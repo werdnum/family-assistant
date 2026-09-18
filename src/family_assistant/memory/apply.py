@@ -11,7 +11,9 @@ change.
 Whole-note writes -- the notes UI, ``add_or_update_note`` -- do not come through
 here. They are held to the store invariants at the notes repository, which is
 also where the core note's derived topic index is regenerated, so both kinds of
-writer leave the store in the same shape.
+writer leave the store in the same shape. A whole-note write regenerates the
+index as part of itself; a batch from here regenerates it once, when every note
+the batch touches has been written, so the list is judged on its final state.
 
 **Entries and their references.** An entry is one markdown bullet; a bullet
 whose continuation lines are indented is one entry. The curator writes the date,
@@ -249,7 +251,7 @@ async def apply_memory_edits(
     records = [
         await _stage_edit(workspace, index, edit) for index, edit in enumerate(edits)
     ]
-    await workspace.flush(provenance_metadata=provenance_metadata)
+    await workspace.flush(provenance_metadata=provenance_metadata, now=now)
 
     for record in records:
         await txn.memory_change_log.add_edit(
@@ -579,19 +581,28 @@ class _Workspace:
         self,
         *,
         provenance_metadata: Mapping[str, object] | None,
+        now: datetime,
     ) -> None:
         """Write every touched note through the repository.
 
-        The repository is where the caps, the always-loaded singleton, the
-        provenance floor and the topic-index regeneration live, so a violation
-        surfaces here as a rejection of the whole list.
+        The repository is where the caps, the always-loaded singleton and the
+        provenance floor live, so a violation surfaces here as a rejection of
+        the whole list.
+
+        The core note's derived topic index is regenerated once, after the last
+        note is written, rather than per write: a list is validated on the state
+        it leaves behind, and a half-applied batch can be over the core note's
+        cap in a shape its final state never has -- adding an entry to a new
+        topic note before moving the core entry that made room for it, say. Held
+        per write, the same list would be applied or refused depending on the
+        order its edits happen to be in.
 
         Raises:
             MemoryEditsRejected: carrying the repository's own message.
         """
-        for title in self.touched_titles:
-            working = self.notes[title]
-            try:
+        try:
+            for title in self.touched_titles:
+                working = self.notes[title]
                 await self.txn.notes.add_or_update(
                     title=working.title,
                     content=render_entries(working.items),
@@ -599,11 +610,14 @@ class _Workspace:
                     visibility_labels=None if working.exists else [MEMORY_LABEL],
                     write_policy=self.write_policy,
                     provenance_metadata=provenance_metadata,
+                    refresh_core_index=False,
                 )
-            except MemoryWriteError as error:
-                reject(self.revision, None, error.message)
-            except NoteWritePolicyError as error:
-                reject(self.revision, None, str(error))
+            if self.touched_titles:
+                await self.txn.notes.refresh_core_memory_index(self.txn, now=now)
+        except MemoryWriteError as error:
+            reject(self.revision, None, error.message)
+        except NoteWritePolicyError as error:
+            reject(self.revision, None, str(error))
 
 
 def reject(revision: int, index: int | None, reason: str) -> NoReturn:

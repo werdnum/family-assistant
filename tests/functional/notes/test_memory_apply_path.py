@@ -1385,3 +1385,75 @@ async def test_the_confined_caller_still_edits_the_memory_notes_it_reads(
     sam = await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
     assert sam is not None
     assert sam.visibility_labels == [MEMORY_LABEL]
+
+
+# ---------------------------------------------------------------------------
+# A batch is judged on its final state
+# ---------------------------------------------------------------------------
+
+# Sized so that the core note holds both entries *without* the derived index,
+# but not with it: the batch below is over the cap in the middle and inside it
+# at the end.
+CROWDED = MemoryLimits(core_note_max_chars=250, topic_note_max_chars=400)
+BULKY_ENTRY = "L" * 150
+KEPT_ENTRY = "The household eats at 6pm."
+
+
+async def _seed_crowded_core(db: Database) -> None:
+    """A core note that only fits its topic index once the bulky entry leaves."""
+    await db.notes.add_or_update(
+        CORE_TITLE,
+        f"- {KEPT_ENTRY}\n- {BULKY_ENTRY}",
+        True,
+        visibility_labels=[MEMORY_LABEL],
+        # Admin surface equivalent: the note is seeded, not written by a profile.
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+
+
+def _make_room_edits(message_id: int) -> dict[str, MemoryEdit]:
+    """The two edits that add a topic and move the core's bulky entry into it."""
+    return {
+        "add": MemoryEdit(
+            op=MemoryEditOp.ADD,
+            note_title="Trips",
+            entry="A trip to Perth in October (Alice, 2026-09-17).",
+            message_ids=[message_id],
+        ),
+        "move": MemoryEdit(
+            op=MemoryEditOp.MOVE,
+            note_title=CORE_TITLE,
+            target_text=BULKY_ENTRY,
+            destination_note_title="Trips",
+        ),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", [("move", "add"), ("add", "move")])
+async def test_a_batch_is_judged_on_its_final_state_whatever_its_order(
+    db_engine: AsyncEngine, order: tuple[str, str]
+) -> None:
+    """The core note is over its cap mid-batch in one order and not in the other.
+
+    Regenerating the index per note write made the same list applicable or
+    refused depending on which edit came first.
+    """
+    db = _db(db_engine, limits=CROWDED)
+    ids = await _seed_turn(db, count=1)
+    await _seed_crowded_core(db)
+    edits = _make_room_edits(ids[0])
+
+    outcome = await _apply(db, [edits[name] for name in order])
+
+    assert outcome.applied is True, outcome.rejections
+    assert await _entries(db, CORE_TITLE) == f"- {KEPT_ENTRY}"
+    trips = await _entries(db, "Trips")
+    assert BULKY_ENTRY in trips
+    assert "A trip to Perth in October" in trips
+    core = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
+    assert core is not None
+    assert "- Trips (changed" in core.content
+    assert len(core.content) <= CROWDED.core_note_max_chars

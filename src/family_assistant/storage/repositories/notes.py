@@ -654,6 +654,7 @@ class NotesRepository(BaseRepository):
         additional_visibility_labels: list[str] | None = None,
         # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
         provenance_metadata: Mapping[str, object] | None = None,
+        refresh_core_index: bool = True,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert).
 
@@ -665,6 +666,14 @@ class NotesRepository(BaseRepository):
                 See-before-overwrite, default/required/allowed labels are applied
                 here so every write path is covered. Pass
                 ``NoteWritePolicy.UNCONSTRAINED`` from trusted admin surfaces.
+            refresh_core_index: Whether a memory write regenerates the core
+                note's topic index before returning. A whole-note write is its
+                own unit of work and leaves it True. A caller applying a *batch*
+                of memory writes in one transaction passes False and calls
+                :meth:`refresh_core_memory_index` once the batch is complete:
+                regenerating per write would hold a half-applied store to the
+                core note's cap, so a batch could be refused for a shape its
+                final state never has.
 
         Raises:
             NoteWritePolicyError: if the caller cannot see an existing note with
@@ -824,7 +833,7 @@ class NotesRepository(BaseRepository):
                         f"PostgreSQL error in add_or_update({title}): {e}"
                     )
                     raise
-                if memory_write:
+                if memory_write and refresh_core_index:
                     await self.refresh_core_memory_index(txn, now=now)
                 return "Success"
 
@@ -850,7 +859,7 @@ class NotesRepository(BaseRepository):
 
                     # Enqueue indexing task
                     await self._enqueue_indexing_task(txn, title)
-                    if memory_write:
+                    if memory_write and refresh_core_index:
                         await self.refresh_core_memory_index(txn, now=now)
                     return "Success"
                 except SQLAlchemyError as e:
@@ -902,7 +911,7 @@ class NotesRepository(BaseRepository):
 
                         # Enqueue indexing task
                         await self._enqueue_indexing_task(txn, title)
-                        if memory_write:
+                        if memory_write and refresh_core_index:
                             await self.refresh_core_memory_index(txn, now=now)
                         return "Success"
                     else:
