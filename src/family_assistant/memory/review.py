@@ -52,6 +52,7 @@ from family_assistant.security.taint import (
     merge_history_taint,
 )
 from family_assistant.security.taint_audit import taint_audit_sources
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -364,7 +365,9 @@ async def _run_curator_attempts(
 
     for attempt in range(1, MAX_REVIEW_ATTEMPTS + 1):
         expected_revision = await db.memory_store.get_revision()
-        topics = await db.notes.get_memory_topic_notes()
+        topics = await db.notes.get_memory_topic_notes(
+            read_policy=_curator_read_policy(curator)
+        )
         review = _fresh_review_context(
             interface_type=interface_type,
             conversation_id=conversation_id,
@@ -482,6 +485,22 @@ async def _run_curator_turn(
         interface_type,
         conversation_id,
         result.error_traceback,
+    )
+
+
+def _curator_read_policy(curator: ProcessingService) -> NoteReadPolicy:
+    """The confinement the curator's own note reads run under.
+
+    Derived from the profile's config through the same constructor the tool
+    layer uses, so the request this task renders shows the curator exactly the
+    notes its own ``get_note`` would return -- a note labelled beyond its
+    grants is hidden by both or by neither.
+    """
+    config = curator.service_config
+    return NoteReadPolicy.for_profile(
+        visibility_grants=config.visibility_grants,
+        required_labels=config.required_note_read_labels,
+        memory_read=config.memory_read,
     )
 
 

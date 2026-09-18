@@ -589,13 +589,19 @@ class NotesRepository(BaseRepository):
             )
         return None
 
-    async def get_memory_topic_notes(self) -> list[MemoryTopicNote]:
-        """Every memory topic note, most recently changed first.
+    async def get_memory_topic_notes(
+        self, *, read_policy: NoteReadPolicy
+    ) -> list[MemoryTopicNote]:
+        """Every memory topic note the reader may see, most recently changed first.
 
-        No read policy: the label *is* the confinement here. A memory topic
-        note is by definition inside the curator's read scope, and the caller
-        is the review task assembling the curator's request rather than a tool
-        resolving a title a model named.
+        Args:
+            read_policy: Confinement the read runs under. Required, and not
+                defaulted, because this query embeds whole notes in a model's
+                request: carrying the `memory` label does not make a note
+                readable by every memory reader, since it may carry others
+                (`memory` plus `private`) that the reader's grants do not
+                cover. Deriving it from the profile keeps this path saying what
+                that profile's own ``get_note`` says.
 
         The core note is excluded: it reaches the curator through the notes
         context provider, and repeating it in the request would spend the
@@ -611,6 +617,7 @@ class NotesRepository(BaseRepository):
             .where(self._labels_superset_condition([MEMORY_LABEL]))
             .order_by(notes_table.c.updated_at.desc(), notes_table.c.title)
         )
+        stmt = self._apply_read_policy(stmt, read_policy)
         if core_note_id is not None:
             stmt = stmt.where(notes_table.c.id != core_note_id)
         rows = await self._db.fetch_all(stmt)

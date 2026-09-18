@@ -233,6 +233,44 @@ async def test_rows_before_the_enablement_moment_are_never_shown(
 
 
 @pytest.mark.asyncio
+async def test_a_memory_note_beyond_the_curators_grants_is_not_in_its_request(
+    db_engine: AsyncEngine,
+) -> None:
+    """Carrying `memory` is not enough: the reader's grants decide as well.
+
+    The request embeds topic notes whole, so a note the curator's own get_note
+    hides has to be missing from it too -- otherwise the confinement holds for
+    the tool and not for the far larger channel beside it.
+    """
+    limits = review_limits()
+    db = memory_db(db_engine, limits)
+    script = CuratorScript()
+    service = curator_service(db_engine, curator_llm(script))
+
+    await enable_contribution(db)
+    await db.notes.add_or_update(
+        title="Transport",
+        content="- The family always takes the tram.",
+        include_in_prompt=False,
+        visibility_labels=[MEMORY_LABEL],
+        write_policy=PERSON_WRITE_POLICY,
+    )
+    await db.notes.add_or_update(
+        title="Private",
+        content="- Alice's counselling is on Tuesdays.",
+        include_in_prompt=False,
+        visibility_labels=[MEMORY_LABEL, "private"],
+        write_policy=PERSON_WRITE_POLICY,
+    )
+    await seed_turn(db, turn_id="turn-1", said="we always take the tram")
+
+    await _review(db, service, limits=limits)
+
+    assert "always takes the tram" in script.requests[0]
+    assert "counselling" not in script.requests[0]
+
+
+@pytest.mark.asyncio
 async def test_a_second_review_shows_only_what_is_new(db_engine: AsyncEngine) -> None:
     limits = review_limits()
     db = memory_db(db_engine, limits)
