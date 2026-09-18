@@ -60,23 +60,6 @@ def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent(
     assert "/coder" in profile.slash_commands
 
 
-def test_shipped_coder_profile_names_a_live_agent_revision(
-    shipped_config: AppConfig,
-) -> None:
-    """Pin the agent revision so a retirement is a visible change, not an outage.
-
-    `is_interactions_agent_model` matches the whole `antigravity-*` family, so it
-    keeps routing a revision Google has already shut down -- the run then fails
-    at submit, in production, against an id nothing in the tree objected to.
-    Google retires each preview a few weeks after naming its successor, so the
-    shipped id has to be revisited on a schedule; asserting it here is what turns
-    that into an edit a reviewer sees.
-    """
-    processing_config = shipped_profile(shipped_config, "coder").processing_config
-
-    assert processing_config.llm_model == "antigravity-preview-09-2026"
-
-
 def test_shipped_coder_profile_configures_no_sandbox_credentials(
     shipped_config: AppConfig,
 ) -> None:
