@@ -25,7 +25,8 @@ persisted the content, or with the operator who configured the installation.
 Stored notes are the one artifact that currently violates this. Three surfaces put database content
 into every turn's `<turn_context>` before any tool runs:
 
-1. the body of every note marked `include_in_prompt`;
+1. the body of every note marked `include_in_prompt`, together with the description and MIME type of
+   each attachment associated with it;
 2. the name and description of every database-backed skill (a note whose frontmatter declares skill
    metadata), regardless of `include_in_prompt`;
 3. the title of every other note, in the "other available notes" catalog.
@@ -42,9 +43,12 @@ it should.
 
 ### Ambient eligibility is decided when the note is written
 
-A note carries a stored **ambient eligibility**: whether its prompt-visible material — body, skill
-catalog entry, and title — may be placed in turn context without being asked for. The eligibility is
-decided by the write that produces the note's current content, and only there:
+A note carries a stored **ambient eligibility**: whether its **ambient material** may be placed in
+turn context without being asked for. Ambient material is everything a note contributes to the
+prompt: body, title, skill catalog entry, and the rendered metadata of its attachments. It is
+defined by what the notes context provider renders, so anything the provider renders in future is
+ambient material by construction and is covered without amending this rule. Eligibility is decided
+by the write that produces the note's current ambient material, and only there:
 
 - A write from a turn **below** `taint_policy.high_taint_tier` produces an eligible note. This is
   every ordinary interactive write, and every write from an authenticated user through the web API,
@@ -100,8 +104,11 @@ a button to a refusal sets the fallback to `confirm` through `matrix_overrides`.
 Which writes cross the gate:
 
 - creating or updating a note with `include_in_prompt: true`;
-- updating the content of a note that is already prompt-included, whether or not the call names
-  `include_in_prompt`;
+- any write to a note that is already prompt-included — content, attachment associations, or
+  anything else that changes its ambient material — whether or not the call names
+  `include_in_prompt`. Attachments are the case that makes this general rule necessary: an
+  attachment id names a stored description and MIME type that the prompt renders as text, so
+  associating one is a write of ambient material even though the call carries only the id;
 - creating or updating a note whose content declares skill frontmatter (the catalog entry is
   ambient);
 - creating a note under a new title is **not** gated. A tainted create without ambient intent
@@ -152,11 +159,19 @@ eligibility decided by their own trust:
 
 ### Observe mode
 
-Under `taint_policy.mode: observe` the gate audits and admits, as every cell does. The write records
-the would-have outcome, the note is eligible, and the context provider no longer re-taints later
-turns from it. That is a real change in observe mode — today those turns re-taint — and it is the
-intended one: observe mode exists to measure what enforcement would do, and it cannot measure that
-while every turn starts at the ceiling for a reason enforcement would have removed.
+**Eligibility follows the verdict; the mode decides only whether the write is refused.** Under
+`taint_policy.mode: observe` the judge still runs (the risk-adjudicated design preserves the outcome
+and downgrades only its effect), so a gated write in observe mode has a real verdict. A write the
+verdict admits produces an eligible note. A write the verdict denies — or that fell to the `deny`
+fallback — still succeeds, because nothing blocks in observe mode, but the note it produces is
+**ineligible**, and the tool result says so. Eligibility is never granted by the mode being lenient,
+so switching the deployment to `enforce` later finds no note that was admitted only because
+enforcement was off; the switch changes which writes are refused, not which notes are ambient.
+
+This is a real change in observe mode — today a tainted prompt note both lands in context and
+re-taints every later turn — and it is the intended one: observe mode exists to measure what
+enforcement would do, and it cannot measure that while every turn starts at the ceiling for a reason
+enforcement would have removed.
 
 ## Deliberate simplifications
 
