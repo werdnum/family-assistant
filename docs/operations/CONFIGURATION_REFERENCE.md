@@ -2129,12 +2129,14 @@ memory_config:
 ```
 
 - **enabled** — the master switch for the whole mechanism, on by default. With it off nothing is
-  swept and nothing is reviewed, whatever any profile is configured to do. It does not touch the
-  enablement moments a contributing profile has already recorded, so turning it back on resumes from
-  them and conversation held while it was off is reviewed then; `memory_contribute: false` is the
-  setting that discards what was not reviewed. The sweep is only scheduled at all when this is on
-  **and** at least one profile contributes, so a deployment that turns either off schedules no
-  recurring query that could only return nothing.
+  swept and nothing is reviewed, and no profile reads or writes memory either, whatever any profile
+  is configured to do: a profile that still carries `memory_read: true` gets no memory note in its
+  context, is denied the `memory` label wherever it reads notes, and does not hold
+  `propose_memory_edits`. It does not touch the enablement moments a contributing profile has
+  already recorded, so turning it back on resumes from them and conversation held while it was off
+  is reviewed then; `memory_contribute: false` is the setting that discards what was not reviewed.
+  The sweep is only scheduled at all when this is on **and** at least one profile contributes, so a
+  deployment that turns either off schedules no recurring query that could only return nothing.
 - **sweep_interval_minutes** — how often the predicate is evaluated. Freshness is quantised to this,
   which is negligible against the idle windows.
 - **idle_window_minutes** — per interface, how long a conversation must have been quiet before it is

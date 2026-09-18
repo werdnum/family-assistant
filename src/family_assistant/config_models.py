@@ -2259,6 +2259,35 @@ class AppConfig(BaseSettings):
             )
         return self
 
+    def effective_memory_read(self, profile: ServiceProfile) -> bool:
+        """Whether this profile actually reads the household's memory.
+
+        The one place the master switch meets a profile's own setting.
+        ``memory_config.enabled: false`` is documented as turning the whole
+        mechanism off for every profile at once, and that is only true if every
+        consumer of ``memory_read`` -- the profile's note read policy, the
+        withholding of the memory-writing tools, the ``memory_read`` its
+        running service advertises -- asks here rather than reading the profile
+        field directly. The raw fields keep their meaning for validation: a
+        profile that contributes without reading is still a startup error
+        however the switch is set, so turning the mechanism back on cannot
+        surface a contradiction that startup would have rejected.
+        """
+        return self.memory_config.enabled and profile.processing_config.memory_read
+
+    def effective_memory_contribute(self, profile: ServiceProfile) -> bool:
+        """Whether this profile's conversations actually feed the curator.
+
+        The contribution half of :meth:`effective_memory_read`. Note that the
+        *recorded* enablement moments are deliberately not derived from this:
+        the master switch pauses the mechanism without discarding what a
+        contributing profile has already established, so turning it back on
+        resumes from the moment it had.
+        """
+        return (
+            self.memory_config.enabled and profile.processing_config.memory_contribute
+        )
+
     @model_validator(mode="after")
     def validate_user_identity_uniqueness(self) -> AppConfig:
         user_ids: set[str] = set()

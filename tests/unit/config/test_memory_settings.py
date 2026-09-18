@@ -182,3 +182,29 @@ def test_a_read_only_profile_does_not_feed_reviews(
     contributing = assistant._memory_contributing_profiles()  # pylint: disable=protected-access
 
     assert contributing == set()
+
+
+def test_the_master_switch_leaves_no_contributing_profiles(
+    shipped_config: AppConfig, provider_api_keys: None
+) -> None:
+    """`memory_config.enabled: false` empties the set the sweep is built from.
+
+    The profiles keep `memory_contribute: true` -- the switch is a deployment
+    saying "not right now" rather than an edit to the profiles -- and nothing
+    contributes while it is off. The enablement boundary reads the configured
+    setting instead, so turning the switch back on resumes from the moments
+    already recorded.
+    """
+    del provider_api_keys
+    shipped_config.memory_config.enabled = False
+
+    assistant = Assistant(shipped_config, llm_client_overrides={})
+
+    # Reaching past the private names on purpose: asserting through the helpers
+    # the application itself calls is what makes this a statement about
+    # production rather than about a re-derivation in a test.
+    assert assistant._memory_contributing_profiles() == set()  # pylint: disable=protected-access
+    assert assistant._configured_memory_contributing_profiles() == {  # pylint: disable=protected-access
+        "default_assistant",
+        "complex_tasks",
+    }

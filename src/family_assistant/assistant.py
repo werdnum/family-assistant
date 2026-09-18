@@ -1325,11 +1325,7 @@ class Assistant:
             if profile_conf.visibility_grants
             else None
         )
-        profile_read_policy = NoteReadPolicy.for_profile(
-            visibility_grants=profile_grants,
-            required_labels=profile_proc_conf.required_note_read_labels,
-            memory_read=profile_proc_conf.memory_read,
-        )
+        profile_read_policy = self._profile_note_read_policy(profile_conf)
         context_providers = self._build_profile_context_providers(
             profile_conf, note_registry, profile_read_policy
         )
@@ -1363,7 +1359,7 @@ class Assistant:
                 profile_proc_conf.allowed_note_visibility_labels
             ),
             allow_wake_llm=profile_proc_conf.allow_wake_llm,
-            memory_read=profile_proc_conf.memory_read,
+            memory_read=self.config.effective_memory_read(profile_conf),
             include_aggregated_context=(profile_proc_conf.include_aggregated_context),
             note_registry=note_registry,
             greeting_wav_path=profile_proc_conf.greeting_wav_path,
@@ -1458,6 +1454,23 @@ class Assistant:
                 "Failed to create camera backend for profile '%s'", profile_conf.id
             )
         return None
+
+    def _profile_note_read_policy(self, profile_conf: ServiceProfile) -> NoteReadPolicy:
+        """The note-read confinement a profile's context and tools run under.
+
+        One method rather than a derivation at each call site, because this is
+        where the memory master switch becomes "no memory note reaches this
+        profile through any path".
+        """
+        return NoteReadPolicy.for_profile(
+            visibility_grants=(
+                set(profile_conf.visibility_grants)
+                if profile_conf.visibility_grants
+                else None
+            ),
+            required_labels=profile_conf.processing_config.required_note_read_labels,
+            memory_read=self.config.effective_memory_read(profile_conf),
+        )
 
     def _build_profile_context_providers(
         self,
@@ -1609,7 +1622,7 @@ class Assistant:
             profile_conf.operator_tools_policy,
             self.config.global_tools_policy,
             profile_conf.excluded_global_tools,
-            memory_read=profile_proc_conf.memory_read,
+            memory_read=self.config.effective_memory_read(profile_conf),
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
         profile_root_provider = _root_provider_for_profile(
@@ -2245,7 +2258,25 @@ class Assistant:
             logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
 
     def _memory_contributing_profiles(self) -> set[str]:
-        """The profiles an operator has configured to feed the memory curator."""
+        """The profiles that actually feed the memory curator.
+
+        Through the effective setting, so the master switch empties this set
+        the same way it takes memory out of every profile's context and tools.
+        """
+        return {
+            profile.id
+            for profile in self.config.service_profiles
+            if self.config.effective_memory_contribute(profile)
+        }
+
+    def _configured_memory_contributing_profiles(self) -> set[str]:
+        """The profiles an operator has configured to feed the memory curator.
+
+        The raw setting, master switch aside: only the enablement boundary uses
+        it, because the switch pauses the mechanism rather than ending a
+        profile's contribution, and a boundary discarded while it was off could
+        not be restored by turning it back on.
+        """
         return {
             profile.id
             for profile in self.config.service_profiles
@@ -2262,13 +2293,16 @@ class Assistant:
         calls on months of old conversation. Run at startup because that is
         when the configuration is read; a profile already recorded as
         contributing keeps the moment it has, so a restart does not re-stamp
-        the boundary and discard everything said since.
+        the boundary and discard everything said since. This is the one place
+        that reads the configured setting rather than the effective one:
+        ``memory_config.enabled: false`` pauses the mechanism, and a deployment
+        that turns it back on resumes from the moments it already had.
         """
         assert self.database_engine is not None, (
             "Database engine must be initialized before recording memory enablement"
         )
         await Database(self.database_engine).memory_review.record_enablement(
-            profile_ids_contributing=self._memory_contributing_profiles(),
+            profile_ids_contributing=self._configured_memory_contributing_profiles(),
             now=datetime.now(UTC),
         )
 

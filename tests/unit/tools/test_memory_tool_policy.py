@@ -57,7 +57,7 @@ def _holds_memory_tool(config: AppConfig, profile_id: str) -> bool:
         profile.operator_tools_policy,
         config.global_tools_policy,
         profile.excluded_global_tools,
-        memory_read=profile.processing_config.memory_read,
+        memory_read=config.effective_memory_read(profile),
     )
     return (
         engine.evaluate_for_advertisement(
@@ -96,6 +96,24 @@ def test_the_same_profile_loses_the_tool_when_it_stops_reading_memory(
     config = _config(tmp_path)
     _profile(config, profile_id).processing_config.memory_read = False
 
+    assert _holds_memory_tool(config, profile_id) is False
+
+
+@pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])
+def test_the_master_switch_takes_the_tool_from_a_reading_profile(
+    tmp_path: Path, profile_id: str
+) -> None:
+    """`memory_config.enabled: false` reaches the foreground, not just the sweep.
+
+    It is documented as turning the whole mechanism off for every profile at
+    once, so a profile that still carries `memory_read: true` must lose the tool
+    anyway -- otherwise a deployment that opted out of memory would still be
+    offered a way to write it.
+    """
+    config = _config(tmp_path)
+    config.memory_config.enabled = False
+
+    assert _profile(config, profile_id).processing_config.memory_read is True
     assert _holds_memory_tool(config, profile_id) is False
 
 
