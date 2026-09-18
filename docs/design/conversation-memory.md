@@ -6,11 +6,10 @@ Accepted; implementing, in the order 1 → 2 → 4 → 7. Milestone 1 (the curat
 watermark, sweep, read policy and skip metrics) landed in PR #1242; milestone 2 (prompts, settings,
 documentation) in PR #1246; milestone 4 (Telegram sender names and maximum deferral) in PR #1247;
 milestone 7 (contribution on by default) stacked on top of it. Milestone 3 (evaluation) and
-milestone 5 (user control) are deferred: the owner chose to turn memory on and learn from real use
-first, rather than build the measurement before there is anything to measure. Both remain planned,
-and the trade-off that decision accepts is recorded under "Deliberate simplifications".
-Approach-level; construction detail (field names, payload shapes, exact prompts) belongs to the
-implementing PRs.
+milestone 5 (user control) are deferred: the owner chose to turn memory on, see what it produces in
+real use, and let that decide what to build next. Both remain planned, and the trade-off that
+decision accepts is recorded under "Deliberate simplifications". Approach-level; construction detail
+(field names, payload shapes, exact prompts) belongs to the implementing PRs.
 
 This revision splits the design into **v1 invariants** and **future hardening**. An earlier revision
 answered every reviewer counterexample with a mechanism and grew into a fact-management system:
@@ -620,9 +619,9 @@ usefulness is the point of v1.
 7. **Default on.** Contribution on by default for the household profiles. This was gated on
    milestones 3 and 5, so that the default would arrive with the quality measurement and the
    controls to notice and correct a bad entry. It was taken without them: the owner chose to run
-   memory and learn from real use, on the reasoning that the evaluation corpus is guesswork until
-   there is real curated memory to compare it against. What bounds the risk in the meantime is under
-   "Deliberate simplifications". Verified by a startup test of the shipped defaults.
+   memory, see what it produces in real use, and let that decide what to build next. What bounds the
+   risk in the meantime is under "Deliberate simplifications". Verified by a startup test of the
+   shipped defaults.
 
 ## Open questions
 
