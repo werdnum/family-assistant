@@ -286,27 +286,44 @@ async def _user_ids(db: Database) -> list[str | None]:
 
 
 async def _seed_turn(
-    db: Database, *, said: str, at: datetime, speaker: str, turn_id: str
-) -> None:
-    """One aged turn, written the way a turn writes one.
+    db: Database,
+    *,
+    said: str,
+    at: datetime,
+    speaker: str,
+    turn_id: str,
+    profile_id: str = PROFILE,
+) -> list[int]:
+    """One turn, written the way a turn writes one. Returns its row ids.
 
-    Used only where a test needs rows older than the test run itself; the
-    stamps match what a real turn leaves, so nothing is skipped on provenance.
+    Used where a test needs a turn the Telegram fixture cannot produce: one
+    older than the test run itself, or one under a profile a slash command
+    switched to. The stamps match what a real turn leaves, so nothing is
+    skipped on provenance.
     """
     trusted = TurnTaintState.empty().to_metadata()
-    for message in (
-        UserMessage(content=said, taint_metadata=trusted),
-        AssistantMessage(content="Noted.", taint_metadata=trusted),
-    ):
+    return [
         await db.message_history.add_message(
             message,
             interface_type=TELEGRAM,
             conversation_id=CONVERSATION,
             timestamp=at,
             turn_id=turn_id,
-            processing_profile_id=PROFILE,
+            processing_profile_id=profile_id,
             user_id=speaker,
         )
+        for message in (
+            UserMessage(content=said, taint_metadata=trusted),
+            AssistantMessage(content="Noted.", taint_metadata=trusted),
+        )
+    ]
+
+
+async def _watermark(db: Database) -> int:
+    row = await db.memory_review.get_watermark(
+        interface_type=TELEGRAM, conversation_id=CONVERSATION
+    )
+    return row.last_reviewed_internal_id if row is not None else 0
 
 
 # ---------------------------------------------------------------------------
@@ -435,3 +452,85 @@ async def test_a_telegram_chat_that_never_goes_quiet_is_reviewed_anyway(
 
     assert result is MemoryReviewResult.APPLIED
     assert "Bob: we always take the tram" in script.requests[0]
+
+
+# ---------------------------------------------------------------------------
+# A profile switched by slash command inside the chat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_profile_switched_mid_stretch_is_neither_shown_nor_left_behind(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    db_engine: AsyncEngine,
+) -> None:
+    """`/engineer` inside a household chat is handled by eligibility alone.
+
+    Its rows are not rendered, and the watermark still moves past them, so they
+    cannot hold the conversation's own stretch behind them for ever.
+    """
+    fixture = telegram_handler_fixture
+    limits = review_limits()
+    db = memory_db(db_engine, limits)
+    resolver = UserIdentityResolver(fixture.assistant.config)
+    started = datetime.now(UTC)
+    await db.memory_review.record_enablement(
+        profile_ids_contributing={PROFILE}, now=started - timedelta(days=1)
+    )
+
+    await _send(
+        fixture,
+        text="we always take the tram",
+        telegram_user_id=ALICE_TELEGRAM_ID,
+        message_id=101,
+    )
+    diagnosed = await _seed_turn(
+        db,
+        said="why did the daily brief not fire last night",
+        at=started,
+        speaker=ALICE,
+        turn_id="engineer-turn",
+        profile_id="engineer",
+    )
+    await _send(
+        fixture,
+        text="the 7pm tram is the last one",
+        telegram_user_id=BOB_TELEGRAM_ID,
+        message_id=102,
+    )
+
+    curator, script = _curator(db_engine, AttributingCurator(speaker="Bob"))
+    settled = started + timedelta(minutes=IDLE_MINUTES + 1)
+    result = await _review(db, curator, limits=limits, now=settled, resolver=resolver)
+
+    assert result is MemoryReviewResult.APPLIED
+    assert "daily brief" not in script.requests[0]
+    assert "Alice: we always take the tram" in script.requests[0]
+    assert "Bob: the 7pm tram is the last one" in script.requests[0]
+    assert await _watermark(db) > max(diagnosed)
+
+
+@pytest.mark.asyncio
+async def test_a_telegram_chat_that_only_used_another_profile_is_not_due(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    db_engine: AsyncEngine,
+) -> None:
+    """A row under `/engineer` is not this chat's activity, however old it is."""
+    del telegram_handler_fixture
+    limits = review_limits()
+    db = memory_db(db_engine, limits)
+    now = datetime.now(UTC)
+    await db.memory_review.record_enablement(
+        profile_ids_contributing={PROFILE}, now=now - timedelta(days=7)
+    )
+    await _seed_turn(
+        db,
+        said="why did the daily brief not fire last night",
+        at=now - timedelta(days=2),
+        speaker=ALICE,
+        turn_id="engineer-turn",
+        profile_id="engineer",
+    )
+
+    curator, _ = _curator(db_engine, AttributingCurator(speaker="Alice"))
+    assert await _sweep(db, curator, now=now) == []

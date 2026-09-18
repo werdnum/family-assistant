@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.config_models import MemoryConfig
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.memory.due import (
     DueReason,
@@ -116,6 +117,24 @@ async def test_the_window_is_per_interface(db_engine: AsyncEngine) -> None:
     await _say(db, minutes_ago=45, interface_type="telegram", conversation_id="tg-conv")
 
     assert await _due(db) == ["web-conv"]
+
+
+@pytest.mark.asyncio
+async def test_the_shipped_windows_are_the_ones_the_predicate_measures(
+    db_engine: AsyncEngine,
+) -> None:
+    """The defaults and the predicate, tested as one thing rather than two.
+
+    The numbers themselves are pinned in the settings' own test; what this adds
+    is that a deployment which configures nothing gets them applied per
+    interface -- 45 minutes of quiet ends a web conversation and not a Telegram
+    one.
+    """
+    db = Database(engine=db_engine)
+    await _say(db, minutes_ago=45, interface_type="web", conversation_id="web-conv")
+    await _say(db, minutes_ago=45, interface_type="telegram", conversation_id="tg-conv")
+
+    assert await _due(db, settings=MemoryConfig().to_review_settings()) == ["web-conv"]
 
 
 @pytest.mark.asyncio
