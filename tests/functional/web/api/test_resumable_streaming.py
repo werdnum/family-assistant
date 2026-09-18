@@ -57,6 +57,7 @@ from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMet
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -224,6 +225,7 @@ def test_processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
         prompts=mock_processing_service_config.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast(

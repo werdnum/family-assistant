@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools.notes import add_or_update_note_tool, delete_note_tool
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -32,7 +32,9 @@ async def test_create_note_with_visibility_labels(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    note = await db.notes.get_by_title("Sensitive Info", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Sensitive Info", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.visibility_labels == ["sensitive", "private"]
 
@@ -57,7 +59,9 @@ async def test_update_preserves_visibility_labels(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    note = await db.notes.get_by_title("Labeled Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Labeled Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "Updated content"
     assert note.visibility_labels == ["sensitive"]
@@ -84,7 +88,9 @@ async def test_update_clears_visibility_labels(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    note = await db.notes.get_by_title("Was Labeled", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Was Labeled", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.visibility_labels == []
 
@@ -115,7 +121,9 @@ async def test_get_prompt_notes_with_grants(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    notes = await db.notes.get_prompt_notes(visibility_grants={"sensitive"})
+    notes = await db.notes.get_prompt_notes(
+        read_policy=NoteReadPolicy(grants=frozenset({"sensitive"}))
+    )
     titles = [n.title for n in notes]
     assert "Public Note" in titles
     assert "Sensitive Note" in titles
@@ -142,7 +150,9 @@ async def test_get_prompt_notes_empty_grants(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    notes = await db.notes.get_prompt_notes(visibility_grants=set())
+    notes = await db.notes.get_prompt_notes(
+        read_policy=NoteReadPolicy(grants=frozenset(set()))
+    )
     titles = [n.title for n in notes]
     assert "Public Note" in titles
     assert "Labeled Note" not in titles
@@ -162,10 +172,14 @@ async def test_get_by_title_insufficient_grants(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    note = await db.notes.get_by_title("Secret Note", visibility_grants={"default"})
+    note = await db.notes.get_by_title(
+        "Secret Note", read_policy=NoteReadPolicy(grants=frozenset({"default"}))
+    )
     assert note is None
 
-    note = await db.notes.get_by_title("Secret Note", visibility_grants={"top-secret"})
+    note = await db.notes.get_by_title(
+        "Secret Note", read_policy=NoteReadPolicy(grants=frozenset({"top-secret"}))
+    )
     assert note is not None
     assert note.title == "Secret Note"
 
@@ -192,7 +206,9 @@ async def test_get_excluded_notes_titles_respects_grants(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    titles = await db.notes.get_excluded_notes_titles(visibility_grants={"default"})
+    titles = await db.notes.get_excluded_notes_titles(
+        read_policy=NoteReadPolicy(grants=frozenset({"default"}))
+    )
     assert "Excluded Public" in titles
     assert "Excluded Sensitive" not in titles
 
@@ -223,7 +239,9 @@ async def test_get_all_with_grants(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    notes = await db.notes.get_all(visibility_grants={"default"})
+    notes = await db.notes.get_all(
+        read_policy=NoteReadPolicy(grants=frozenset({"default"}))
+    )
     titles = [n.title for n in notes]
     assert "Default Note" in titles
     assert "No Labels" in titles
@@ -244,14 +262,18 @@ async def test_and_semantics(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    notes_one_grant = await db.notes.get_all(visibility_grants={"sensitive"})
+    notes_one_grant = await db.notes.get_all(
+        read_policy=NoteReadPolicy(grants=frozenset({"sensitive"}))
+    )
     assert not any(n.title == "Multi Label Note" for n in notes_one_grant)
 
-    notes_other_grant = await db.notes.get_all(visibility_grants={"private"})
+    notes_other_grant = await db.notes.get_all(
+        read_policy=NoteReadPolicy(grants=frozenset({"private"}))
+    )
     assert not any(n.title == "Multi Label Note" for n in notes_other_grant)
 
     notes_both_grants = await db.notes.get_all(
-        visibility_grants={"sensitive", "private"}
+        read_policy=NoteReadPolicy(grants=frozenset({"sensitive", "private"}))
     )
     assert any(n.title == "Multi Label Note" for n in notes_both_grants)
 
@@ -282,7 +304,7 @@ async def test_no_grants_returns_all(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    notes = await db.notes.get_all(visibility_grants=None)
+    notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     titles = [n.title for n in notes]
     assert "Public" in titles
     assert "Sensitive" in titles
@@ -322,7 +344,7 @@ async def test_context_provider_with_grants(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
-        visibility_grants={"default"},
+        read_policy=NoteReadPolicy(grants=frozenset({"default"})),
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -367,7 +389,7 @@ async def test_context_provider_without_grants(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
-        visibility_grants=None,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -428,7 +450,9 @@ async def test_update_note_blocked_by_visibility(
 
     # Verify original content is unchanged
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Secret Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Secret Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "Original secret content"
 
@@ -458,7 +482,9 @@ async def test_update_note_allowed_with_grants(
     assert "successfully" in result.lower()
 
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Labeled Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Labeled Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "Updated content"
 
@@ -480,7 +506,9 @@ async def test_create_new_note_with_grants(
     assert "successfully" in result.lower()
 
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Brand New Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Brand New Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "Fresh content"
 
@@ -508,7 +536,9 @@ async def test_delete_note_blocked_by_visibility(
 
     # Verify note still exists
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Protected Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Protected Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
 
 
@@ -533,7 +563,9 @@ async def test_delete_note_allowed_with_grants(
     assert result["success"] is True
 
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Deletable Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Deletable Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is None
 
 
@@ -583,6 +615,8 @@ async def test_new_note_gets_default_labels(
     assert "successfully" in result.lower()
 
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Auto Labeled", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Auto Labeled", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.visibility_labels == ["default"]

@@ -37,6 +37,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.model_selection import ResolvedModelSelection
+from family_assistant.memory.task_types import MEMORY_REVIEW_TASK_TYPE
 from family_assistant.observability.metrics import record_task_processed
 from family_assistant.processing import (
     PENDING,
@@ -151,6 +152,7 @@ from family_assistant.storage.events import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
+    TaskAttempt,
     TaskPriority,
     notify_other_workers,
     register_worker_wake_event,
@@ -1165,11 +1167,18 @@ class TaskHandlerBudget:
 # Note: ``delegated_profile_run`` is registered on a feature branch and may not exist
 # on every deployment yet. Listing it here is forward-compatible and harmless: the
 # entry only applies when a task of that type is actually processed.
+#
+# A memory review runs up to two curator turns -- the review and one re-run
+# against a store somebody changed under it -- each of which may take several
+# tool-calling iterations. It parks on nothing, so the budget is model latency
+# rather than waiting, but two turns can outlast the 300s default on a slow
+# provider, and a review cut off midway leaves its conversation due for ever.
 DEFAULT_TASK_HANDLER_BUDGETS: dict[str, TaskHandlerBudget] = {
     "delegated_profile_run": TaskHandlerBudget(
         timeout=600,  # 10 minutes for confirmation-gated delegated runs
         parks_on_queued_work=True,
     ),
+    MEMORY_REVIEW_TASK_TYPE: TaskHandlerBudget(timeout=600),
 }
 
 
@@ -4678,6 +4687,10 @@ class TaskWorker:
                     turn_id=_turn_id_for_task(task["task_id"]),
                     db_context=db_context,
                     task_priority=TaskPriority(task["priority"]),
+                    task_attempt=TaskAttempt(
+                        retry_count=task.get("retry_count", 0),
+                        max_retries=task.get("max_retries", 3),
+                    ),
                     # Infrastructure fields (required - no defaults)
                     processing_service=self.processing_service,
                     # No run binding here: a task is not a turn, so a tool that
@@ -4727,6 +4740,16 @@ class TaskWorker:
                         self.processing_service.service_config.required_note_visibility_labels
                         if self.processing_service
                         else None
+                    ),
+                    required_note_read_labels=(
+                        self.processing_service.service_config.required_note_read_labels
+                        if self.processing_service
+                        else None
+                    ),
+                    memory_read=(
+                        self.processing_service.service_config.memory_read
+                        if self.processing_service
+                        else False
                     ),
                     allowed_note_visibility_labels=(
                         self.processing_service.service_config.allowed_note_visibility_labels
@@ -6051,6 +6074,10 @@ async def handle_script_execution(
             required_note_visibility_labels=(
                 processing_service.service_config.required_note_visibility_labels
             ),
+            required_note_read_labels=(
+                processing_service.service_config.required_note_read_labels
+            ),
+            memory_read=processing_service.service_config.memory_read,
             allowed_note_visibility_labels=(
                 processing_service.service_config.allowed_note_visibility_labels
             ),
@@ -6387,6 +6414,10 @@ async def _build_confirmation_execution_context(
         required_note_visibility_labels=(
             processing_service.service_config.required_note_visibility_labels
         ),
+        required_note_read_labels=(
+            processing_service.service_config.required_note_read_labels
+        ),
+        memory_read=processing_service.service_config.memory_read,
         allowed_note_visibility_labels=(
             processing_service.service_config.allowed_note_visibility_labels
         ),

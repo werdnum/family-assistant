@@ -19,7 +19,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -136,7 +136,9 @@ add_or_update_note(
 
     # Step 4: Verify user-visible outcome - note was created
     db_ctx = Database(engine=db_engine)
-    note = await db_ctx.notes.get_by_title("Temperature Log", visibility_grants=None)
+    note = await db_ctx.notes.get_by_title(
+        "Temperature Log", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert "Temperature: 22.5°C" in note.content
 
@@ -276,7 +278,9 @@ async def test_script_execution_by_stored_name(
 
     # Step 4: Verify the stored script was resolved and executed
     db_ctx = Database(engine=db_engine)
-    note = await db_ctx.notes.get_by_title("Stored Temp Log", visibility_grants=None)
+    note = await db_ctx.notes.get_by_title(
+        "Stored Temp Log", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert "Stored: 24.5°C" in note.content
 
@@ -373,7 +377,7 @@ async def test_script_with_syntax_error_creates_no_note(
 
     # Step 4: Verify no notes were created
     db_ctx = Database(engine=db_engine)
-    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    notes = await db_ctx.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     assert len(notes) == 0, "No notes should be created when script has errors"
 
     logger.info("Confirmed no notes created for script with syntax error")
@@ -484,7 +488,7 @@ add_or_update_note(
 
     # Step 4: Verify both notes were created
     db_ctx = Database(engine=db_engine)
-    all_notes = await db_ctx.notes.get_all(visibility_grants=None)
+    all_notes = await db_ctx.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     note_titles = {n.title for n in all_notes}
 
     assert "Event Log" in note_titles
@@ -624,7 +628,7 @@ add_or_update_note(
     # Step 5: Verify the script successfully retrieved and processed notes
     db_ctx = Database(engine=db_engine)
     result_note = await db_ctx.notes.get_by_title(
-        "Retrieval Results", visibility_grants=None
+        "Retrieval Results", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert result_note is not None, "Script should have created a result note"
     assert "Found via list: True" in result_note.content

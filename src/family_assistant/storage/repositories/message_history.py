@@ -518,6 +518,23 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row_as_dict(row) for row in rows]
 
+    async def rows_matching(
+        self, condition: ColumnElement[bool]
+    ) -> list[MessageHistoryRow]:
+        """Every row matching ``condition``, oldest first, fully deserialized.
+
+        The primitive for a caller that owns its own selection predicate -- the
+        memory review's eligibility rule, which is about contributing profiles
+        and enablement moments rather than about message history -- and needs
+        the same deserialization every other read of this table gets.
+        """
+        rows = await self._db.fetch_all(
+            select(message_history_table)
+            .where(condition)
+            .order_by(message_history_table.c.internal_id.asc())
+        )
+        return [self._process_message_row_as_dict(row) for row in rows]
+
     async def hydrate_history_results(
         self,
         rows: list[MessageHistoryRow],

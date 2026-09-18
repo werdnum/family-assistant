@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 
 SKILL_CONTENT = (
     "---\n"
@@ -37,7 +37,9 @@ async def test_skill_detected_on_create(db_engine: AsyncEngine) -> None:
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    note = await db.notes.get_by_title("My Skill", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "My Skill", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
 
     assert note is not None
     assert note.is_skill is True
@@ -58,7 +60,9 @@ async def test_regular_note_not_detected_as_skill(db_engine: AsyncEngine) -> Non
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    note = await db.notes.get_by_title("Regular Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Regular Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
 
     assert note is not None
     assert note.is_skill is False
@@ -80,7 +84,9 @@ async def test_skill_detection_updated_on_content_change(
         content=SKILL_CONTENT,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
-    note = await db.notes.get_by_title("Changeable", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Changeable", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.is_skill is True
 
@@ -90,7 +96,9 @@ async def test_skill_detection_updated_on_content_change(
         content="Now just regular content.",
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
-    note = await db.notes.get_by_title("Changeable", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Changeable", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.is_skill is False
     assert note.skill_name is None
@@ -113,7 +121,7 @@ async def test_get_skills_returns_only_skills(db_engine: AsyncEngine) -> None:
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    skills = await db.notes.get_skills(visibility_grants=None)
+    skills = await db.notes.get_skills(read_policy=NoteReadPolicy.UNRESTRICTED)
 
     assert len(skills) == 1
     assert skills[0].title == "Skill Note"
@@ -140,7 +148,9 @@ async def test_get_prompt_notes_excludes_skills(db_engine: AsyncEngine) -> None:
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+    prompt_notes = await db.notes.get_prompt_notes(
+        read_policy=NoteReadPolicy.UNRESTRICTED
+    )
 
     titles = [n.title for n in prompt_notes]
     assert "Regular Prompt Note" in titles
@@ -168,7 +178,9 @@ async def test_get_excluded_notes_titles_excludes_skills(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    excluded = await db.notes.get_excluded_notes_titles(visibility_grants=None)
+    excluded = await db.notes.get_excluded_notes_titles(
+        read_policy=NoteReadPolicy.UNRESTRICTED
+    )
 
     assert "Hidden Regular Note" in excluded
     assert "Hidden Skill" not in excluded

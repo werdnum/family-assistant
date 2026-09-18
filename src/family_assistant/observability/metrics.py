@@ -36,7 +36,7 @@ from family_assistant.llm.call_context import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from family_assistant.llm.messages import MessageReasoningInfo
 
@@ -48,6 +48,12 @@ __all__ = [
     "LLM_CALL_DURATION",
     "LLM_TIME_TO_FIRST_OUTPUT",
     "LLM_TOKENS",
+    "MEMORY_CONVERSATIONS_DUE",
+    "MEMORY_REVIEWS",
+    "MEMORY_REVIEWS_ENQUEUED",
+    "MEMORY_REVIEW_SKIPS",
+    "MEMORY_SKIPPED_ROWS",
+    "MEMORY_SKIPPED_USER_CHARS",
     "MODEL_ROUTING_DECISIONS",
     "MODEL_ROUTING_LATENCY",
     "TASKS_ENQUEUED",
@@ -68,6 +74,10 @@ __all__ = [
     "normalized_token_buckets",
     "record_indexing_documents",
     "record_llm_call",
+    "record_memory_conversations_due",
+    "record_memory_review_enqueued",
+    "record_memory_review_outcome",
+    "record_memory_review_skip",
     "record_model_routing",
     "record_task_enqueued",
     "record_task_processed",
@@ -317,6 +327,63 @@ TASKS_QUEUED = Gauge(
         "state, and the processed counter already has them."
     ),
     ("priority", "state"),
+)
+
+MEMORY_CONVERSATIONS_DUE = Gauge(
+    "family_assistant_memory_conversations_due",
+    (
+        "Conversations the last memory review sweep found ready to review, by "
+        "the clause that made them due -- idle, or the maximum deferral."
+    ),
+    ("reason",),
+)
+
+MEMORY_REVIEWS_ENQUEUED = Counter(
+    "family_assistant_memory_reviews_enqueued",
+    (
+        "Memory reviews written to the queue, by interface and by whether the "
+        "sweep enqueued one or found a review of that conversation already in "
+        "flight."
+    ),
+    ("interface_type", "outcome"),
+)
+
+MEMORY_REVIEWS = Counter(
+    "family_assistant_memory_reviews",
+    (
+        "Memory reviews that reached a terminal outcome, by which one -- edits "
+        "applied, nothing worth remembering, the stretch skipped before the "
+        "model call, or the review given up on. A store-revision conflict that "
+        "sent a review round again is counted as conflict_retry, which is the "
+        "one non-terminal label here."
+    ),
+    ("outcome",),
+)
+
+MEMORY_REVIEW_SKIPS = Counter(
+    "family_assistant_memory_review_skips",
+    "Stretches not reviewed, by the reason the review task skipped them.",
+    ("reason",),
+)
+
+MEMORY_SKIPPED_ROWS = Counter(
+    "family_assistant_memory_skipped_rows",
+    (
+        "Message rows in stretches that were skipped rather than reviewed, by "
+        "reason. A counter rather than a gauge: the design asks how much is "
+        "being lost over time, and a gauge would keep only the last skip."
+    ),
+    ("reason",),
+)
+
+MEMORY_SKIPPED_USER_CHARS = Counter(
+    "family_assistant_memory_skipped_user_chars",
+    (
+        "Characters a person wrote in stretches that were skipped rather than "
+        "reviewed, by reason. This is the number the design's taint-refinement "
+        "decision is gated on."
+    ),
+    ("reason",),
 )
 
 TASK_DUE_LATENCY = Gauge(
@@ -574,6 +641,56 @@ def record_task_processed(
             TASK_DURATION.labels(task_type, priority).observe(duration_seconds)
     except Exception:
         logger.debug("Failed to record task processing metrics", exc_info=True)
+
+
+def record_memory_conversations_due(counts: Mapping[str, int]) -> None:
+    """Publish one sweep's view of the review backlog. Never raises.
+
+    Every reason is reported on every sweep, zeroes included, so a series does
+    not go stale at its last non-zero value once the backlog clears.
+    """
+    try:
+        for reason, count in counts.items():
+            MEMORY_CONVERSATIONS_DUE.labels(reason).set(count)
+    except Exception:
+        logger.debug("Failed to record memory conversations due metric", exc_info=True)
+
+
+def record_memory_review_enqueued(*, interface_type: str, outcome: str) -> None:
+    """Count one due conversation the sweep acted on. Never raises.
+
+    ``outcome`` separates a review that was enqueued from one that was skipped
+    because a review of the same conversation was already in flight, which is
+    how a conversation whose reviews never finish shows up as a flat enqueue
+    rate against a rising skip rate.
+    """
+    try:
+        MEMORY_REVIEWS_ENQUEUED.labels(interface_type, outcome).inc()
+    except Exception:
+        logger.debug("Failed to record memory review enqueue metric", exc_info=True)
+
+
+def record_memory_review_outcome(outcome: str) -> None:
+    """Count one review that reached an outcome. Never raises."""
+    try:
+        MEMORY_REVIEWS.labels(outcome).inc()
+    except Exception:
+        logger.debug("Failed to record memory review outcome metric", exc_info=True)
+
+
+def record_memory_review_skip(*, reason: str, rows: int, user_chars: int) -> None:
+    """Count one skipped stretch and the volume it took with it. Never raises.
+
+    The three move together because they answer one question -- how much is
+    this conservative skip costing -- and recording them apart would let a
+    partial failure leave the rows counted and the characters not.
+    """
+    try:
+        MEMORY_REVIEW_SKIPS.labels(reason).inc()
+        MEMORY_SKIPPED_ROWS.labels(reason).inc(rows)
+        MEMORY_SKIPPED_USER_CHARS.labels(reason).inc(user_chars)
+    except Exception:
+        logger.debug("Failed to record memory review skip metrics", exc_info=True)
 
 
 def record_task_queue_state(

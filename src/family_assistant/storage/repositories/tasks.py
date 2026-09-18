@@ -41,6 +41,17 @@ TERMINAL_TASK_STATUSES = ("done", "failed")
 STALE_TASK_TIMEOUT_MINUTES = 15
 
 
+class TaskAlreadyExistsError(RuntimeError):
+    """A non-system task id is already in the queue.
+
+    A deterministic task id is how a producer says "one of these at a time",
+    so the collision is information rather than a failure: the work is already
+    in flight. Typed, so a producer that means it can catch this and nothing
+    else; a subclass of RuntimeError, because that is what this has always
+    raised and a caller that catches the general case still does.
+    """
+
+
 def _revive_if_terminal(
     column_name: str,
     revived_value: object,
@@ -312,7 +323,9 @@ class TasksRepository(BaseRepository):
                 logger.exception(
                     f"ENQUEUE FAILED: Task with ID '{task_id}' already exists in the queue: {e}"
                 )
-                raise RuntimeError(f"Task ID '{task_id}' already exists") from e
+                raise TaskAlreadyExistsError(
+                    f"Task ID '{task_id}' already exists"
+                ) from e
             else:
                 # For system tasks, integrity error during PostgreSQL upsert shouldn't happen
                 logger.exception(

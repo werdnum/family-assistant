@@ -9,6 +9,7 @@ from family_assistant.indexing.message_history_indexer import (
     MESSAGE_HISTORY_SOURCE_TYPE,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.storage.vector_search import (
     MetadataFilter,
@@ -89,6 +90,7 @@ async def search_documents_api(
         created_before=filters.created_before,
         title_like=filters.title_like,
         metadata_filters=metadata_filters,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     embed_result = await embedding_generator.generate_embeddings([payload.query_text])
     query_embedding = embed_result.embeddings[0] if embed_result.embeddings else None

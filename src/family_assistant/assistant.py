@@ -85,6 +85,13 @@ from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
     is_interactions_agent_model,
 )
+from family_assistant.memory.review import make_memory_review_handler
+from family_assistant.memory.sweep import (
+    MEMORY_REVIEW_SWEEP_TASK_ID,
+    MEMORY_REVIEW_SWEEP_TASK_TYPE,
+    MEMORY_REVIEW_TASK_TYPE,
+    make_memory_review_sweep_handler,
+)
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
@@ -127,7 +134,9 @@ from family_assistant.storage.base import create_engine_with_sqlite_optimization
 from family_assistant.storage.database import (
     Database,
     set_engine_history_taint_epoch,
+    set_engine_memory_limits,
 )
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
@@ -165,6 +174,7 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
 from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
@@ -267,6 +277,8 @@ def _build_profile_policy_engine(
     operator_tools_policy: ToolPolicyConfig | None,
     global_tools_policy: ToolPolicyConfig | None = None,
     excluded_global_tools: Sequence[str] | None = None,
+    *,
+    memory_read: bool = False,
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
@@ -278,6 +290,13 @@ def _build_profile_policy_engine(
     layer so they apply to every profile regardless of the profile's own
     ``tools_policy`` (which otherwise replaces the shipped defaults wholesale).
     Operator policy still takes precedence over global rules.
+
+    ``memory_read`` says whether the profile reads the household's memory. A
+    profile that does not cannot write it either, so the memory-writing tools
+    are withheld here rather than only refused when called: a tool that refuses
+    every call it receives is a dead end advertised as a capability, and the
+    model has no way to know it should have used ``add_or_update_note``.
+    Fail-closed, so a caller that does not say leaves them out.
     """
     if profile_tools_policy is None:
         msg = (
@@ -310,6 +329,22 @@ def _build_profile_policy_engine(
                 priority=MAX_POLICY_RULE_PRIORITY,
                 description=(
                     f"Profile '{profile_id}' withholds these globally granted tools."
+                ),
+            )
+        )
+
+    # Same layer, same priority and the same reason for both: a deny declared
+    # here is the only one a profile's own allow -- or a global grant -- cannot
+    # outrank.
+    if not memory_read:
+        synthetic_rules.append(
+            PolicyRule(
+                match=ToolMatcher(names=list(MEMORY_WRITE_TOOL_NAMES)),
+                decision=ToolPolicyDecision.DENY,
+                priority=MAX_POLICY_RULE_PRIORITY,
+                description=(
+                    f"Profile '{profile_id}' does not read the household's memory, "
+                    "so it cannot write it either."
                 ),
             )
         )
@@ -869,6 +904,15 @@ class Assistant:
             self.config.taint_policy.history_taint_epoch,
         )
 
+        # Same reasoning for the conversation-memory limits: every writer of a
+        # memory note (web notes API, foreground tool, background curator)
+        # reaches the notes repository through its own Database handle, and all
+        # of them must enforce the deployment's caps.
+        set_engine_memory_limits(
+            self.database_engine,
+            self.config.memory_config.to_limits(),
+        )
+
         # Store engine in FastAPI app state for web dependencies
         self.fastapi_app.state.database_engine = self.database_engine
 
@@ -1281,8 +1325,13 @@ class Assistant:
             if profile_conf.visibility_grants
             else None
         )
+        profile_read_policy = NoteReadPolicy.for_profile(
+            visibility_grants=profile_grants,
+            required_labels=profile_proc_conf.required_note_read_labels,
+            memory_read=profile_proc_conf.memory_read,
+        )
         context_providers = self._build_profile_context_providers(
-            profile_conf, note_registry, profile_grants
+            profile_conf, note_registry, profile_read_policy
         )
 
         service_config = ProcessingServiceConfig(
@@ -1301,6 +1350,7 @@ class Assistant:
             id=profile_id,
             description=profile_conf.description or f"Processing profile: {profile_id}",
             visibility_grants=profile_grants,
+            required_note_read_labels=(profile_proc_conf.required_note_read_labels),
             default_note_visibility_labels=(
                 profile_proc_conf.default_note_visibility_labels
                 if profile_proc_conf.default_note_visibility_labels is not None
@@ -1313,6 +1363,7 @@ class Assistant:
                 profile_proc_conf.allowed_note_visibility_labels
             ),
             allow_wake_llm=profile_proc_conf.allow_wake_llm,
+            memory_read=profile_proc_conf.memory_read,
             include_aggregated_context=(profile_proc_conf.include_aggregated_context),
             note_registry=note_registry,
             greeting_wav_path=profile_proc_conf.greeting_wav_path,
@@ -1412,7 +1463,7 @@ class Assistant:
         self,
         profile_conf: ServiceProfile,
         note_registry: NoteRegistry | None,
-        profile_grants: set[str] | None,
+        read_policy: NoteReadPolicy,
     ) -> list[ContextProvider]:
         """Build and filter the aggregated-context sources for one profile."""
         assert self.attachment_registry is not None
@@ -1422,7 +1473,7 @@ class Assistant:
                 get_db_context_func=self._database,
                 prompts=profile_config.prompts,
                 attachment_registry=self.attachment_registry,
-                visibility_grants=profile_grants,
+                read_policy=read_policy,
                 note_registry=note_registry,
             ),
             CalendarContextProvider(
@@ -1558,6 +1609,7 @@ class Assistant:
             profile_conf.operator_tools_policy,
             self.config.global_tools_policy,
             profile_conf.excluded_global_tools,
+            memory_read=profile_proc_conf.memory_read,
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
         profile_root_provider = _root_provider_for_profile(
@@ -2136,6 +2188,8 @@ class Assistant:
             # Create system cleanup task
             await self._setup_system_tasks()
 
+        await self._record_memory_enablement()
+
         # Reconcile stale worker tasks asynchronously
         asyncio.create_task(self._reconcile_worker_tasks())
 
@@ -2189,6 +2243,76 @@ class Assistant:
         reconciled = await reconcile_stale_tasks(db_ctx, backend)
         if reconciled:
             logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
+
+    def _memory_contributing_profiles(self) -> set[str]:
+        """The profiles an operator has configured to feed the memory curator."""
+        return {
+            profile.id
+            for profile in self.config.service_profiles
+            if profile.processing_config.memory_contribute
+        }
+
+    async def _record_memory_enablement(self) -> None:
+        """Reconcile the stored contribution boundary with the configuration.
+
+        See docs/design/conversation-memory.md, "Enablement boundary": each time
+        contribution is turned on for a profile the moment is recorded, and a
+        review considers only rows newer than it, so turning the feature on
+        learns from what is said next rather than spending a burst of model
+        calls on months of old conversation. Run at startup because that is
+        when the configuration is read; a profile already recorded as
+        contributing keeps the moment it has, so a restart does not re-stamp
+        the boundary and discard everything said since.
+        """
+        assert self.database_engine is not None, (
+            "Database engine must be initialized before recording memory enablement"
+        )
+        await Database(self.database_engine).memory_review.record_enablement(
+            profile_ids_contributing=self._memory_contributing_profiles(),
+            now=datetime.now(UTC),
+        )
+
+    async def _seed_memory_review_sweep(self, db_ctx: Database) -> None:
+        """Schedule the recurring review sweep, when there is anything to sweep.
+
+        Two conditions, and both are deliberate. The master switch is what a
+        deployment turns the whole mechanism off with; the contributor check is
+        what keeps the shipped configuration -- contribution off everywhere --
+        from running a query every few minutes that can only ever return
+        nothing. A sweep seeded by an earlier configuration and left behind by a
+        later one is harmless: the handler reads the same two conditions and
+        returns immediately.
+        """
+        settings = self.config.memory_config.to_review_settings()
+        contributors = self._memory_contributing_profiles()
+        if not settings.enabled or not contributors:
+            logger.info(
+                "Memory review sweep not scheduled: "
+                f"enabled={settings.enabled}, contributing profiles={len(contributors)}."
+            )
+            return
+        try:
+            await db_ctx.tasks.enqueue(
+                task_id=MEMORY_REVIEW_SWEEP_TASK_ID,
+                task_type=MEMORY_REVIEW_SWEEP_TASK_TYPE,
+                payload={},
+                scheduled_at=datetime.now(UTC),
+                recurrence_rule=(
+                    f"FREQ=MINUTELY;INTERVAL={settings.sweep_interval_minutes}"
+                ),
+                max_retries_override=5,
+                priority=TaskPriority.BACKGROUND,
+            )
+            logger.info(
+                "Memory review sweep scheduled every "
+                f"{settings.sweep_interval_minutes} minute(s) for "
+                f"{len(contributors)} contributing profile(s)."
+            )
+        except Exception:
+            # Logged rather than raised, as every other system task setup is:
+            # a sweep that failed to seed is re-seeded on the next restart, and
+            # nothing else in startup depends on it.
+            logger.exception("Memory review sweep task setup failed")
 
     async def _setup_system_tasks(self) -> None:
         """Upsert system tasks on startup."""
@@ -2352,6 +2476,8 @@ class Assistant:
                 # leaves the reaper with no caller until the next restart.
                 logger.exception("Attachment cleanup task setup failed")
 
+            await self._seed_memory_review_sweep(db_ctx)
+
             if self.embedding_generator is None:
                 logger.info(
                     "No embedding generator configured; skipping the message "
@@ -2488,6 +2614,21 @@ class Assistant:
         )
         worker.register_task_handler("attachment_cleanup", handle_attachment_cleanup)
         worker.register_task_handler("reindex_document", self.handle_reindex_document)
+        worker.register_task_handler(
+            MEMORY_REVIEW_SWEEP_TASK_TYPE,
+            make_memory_review_sweep_handler(
+                settings=self.config.memory_config.to_review_settings(),
+                configured_contributors=self._memory_contributing_profiles(),
+            ),
+        )
+        worker.register_task_handler(
+            MEMORY_REVIEW_TASK_TYPE,
+            make_memory_review_handler(
+                settings=self.config.memory_config.to_review_settings(),
+                configured_contributors=self._memory_contributing_profiles(),
+                limits=self.config.memory_config.to_limits(),
+            ),
+        )
         logger.info(f"Registered task handlers for worker {worker.worker_id}")
         return worker
 

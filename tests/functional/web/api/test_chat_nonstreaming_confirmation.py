@@ -39,6 +39,7 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.storage import init_db
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -160,6 +161,7 @@ def processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db,
         prompts=processing_service_config.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     return ProcessingService(
         llm_client=mock_llm_client,

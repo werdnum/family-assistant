@@ -10,6 +10,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.memory.invariants import MemoryWriteError
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintMetadata,
@@ -75,10 +76,15 @@ async def _load_note_attachment(
     )
 
 
-def _note_provenance_from_taint(
+def note_provenance_from_taint(
     exec_context: ToolExecutionContext,
 ) -> NoteProvenanceMetadata | None:
-    """Return durable provenance metadata for the current turn taint."""
+    """Return durable provenance metadata for the current turn taint.
+
+    Shared with the memory apply path, which stamps its note writes the same
+    way: the repository holds every memory write to the trusted pole, and it
+    can only do that from a stamp the writer supplied.
+    """
     if exec_context.taint_tracker is None:
         return None
     state = exec_context.taint_tracker.snapshot()
@@ -129,7 +135,7 @@ async def add_or_update_note_tool(
     # path is covered, not just this tool.
     write_policy = exec_context.note_write_policy()
 
-    provenance_metadata = _note_provenance_from_taint(exec_context)
+    provenance_metadata = note_provenance_from_taint(exec_context)
 
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
@@ -172,6 +178,8 @@ async def add_or_update_note_tool(
             else ""
         )
         return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully{attachment_info}."
+    except MemoryWriteError as e:
+        return f"Error: {e.message}"
     except NoteWritePolicyError as e:
         return f"Error: {e}"
     except Exception as e:
@@ -186,7 +194,12 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "add_or_update_note",
             "description": (
-                "Add a new note or update an existing note with the given title. Use this to remember information provided by the user. "
+                "Add a new note or update an existing note with the given title. Use this for the user's own notes: "
+                "lists, reference material, documents, anything they asked you to write down as a note — including "
+                "when someone asks you to remember something and you have no memory tool. "
+                "If `propose_memory_edits` is among your tools, prefer it for the household's long-term memory — "
+                "standing preferences, facts about people, decisions, routines, and anything you are asked to forget — "
+                "because it edits memory entry by entry and keeps each entry's evidence. "
                 "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs. "
                 "Leave `include_in_prompt` at its default `false` unless the note is short, evergreen context that must load every "
                 "turn (see the parameter description). To create a reusable skill instead of a plain note, load the 'Skill Creation' "
@@ -317,13 +330,13 @@ async def get_note_tool(
     attachment_registry = exec_context.attachment_registry
 
     note = await db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
+        title, read_policy=exec_context.note_read_policy()
     )
     if not note:
         # Fall back to file-based skills via NoteRegistry
         if exec_context.note_registry:
             skill = exec_context.note_registry.get_skill_by_name(
-                title, visibility_grants=exec_context.visibility_grants
+                title, exec_context.note_read_policy()
             )
             if skill:
                 result_data = {
@@ -431,7 +444,7 @@ async def list_notes_tool(
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
     all_notes = await exec_context.db_context.notes.get_all(
-        visibility_grants=exec_context.visibility_grants
+        read_policy=exec_context.note_read_policy()
     )
 
     # Apply filtering if requested
@@ -473,14 +486,17 @@ async def delete_note_tool(
     """Tool wrapper for delete_note."""
     # Enforce visibility: only allow deleting notes the user can see
     visible = await exec_context.db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
+        title, read_policy=exec_context.note_read_policy()
     )
     if not visible:
         return {
             "success": False,
             "message": f"Note '{title}' not found.",
         }
-    deleted = await exec_context.db_context.notes.delete(title)
+    try:
+        deleted = await exec_context.db_context.notes.delete(title)
+    except MemoryWriteError as e:
+        return {"success": False, "message": e.message}
     return {
         "success": deleted,
         "message": f"Note '{title}' deleted successfully."

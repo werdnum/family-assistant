@@ -9,6 +9,7 @@ events it fires on enqueue.
 import asyncio
 import logging
 from asyncio import Event
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import IntEnum
 
@@ -123,6 +124,26 @@ class TaskPriority(IntEnum):
     def label(self) -> str:
         """This lane's name where a string is wanted: metrics, the admin API."""
         return self.name.lower()
+
+
+@dataclass(frozen=True)
+class TaskAttempt:
+    """Which attempt of a task is running, and whether it is the last one.
+
+    Read by a handler that has to choose between failing (so the queue retries
+    it) and giving up in a way that leaves a durable record. Without it such a
+    handler either abandons its work on the first transient error or retries
+    for ever; neither is what the queue's own retry budget is for.
+    """
+
+    retry_count: int
+    """How many times this task has already been rescheduled after a failure."""
+    max_retries: int
+
+    @property
+    def is_final(self) -> bool:
+        """Whether a failure now exhausts the queue's retries for this task."""
+        return self.retry_count >= self.max_retries
 
 
 # Define the tasks table for the message queue

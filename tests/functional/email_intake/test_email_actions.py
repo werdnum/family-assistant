@@ -35,6 +35,7 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import ParsedEmailData
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.task_worker import handle_confirmation_tool_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS,
@@ -946,7 +947,7 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     assert (
         await db.notes.get_by_title(
             "Soccer tickets",
-            visibility_grants=None,
+            read_policy=NoteReadPolicy.UNRESTRICTED,
         )
         is None
     )
@@ -1049,7 +1050,7 @@ async def test_approved_email_confirmation_executes_exact_tool_and_notifies_send
     )
     note = await db.notes.get_by_title(
         "Soccer tickets",
-        visibility_grants=None,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     assert note is not None
     assert note.visibility_labels == []

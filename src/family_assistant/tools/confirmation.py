@@ -413,6 +413,7 @@ async def _effective_note_labels(
     # (repositories/__init__ -> schedule_automations -> task_worker -> tools),
     # so a top-level import here would be circular.
     from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+        NoteReadPolicy,
         NoteWritePolicyError,
     )
 
@@ -421,7 +422,7 @@ async def _effective_note_labels(
     existing = None
     if isinstance(title, str) and context.db_context is not None:
         existing = await context.db_context.notes.get_by_title(
-            title, visibility_grants=None
+            title, read_policy=NoteReadPolicy.UNRESTRICTED
         )
         # Mirror the repository's see-before-overwrite check so the approver
         # sees the rejection up front instead of approving a write that
@@ -429,7 +430,7 @@ async def _effective_note_labels(
         # note it cannot see.
         if existing is not None and write_policy.visibility_grants is not None:
             visible_existing = await context.db_context.notes.get_by_title(
-                title, visibility_grants=write_policy.visibility_grants
+                title, read_policy=write_policy.see_before_overwrite_read_policy()
             )
             if visible_existing is None:
                 return (

@@ -17,6 +17,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -73,6 +74,7 @@ async def create_processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_test_db_context_func,
         prompts={"system_prompt": "Test system prompt."},
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Create service config

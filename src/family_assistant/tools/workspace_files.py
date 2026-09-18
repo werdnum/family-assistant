@@ -645,7 +645,7 @@ async def workspace_export_notes_tool(
 
         # Get notes from database
         all_notes = await db_context.notes.get_all(
-            visibility_grants=exec_context.visibility_grants
+            read_policy=exec_context.note_read_policy()
         )
 
         # Filter by titles if specified

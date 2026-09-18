@@ -72,10 +72,12 @@ class ToolExecutorConfig(Protocol):
     id: str
     tools_config: ToolsConfig
     visibility_grants: set[str] | None
+    required_note_read_labels: list[str] | None
     default_note_visibility_labels: list[str] | None
     required_note_visibility_labels: list[str] | None
     allowed_note_visibility_labels: list[str] | None
     allow_wake_llm: bool
+    memory_read: bool
     note_registry: NoteRegistry | None
 
 
@@ -233,10 +235,14 @@ class ProcessingServiceConfig:
     context_pruning_min_turns: int = 3
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
+    required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    # Whether this profile sees household memory notes. Fail-closed by default:
+    # see ProcessingConfig.memory_read.
+    memory_read: bool = False
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
     # Whether the context providers' output reaches this profile at all. See

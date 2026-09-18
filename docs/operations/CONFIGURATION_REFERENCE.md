@@ -1967,6 +1967,169 @@ grant the reports are readable only through the web interface. See
 
 ______________________________________________________________________
 
+## Profile Note Visibility
+
+A note is visible to a profile when its visibility labels are a **subset** of the profile's
+`visibility_grants`. Four `processing_config` keys narrow that on a per-profile basis, and all four
+are enforced at the storage layer rather than in a tool, so they hold for every path that reaches
+notes — the assistant's note tools, scripts, and the context provider that renders notes into the
+system prompt.
+
+```yaml
+- id: "some_profile"
+  visibility_grants: ["memory"]
+  processing_config:
+    default_note_visibility_labels: ["memory"]
+    required_note_visibility_labels: ["memory"]
+    allowed_note_visibility_labels: ["memory"]
+    required_note_read_labels: ["memory"]
+```
+
+- **default_note_visibility_labels** — applied when the profile creates a note without naming
+  labels.
+- **required_note_visibility_labels** — write floor: every note the profile writes carries these,
+  and it may not modify a note that does not already.
+- **allowed_note_visibility_labels** — write ceiling: no note the profile writes may carry a label
+  outside this set.
+- **required_note_read_labels** — read floor, the mirror of the write floor: a note or file-based
+  skill must carry every label listed here for the profile to read it at all.
+
+The read floor is what a grant set cannot express. Because visibility is a subset test, an
+**unlabelled** note is visible to every reader, and a file-based skill — which carries no labels —
+passes any grant set for the same reason. A profile granted only `memory` therefore still sees every
+unlabelled household note until a read floor is set. Setting one confines the profile to notes
+labelled for it, at both boundaries that resolve notes: the notes repository and the skill registry.
+
+Memory topic notes are left out of the "Other available notes" title list for every reader, so the
+memory contribution to a rendered prompt is the core note alone. They remain reachable by title
+through `get_note`, through search, and in `list_notes` output.
+
+The shipped `memory_curator` profile sets all four to `memory`, which is what confines the
+background curator to the memory notes in both directions. See
+[docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+The `memory` label itself is not granted through `visibility_grants`. It is granted, or taken away,
+by the `memory_read` setting described under [Conversation Memory](#conversation-memory) below, so
+that turning memory reading off for a profile is one switch rather than a switch and a grant list
+that have to agree.
+
+______________________________________________________________________
+
+## Conversation Memory
+
+`memory_config` bounds the household memory store — the notes carrying the `memory` visibility
+label. Every writer is held to these bounds at the notes repository, so a value here applies to the
+notes UI, the assistant's own note tools and the background curator alike; a write that would exceed
+a cap is refused with a message telling the writer to condense or move detail to a topic note.
+
+```yaml
+memory_config:
+  core_note_max_chars: 6000
+  topic_note_max_chars: 12000
+  topic_index_max_chars: 1500
+  review_input_max_chars: 24000
+  max_edits_per_review: 12
+  core_note_title: "Household Memory"
+```
+
+- **core_note_max_chars** — ceiling on the single always-loaded memory note, which is the whole
+  memory contribution to every prompt.
+- **topic_note_max_chars** — ceiling on each memory topic note, sized so no memory note exceeds what
+  one review can read.
+- **topic_index_max_chars** — the share of the core note its derived index of topic notes may
+  occupy.
+- **review_input_max_chars** — ceiling on everything one memory review is given: the rendered
+  transcript of the stretch plus the current memory topic entries shown beside it. The transcript
+  takes two thirds of it, and the entries whatever is left, most recently changed first; that split
+  is not configurable.
+- **max_edits_per_review** — how many note edits one review may propose.
+- **core_note_title** — the title the core note is created under. It is created automatically on the
+  first memory write, identified thereafter by id, so renaming it in the notes UI is safe. If a note
+  with this title already exists and is not part of memory, memory writes are refused until it is
+  renamed.
+
+Deleting the core note is refused (exactly one must exist); clearing its contents is an ordinary
+edit. See [docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+### Which profiles read and contribute
+
+Two `processing_config` settings decide a profile's relationship to memory. Both are off by default,
+so a deployment opts in explicitly.
+
+```yaml
+- id: "some_profile"
+  processing_config:
+    memory_read: true
+    memory_contribute: false
+```
+
+- **memory_read** — whether the profile sees household memory. This is the whole of memory's
+  visibility: with it on, the `memory` label is added to the profile's effective read grants, so the
+  always-loaded core note reaches its prompt and `get_note` opens a topic note; with it off, the
+  label is denied even if `visibility_grants` names it, and no memory note reaches the profile
+  through any path. It also governs writing: a profile that reads no memory must not write any
+  either, so `propose_memory_edits` is withheld from its effective tool set whatever its
+  `tools_policy` grants, and "remember this" is served by `add_or_update_note` as an ordinary note.
+- **memory_contribute** — whether conversations run under the profile are reviewed into memory by
+  the background curator.
+
+A profile that does not read memory cannot write it either. `propose_memory_edits` refuses with that
+reason, and whole-note writes to a memory note — `add_or_update_note`, `delete_note` — are refused
+at the notes repository: a profile that cannot see the existing entries would be duplicating what is
+already there or replacing text it never read. The web notes UI is an admin surface and is
+unaffected.
+
+Contributing without reading is a startup error. Contribution feeds a profile's conversations to the
+curator, which then writes entries the profile itself cannot see, so it could neither honour what it
+taught nor be corrected by it.
+
+Turning contribution on for a profile records the moment, and reviews consider only conversation
+from then on — turning the feature on does not spend a burst of model calls on months of old
+conversation. Turning it off and on again records a new moment, which discards anything said in
+between that had not yet been reviewed. Reviewing older history is a separate, explicit backfill.
+
+### When conversations are reviewed
+
+`memory_config` also holds the timing of the background review. A recurring system task evaluates a
+predicate over stored state every few minutes and enqueues one review per due conversation; nothing
+is enqueued when a message is persisted, so there is no state to lose across a restart.
+
+```yaml
+memory_config:
+  enabled: true
+  sweep_interval_minutes: 5
+  idle_window_minutes:
+    web: 30
+    telegram: 90
+  default_idle_window_minutes: 30
+  max_deferral_hours: 24
+  contributing_interfaces: ["telegram", "web"]
+```
+
+- **enabled** — the master switch for the whole mechanism. With it off nothing is swept and nothing
+  is reviewed, whatever any profile is configured to do. The sweep is only scheduled at all when
+  this is on **and** at least one profile contributes, so the shipped configuration schedules
+  nothing.
+- **sweep_interval_minutes** — how often the predicate is evaluated. Freshness is quantised to this,
+  which is negligible against the idle windows.
+- **idle_window_minutes** — per interface, how long a conversation must have been quiet before it is
+  reviewed. An idle stretch is a settled discussion, and how long that takes differs by interface:
+  Telegram is bursty, and a household member replying twenty minutes later is still the same
+  exchange.
+- **default_idle_window_minutes** — the window for an interface the map does not name.
+- **max_deferral_hours** — how long the oldest unreviewed message may wait before the conversation
+  is reviewed whether it has gone quiet or not. This is what guarantees a busy group chat that never
+  settles is still reviewed.
+- **contributing_interfaces** — which interfaces may contribute at all. Telephone calls and iOS
+  native-voice sessions are deliberately absent: a call is saved as a transcript note rather than as
+  message rows, and a native-voice session is persisted with every assistant row stamped at the
+  untrusted extreme, so a review of one would be skipped on provenance in any case. Both read memory
+  like any other interface; they only do not feed it. Email intake, A2A, delegation subconversations
+  and automation-triggered turns are excluded whatever this says, by the profile they run under, by
+  their subconversation, or by being application-generated rather than a person speaking.
+
+______________________________________________________________________
+
 ## Shopping (Universal Commerce Protocol)
 
 `ucp_config` publishes this deployment's own UCP platform profile at `/.well-known/ucp` and holds

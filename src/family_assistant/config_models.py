@@ -71,6 +71,8 @@ if TYPE_CHECKING:
 
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
+from .memory.limits import MemoryLimits
+from .memory.review_settings import MemoryReviewSettings
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -508,6 +510,25 @@ class ProcessingConfig(BaseModel):
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    # Read floor, the mirror of required_note_visibility_labels. A note or file
+    # skill must carry every label listed here to be readable by this profile.
+    # Grants alone cannot express this: a note is visible when its labels are a
+    # *subset* of the grants, so an unlabelled note -- and every label-less file
+    # skill -- is visible to every reader. None (the default) is the ordinary
+    # reader, confined by grants only.
+    required_note_read_labels: list[str] | None = None
+    # Whether this profile sees the household's conversation memory, and
+    # whether its conversations are reviewed into it. Two settings because they
+    # are two decisions: a specialised profile can benefit from the household's
+    # standing preferences without teaching its own conversations back into
+    # shared memory. Contributing implies reading, which startup validation
+    # enforces. `memory_read` is also the whole of memory's visibility: the one
+    # place a profile's NoteReadPolicy is derived grants or denies the `memory`
+    # label from it, so the setting and the profile's visibility_grants cannot
+    # disagree. See docs/design/conversation-memory.md, "Two settings, one
+    # convenience default".
+    memory_read: bool = False
+    memory_contribute: bool = False
     allow_wake_llm: bool = True
     enable_computer_use: bool = False
     computer_use_excluded_functions: list[str] = Field(default_factory=list)
@@ -684,6 +705,70 @@ class NotesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_visibility_labels: list[str] = Field(default_factory=list)
+
+
+class MemoryConfig(BaseModel):
+    """Bounds and naming for the conversation-memory store.
+
+    Every memory write is held to these at the notes repository, whichever
+    interface it arrives through. See docs/design/conversation-memory.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    core_note_max_chars: int = MemoryLimits.DEFAULTS.core_note_max_chars
+    topic_note_max_chars: int = MemoryLimits.DEFAULTS.topic_note_max_chars
+    topic_index_max_chars: int = MemoryLimits.DEFAULTS.topic_index_max_chars
+    review_input_max_chars: int = MemoryLimits.DEFAULTS.review_input_max_chars
+    max_edits_per_review: int = MemoryLimits.DEFAULTS.max_edits_per_review
+    core_note_title: str = MemoryLimits.DEFAULTS.core_note_title
+
+    enabled: bool = MemoryReviewSettings.DEFAULTS.enabled
+    """The master switch. With it off nothing is swept and nothing is reviewed.
+
+    On by default, which costs a deployment nothing while contribution ships
+    off on every profile: the sweep is not even seeded until some profile is
+    configured to contribute.
+    """
+    sweep_interval_minutes: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.sweep_interval_minutes, gt=0
+    )
+    idle_window_minutes: dict[str, int] = Field(
+        default_factory=lambda: dict(MemoryReviewSettings.DEFAULTS.idle_window_minutes)
+    )
+    default_idle_window_minutes: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.default_idle_window_minutes, gt=0
+    )
+    max_deferral_hours: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.max_deferral_hours, gt=0
+    )
+    contributing_interfaces: list[str] = Field(
+        default_factory=lambda: sorted(
+            MemoryReviewSettings.DEFAULTS.contributing_interfaces
+        )
+    )
+
+    def to_limits(self) -> MemoryLimits:
+        """The runtime value the storage layer enforces."""
+        return MemoryLimits(
+            core_note_max_chars=self.core_note_max_chars,
+            topic_note_max_chars=self.topic_note_max_chars,
+            topic_index_max_chars=self.topic_index_max_chars,
+            review_input_max_chars=self.review_input_max_chars,
+            max_edits_per_review=self.max_edits_per_review,
+            core_note_title=self.core_note_title,
+        )
+
+    def to_review_settings(self) -> MemoryReviewSettings:
+        """The value the sweep and the due predicate are evaluated against."""
+        return MemoryReviewSettings(
+            enabled=self.enabled,
+            sweep_interval_minutes=self.sweep_interval_minutes,
+            idle_window_minutes=dict(self.idle_window_minutes),
+            default_idle_window_minutes=self.default_idle_window_minutes,
+            max_deferral_hours=self.max_deferral_hours,
+            contributing_interfaces=frozenset(self.contributing_interfaces),
+        )
 
 
 class SkillsConfig(BaseModel):
@@ -1917,6 +2002,7 @@ class AppConfig(BaseSettings):
         default_factory=BrowserHandoffConfig
     )
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
+    memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
     mqtt_config: MQTTConfig = Field(default_factory=MQTTConfig)
     ucp_config: UCPConfig = Field(default_factory=UCPConfig)
@@ -2142,6 +2228,35 @@ class AppConfig(BaseSettings):
                     f"{', '.join(sorted(granted)) or '(none granted)'}."
                 )
                 raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_memory_contribution_implies_reading(self) -> AppConfig:
+        """Reject a profile configured to contribute to memory but not read it.
+
+        Contribution feeds a profile's conversations to the curator, which then
+        writes entries the profile itself cannot see. That is a profile
+        teaching a notebook it is not allowed to open: it can neither honour
+        what it taught nor be corrected by it, and nothing reports the
+        asymmetry at runtime. The design makes reading the prerequisite, so the
+        contradiction is a startup error rather than a silent oddity.
+
+        Raises:
+            ValueError: naming every profile with the combination.
+        """
+        offenders = sorted(
+            profile.id
+            for profile in self.service_profiles
+            if profile.processing_config.memory_contribute
+            and not profile.processing_config.memory_read
+        )
+        if offenders:
+            raise ValueError(
+                f"Profile(s) {', '.join(offenders)} set memory_contribute "
+                "without memory_read. Contributing to the household's memory "
+                "requires reading it: set memory_read: true, or turn "
+                "memory_contribute off."
+            )
         return self
 
     @model_validator(mode="after")

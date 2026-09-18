@@ -268,6 +268,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.processing import ProcessingService
     from family_assistant.security.definition_records import (
         DefinitionGateOutcome,
@@ -287,8 +288,11 @@ if TYPE_CHECKING:
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.database import Database
-    from family_assistant.storage.repositories.notes import NoteWritePolicy
-    from family_assistant.storage.tasks import TaskPriority
+    from family_assistant.storage.repositories.notes import (
+        NoteReadPolicy,
+        NoteWritePolicy,
+    )
+    from family_assistant.storage.tasks import TaskAttempt, TaskPriority
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -546,6 +550,15 @@ class ToolExecutionContext:
     :meth:`inherited_task_priority` when enqueueing further work of the same
     kind.
     """
+    task_attempt: TaskAttempt | None = None
+    """Which attempt of the running task this is, and whether it is the last.
+
+    Set by the task worker from the dequeued row, alongside ``task_priority``,
+    and the only place a running task's retry budget is known. ``None`` outside
+    a task, where there is no budget: a handler that must decide between
+    failing for a retry and giving up durably treats that as its last attempt,
+    since nothing will run it again.
+    """
     subconversation_id: str | None = (
         None  # Subconversation ID for delegated conversations, None for main conversation
     )
@@ -557,10 +570,28 @@ class ToolExecutionContext:
     indexing_source: IndexingSource | None = None  # Add indexing_source
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
     visibility_grants: set[str] | None = None
+    required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    memory_read: bool = False
+    """Whether the active profile sees the household's memory notes.
+
+    Fail-closed by default: a context built without it reads no memory and so
+    may not write any either. See ``ProcessingConfig.memory_read``.
+    """
+    memory_review: MemoryReviewContext | None = None
+    """The curator review this turn is running for, when it is one.
+
+    Carries the stretch a memory edit may cite, the store revision the
+    proposal is computed against, and the watermark a successful apply
+    advances -- as one value, so a turn can never hold the scope without the
+    revision that guards it. ``None`` in the foreground, where the tool
+    derives the scope from this context's own ``turn_id`` (a "remember this"
+    cites the message in which the person asked, and can cite nothing else)
+    and reads the current revision immediately before applying.
+    """
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None
@@ -632,6 +663,7 @@ class ToolExecutionContext:
         # Local import: the notes repository transitively imports the tools
         # package (repositories/__init__ -> schedule_automations -> task_worker
         # -> tools), so a top-level import here would be circular.
+        from family_assistant.memory.invariants import MEMORY_LABEL  # noqa: PLC0415
         from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
             NoteWritePolicy,
         )
@@ -641,6 +673,28 @@ class ToolExecutionContext:
             default_labels=self.default_note_visibility_labels,
             required_labels=self.required_note_visibility_labels,
             allowed_labels=self.allowed_note_visibility_labels,
+            denied_labels=(
+                frozenset() if self.memory_read else frozenset({MEMORY_LABEL})
+            ),
+        )
+
+    def note_read_policy(self) -> NoteReadPolicy:
+        """Derive the note read policy for the active profile from this context.
+
+        The read-side mirror of :meth:`note_write_policy`, and the only way a
+        tool should resolve a note or a file skill: both boundaries take this
+        one object, so a confined profile cannot reach an unlabelled note
+        through a path that only checked grants.
+        """
+        # Local import for the same cycle reason as note_write_policy above.
+        from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+            NoteReadPolicy,
+        )
+
+        return NoteReadPolicy.for_profile(
+            visibility_grants=self.visibility_grants,
+            required_labels=self.required_note_read_labels,
+            memory_read=self.memory_read,
         )
 
 

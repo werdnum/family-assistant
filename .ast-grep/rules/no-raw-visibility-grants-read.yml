@@ -1,0 +1,39 @@
+id: no-raw-visibility-grants-read
+language: python
+severity: error
+message: "Reading raw visibility_grants applies half the confinement - derive a read or write policy instead"
+note: |
+  A profile's visibility grants are one of three inputs to read confinement, and on
+  their own they are the weakest: content is visible when its labels are a *subset* of
+  the grants, so unlabelled content is visible to every reader, and a reader with no
+  grants configured sees every label set. The required-label floor and the
+  denied-label ceiling are what close both holes -- and they are what make
+  `memory_read` mean something, since that setting becomes a denied label rather than
+  a missing grant.
+
+  Every read performed on behalf of a profile MUST therefore derive
+  ToolExecutionContext.note_read_policy() (or note_write_policy() for a write) and
+  hand that one object to the boundary, so the same rule governs a note, a file skill
+  and an indexed document.
+
+  ❌ INCORRECT - a profile denied memory still finds indexed memory notes:
+    VectorSearchQuery(..., visibility_grants=exec_context.visibility_grants)
+    if not set(labels) <= exec_context.visibility_grants: ...
+
+  ✅ CORRECT - one derived policy governs the read:
+    VectorSearchQuery(..., read_policy=exec_context.note_read_policy())
+    if not exec_context.note_read_policy().admits_labels(labels): ...
+
+  Matched on the spelling the tool layer uses for its context parameter, which is
+  where the mistake is reachable: ToolExecutionContext derives both policies from
+  `self.visibility_grants`, and the grants a profile's config carries are read by the
+  wiring that builds a context rather than by anything performing a read.
+
+  Approved locations (see .ast-grep/exemptions.yml): the positive fixture and tests,
+  which assemble contexts rather than read on a profile's behalf.
+
+  For a one-off approved call site, add an inline exemption with a reason:
+    # ast-grep-ignore: no-raw-visibility-grants-read - reason
+rule:
+  pattern: exec_context.visibility_grants
+

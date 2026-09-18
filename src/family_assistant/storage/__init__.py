@@ -42,6 +42,12 @@ from family_assistant.storage.events import (
     recent_events_table,
 )
 from family_assistant.storage.ios_push_token import ios_push_tokens_table
+from family_assistant.storage.memory_change_log import memory_change_log_table
+from family_assistant.storage.memory_review import (
+    memory_contribution_state_table,
+    memory_review_watermarks_table,
+)
+from family_assistant.storage.memory_store import memory_store_table
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.oauth_connections import (
@@ -357,6 +363,10 @@ __all__ = [
     "event_listeners_table",
     "init_db",  # Now defined above
     "ios_push_tokens_table",
+    "memory_change_log_table",
+    "memory_contribution_state_table",
+    "memory_review_watermarks_table",
+    "memory_store_table",
     "message_history_table",
     "metadata",
     # Tables - still exported for direct use

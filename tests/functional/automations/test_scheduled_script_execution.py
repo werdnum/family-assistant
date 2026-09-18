@@ -17,6 +17,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -199,14 +200,16 @@ print("Script executed - note created: " + str(result))
         # Verify the script created the note
         db_context = Database(engine=db_engine)
         # First, let's check all notes to debug
-        all_notes = await db_context.notes.get_all(visibility_grants=None)
+        all_notes = await db_context.notes.get_all(
+            read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         logger.info(f"All notes after script execution: {len(all_notes)}")
         for n in all_notes:
             logger.info(f"  Note title: '{n.title}'")
 
         # Now look for our specific note
         note = await db_context.notes.get_by_title(
-            test_note_title, visibility_grants=None
+            test_note_title, read_policy=NoteReadPolicy.UNRESTRICTED
         )
         assert note is not None, (
             f"Expected to find note with title '{test_note_title}'. Found notes: {[n.title for n in all_notes]}"

@@ -19,6 +19,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.task_worker import (
     TaskWorker,
     handle_llm_callback,
@@ -531,7 +532,9 @@ if temp > 30 or temp < 10:
 
     # Step 4: Verify note was created but LLM was NOT woken
     db_ctx = Database(engine=db_engine)
-    note = await db_ctx.notes.get_by_title("Temperature Log", visibility_grants=None)
+    note = await db_ctx.notes.get_by_title(
+        "Temperature Log", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert "22.5°C" in note.content
 

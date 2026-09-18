@@ -14,7 +14,6 @@ import json
 import logging
 import re
 import time
-import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
@@ -55,10 +54,10 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
-    is_externally_authored,
     merge_taint_state_into_tracker,
     resolve_tool_sink_class,
 )
+from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.services.tool_call_review import (
     DelegatingPolicyContext,
     ToolCallReviewConstraints,
@@ -111,7 +110,6 @@ if TYPE_CHECKING:
     from family_assistant.storage.types import (
         TaintAuditArgumentsSummary,
         TaintAuditReviewContext,
-        TaintAuditSourceSummary,
     )
 
 logger = logging.getLogger(__name__)
@@ -1236,37 +1234,6 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         await self.wrapped_provider.close()
 
 
-def _taint_audit_sources(
-    state: TurnTaintState,
-    *,
-    max_sources: int = 12,
-) -> list[TaintAuditSourceSummary]:
-    summaries: list[TaintAuditSourceSummary] = []
-    for source in state.sources[:max_sources]:
-        trusted = not is_externally_authored(source.tier)
-        summaries.append({
-            # These are enum-backed, closed-vocabulary provenance fields.
-            "source_type": source.source_type.value,
-            "tier": source.tier.config_value,
-            # Externally authored source metadata is deliberately stubbed, just
-            # as it is in the reviewer prompt's provenance digest.
-            "source_id": _bounded_audit_text(source.source_id, 256)
-            if trusted and source.source_id is not None
-            else None,
-            "labels": (
-                sorted(_bounded_audit_text(label, 64) for label in source.labels)[:16]
-                if trusted
-                else []
-            ),
-            "reason": (
-                _bounded_audit_text(source.reason, 256)
-                if trusted
-                else "Externally authored source details omitted from audit."
-            ),
-        })
-    return summaries
-
-
 def _summarize_tool_arguments(
     arguments: Mapping[str, object],
     *,
@@ -1305,24 +1272,6 @@ def _descriptor_argument_keys(descriptor: ToolDescriptor) -> frozenset[str]:
     if not isinstance(properties, Mapping):
         return frozenset()
     return frozenset(str(key) for key in properties)
-
-
-def _normalize_audit_text(value: str) -> str:
-    """Normalize one audit string, stripping controls and direction tricks."""
-    normalized = unicodedata.normalize("NFKC", value)
-    cleaned = "".join(
-        " " if unicodedata.category(character) in {"Cc", "Cf", "Cs"} else character
-        for character in normalized
-    )
-    return " ".join(cleaned.split()).strip()
-
-
-def _bounded_audit_text(value: str, limit: int) -> str:
-    """Return normalized audit text within a fixed display bound."""
-    cleaned = _normalize_audit_text(value)
-    if len(cleaned) > limit:
-        return cleaned[: limit - 1].rstrip() + "…"
-    return cleaned
 
 
 def _collect_attachment_argument_ids(
@@ -2895,7 +2844,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             tool_call_id=tool_call_id,
             sink_class=sink_class,
             max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            sources=taint_audit_sources(state),
             requested_outcome=requested_outcome,
             effective_outcome=effective_outcome,
             mode=mode,

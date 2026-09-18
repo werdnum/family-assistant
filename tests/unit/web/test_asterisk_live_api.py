@@ -16,7 +16,7 @@ from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.storage.database import Database
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
 
 
@@ -368,7 +368,7 @@ class TestCallTranscriptSaving:
         await handler._save_call_transcript()
 
         db = Database(db_engine)
-        notes = await db.notes.get_all(visibility_grants=None)
+        notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
         assert len(notes) == 1
         note = notes[0]
 
@@ -395,7 +395,7 @@ class TestCallTranscriptSaving:
         await handler._save_call_transcript()
 
         db = Database(db_engine)
-        notes = await db.notes.get_all(visibility_grants=None)
+        notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
         assert len(notes) == 1
         note = notes[0]
 
@@ -431,7 +431,9 @@ class TestCallTranscriptSaving:
         await handler._save_call_transcript()
 
         db = Database(db_engine)
-        note = await db.notes.get_by_title(title, visibility_grants=None)
+        note = await db.notes.get_by_title(
+            title, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         assert note is not None
         assert "[00:00] Caller: Hello" in note.content
         assert note.visibility_labels == ["telephone_logs"]
@@ -446,7 +448,7 @@ class TestCallTranscriptSaving:
         await handler._save_call_transcript()
 
         db = Database(db_engine)
-        notes = await db.notes.get_all(visibility_grants=None)
+        notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
         assert len(notes) == 1
         note = notes[0]
 

@@ -45,6 +45,7 @@ from sqlalchemy.exc import (
 )
 from sqlalchemy.sql import Delete, Insert, Update
 
+from family_assistant.memory.limits import MemoryLimits
 from family_assistant.request_side_effects import mark_state_changed
 
 if TYPE_CHECKING:
@@ -66,6 +67,9 @@ if TYPE_CHECKING:
         ErrorLogsRepository,
         EventsRepository,
         IosPushTokenRepository,
+        MemoryChangeLogRepository,
+        MemoryReviewRepository,
+        MemoryStoreRepository,
         MessageHistoryRepository,
         NotesRepository,
         OAuthConnectionsRepository,
@@ -157,6 +161,12 @@ _ENGINE_TRANSACTION_LOCKS: weakref.WeakKeyDictionary[AsyncEngine, asyncio.Lock] 
     weakref.WeakKeyDictionary()
 )
 
+# Conversation-memory limits (memory_config), registered per engine at startup
+# for the same reason as the taint epoch above.
+_ENGINE_MEMORY_LIMITS: weakref.WeakKeyDictionary[AsyncEngine, MemoryLimits] = (
+    weakref.WeakKeyDictionary()
+)
+
 
 def set_engine_history_taint_epoch(
     engine: AsyncEngine,
@@ -181,6 +191,17 @@ def set_engine_history_taint_epoch(
 def _engine_history_taint_epoch(engine: AsyncEngine) -> datetime | None:
     """Return the history taint epoch configured on an engine, if any."""
     return _ENGINE_HISTORY_TAINT_EPOCHS.get(engine)
+
+
+def set_engine_memory_limits(engine: AsyncEngine, limits: MemoryLimits) -> None:
+    """Attach the deployment's conversation-memory limits to a database engine.
+
+    Called once at startup from ``memory_config``. Registered per engine for
+    the same reason as the taint epoch above: handles are created from a bare
+    engine at dozens of call sites, and the memory store's shape must be the
+    same one whichever of them a write arrives through.
+    """
+    _ENGINE_MEMORY_LIMITS[engine] = limits
 
 
 def _engine_transaction_lock(engine: AsyncEngine) -> asyncio.Lock | None:
@@ -368,6 +389,11 @@ class DatabaseExecutor(ABC):
         return self.engine.dialect.name
 
     @property
+    def memory_limits(self) -> MemoryLimits:
+        """The conversation-memory limits every memory write on this executor obeys."""
+        return _ENGINE_MEMORY_LIMITS.get(self.engine, MemoryLimits.DEFAULTS)
+
+    @property
     def history_taint_epoch(self) -> datetime | None:
         """The deployment history taint epoch configured on this engine, if any."""
         return _engine_history_taint_epoch(self.engine)
@@ -444,6 +470,33 @@ class DatabaseExecutor(ABC):
             cached = repository_class(self)  # type: ignore[call-arg] # every repository takes an executor
             self._repositories[repository_class] = cached
         return cached  # type: ignore[return-value] # keyed by its own class
+
+    @property
+    def memory_change_log(self) -> MemoryChangeLogRepository:
+        """Get the memory change log repository instance."""
+        from family_assistant.storage.repositories.memory_change_log import (  # noqa: PLC0415
+            MemoryChangeLogRepository,
+        )
+
+        return self._repository(MemoryChangeLogRepository)
+
+    @property
+    def memory_review(self) -> MemoryReviewRepository:
+        """Get the memory review watermark and enablement repository instance."""
+        from family_assistant.storage.repositories.memory_review import (  # noqa: PLC0415
+            MemoryReviewRepository,
+        )
+
+        return self._repository(MemoryReviewRepository)
+
+    @property
+    def memory_store(self) -> MemoryStoreRepository:
+        """Get the household memory store repository instance."""
+        from family_assistant.storage.repositories.memory_store import (  # noqa: PLC0415
+            MemoryStoreRepository,
+        )
+
+        return self._repository(MemoryStoreRepository)
 
     @property
     def notes(self) -> NotesRepository:
@@ -629,22 +682,35 @@ class Database(DatabaseExecutor):
         engine: AsyncEngine,
         max_retries: int = 3,
         base_delay: float = 0.5,
+        memory_limits: MemoryLimits | None = None,
     ) -> None:
         """
         Args:
             engine: SQLAlchemy AsyncEngine for dependency injection.
             max_retries: Attempts for a unit of work that fails retryably.
             base_delay: Base delay in seconds for exponential backoff.
+            memory_limits: Conversation-memory limits for this handle only.
+                Deployment-wide limits belong on the engine
+                (:func:`set_engine_memory_limits`), so that every handle sees
+                them; this override is for tests that exercise a cap.
         """
         super().__init__()
         self._engine = engine
         self.max_retries = max_retries
         self.base_delay = base_delay
+        self._memory_limits = memory_limits
 
     @property
     def engine(self) -> AsyncEngine:
         """The engine this handle runs against."""
         return self._engine
+
+    @property
+    def memory_limits(self) -> MemoryLimits:
+        """This handle's override, else the engine's, else the defaults."""
+        if self._memory_limits is not None:
+            return self._memory_limits
+        return super().memory_limits
 
     def transaction(self) -> DatabaseTransaction:
         """Open an explicit atomic block.
@@ -724,6 +790,11 @@ class DatabaseTransaction(DatabaseExecutor):
     def engine(self) -> AsyncEngine:
         """The engine this transaction runs against."""
         return self._database.engine
+
+    @property
+    def memory_limits(self) -> MemoryLimits:
+        """The limits of the handle this transaction was opened from."""
+        return self._database.memory_limits
 
     @property
     def connection(self) -> AsyncConnection:

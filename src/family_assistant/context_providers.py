@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         GoogleCalendarFactory,
     )
     from family_assistant.skills.registry import NoteRegistry
+    from family_assistant.storage.repositories.notes import NoteReadPolicy
     from family_assistant.tools.types import CalendarConfig, CalendarEvent
 
 # Matches the window fetch_upcoming_events reads from CalDAV and iCal.
@@ -112,8 +113,8 @@ class NotesContextProvider(ContextProvider):
         self,
         get_db_context_func: Callable[[], Database],
         prompts: PromptsType,
+        read_policy: "NoteReadPolicy",
         attachment_registry: Any = None,  # noqa: ANN401 # AttachmentRegistry | None
-        visibility_grants: set[str] | None = None,
         note_registry: "NoteRegistry | None" = None,
     ) -> None:
         """
@@ -123,13 +124,14 @@ class NotesContextProvider(ContextProvider):
             get_db_context_func: A function that returns a Database handle.
             prompts: A dictionary containing prompt templates for formatting.
             attachment_registry: Optional attachment registry for fetching attachment metadata.
-            visibility_grants: If set, only notes whose labels are a subset are included.
+            read_policy: The profile's note read confinement. Every note and
+                skill this provider surfaces is resolved through it.
             note_registry: Optional registry of file-based skills.
         """
         self._get_db_context_func = get_db_context_func
         self._prompts = prompts
         self._attachment_registry = attachment_registry
-        self._visibility_grants = visibility_grants
+        self._read_policy = read_policy
         self._note_registry = note_registry
 
     @property
@@ -202,13 +204,11 @@ class NotesContextProvider(ContextProvider):
         db_context = self._get_db_context_func()
         # Use targeted queries - skills are identified at write time via is_skill column
         prompt_notes = await db_context.notes.get_prompt_notes(
-            visibility_grants=self._visibility_grants
+            read_policy=self._read_policy
         )
-        db_skills = await db_context.notes.get_skills(
-            visibility_grants=self._visibility_grants
-        )
+        db_skills = await db_context.notes.get_skills(read_policy=self._read_policy)
         excluded_titles = await db_context.notes.get_excluded_notes_titles(
-            visibility_grants=self._visibility_grants
+            read_policy=self._read_policy
         )
 
         # 1. Regular notes section
@@ -248,7 +248,7 @@ class NotesContextProvider(ContextProvider):
 
         # 2. Skill catalog (DB skills + file-based skills)
         file_skills = (
-            self._note_registry.get_skill_catalog(self._visibility_grants)
+            self._note_registry.get_skill_catalog(self._read_policy)
             if self._note_registry
             else []
         )
@@ -300,7 +300,7 @@ class NotesContextProvider(ContextProvider):
         sources: list[TaintSource] = []
         db_context = self._get_db_context_func()
         prompt_notes = await db_context.notes.get_prompt_notes(
-            visibility_grants=self._visibility_grants
+            read_policy=self._read_policy
         )
         for note in prompt_notes:
             provenance_metadata = note.provenance_metadata

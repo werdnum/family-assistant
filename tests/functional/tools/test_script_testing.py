@@ -16,7 +16,7 @@ from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.database import Database
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
@@ -238,7 +238,7 @@ notified = send_message_to_user(
 
     created_note = await db.notes.get_by_title(
         "Packing List",
-        visibility_grants=None,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     assert created_note is None
     assert chat_interface.mock_calls == []
@@ -378,7 +378,7 @@ add_or_update_note(
     assert transcript[0]["historical_examples_used"] == 1
     stored_note = await db.notes.get_by_title(
         "Weekly Plan",
-        visibility_grants=None,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     assert stored_note is None
 

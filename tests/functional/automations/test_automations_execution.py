@@ -19,6 +19,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.scripting.errors import ScriptError
 from family_assistant.services.tool_call_review import TriggerReviewInput
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     TaskWorker,
@@ -160,7 +161,7 @@ add_or_update_note(title="Provenance {test_run_id}", content="written by script"
     )
 
     db_ctx = Database(engine=db_engine)
-    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    notes = await db_ctx.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     matching = [n for n in notes if f"Provenance {test_run_id}" in n.title]
     assert len(matching) == 1
 
@@ -265,7 +266,7 @@ add_or_update_note(title="Legacy {test_run_id}", content="should not be written"
         )
 
     db_ctx = Database(engine=db_engine)
-    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    notes = await db_ctx.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     matching = [n for n in notes if f"Legacy {test_run_id}" in n.title]
     assert len(matching) == 0
 
@@ -680,7 +681,7 @@ log_event()
 
     # Verify the script created the note
     db_ctx = Database(engine=db_engine)
-    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    notes = await db_ctx.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     matching_notes = [n for n in notes if f"Event Log {test_run_id}" in n.title]
     assert len(matching_notes) == 1
     note = matching_notes[0]
