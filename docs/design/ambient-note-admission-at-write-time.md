@@ -71,20 +71,31 @@ future prompt unasked.
 
 The shipped cell values follow the existing lattice and the risk-adjudicated design:
 
-| turn's max tier      | `ambient_prompt_write`          |
-| -------------------- | ------------------------------- |
-| `trusted_user`       | allow                           |
-| `known_contact`      | audit                           |
-| `recognized_machine` | adjudicate                      |
-| `unknown_external`   | adjudicate (verdict floor deny) |
+| turn's max tier      | `ambient_prompt_write`     |
+| -------------------- | -------------------------- |
+| `trusted_user`       | allow                      |
+| `known_contact`      | audit                      |
+| `recognized_machine` | adjudicate                 |
+| `unknown_external`   | adjudicate (fallback deny) |
 
 `adjudicate` is the non-manual gate: the tool-call reviewer already sees the turn's trusted rows and
-the full write, which is what is needed to tell "add the term dates from this email to the family
-note" from a smuggled instruction. The verdict floor at `unknown_external` is `deny` rather than
-`confirm`, deliberately: a confirmation button is the manual review this design exists to avoid, and
-a denied ambient write is not a lost write — the same content can be saved as an ordinary,
-ineligible note in the same turn, and the tool result says so. The operator can lift the floor to
-`confirm` through `matrix_overrides` if they prefer a button to a refusal.
+the full write, and decides whether the write is what the user asked for. Two cases fix what it
+decides:
+
+- *"Research how to do X and save it as a skill."* The turn is `unknown_external` from the web
+  content, and the write puts a skill on an ambient surface. The trusted rows ask for exactly this
+  write, so the judge admits it: the content is untrusted in origin but the user chose to make it a
+  skill, and that choice is the intent being judged.
+- *"Go and reserve me a restaurant."* A page the browser read tells the model to save a skill, and
+  the model attempts the write. Nothing in the trusted rows asked for a skill or a note, so the
+  judge denies it. The reservation continues; only the ambient write is refused.
+
+The judge is bounded only by its own verdict, not by a floor: the cell exists to admit the first
+case. What is `deny` is the **fallback** — the outcome when no judge is configured or it does not
+answer — rather than `confirm`, deliberately: a confirmation button is the manual review this design
+exists to avoid, and a refused ambient write is not a lost write — the same content can be saved as
+an ordinary, ineligible note in the same turn, and the tool result says so. An operator who prefers
+a button to a refusal sets the fallback to `confirm` through `matrix_overrides`.
 
 Which writes cross the gate:
 
