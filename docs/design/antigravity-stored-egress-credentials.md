@@ -106,12 +106,17 @@ gains refresh. `scheme: "basic"` satisfies only the first, so the git rule (`git
 `transform` header it uses today and keeps the ~1h ceiling with it. Static credentials fail the
 first and stay on `transform` for the reasons above.
 
-This is a capability constraint rather than a preference, and it is worth retesting rather than
-designing around permanently: if GitHub's git-over-HTTPS endpoint accepts
-`Authorization: Bearer <installation-token>`, the git rule becomes a `bearer` rule and the ceiling
-disappears everywhere. That is one `git ls-remote` against a private repository with a real
-installation token — a check for a deployment that has one, not something this design should assume
-either way.
+Both halves of that constraint are measured rather than assumed. **GitHub's git-over-HTTPS rejects
+`Bearer`**: against a private repository with a real `ghs_` installation token, `upload-pack`
+answered 401 unauthenticated, 200 under `Basic`, and 401 under `Bearer`, with
+`WWW-Authenticate: Basic realm="GitHub"` on the refusal. `receive-pack` — the push case this ceiling
+actually bites — separates the two layers: `Basic` reaches authorization and is refused 403 for
+write, while `Bearer` never authenticates at all and stops at 401. So a push fails no differently
+from a fetch, and no permission grant would change it.
+
+The split is therefore structural, not a gap waiting to close. It could only change if GitHub began
+accepting `Bearer` on git, which its own `WWW-Authenticate` advertises against; a design that
+assumed otherwise would be betting on that.
 
 ### Rule of Two
 
