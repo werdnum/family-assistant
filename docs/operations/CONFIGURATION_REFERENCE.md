@@ -2073,6 +2073,19 @@ so a deployment opts in explicitly.
 - **memory_contribute** — whether conversations run under the profile are reviewed into memory by
   the background curator.
 
+`default_assistant` and `complex_tasks` ship with both set to `false` and carry them explicitly, so
+the opt-in is visible where an operator reads rather than inherited from a code default. A
+deployment turns memory on for the household by setting **both** on those profiles: contributing
+requires reading. `complex_tasks` carries the settings rather than reading only, because a long
+investigation is where constraints, rejected options and open decisions actually get settled, and a
+delegation from the assistant lands there mid-conversation — learning from one half of a
+conversation and not the other would be arbitrary. The shipped default flips on at milestone 7 of
+[the design](../design/conversation-memory.md), once the evaluation and the user-facing controls
+exist to measure and correct what gets written.
+
+The `memory_curator` profile is the exception and is left alone: it reads memory because curating it
+is its whole job, and does not contribute, since its own subconversation is never reviewed.
+
 A profile that does not read memory cannot write it either. `propose_memory_edits` refuses with that
 reason, and whole-note writes to a memory note — `add_or_update_note`, `delete_note` — are refused
 at the notes repository: a profile that cannot see the existing entries would be duplicating what is

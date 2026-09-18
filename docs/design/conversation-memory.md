@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposal, awaiting approval. Approach-level; construction detail (field names, payload shapes, exact
-prompts) belongs to the implementing PRs.
+Accepted; implementing. Milestone 1 (the curator profile, apply path, watermark, sweep, read policy
+and skip metrics) landed in PR #1242; milestone 2 (prompts, settings, documentation) follows on top
+of it. Approach-level; construction detail (field names, payload shapes, exact prompts) belongs to
+the implementing PRs.
 
 This revision splits the design into **v1 invariants** and **future hardening**. An earlier revision
 answered every reviewer counterexample with a mechanism and grew into a fact-management system:
@@ -479,6 +481,19 @@ Each of these is a chosen limitation of v1, with the reason it is acceptable.
 - **Skipped volume is counted, not gauged.** The skip measurement the taint refinement is gated on
   is a pair of counters (rows, and characters a person wrote) rather than gauges: the question is
   how much is lost over a period, and a gauge would keep only the last skip's numbers.
+- **The core note's topic index names every memory topic, including one a reader cannot open.** The
+  index is derived from the topic notes that exist, and a topic carrying an additional restricting
+  label beyond `memory` is listed by title in the core note of a reader whose grants do not admit
+  it. Titles only: the content stays confined, `get_note` refuses it, and the reader learns that a
+  topic by that name exists. Filtering the index per reader would make it a per-reader projection
+  rather than the derived section of one note, which is machinery for a case no shipped
+  configuration produces — every memory note carries exactly the `memory` label.
+- **The curator is in the delegation catalogue, and refuses every delegation.** Profiles that may
+  delegate see it listed with the rest, because the catalogue is built from the registered profiles
+  rather than from who may reach each one. Every attempt is refused
+  (`allowed_delegation_sources: []`, `delegation_security_level: blocked`), so the cost is a wasted
+  tool call and a model that tried something the description told it not to. Filtering the catalogue
+  by reachability is a worthwhile tidy-up for its own sake, not a memory change.
 - **A review gives up rather than waiting out a person who keeps editing.** A revision conflict
   re-runs the review once against the fresh store; a second conflict abandons the chunk. Whoever is
   editing wins, which is the intended precedence, and the conversation's later rows are reviewed
@@ -590,10 +605,20 @@ usefulness is the point of v1.
 
 ## Open questions
 
-- Idle windows. Proposed starting points: 30 minutes for web, 90 minutes for Telegram, 24 hours
-  maximum deferral. These are settings, not design; the question is whether to ship them as defaults
-  or leave memory off until a deployment sets them.
-- Whether `complex_tasks` contributes from the start, or reads only. The proposal says it
-  contributes.
-- Where the household-scope statement should surface beyond the user documentation: once, in the
-  chat, when memory first writes something, or only in the docs.
+All three are resolved.
+
+- **Idle windows: shipped as defaults.** 30 minutes for web, 90 for Telegram, 24 hours maximum
+  deferral, in `memory_config`. Leaving them unset would have made a deployment configure timings
+  before it could try the feature at all, when the thing that actually keeps memory off is
+  `memory_contribute`, which no shipped profile sets. A deployment that opts in gets working
+  cadences; one that does not is unaffected by their values.
+- **`complex_tasks` contributes.** It carries `memory_read` and `memory_contribute` explicitly, both
+  off like `default_assistant`'s, and flips with the default at milestone 7. A long investigation is
+  where constraints, rejected options and open decisions actually get settled, which is most of what
+  memory is for; and a delegation from the assistant lands here mid-conversation, so learning from
+  one half of a conversation and not the other would be arbitrary.
+- **The household-scope statement lives in the documentation only**, in `docs/user/memory.md` and in
+  the configuration reference. A one-time chat notice on the first memory write is a per-deployment
+  interruption that buys nothing the recent-changes view of milestone 5 does not buy better, in the
+  place a person is already looking at what was learned. If that view lands and people are still
+  surprised by the scope, the notice is cheap to add then.
