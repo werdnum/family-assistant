@@ -1,6 +1,6 @@
 # Script execution as the automatic review boundary
 
-Status: proposed implementation plan.
+Status: implementation plan reviewed with Fable and GPT-6.
 
 ## Problem
 
@@ -29,7 +29,9 @@ Resolve and validate inline or stored invocations before review without executin
 performing side effects. Execute the same resolved source and inputs that were reviewed; a stored
 script name alone is insufficient. Incomplete source or unavailable review context cannot produce a
 whole-script approval. Apply existing fail-closed review behavior rather than silently treating a
-truncated program as approved.
+truncated program as approved. Durable confirmations store and render the resolved program and
+effective inputs as the executable payload; replay does not look the source up again by name. Stored
+identity and definition provenance provide review context, not a mutable execution reference.
 
 An explicit successful review, or the human confirmation it requires, authorizes the deterministic
 operations of that invocation. Carry this authorization in runtime-owned execution context through
@@ -48,12 +50,15 @@ merely because taint increased. Explicit hard taint restrictions still apply. Th
 assess how runtime data can influence effects; deterministic execution does not imply fixed or safe
 destinations.
 
-Approval ends at new executable code or a new model decision. A nested script invocation receives
-its own source-aware review; delegated agents, model-driven tools, callbacks, and future automation
-runs do not inherit permission for their subsequent decisions. The approved script may initiate
-those operations subject to existing policy, but their execution retains its own enforcement. Any
-review still needed within a script should receive the enclosing source and parent decision as
-context, so it does not recreate the original context-free failure.
+Approval ends at new executable code or a new model decision. Persistence of executable definitions
+retains its own gate, with the enclosing source and parent decision as context, so the write can be
+independently reviewed without borrowing the parent verdict. A nested script invocation receives its
+own source-aware review; delegated agents, model-driven tools, callbacks, and future automation runs
+do not inherit permission for their subsequent decisions. The approved script may initiate those
+operations subject to existing policy, but their execution retains its own enforcement. A model
+decision also ends inherited approval for the calling script's continuation. Any review still needed
+within a script should receive the enclosing source and parent decision as context, so it does not
+recreate the original context-free failure.
 
 The execution authorization is local to the invocation and ends on completion, failure, timeout, or
 cancellation. It must not leak to sibling calls or later turns. Persisted definitions retain their
@@ -65,7 +70,9 @@ content as human-authored or independently reviewed.
 1. **Make the invocation reviewable.** Share source resolution and input validation between review
    preparation and execution. Extend review input and rendering with the complete resolved program
    and execution capabilities. Verify inline and stored scripts show the actual executed source,
-   including when a stored definition changes after preparation.
+   including when a stored definition changes after preparation or while a durable confirmation is
+   pending. Verify a script admitted without outer review supplies its full context when runtime
+   taint causes the first nested review.
 2. **Carry execution approval through the enforcement chokepoints.** Integrate scoped authorization
    into tool dispatch, Monty execution, and named-sink authorization. Preserve live taint tracking
    and policy floors. Verify an approved multi-tool script receives one automatic review and covered
@@ -92,3 +99,8 @@ cannot be justified from the available context can still require confirmation or
 The initial change targets explicit `execute_script` invocations. Other script entry points gain
 inherited authorization only when they pass through the same source-aware review boundary; merely
 using Monty confers no approval. No change to unrelated agent-review boundaries is proposed.
+
+Confirmation replay is an inline invocation of the pinned program and must satisfy current policy
+for that invocation. It does not retain a permission that applies only to a live named lookup.
+Observe-mode shadow reviews remain independent, so their counts are not a forecast of the number of
+reviews an approved program would need under enforcement.
