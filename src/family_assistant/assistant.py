@@ -2627,6 +2627,15 @@ class Assistant:
                 settings=self.config.memory_config.to_review_settings(),
                 configured_contributors=self._memory_contributing_profiles(),
                 limits=self.config.memory_config.to_limits(),
+                # A message row stores who wrote it as a user id and nothing
+                # more, so the transcript's sender names come from the
+                # operator's own `users` configuration. Config rather than a
+                # live interface lookup: a review renders rows that may be a
+                # day old, and the name a deployment chose is the one the
+                # household recognises.
+                name_for_user_id=UserIdentityResolver(
+                    self.config
+                ).label_for_stored_user_id,
             ),
         )
         logger.info(f"Registered task handlers for worker {worker.worker_id}")

@@ -200,6 +200,18 @@ class UserIdentityResolver:
         except UserIdentityResolutionError:
             return raw_owner_id
 
+    def label_for_stored_user_id(self, raw_user_id: str) -> str | None:
+        """The configured human name for a ``user_id`` as persisted on a row.
+
+        The two halves a caller holding only a stored id needs:
+        :meth:`canonicalize_owner_id`, because a Telegram row may carry the
+        numeric Telegram id rather than the canonical one, and
+        :meth:`get_user_label`, which is where an operator writes the name.
+        ``None`` when the deployment configured no label, which leaves the
+        caller to decide what to show instead of inventing one here.
+        """
+        return self.get_user_label(self.canonicalize_owner_id(raw_user_id))
+
     def owner_ids_canonicalizing_to(self, user_id: str) -> set[str]:
         """Return every stored ``user_id`` that ``canonicalize_owner_id`` maps to
         ``user_id`` via a configured mapping.
