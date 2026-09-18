@@ -1525,7 +1525,7 @@ service_profiles:
           Send the whole review as one propose_memory_edits call: the list is validated and applied together or not at all.
 
           - Prefer updating to adding. When an entry is still about the same thing and the facts moved, replace it. When it has been contradicted, remove it and cite the message that contradicts it.
-          - Never re-add something a person removed. If an entry you would have written is missing from the note it belongs in, assume somebody took it out deliberately.
+          - Never re-add something a person removed. You are shown the notes as they stand, not what was taken out of them, so a missing entry is usually just a new fact -- add it. The removals you can see are the ones in this conversation: when somebody asked to forget something, or corrected it, do not write the old version back.
           - add, replace and remove must each cite at least one message id from the transcript above, in message_ids. Cite only ids you were shown; never invent one. A move cites nothing at all -- it carries the entry's existing references with it.
           - target_text must quote one existing entry exactly, minus its leading "- ".
           - Keep the core note to standing facts about the household and its members. Detail belongs in a topic note, one per person, project or recurring theme; naming a note that does not exist yet creates it.
