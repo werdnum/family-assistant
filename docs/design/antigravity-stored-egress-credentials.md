@@ -90,10 +90,10 @@ render `Basic ghs_...` for the git rule, which is a 401.
 **One mint, one stored credential per scheme.** A run's `github_app` credentials are minted once and
 stored as separate ids: the bearer rule holds the raw token, the basic rule holds
 `base64("x-access-token:<token>")` under `prefix: "Basic"`. The encoding stays ours, as it is today;
-what moves is only where the encoded value lands. Rotation writes every scheme's id from the same
-mint, so the two cannot drift apart — a rotation that updated one and not the other would leave git
-and the REST API authenticating as tokens of different ages, which is the kind of partial success
-that reads as an agent being confused.
+what moves is only where the encoded value lands. Rotation writes every scheme's id from one mint,
+so the ids never hold *unrelated* tokens — but two `PATCH`es are two requests, and one can fail
+while the other lands. The residual that leaves is bounded rather than designed away; see
+"Deliberate simplifications".
 
 ### Rule of Two
 
@@ -178,6 +178,14 @@ be built on the strength of the documentation alone.
 - **Rotation is unconditional.** It does not ask whether a run is in flight. Gating it on live runs
   would add exactly the state the design is trying not to grow, to save a token exchange that costs
   one HTTP round trip.
+- **Partial rotation is repaired by the next tick, not by a retry path.** Two ids mean two requests,
+  and nothing makes them atomic. A tick that updates one and not the other leaves the schemes
+  holding tokens of different ages — harmless while both are unexpired, since each is independently
+  valid. The next unconditional tick rewrites both from a fresh mint, so drift self-heals within one
+  interval, which is a fraction of token life. Sustained failure is not a new failure mode: it is
+  the "rotation stopped" case above, arriving as a visible 401 on whichever scheme went stale first.
+  Adding per-id retry, ordering or compensation would buy a narrower window at the cost of exactly
+  the lifecycle state this design refuses to grow.
 - **No cleanup of orphaned ids.** A credential whose config stopped referencing it keeps being
   rotated until an operator deletes it. Reconciling the store against config is machinery for a rare
   case; the credential is scoped and short-lived either way.
