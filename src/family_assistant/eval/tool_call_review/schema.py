@@ -22,6 +22,7 @@ from pydantic import (
 )
 
 from family_assistant.llm.messages import dict_to_message
+from family_assistant.scripting.invocation import ScriptReviewContext
 from family_assistant.security.taint import SinkClass, TurnTaintState
 from family_assistant.services.tool_call_review import (
     BrowserActionReviewInput,
@@ -256,6 +257,31 @@ class TriggerSpec(BaseModel):
         )
 
 
+class ScriptContextSpec(BaseModel):
+    """Resolved program evidence with capabilities resolved from the live registry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    inputs: dict[str, object]
+    tool_names: list[str]
+    external_functions: list[str]
+
+    def to_review_context(
+        self, registry: Mapping[str, ToolDescriptor] | None = None
+    ) -> ScriptReviewContext:
+        """Rebuild the runtime contract without copying tool schemas into cases."""
+        return ScriptReviewContext(
+            source=self.source,
+            inputs=dict(self.inputs),
+            tools=tuple(
+                resolve_tool_descriptor(name, registry=registry).definition
+                for name in self.tool_names
+            ),
+            external_functions=tuple(self.external_functions),
+        )
+
+
 class ConversationPayload(BaseModel):
     """Serialized ``ToolCallReviewInput`` minus derived and resolved parts.
 
@@ -282,6 +308,7 @@ class ConversationPayload(BaseModel):
     deployment_guidance: str = ""
     profile_guidance: str = ""
     trigger: TriggerSpec | None = None
+    script: ScriptContextSpec | None = None
 
     @model_validator(mode="after")
     def _require_canonical_taint_metadata(self) -> ConversationPayload:
@@ -574,6 +601,9 @@ class EvalCase(BaseModel):
             profile_guidance=payload.profile_guidance,
             trigger=trigger,
             destination_echo=destination_echo,
+            script=payload.script.to_review_context(descriptor_registry)
+            if payload.script is not None
+            else None,
         )
 
     @staticmethod

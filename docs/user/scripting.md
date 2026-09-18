@@ -267,6 +267,17 @@ result = tools_execute_json("send_email", args_json)
 
 ```
 
+### Automatic review of a script
+
+When a script needs approval, one approval can cover the script as a whole, including ordinary
+intermediate steps such as reading information and saving the requested result. The approval is for
+the exact source and inputs that were shown. If a saved script changes while an approval is pending,
+the approved run still uses the earlier source.
+
+Approval does not grant extra permissions: the tools a script can use and their normal safeguards
+still apply. Saving or running new code, creating future automation, and using a model to make a
+later decision each follow their own approval rules.
+
 ### Attachment API
 
 Scripts can create and manipulate attachments (files, images, charts, etc.) that are automatically

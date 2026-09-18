@@ -1,6 +1,6 @@
 # Script execution as the automatic review boundary
 
-Status: implementation plan reviewed with Fable and GPT-6.
+Status: implemented.
 
 ## Problem
 
@@ -9,7 +9,7 @@ automatic reviews. Those reviews see the individual operation and the original t
 executing script or its approval. Implementation steps consequently appear unrelated to the
 authorized task and also consume additional review budget.
 
-The current paths explain the behavior:
+The original paths explain the behavior:
 
 - `tools/infrastructure.py` constructs `ToolCallReviewInput` for each gated operation.
 - `scripting/monty_engine.py` clears `taint_policy_snapshot` before dispatching nested tools. This
@@ -17,7 +17,7 @@ The current paths explain the behavior:
 - `tools/execute_script.py` resolves stored source inside the tool, after the outer gate.
 - `scripting/apis/keychute.py` authorizes brokered HTTP through the separate named-sink gate.
 
-## Proposed boundary
+## Review boundary
 
 Review the resolved script invocation as a program, including its source, effective inputs,
 available capabilities, relevant policy constraints, and definition provenance. The reviewer
@@ -98,7 +98,10 @@ cannot be justified from the available context can still require confirmation or
 
 The initial change targets explicit `execute_script` invocations. Other script entry points gain
 inherited authorization only when they pass through the same source-aware review boundary; merely
-using Monty confers no approval. No change to unrelated agent-review boundaries is proposed.
+using Monty confers no approval. No change to unrelated agent-review boundaries is proposed. Tool
+metadata explicitly identifies operations eligible to inherit deterministic execution approval;
+unclassified tools retain their own enriched gates. Missing metadata therefore adds review rather
+than silently widening approval.
 
 Confirmation replay is an inline invocation of the pinned program and must satisfy current policy
 for that invocation. It does not retain a permission that applies only to a live named lookup.
