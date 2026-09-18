@@ -91,9 +91,9 @@ async def run_memory_review_sweep(
 ) -> int:
     """Enqueue a review for every due conversation. Returns how many it wrote.
 
-    Cheap to run when memory is off or nothing contributes, because that is the
-    shipped state and a previously seeded sweep survives the switch being
-    turned off.
+    Cheap to run when memory is off or nothing contributes: turning either
+    switch off leaves a previously seeded sweep in the queue, so the occurrence
+    keeps arriving and has to return without touching the database.
     """
     if not settings.enabled or not configured_contributors:
         record_memory_conversations_due(dict.fromkeys(DueReason, 0))
