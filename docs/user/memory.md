@@ -7,7 +7,7 @@ Memory is separate from the notes you ask it to keep. Notes are things you filed
 small, curated set of things worth knowing in every conversation — a standing preference, a fact
 about someone in the family, a decision and the reason behind it.
 
-Not every deployment has memory switched on. If nothing described here seems to exist, ask whoever
+Your deployment may have memory switched off. If nothing described here seems to exist, ask whoever
 set up your Family Assistant.
 
 ## What it remembers on its own

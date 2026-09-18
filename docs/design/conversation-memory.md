@@ -2,10 +2,15 @@
 
 ## Status
 
-Accepted; implementing. Milestone 1 (the curator profile, apply path, watermark, sweep, read policy
-and skip metrics) landed in PR #1242; milestone 2 (prompts, settings, documentation) follows on top
-of it. Approach-level; construction detail (field names, payload shapes, exact prompts) belongs to
-the implementing PRs.
+Accepted; implementing, in the order 1 → 2 → 4 → 7. Milestone 1 (the curator profile, apply path,
+watermark, sweep, read policy and skip metrics) landed in PR #1242; milestone 2 (prompts, settings,
+documentation) in PR #1246; milestone 4 (Telegram sender names and maximum deferral) in PR #1247;
+milestone 7 (contribution on by default) stacked on top of it. Milestone 3 (evaluation) and
+milestone 5 (user control) are deferred: the owner chose to turn memory on and learn from real use
+first, rather than build the measurement before there is anything to measure. Both remain planned,
+and the trade-off that decision accepts is recorded under "Deliberate simplifications".
+Approach-level; construction detail (field names, payload shapes, exact prompts) belongs to the
+implementing PRs.
 
 This revision splits the design into **v1 invariants** and **future hardening**. An earlier revision
 answered every reviewer counterexample with a mechanism and grew into a fact-management system:
@@ -168,10 +173,10 @@ audience (which conversations it may appear in). Per-person attribution handles 
 not decide the audience. A private conversation about a surprise present must not become context in
 the recipient's chat because the entry correctly names both people.
 
-**The first version has one scope: the household.** Everything the curator learns from an opted-in
+**The first version has one scope: the household.** Everything the curator learns from a reviewed
 conversation is household memory, visible in every conversation of every profile that reads memory,
 whoever is speaking. Conversations that contribute are those on household-member interfaces (web and
-iOS chat, and Telegram) under a profile that opts into contributing. Two spoken interfaces are
+iOS chat, and Telegram) under a profile configured to contribute. Two spoken interfaces are
 read-only in the first version, for reasons in the persistence layer rather than the design: a
 telephone call is saved as a transcript note, not as message-history rows, so nothing exists for the
 sweep to review; and an iOS native-voice session is persisted with every assistant row stamped at
@@ -248,9 +253,10 @@ stretch contains no user messages, the review is skipped and the watermark advan
 profile settings. Contributing implies reading: a profile configured to contribute without reading
 is a configuration error that startup validation rejects. Reading does not imply contributing: a
 specialised or experimental profile can benefit from the household's preferences without teaching
-its conversations back into shared memory. Contribution ships off, and turns on by default for the
-household profile only once the evaluation and the user controls below have landed, so no deployment
-receives silent model-written memory before it can measure it and correct it.
+its conversations back into shared memory. Contribution ships on for the two household profiles and
+off for every other profile; a deployment opts out per profile, or turns the whole mechanism off
+with `memory_config.enabled`. The default arrived ahead of the evaluation and the user controls
+below — see "Deliberate simplifications".
 
 ### The curator proposes edits; the apply path enforces the invariants
 
@@ -498,6 +504,14 @@ Each of these is a chosen limitation of v1, with the reason it is acceptable.
   (`allowed_delegation_sources: []`, `delegation_security_level: blocked`), so the cost is a wasted
   tool call and a model that tried something the description told it not to. Filtering the catalogue
   by reachability is a worthwhile tidy-up for its own sake, not a memory change.
+- **Default on without the evaluation or the user controls.** Milestone 7 was gated on milestone 3
+  (evaluation) and milestone 5 (the recent-changes view and evidence links); it landed without
+  either, because the owner chose to turn memory on and learn from real use rather than build the
+  measurement first. Both remain planned. What bounds the risk meanwhile is that memory is not a
+  hidden store: memory notes are ordinary notes, readable and editable on the Notes page like any
+  other, every edit the apply path lets through is recorded in the change log table with the review
+  it came from, and contribution can be turned off per profile or globally at any time. A wrong
+  entry is visible where the household already looks and costs one edit to fix.
 - **A review gives up rather than waiting out a person who keeps editing.** A revision conflict
   re-runs the review once against the fresh store; a second conflict abandons the chunk. Whoever is
   editing wins, which is the intended precedence, and the conversation's later rows are reviewed
@@ -575,12 +589,12 @@ usefulness is the point of v1.
    exactly the memory tools, and that its effective context provider set is exactly the notes
    provider. Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
-   contribute settings on the profiles that carry them, shipping off by default so a deployment opts
-   in explicitly until milestone 7 flips the default; a line in the assistant system prompt about
-   what memory is and how to honour "forget"; `docs/user/memory.md` stating the household scope and
-   what forgetting means; the settings in the configuration reference. Verified by the existing
-   prompt-render startup check, a startup validation that a contributing profile reads, and a test
-   that a read-only profile sees the core note and does not feed reviews.
+   contribute settings on the profiles that carry them, shipping off until milestone 7 flips the
+   default; a line in the assistant system prompt about what memory is and how to honour "forget";
+   `docs/user/memory.md` stating the household scope and what forgetting means; the settings in the
+   configuration reference. Verified by the existing prompt-render startup check, a startup
+   validation that a contributing profile reads, and a test that a read-only profile sees the core
+   note and does not feed reviews.
 3. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
@@ -603,9 +617,12 @@ usefulness is the point of v1.
 6. **Per-evidence provenance**, if milestone 3 says so. The user's own rows reviewed under their own
    provenance when later rows are tainted. Verified by the hotel example: the preference is learned
    and the research is not.
-7. **Default on.** Contribution on by default for the household profile. Gated on milestones 3 and
-   5, so the default arrives with the quality measurement and the controls to notice and correct a
-   bad entry. Verified by a startup test of the shipped defaults.
+7. **Default on.** Contribution on by default for the household profiles. This was gated on
+   milestones 3 and 5, so that the default would arrive with the quality measurement and the
+   controls to notice and correct a bad entry. It was taken without them: the owner chose to run
+   memory and learn from real use, on the reasoning that the evaluation corpus is guesswork until
+   there is real curated memory to compare it against. What bounds the risk in the meantime is under
+   "Deliberate simplifications". Verified by a startup test of the shipped defaults.
 
 ## Open questions
 
@@ -613,15 +630,15 @@ All three are resolved.
 
 - **Idle windows: shipped as defaults.** 30 minutes for web, 90 for Telegram, 24 hours maximum
   deferral, in `memory_config`. Leaving them unset would have made a deployment configure timings
-  before it could try the feature at all, when the thing that actually keeps memory off is
-  `memory_contribute`, which no shipped profile sets. A deployment that opts in gets working
-  cadences; one that does not is unaffected by their values.
+  before it could try the feature at all, when the settings that actually decide whether memory runs
+  are `memory_contribute` and `memory_config.enabled`. A deployment that leaves them alone gets
+  working cadences; one that turns memory off is unaffected by their values.
 - **`complex_tasks` contributes.** It carries `memory_read` and `memory_contribute` explicitly, both
-  off like `default_assistant`'s, and flips with the default at milestone 7. A long investigation is
-  where constraints, rejected options and open decisions actually get settled, which is most of what
-  memory is for. This covers top-level `/complex` conversations only: a delegation into the profile
-  runs in a subconversation, and subconversations never contribute; the delegating conversation,
-  which carries the delegated result, is what gets reviewed.
+  on like `default_assistant`'s. A long investigation is where constraints, rejected options and
+  open decisions actually get settled, which is most of what memory is for. This covers top-level
+  `/complex` conversations only: a delegation into the profile runs in a subconversation, and
+  subconversations never contribute; the delegating conversation, which carries the delegated
+  result, is what gets reviewed.
 - **The household-scope statement lives in the documentation only**, in `docs/user/memory.md` and in
   the configuration reference. A one-time chat notice on the first memory write is a per-deployment
   interruption that buys nothing the recent-changes view of milestone 5 does not buy better, in the

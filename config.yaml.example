@@ -106,25 +106,28 @@
 #         priority: 90
 
 # --- Conversation Memory ---
-# The household memory notes, and the background curator that keeps them. Off
-# out of the box: no shipped profile contributes, so nothing is reviewed and
-# nothing is written until a deployment opts in here.
+# The household memory notes, and the background curator that keeps them. On
+# out of the box for the two profiles a person talks to -- default_assistant
+# and complex_tasks -- which read memory and feed their conversations to the
+# curator. The first startup with contribution on records the moment, and only
+# conversation from then on is reviewed, so an existing deployment's history is
+# left alone.
 #
-# Opting in means setting BOTH settings on the profiles that should take part.
-# memory_read lets a profile see memory; memory_contribute feeds its
-# conversations to the curator. Contributing without reading is a startup error.
-# Turning contribution on records the moment, and only conversation from then on
-# is reviewed.
+# To opt OUT, override the profiles below. memory_contribute: false keeps the
+# memory a profile already has without adding to it; setting both to false takes
+# it out of memory entirely. Contributing without reading is a startup error.
 # service_profiles:
 #   - id: "default_assistant"
 #     processing_config:
 #       memory_read: true
-#       memory_contribute: true
+#       memory_contribute: false
 #   - id: "complex_tasks"
 #     processing_config:
 #       memory_read: true
-#       memory_contribute: true   # top-level /complex conversations only; a delegation
-#                                 # into the profile is a subconversation, never reviewed
+#       memory_contribute: false
+#
+# To turn the whole mechanism off for every profile at once, without touching
+# any profile, set memory_config.enabled: false below.
 #
 # The store's bounds and the review cadence are deployment-wide. The values
 # below are the shipped defaults; override only what you need.
