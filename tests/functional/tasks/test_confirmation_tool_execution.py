@@ -42,13 +42,21 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.deferred_tool_confirmation import (
+    build_deferred_confirmation_callback,
     create_deferred_tool_confirmation,
 )
-from family_assistant.services.tool_call_review import ToolCallReviewer
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewer,
+    ToolCallReviewResponse,
+    ToolCallReviewVerdict,
+)
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     TaintTrackingToolsProvider,
 )
@@ -64,6 +72,7 @@ from family_assistant.tools.services import delegate_to_service_tool
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolCallReviewAuthorization,
+    ToolConfirmationAuthorization,
     ToolExecutionContext,
     ToolResult,
 )
@@ -162,6 +171,31 @@ class CountingReviewLLM:
         del messages, response_model, max_retries
         self.calls += 1
         raise AssertionError("Durable review authorization must bypass the reviewer")
+
+
+class AllowingReviewLLM:
+    """Reviewer fake that records and allows nested calls requiring review."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_structured[T: BaseModel](
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        del messages
+        self.calls += 1
+        assert response_model is ToolCallReviewResponse
+        assert max_retries == 0
+        return cast(
+            "T",
+            ToolCallReviewResponse(
+                verdict=ToolCallReviewVerdict.ALLOW,
+                reason="The nested call is aligned with the request.",
+            ),
+        )
 
 
 class DelegationReplayToolsProvider:
@@ -769,6 +803,260 @@ async def test_deferred_review_confirmation_persists_call_authorization(
     assert request["taint_policy_reason"] == (
         "Unknown external content reached an artifact write."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_mutation", ["changed", "deleted"])
+async def test_stored_script_confirmation_replays_pinned_inline_invocation(
+    db_engine: AsyncEngine,
+    stored_mutation: str,
+) -> None:
+    original_source = "prefix + value"
+    replacement_source = 'prefix + "replacement"'
+    stored_name = "durable-review-script"
+    initial_arguments: ToolArguments = {
+        "name": stored_name,
+        "globals": {"prefix": "approved:", "value": "superseded"},
+        "parameters": {"value": "original"},
+    }
+    expected_arguments: ToolArguments = {
+        "script": original_source,
+        "globals": {"prefix": "approved:", "value": "original"},
+    }
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name=stored_name,
+        description="Durable confirmation source pinning",
+        script_code=original_source,
+        parameters_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        },
+        definition_human_direct=True,
+    )
+    execute_script_registration = next(
+        registration
+        for registration in LOCAL_TOOL_REGISTRATIONS
+        if registration.name == "execute_script"
+    )
+    initial_policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(
+            registrations=[execute_script_registration]
+        ),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.CONFIRM)
+        ),
+    )
+    initial_service = _processing_service(initial_policy_provider)
+    context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        user_name="Automation Owner",
+        user_id="user-1",
+        turn_id=None,
+        db_context=db,
+        processing_service=initial_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=initial_policy_provider,
+        processing_profile_id="test-profile",
+        request_confirmation_callback=build_deferred_confirmation_callback(
+            target_user_id="user-1",
+            source_prefix="Automation requested approval.",
+            missing_owner_message=lambda tool_name: (
+                f"No owner is available to approve {tool_name}."
+            ),
+        ),
+    )
+
+    result = await initial_policy_provider.execute_tool(
+        "execute_script",
+        initial_arguments,
+        context,
+        "stored-script-call",
+    )
+
+    result_text = result.get_text() if isinstance(result, ToolResult) else result
+    assert "Waiting on the user to approve" in result_text
+
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert len(pending) == 1
+    request = pending[0]
+    assert request["tool_name"] == "execute_script"
+    assert request["tool_args_json"] == expected_arguments
+    assert original_source in request["confirmation_prompt"]
+    assert "approved:" in request["confirmation_prompt"]
+    assert "original" in request["confirmation_prompt"]
+    assert "superseded" not in request["confirmation_prompt"]
+
+    if stored_mutation == "changed":
+        await db.scripts.save(
+            name=stored_name,
+            description="Replacement that was never approved",
+            script_code=replacement_source,
+            definition_human_direct=True,
+        )
+    else:
+        assert stored_mutation == "deleted"
+        assert await db.scripts.delete(stored_name)
+
+    task_id = await _approve_request(db_engine, str(request["id"]))
+    replay_policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(
+            registrations=[execute_script_registration]
+        ),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(
+                            names=["execute_script"],
+                            argument_equals={"script": original_source},
+                        ),
+                        decision=ToolPolicyDecision.CONFIRM,
+                        priority=20,
+                        description="Inline scripts require current confirmation.",
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(
+                            names=["execute_script"],
+                            argument_equals={"name": stored_name},
+                        ),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=10,
+                        description="Named script lookup is allowed.",
+                    ),
+                ],
+            )
+        ),
+    )
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(replay_policy_provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert len(chat_interface.messages) == 1
+    assert "Script result: approved:original" in chat_interface.messages[0][1]
+    assert replacement_source not in chat_interface.messages[0][1]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("authorization_consumed", "expected_nested_reviews"),
+    [(False, 0), (True, 1)],
+)
+async def test_generic_confirmation_authorizes_script_only_once(
+    db_engine: AsyncEngine,
+    authorization_consumed: bool,
+    expected_nested_reviews: int,
+) -> None:
+    source = 'record_tool(value="nested-effect")'
+    call_id = "generic-confirmed-script"
+    canonical_arguments: ToolArguments = {"script": source, "globals": {}}
+    execute_script_registration = next(
+        registration
+        for registration in LOCAL_TOOL_REGISTRATIONS
+        if registration.name == "execute_script"
+    )
+    recording_provider = RecordingDescriptorToolsProvider({
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.STATE_CHANGING,
+    })
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=CompositeToolsProvider([
+            LocalToolsProvider(registrations=[execute_script_registration]),
+            recording_provider,
+        ]),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["execute_script"]),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=20,
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(names=["record_tool"]),
+                        decision=ToolPolicyDecision.REVIEW,
+                        priority=20,
+                    ),
+                ],
+            )
+        ),
+    )
+    allowing_llm = AllowingReviewLLM()
+    provider = TaintTrackingToolsProvider(
+        policy_provider,
+        tool_call_reviewer=ToolCallReviewer(
+            cast("LLMInterface", allowing_llm),
+            ToolCallReviewConfig(),
+        ),
+        review_config=ToolCallReviewConfig(),
+    )
+    authorization = ToolConfirmationAuthorization(
+        tool_name="execute_script",
+        call_id=call_id,
+        tool_args=canonical_arguments,
+        consumed=authorization_consumed,
+    )
+    context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        user_name="Test User",
+        user_id="user-1",
+        turn_id=None,
+        db_context=Database(engine=db_engine),
+        processing_service=_processing_service(provider),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=provider,
+        tool_call_review_messages=[
+            UserMessage(
+                content="Run the confirmed script.",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
+        ],
+        tool_confirmation_authorization=authorization,
+    )
+
+    await provider.execute_tool(
+        "execute_script",
+        {"script": source},
+        context,
+        call_id,
+    )
+
+    assert authorization.consumed is True
+    assert allowing_llm.calls == expected_nested_reviews
+    assert recording_provider.calls == [
+        (
+            "record_tool",
+            {"value": "nested-effect"},
+            None,
+            "user-1",
+            "web",
+        )
+    ]
 
 
 @pytest.mark.asyncio

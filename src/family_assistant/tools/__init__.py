@@ -741,6 +741,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
 
 LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "add_or_update_note": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.SENSITIVE_DATA,
@@ -748,18 +749,21 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_note": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_notes": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "delete_note": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
@@ -822,12 +826,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_documents": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_full_document_content": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
@@ -847,11 +853,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DOCUMENTS,
     ),
     "get_user_documentation_content": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.DOCUMENTS,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "query_recent_events": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
@@ -870,6 +878,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_automations": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
@@ -879,6 +888,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_automation": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
@@ -912,12 +922,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_automation_stats": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "download_state_history": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
@@ -925,6 +937,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "render_home_assistant_template": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
@@ -940,17 +953,20 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "list_home_assistant_entities": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_home_assistant_actions": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "call_home_assistant_action": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.HOME_AUTOMATION,
         ToolTag.EXTERNAL_COMM,
@@ -1005,6 +1021,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "list_calendars": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
@@ -1012,6 +1029,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "add_calendar_event": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
@@ -1019,6 +1037,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_calendar_events": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
@@ -1028,6 +1047,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "modify_calendar_event": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
@@ -1035,6 +1055,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "delete_calendar_event": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
@@ -1052,6 +1073,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     # its own choosing. EXTERNAL_COMM is kept so tool policies matching it are
     # unaffected; KNOWN_USER_COMM refines the taint sink class.
     "send_message_to_user": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.EXTERNAL_COMM,
         ToolTag.KNOWN_USER_COMM,
         ToolTag.SENSITIVE_DATA,
@@ -1062,6 +1084,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         deferred_confirmation_eligible=True,
     ),
     "get_attachment_info": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.MEDIA,
@@ -1079,16 +1102,19 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_scripts": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_script": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "delete_script": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
@@ -1099,11 +1125,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNSPECIFIED,
     ),
     "attach_to_response": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.USER_FACING_MEDIA,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "read_text_attachment": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
@@ -1138,6 +1166,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "jq_query": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
@@ -1365,6 +1394,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.EXTERNAL_COMM,
     ),
     "workspace_read": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
@@ -1378,12 +1408,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "workspace_glob": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "workspace_delete": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
@@ -1392,6 +1424,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "workspace_mkdir": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.FILE_SYSTEM,
@@ -1437,6 +1470,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_source_file": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
@@ -1444,6 +1478,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_source_code": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
@@ -1524,11 +1559,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_system_info": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.OUTPUT_TRUSTED,
     ),
     # MQTT tools
     "mqtt_publish": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         # Publishes only to the operator-configured home broker, so runtime
         # taint treats it as a home_local sink rather than arbitrary external
         # messaging (which the external_comm tag would imply).
@@ -1537,12 +1574,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "ucp_add_to_cart": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "ucp_get_cart": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
@@ -1550,6 +1589,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "ucp_transfer_checkout_to_human": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.SHOPPING,
@@ -1566,30 +1606,35 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     # read-only + sensitive tags make a second read after untrusted content a
     # gated sensitive_read_broadening sink.
     "gmail_search": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "gmail_get_message": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "gmail_get_attachment": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "drive_search": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "drive_get_file": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,

@@ -24,6 +24,8 @@ _OUTPUT_SAFETY_TAGS = {
 class ToolTag(StrEnum):
     """Security-relevant tags for tools."""
 
+    # Opt-in: unknown tools remain independent script review boundaries.
+    SCRIPT_DETERMINISTIC = "script_deterministic"
     READ_ONLY = "read_only"
     SENSITIVE_DATA = "sensitive_data"
     STATE_CHANGING = "state_changing"

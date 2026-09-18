@@ -51,6 +51,8 @@ def _taint_execution_context(
     execution_context.processing_service = None
     execution_context.request_confirmation_callback = None
     execution_context.confirmation_ui_managers = None
+    execution_context.prepared_script = None
+    execution_context.script_execution = None
     execution_context.tool_call_review_state = ToolCallReviewTurnState()
     execution_context.tool_call_review_messages = ()
     execution_context.tool_call_review_trigger = None

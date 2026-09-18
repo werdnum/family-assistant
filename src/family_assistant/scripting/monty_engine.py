@@ -382,7 +382,7 @@ class MontyEngine:
         if self.config.enable_time_api:
             self._add_time_api(ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:
-            self._add_llm_api(ext_fn_impls)
+            self._add_llm_api(ext_fn_impls, execution_context)
 
         if execution_context and execution_context.attachment_registry:
             try:
@@ -479,16 +479,17 @@ class MontyEngine:
                 kwargs, execution_context, tool_definition
             )
 
-            original_snapshot = execution_context.taint_policy_snapshot
-            execution_context.taint_policy_snapshot = None
-            try:
-                result = await self.tools_provider.execute_tool(
-                    name=tool_name,
-                    arguments=processed_kwargs,
-                    context=execution_context,
-                )
-            finally:
-                execution_context.taint_policy_snapshot = original_snapshot
+            result = await self.tools_provider.execute_tool(
+                name=tool_name,
+                arguments=processed_kwargs,
+                context=replace(
+                    execution_context,
+                    taint_policy_snapshot=None,
+                    prepared_script=None,
+                    definition_gate_outcome=None,
+                    pending_definition_review=None,
+                ),
+            )
 
             logger.debug(f"Tool '{tool_name}' executed successfully (async)")
             return await self._format_tool_result_async(
@@ -894,12 +895,37 @@ class MontyEngine:
     def _add_llm_api(
         self,
         impls: dict[str, Callable[..., Any]],
+        execution_context: "ToolExecutionContext | None" = None,
     ) -> None:
-        """Add LLM API functions (llm, llm_json)."""
+        """Add model calls that end the enclosing program's inherited approval."""
         from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
 
-        impls["llm"] = llm_call_async
-        impls["llm_json"] = llm_call_json_async
+        def revoke() -> None:
+            if (
+                execution_context is not None
+                and execution_context.script_execution is not None
+            ):
+                execution_context.script_execution.revoke()
+
+        async def llm(
+            prompt: str, system: str | None = None, model: str | None = None
+        ) -> str:
+            revoke()
+            return await llm_call_async(prompt, system=system, model=model)
+
+        async def llm_json(
+            prompt: str,
+            schema: dict[str, object] | None = None,
+            system: str | None = None,
+            model: str | None = None,
+        ) -> object:
+            revoke()
+            return await llm_call_json_async(
+                prompt, schema=schema, system=system, model=model
+            )
+
+        impls["llm"] = llm
+        impls["llm_json"] = llm_json
 
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
         """Build Monty resource limits from config.
