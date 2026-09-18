@@ -38,8 +38,8 @@ from family_assistant.memory.edits import EvidenceScope
 from family_assistant.memory.review_context import MemoryReviewContext
 from family_assistant.memory.transcript import (
     RenderedStretch,
-    default_sender_label,
     render_stretch,
+    sender_labeller,
 )
 from family_assistant.observability.metrics import (
     record_memory_review_outcome,
@@ -84,6 +84,15 @@ TAINT_SKIP_REASON = "external_taint"
 NO_USER_MESSAGES_REASON = "no_user_messages"
 
 
+def _no_configured_name(_user_id: str) -> str | None:
+    """The name source of a deployment that configured none.
+
+    A review still runs, and its transcript names each speaker by the id its
+    rows carry, which is what keeps two speakers in one chat apart.
+    """
+    return None
+
+
 class MemoryReviewResult(StrEnum):
     """How one run of the handler ended."""
 
@@ -110,14 +119,16 @@ def make_memory_review_handler(
     settings: MemoryReviewSettings,
     configured_contributors: Collection[str],
     limits: MemoryLimits,
+    name_for_user_id: Callable[[str], str | None] = _no_configured_name,
     curator_profile_id: str = MEMORY_CURATOR_PROFILE_ID,
     # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
 ) -> Callable[[ToolExecutionContext, dict[str, Any]], Awaitable[None]]:
     """Bind the review to the configuration this process was started with.
 
-    The same split as the sweep's: the settings, the configured contributors
-    and the store bounds are process-level facts that need a restart to change,
-    while the stored enablement and the watermark are read per run.
+    The same split as the sweep's: the settings, the configured contributors,
+    the store bounds and the sender names are process-level facts that need a
+    restart to change, while the stored enablement and the watermark are read
+    per run.
     """
 
     async def handle_memory_review(
@@ -139,6 +150,7 @@ def make_memory_review_handler(
             settings=settings,
             configured_contributors=configured_contributors,
             limits=limits,
+            name_for_user_id=name_for_user_id,
             curator_profile_id=curator_profile_id,
         )
 
@@ -153,6 +165,7 @@ async def run_memory_review(
     settings: MemoryReviewSettings,
     configured_contributors: Collection[str],
     limits: MemoryLimits,
+    name_for_user_id: Callable[[str], str | None] = _no_configured_name,
     curator_profile_id: str = MEMORY_CURATOR_PROFILE_ID,
 ) -> MemoryReviewResult:
     """Review one conversation's next chunk. Returns how it ended."""
@@ -166,6 +179,7 @@ async def run_memory_review(
         settings=settings,
         configured_contributors=configured_contributors,
         limits=limits,
+        name_for_user_id=name_for_user_id,
     )
     if chunk is None:
         return MemoryReviewResult.DEFERRED
@@ -273,6 +287,7 @@ async def _next_chunk(
     settings: MemoryReviewSettings,
     configured_contributors: Collection[str],
     limits: MemoryLimits,
+    name_for_user_id: Callable[[str], str | None],
 ) -> RenderedStretch | None:
     """The stretch this review covers, or None when there is nothing to review."""
     if not settings.enabled or not configured_contributors:
@@ -309,7 +324,7 @@ async def _next_chunk(
         rows,
         budget_chars=limits.review_transcript_max_chars,
         completed_turn_ids=await _completed_turn_ids(db, rows),
-        sender_label=default_sender_label,
+        sender_label=sender_labeller(name_for_user_id),
     )
     return None if chunk.is_empty else chunk
 

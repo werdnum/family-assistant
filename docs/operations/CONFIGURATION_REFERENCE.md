@@ -321,7 +321,8 @@ Use the stable Keycloak/OIDC email as `id` unless you have a stronger local conv
 The optional `label` is the human-friendly display name the assistant uses to address the user (for
 example in the web chat). When a web/OIDC or API-token user has a `label`, the assistant uses it
 instead of a generic placeholder; if it is omitted the assistant falls back to the OIDC display name
-and then the canonical `id`.
+and then the canonical `id`. It is also the name a memory review attributes an entry to — see
+[Who a review says said something](#who-a-review-says-said-something).
 
 When `users` is configured, unknown OIDC users, Telegram users, and required email mappings are
 rejected at the interface boundary. When it is empty, the app keeps the legacy behavior:
@@ -2141,6 +2142,17 @@ memory_config:
   like any other interface; they only do not feed it. Email intake, A2A, delegation subconversations
   and automation-triggered turns are excluded whatever this says, by the profile they run under, by
   their subconversation, or by being application-generated rather than a person speaking.
+
+### Who a review says said something
+
+A memory entry records who said it, and a group chat is one conversation with several speakers, so
+the transcript a review renders names the sender of every user message. A message row stores its
+writer as a user id and nothing more, so the name comes from the top-level
+[`users`](#user-identities) list: the `label` of the canonical user the stored id belongs to. Set a
+`label` for each household member and their messages are attributed by name, on Telegram and the web
+alike; leave it out and the transcript shows the stored id instead, which is less readable but still
+keeps two speakers apart. Names are read from configuration at startup, not from Telegram at review
+time, so a member who changes their Telegram display name keeps the name you configured.
 
 ______________________________________________________________________
 

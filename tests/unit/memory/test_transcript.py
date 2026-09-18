@@ -15,12 +15,12 @@ from family_assistant.memory.transcript import (
     TRUNCATED_TURN_MARKER,
     UNFINISHED_TURN_MARKER,
     RenderedStretch,
-    default_sender_label,
     render_stretch,
+    sender_labeller,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Callable, Collection, Sequence
 
     from family_assistant.storage.types import MessageHistoryRow
 
@@ -75,7 +75,7 @@ def _render(
         rows,
         budget_chars=budget_chars,
         completed_turn_ids=completed,
-        sender_label=default_sender_label,
+        sender_label=sender_labeller(lambda _user_id: None),
     )
 
 
@@ -221,3 +221,47 @@ def test_a_sender_label_falls_back_to_user_when_the_row_names_nobody() -> None:
     rendered = _render([_row("user", "hello", user_id=None, internal_id=7)])
 
     assert rendered.text.startswith("#7 2026-09-17 14:03 User: hello")
+
+
+# ---------------------------------------------------------------------------
+# Naming the sender
+# ---------------------------------------------------------------------------
+
+
+def _named(**names: str) -> Callable[[MessageHistoryRow], str]:
+    return sender_labeller(names.get)
+
+
+def test_each_sender_is_named_from_the_user_id_its_row_carries() -> None:
+    """Attribution in a group chat: two speakers, two names, one transcript."""
+    rendered = render_stretch(
+        [
+            _row("user", "we always take the tram", user_id="alice", internal_id=1),
+            _row("assistant", "Noted."),
+            _row("user", "not on Sundays", user_id="bob", internal_id=3),
+        ],
+        budget_chars=10_000,
+        completed_turn_ids=("turn-1",),
+        sender_label=_named(alice="Alice", bob="Bob"),
+    )
+
+    assert "#1 2026-09-17 14:03 Alice: we always take the tram" in rendered.text
+    assert "#3 2026-09-17 14:03 Bob: not on Sundays" in rendered.text
+
+
+def test_a_sender_with_no_configured_name_is_rendered_under_its_stored_id() -> None:
+    """Honest rather than guessed: an id still keeps two speakers apart."""
+    label = _named(alice="Alice")
+
+    assert label(_row("user", "hello", user_id="9876543")) == "9876543"
+
+
+def test_a_user_row_the_application_wrote_is_never_attributed_to_a_person() -> None:
+    rendered = render_stretch(
+        [_row("user", "the reminder fired", is_internal=True, internal_id=5)],
+        budget_chars=10_000,
+        completed_turn_ids=("turn-1",),
+        sender_label=_named(alice="Alice"),
+    )
+
+    assert "#5 2026-09-17 14:03 System: the reminder fired" in rendered.text

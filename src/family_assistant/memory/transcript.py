@@ -47,6 +47,9 @@ if TYPE_CHECKING:
 UNFINISHED_TURN_MARKER = "[this turn never finished]"
 TRUNCATED_TURN_MARKER = "[this turn was too long to show in full and is cut off here]"
 
+UNNAMED_SENDER = "User"
+"""What a user row with no stored writer is rendered under."""
+
 _ROLE_LABELS = {"assistant": "Assistant", "system": "System"}
 
 
@@ -108,9 +111,10 @@ def render_stretch(
             Supplied rather than derived, because completeness is a fact about
             the whole turn and rows of it may lie before the watermark.
         sender_label: How to name the person who wrote a user row. A hook
-            because the answer differs by interface: milestone 4 fills in
-            Telegram sender names, and until then a row offers a user name or
-            an id.
+            because the name is not on the row: it is resolved from the stored
+            ``user_id`` against configuration the caller holds, and this module
+            stays a pure function of the rows it is given. See
+            :func:`sender_labeller`.
 
     Returns:
         The chunk, empty when the first available turn has not finished and no
@@ -157,14 +161,41 @@ def render_stretch(
     )
 
 
-def default_sender_label(row: MessageHistoryRow) -> str:
-    """Who wrote a user row, from what the row itself offers.
+def sender_labeller(
+    name_for_user_id: Callable[[str], str | None],
+) -> Callable[[MessageHistoryRow], str]:
+    """Name the writer of a user row, from the row and a name source.
 
-    Milestone 1 has no per-interface name resolution: a web row carries the
-    signed-in user's stored id and nothing better, and falling back to "User"
-    is honest where even that is missing.
+    A message row carries the writer's canonical ``user_id`` and nothing else
+    about them -- there is no name column on ``message_history``, and the
+    display name a Telegram update carries is used for the system prompt and
+    then dropped. So the transcript resolves the id, and the honest resolution
+    is the operator's own ``users`` configuration, where each canonical user may
+    carry a ``label``. That makes the label a *process-level* fact, read at
+    startup like the rest of the configuration, rather than a live lookup
+    against Telegram: a review renders rows that may be a day old, and asking
+    Telegram who a member is now would put a network call, and a name that can
+    change under it, inside the rendering.
+
+    Args:
+        name_for_user_id: The name configured for a stored ``user_id``, or None
+            where the deployment has configured none.
+
+    Returns:
+        A label hook for :func:`render_stretch`, falling back deterministically:
+        the configured name, then the stored id, then ``"User"``. Each step is
+        honest about what is known -- an id is not a name, but it distinguishes
+        two speakers in a group chat, which is what attribution needs.
     """
-    return str(row.get("user_id") or "User")
+
+    def label(row: MessageHistoryRow) -> str:
+        user_id = row.get("user_id")
+        if not user_id:
+            return UNNAMED_SENDER
+        stored = str(user_id)
+        return name_for_user_id(stored) or stored
+
+    return label
 
 
 def _empty() -> RenderedStretch:

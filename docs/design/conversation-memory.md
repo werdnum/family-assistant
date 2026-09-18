@@ -405,13 +405,17 @@ Telegram needs no separate mechanism, but three of the rules above exist because
 
 - The watermark and maximum deferral, because a chat id never ends.
 - Per-person attribution, because a group chat is one conversation with several speakers, and the
-  rendered transcript names the sender of each user message. Two known persistence bugs can put the
-  wrong sender on a row: the Telegram batcher joins messages that arrive within its window and
-  persists them under the last sender's identity, and a message that arrives while another member's
-  turn is running is steered into that turn carrying only a display name. Both are bugs in message
-  history independent of memory and are fixed separately; they are not a gate on Telegram
-  contribution, since no deployment currently runs a multi-member Telegram chat and a misattributed
-  bullet is visible and correctable in any case.
+  rendered transcript names the sender of each user message. The name comes from the operator's
+  `users` configuration, keyed on the id the row carries: a row stores its writer as an id and
+  nothing more, and resolving it from configuration read at startup keeps a network call — and a
+  name that can change under the review — out of the rendering. A member with no configured label is
+  rendered under their stored id, which is less readable but still keeps two speakers apart. Two
+  known persistence bugs can put the wrong sender on a row: the Telegram batcher joins messages that
+  arrive within its window and persists them under the last sender's identity, and a message that
+  arrives while another member's turn is running is steered into that turn carrying only a display
+  name. Both are bugs in message history independent of memory and are fixed separately; they are
+  not a gate on Telegram contribution, since no deployment currently runs a multi-member Telegram
+  chat and a misattributed bullet is visible and correctable in any case.
 - A longer idle window than the web, because Telegram conversation is bursty and a household member
   replying twenty minutes later is still the same exchange.
 

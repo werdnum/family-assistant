@@ -66,6 +66,21 @@ def test_resolved_identities_carry_configured_label() -> None:
     assert resolver.get_user_label("andrew@example.com") == "Andrew"
 
 
+def test_label_for_stored_user_id_names_a_row_written_by_either_interface() -> None:
+    """What the memory transcript resolves a message row's writer with.
+
+    A row carries only the stored ``user_id``, which is the canonical id on a
+    web row and may be the numeric Telegram id on a Telegram one; both have to
+    reach the same configured name, and an unconfigured id has to stay unnamed
+    rather than be guessed at.
+    """
+    resolver = UserIdentityResolver(_config_with_user())
+
+    assert resolver.label_for_stored_user_id("andrew@example.com") == "Andrew"
+    assert resolver.label_for_stored_user_id("123456789") == "Andrew"
+    assert resolver.label_for_stored_user_id("999") is None
+
+
 def test_canonicalize_owner_id_maps_aliases_to_canonical_user() -> None:
     resolver = UserIdentityResolver(_config_with_user())
 
