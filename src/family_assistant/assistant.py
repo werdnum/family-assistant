@@ -174,6 +174,7 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
+from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
 from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
@@ -276,6 +277,8 @@ def _build_profile_policy_engine(
     operator_tools_policy: ToolPolicyConfig | None,
     global_tools_policy: ToolPolicyConfig | None = None,
     excluded_global_tools: Sequence[str] | None = None,
+    *,
+    memory_read: bool = False,
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
@@ -287,6 +290,13 @@ def _build_profile_policy_engine(
     layer so they apply to every profile regardless of the profile's own
     ``tools_policy`` (which otherwise replaces the shipped defaults wholesale).
     Operator policy still takes precedence over global rules.
+
+    ``memory_read`` says whether the profile reads the household's memory. A
+    profile that does not cannot write it either, so the memory-writing tools
+    are withheld here rather than only refused when called: a tool that refuses
+    every call it receives is a dead end advertised as a capability, and the
+    model has no way to know it should have used ``add_or_update_note``.
+    Fail-closed, so a caller that does not say leaves them out.
     """
     if profile_tools_policy is None:
         msg = (
@@ -319,6 +329,22 @@ def _build_profile_policy_engine(
                 priority=MAX_POLICY_RULE_PRIORITY,
                 description=(
                     f"Profile '{profile_id}' withholds these globally granted tools."
+                ),
+            )
+        )
+
+    # Same layer, same priority and the same reason for both: a deny declared
+    # here is the only one a profile's own allow -- or a global grant -- cannot
+    # outrank.
+    if not memory_read:
+        synthetic_rules.append(
+            PolicyRule(
+                match=ToolMatcher(names=list(MEMORY_WRITE_TOOL_NAMES)),
+                decision=ToolPolicyDecision.DENY,
+                priority=MAX_POLICY_RULE_PRIORITY,
+                description=(
+                    f"Profile '{profile_id}' does not read the household's memory, "
+                    "so it cannot write it either."
                 ),
             )
         )
@@ -1583,6 +1609,7 @@ class Assistant:
             profile_conf.operator_tools_policy,
             self.config.global_tools_policy,
             profile_conf.excluded_global_tools,
+            memory_read=profile_proc_conf.memory_read,
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
         profile_root_provider = _root_provider_for_profile(

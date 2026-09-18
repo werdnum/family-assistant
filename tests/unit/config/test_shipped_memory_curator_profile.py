@@ -50,6 +50,7 @@ def _effective_tool_names(config: AppConfig, profile: ServiceProfile) -> set[str
         profile.operator_tools_policy,
         config.global_tools_policy,
         profile.excluded_global_tools,
+        memory_read=profile.processing_config.memory_read,
     )
     return {
         descriptor.name

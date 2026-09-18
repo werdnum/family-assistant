@@ -44,6 +44,16 @@ counting the attempts here rather than saying so in the prompt is what makes
 that a bound rather than a request.
 """
 
+MEMORY_WRITE_TOOL_NAMES: tuple[str, ...] = ("propose_memory_edits",)
+"""The tools a profile that does not read the household's memory must not hold.
+
+Writing memory requires reading it -- a profile that cannot see the existing
+entries would be editing blind -- so these are withheld from a profile with
+``memory_read`` off where every profile's tool policy is assembled
+(``_build_profile_policy_engine``). Naming them here keeps the policy layer and
+the refusal below saying the same thing about the same list.
+"""
+
 MEMORY_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",

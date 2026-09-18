@@ -2067,7 +2067,9 @@ so a deployment opts in explicitly.
   visibility: with it on, the `memory` label is added to the profile's effective read grants, so the
   always-loaded core note reaches its prompt and `get_note` opens a topic note; with it off, the
   label is denied even if `visibility_grants` names it, and no memory note reaches the profile
-  through any path.
+  through any path. It also governs writing: a profile that reads no memory must not write any
+  either, so `propose_memory_edits` is withheld from its effective tool set whatever its
+  `tools_policy` grants, and "remember this" is served by `add_or_update_note` as an ordinary note.
 - **memory_contribute** — whether conversations run under the profile are reviewed into memory by
   the background curator.
 

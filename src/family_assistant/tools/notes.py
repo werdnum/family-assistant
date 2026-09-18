@@ -195,10 +195,11 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "add_or_update_note",
             "description": (
                 "Add a new note or update an existing note with the given title. Use this for the user's own notes: "
-                "lists, reference material, documents, anything they asked you to write down as a note. "
-                "For the household's long-term memory — standing preferences, facts about people, decisions, routines, "
-                "and anything you are asked to remember or forget — use `propose_memory_edits` instead, which edits "
-                "memory entry by entry and keeps their evidence. "
+                "lists, reference material, documents, anything they asked you to write down as a note — including "
+                "when someone asks you to remember something and you have no memory tool. "
+                "If `propose_memory_edits` is among your tools, prefer it for the household's long-term memory — "
+                "standing preferences, facts about people, decisions, routines, and anything you are asked to forget — "
+                "because it edits memory entry by entry and keeps each entry's evidence. "
                 "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs. "
                 "Leave `include_in_prompt` at its default `false` unless the note is short, evergreen context that must load every "
                 "turn (see the parameter description). To create a reusable skill instead of a plain note, load the 'Skill Creation' "
