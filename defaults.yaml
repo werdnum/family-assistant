@@ -975,13 +975,16 @@ service_profiles:
       include_aggregated_context: true
       max_iterations: 50
       model_tier: "standard"
-      # Household memory, shipped off. A deployment opts in by setting *both*:
-      # contributing requires reading, and startup rejects the other way round.
-      # Milestone 7 of docs/design/conversation-memory.md flips this default,
-      # once the evaluation (milestone 3) and the user controls (milestone 5)
-      # are there to measure and correct what gets written.
-      memory_read: false
-      memory_contribute: false
+      # Household memory, on. Conversations under this profile are reviewed by
+      # the curator, and what it writes is loaded into this profile's prompt.
+      # The two settings are separate -- contributing requires reading, and
+      # startup rejects the other way round -- so a deployment that wants the
+      # memory it already has, without adding to it, sets memory_contribute
+      # false and leaves memory_read true. Setting both false takes this
+      # profile out of memory entirely; `memory_config.enabled: false` turns
+      # the whole mechanism off for every profile at once.
+      memory_read: true
+      memory_contribute: true
       # Auto is the normal state on the profile users talk to. Under
       # `model_routing.mode: shadow` this records what Auto would have chosen
       # while every turn still runs on `standard`.
@@ -1811,16 +1814,17 @@ service_profiles:
       # edit to model_tiers above.
       model_tier: "deep"
       max_iterations: 100
-      # Household memory, shipped off, opted into by setting *both* (see
-      # default_assistant above). This profile carries the settings rather than
-      # reading only, and flips with the default at milestone 7: a long
-      # investigation is where constraints, rejected options and open decisions
-      # are actually settled, which is most of what memory is for. Only
-      # top-level /complex conversations are reviewed: a delegation into this
-      # profile runs in a subconversation, and subconversations never
-      # contribute, whatever their profile's settings.
-      memory_read: false
-      memory_contribute: false
+      # Household memory, on, as on default_assistant above -- and turned off
+      # the same ways: memory_contribute false to keep reading without adding,
+      # both false to leave memory entirely, or `memory_config.enabled: false`
+      # for the whole mechanism. This profile contributes rather than reading
+      # only because a long investigation is where constraints, rejected
+      # options and open decisions are actually settled, which is most of what
+      # memory is for. Only top-level /complex conversations are reviewed: a
+      # delegation into this profile runs in a subconversation, and
+      # subconversations never contribute, whatever their profile's settings.
+      memory_read: true
+      memory_contribute: true
       prompts:
         system_prompt: |
           You are an advanced reasoning assistant interacting with {user_name}. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment, and you have a much larger tool-call budget than an ordinary turn — use it to keep working a problem rather than stopping at a partial answer.

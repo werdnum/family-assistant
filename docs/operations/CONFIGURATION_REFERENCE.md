@@ -2054,8 +2054,9 @@ edit. See [docs/design/conversation-memory.md](../design/conversation-memory.md)
 
 ### Which profiles read and contribute
 
-Two `processing_config` settings decide a profile's relationship to memory. Both are off by default,
-so a deployment opts in explicitly.
+Two `processing_config` settings decide a profile's relationship to memory. They are on for the two
+household profiles and off for every other profile, which is also the code default for a profile
+that names neither.
 
 ```yaml
 - id: "some_profile"
@@ -2074,16 +2075,19 @@ so a deployment opts in explicitly.
 - **memory_contribute** — whether conversations run under the profile are reviewed into memory by
   the background curator.
 
-`default_assistant` and `complex_tasks` ship with both set to `false` and carry them explicitly, so
-the opt-in is visible where an operator reads rather than inherited from a code default. A
-deployment turns memory on for the household by setting **both** on those profiles: contributing
-requires reading. `complex_tasks` carries the settings rather than reading only, because a long
-investigation is where constraints, rejected options and open decisions actually get settled. The
-setting covers top-level `/complex` conversations only: a delegation into `complex_tasks` runs in a
-subconversation, and subconversations never contribute, whatever the profile's settings — the
-delegating conversation is reviewed instead, and it carries the delegated result. The shipped
-default flips on at milestone 7 of [the design](../design/conversation-memory.md), once the
-evaluation and the user-facing controls exist to measure and correct what gets written.
+`default_assistant` and `complex_tasks` ship with both set to `true` and carry them explicitly, so
+the household's memory behaviour is visible where an operator reads rather than inherited from a
+code default. To opt out, set `memory_contribute: false` on a profile to keep the memory it already
+has without adding to it, set both to `false` to take it out of memory entirely, or set
+`memory_config.enabled: false` to turn the whole mechanism off for every profile at once. Setting
+`memory_read: false` while leaving contribution on is a startup error: contributing requires
+reading.
+
+`complex_tasks` contributes rather than reading only, because a long investigation is where
+constraints, rejected options and open decisions actually get settled. The setting covers top-level
+`/complex` conversations only: a delegation into `complex_tasks` runs in a subconversation, and
+subconversations never contribute, whatever the profile's settings — the delegating conversation is
+reviewed instead, and it carries the delegated result.
 
 The `memory_curator` profile is the exception and is left alone: it reads memory because curating it
 is its whole job, and does not contribute, since its own subconversation is never reviewed.
@@ -2098,10 +2102,13 @@ Contributing without reading is a startup error. Contribution feeds a profile's 
 curator, which then writes entries the profile itself cannot see, so it could neither honour what it
 taught nor be corrected by it.
 
-Turning contribution on for a profile records the moment, and reviews consider only conversation
-from then on — turning the feature on does not spend a burst of model calls on months of old
-conversation. Turning it off and on again records a new moment, which discards anything said in
-between that had not yet been reviewed. Reviewing older history is a separate, explicit backfill.
+A profile's first startup with contribution on records the moment, and reviews consider only
+conversation from then on. For a deployment upgrading into these defaults this is the plain answer
+to "what happens to everything we have already said": nothing. The existing history is never
+reviewed and never curated; memory starts from the first conversation after that startup, so the
+upgrade costs no burst of model calls over months of old conversation. Turning contribution off and
+on again records a new moment, which discards anything said in between that had not yet been
+reviewed. Reviewing older history is a separate, explicit backfill.
 
 ### When conversations are reviewed
 
@@ -2121,10 +2128,15 @@ memory_config:
   contributing_interfaces: ["telegram", "web"]
 ```
 
-- **enabled** — the master switch for the whole mechanism. With it off nothing is swept and nothing
-  is reviewed, whatever any profile is configured to do. The sweep is only scheduled at all when
-  this is on **and** at least one profile contributes, so the shipped configuration schedules
-  nothing.
+- **enabled** — the master switch for the whole mechanism, on by default. With it off nothing is
+  swept and nothing is reviewed, and no profile reads or writes memory either, whatever any profile
+  is configured to do: a profile that still carries `memory_read: true` gets no memory note in its
+  context, is denied the `memory` label wherever it reads notes, and does not hold
+  `propose_memory_edits`. It does not touch the enablement moments a contributing profile has
+  already recorded, so turning it back on resumes from them and conversation held while it was off
+  is reviewed then; `memory_contribute: false` is the setting that discards what was not reviewed.
+  The sweep is only scheduled at all when this is on **and** at least one profile contributes, so a
+  deployment that turns either off schedules no recurring query that could only return nothing.
 - **sweep_interval_minutes** — how often the predicate is evaluated. Freshness is quantised to this,
   which is negligible against the idle windows.
 - **idle_window_minutes** — per interface, how long a conversation must have been quiet before it is

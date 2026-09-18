@@ -1325,11 +1325,7 @@ class Assistant:
             if profile_conf.visibility_grants
             else None
         )
-        profile_read_policy = NoteReadPolicy.for_profile(
-            visibility_grants=profile_grants,
-            required_labels=profile_proc_conf.required_note_read_labels,
-            memory_read=profile_proc_conf.memory_read,
-        )
+        profile_read_policy = self._profile_note_read_policy(profile_conf)
         context_providers = self._build_profile_context_providers(
             profile_conf, note_registry, profile_read_policy
         )
@@ -1363,7 +1359,7 @@ class Assistant:
                 profile_proc_conf.allowed_note_visibility_labels
             ),
             allow_wake_llm=profile_proc_conf.allow_wake_llm,
-            memory_read=profile_proc_conf.memory_read,
+            memory_read=self.config.effective_memory_read(profile_conf),
             include_aggregated_context=(profile_proc_conf.include_aggregated_context),
             note_registry=note_registry,
             greeting_wav_path=profile_proc_conf.greeting_wav_path,
@@ -1458,6 +1454,23 @@ class Assistant:
                 "Failed to create camera backend for profile '%s'", profile_conf.id
             )
         return None
+
+    def _profile_note_read_policy(self, profile_conf: ServiceProfile) -> NoteReadPolicy:
+        """The note-read confinement a profile's context and tools run under.
+
+        One method rather than a derivation at each call site, because this is
+        where the memory master switch becomes "no memory note reaches this
+        profile through any path".
+        """
+        return NoteReadPolicy.for_profile(
+            visibility_grants=(
+                set(profile_conf.visibility_grants)
+                if profile_conf.visibility_grants
+                else None
+            ),
+            required_labels=profile_conf.processing_config.required_note_read_labels,
+            memory_read=self.config.effective_memory_read(profile_conf),
+        )
 
     def _build_profile_context_providers(
         self,
@@ -1609,7 +1622,7 @@ class Assistant:
             profile_conf.operator_tools_policy,
             self.config.global_tools_policy,
             profile_conf.excluded_global_tools,
-            memory_read=profile_proc_conf.memory_read,
+            memory_read=self.config.effective_memory_read(profile_conf),
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
         profile_root_provider = _root_provider_for_profile(
@@ -2178,17 +2191,7 @@ class Assistant:
             self._monitor_task_worker_health()
         )
 
-        # Start event processor if initialized
-        if self.event_processor:
-            self.event_processor_task = asyncio.create_task(
-                self.event_processor.start()
-            )
-            logger.info("Event processor started")
-
-            # Create system cleanup task
-            await self._setup_system_tasks()
-
-        await self._record_memory_enablement()
+        await self._run_startup_tasks()
 
         # Reconcile stale worker tasks asynchronously
         asyncio.create_task(self._reconcile_worker_tasks())
@@ -2202,6 +2205,26 @@ class Assistant:
             logger.info("Web server stopped.")
 
         # Final cleanup will be in stop_services, called from main's finally block.
+
+    async def _run_startup_tasks(self) -> None:
+        """Start the event processor and seed the work that startup schedules.
+
+        Called once the task worker pool is running, which is what every task
+        seeded here depends on. The event processor is optional -- a deployment
+        can turn the event system off -- so only the tasks that belong to it
+        sit behind that guard; the memory steps do not.
+        """
+        if self.event_processor:
+            self.event_processor_task = asyncio.create_task(
+                self.event_processor.start()
+            )
+            logger.info("Event processor started")
+
+            # Create system cleanup task
+            await self._setup_system_tasks()
+
+        await self._record_memory_enablement()
+        await self._seed_memory_review_sweep()
 
     def initiate_shutdown(self, signal_name: str) -> None:
         """Sets the shutdown event to begin graceful shutdown."""
@@ -2245,7 +2268,25 @@ class Assistant:
             logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
 
     def _memory_contributing_profiles(self) -> set[str]:
-        """The profiles an operator has configured to feed the memory curator."""
+        """The profiles that actually feed the memory curator.
+
+        Through the effective setting, so the master switch empties this set
+        the same way it takes memory out of every profile's context and tools.
+        """
+        return {
+            profile.id
+            for profile in self.config.service_profiles
+            if self.config.effective_memory_contribute(profile)
+        }
+
+    def _configured_memory_contributing_profiles(self) -> set[str]:
+        """The profiles an operator has configured to feed the memory curator.
+
+        The raw setting, master switch aside: only the enablement boundary uses
+        it, because the switch pauses the mechanism rather than ending a
+        profile's contribution, and a boundary discarded while it was off could
+        not be restored by turning it back on.
+        """
         return {
             profile.id
             for profile in self.config.service_profiles
@@ -2262,27 +2303,41 @@ class Assistant:
         calls on months of old conversation. Run at startup because that is
         when the configuration is read; a profile already recorded as
         contributing keeps the moment it has, so a restart does not re-stamp
-        the boundary and discard everything said since.
+        the boundary and discard everything said since. This is the one place
+        that reads the configured setting rather than the effective one:
+        ``memory_config.enabled: false`` pauses the mechanism, and a deployment
+        that turns it back on resumes from the moments it already had.
         """
         assert self.database_engine is not None, (
             "Database engine must be initialized before recording memory enablement"
         )
         await Database(self.database_engine).memory_review.record_enablement(
-            profile_ids_contributing=self._memory_contributing_profiles(),
+            profile_ids_contributing=self._configured_memory_contributing_profiles(),
             now=datetime.now(UTC),
         )
 
-    async def _seed_memory_review_sweep(self, db_ctx: Database) -> None:
+    async def _seed_memory_review_sweep(self) -> None:
         """Schedule the recurring review sweep, when there is anything to sweep.
 
         Two conditions, and both are deliberate. The master switch is what a
         deployment turns the whole mechanism off with; the contributor check is
-        what keeps the shipped configuration -- contribution off everywhere --
-        from running a query every few minutes that can only ever return
-        nothing. A sweep seeded by an earlier configuration and left behind by a
-        later one is harmless: the handler reads the same two conditions and
-        returns immediately.
+        what keeps a deployment that has turned contribution off on every
+        profile from running a query every few minutes that can only ever
+        return nothing. A sweep seeded by an earlier configuration and left
+        behind by a later one is harmless: the handler reads the same two
+        conditions and returns immediately.
+
+        Nothing else gates it. The sweep is run by the task worker pool, which
+        `run` always starts -- there is no configuration that leaves a
+        deployment without one -- so this is seeded from startup directly
+        rather than from `_setup_system_tasks`, which only runs when the event
+        system is enabled and would otherwise leave memory fully on with no
+        curator ever running.
         """
+        assert self.database_engine is not None, (
+            "Database engine must be initialized before seeding the review sweep"
+        )
+        db_ctx = Database(self.database_engine)
         settings = self.config.memory_config.to_review_settings()
         contributors = self._memory_contributing_profiles()
         if not settings.enabled or not contributors:
@@ -2475,8 +2530,6 @@ class Assistant:
                 # The enqueue upserts, so a failure here is a real one, and it
                 # leaves the reaper with no caller until the next restart.
                 logger.exception("Attachment cleanup task setup failed")
-
-            await self._seed_memory_review_sweep(db_ctx)
 
             if self.embedding_generator is None:
                 logger.info(
