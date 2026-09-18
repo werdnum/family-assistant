@@ -342,6 +342,25 @@ supervision requirements based on input trust level:
    `taint_sink_class: "sandbox_network"` under `taint_policy.mode: "enforce"` is what keeps
    untrusted content from directing an agent holding real credentials. See
    [docs/design/antigravity-environment-and-credentials.md](docs/design/antigravity-environment-and-credentials.md).
+8. **Memory Curator Profile [BC]**: reviews a settled conversation and proposes edits to the
+   household's memory notes. It reads sensitive data and writes state, so **both are confined to
+   memory-labelled notes** and it reaches nothing else of the household's. Confinement is
+   configuration, not code: a **read policy** (`required_note_read_labels: [memory]`) applied at
+   every boundary that resolves notes or skills for a profile — grants alone do not confine, since
+   an unlabelled note is a subset of any grant set — and the matching **write floor**
+   (`required_note_visibility_labels: [memory]`), which makes the notes repository refuse a write to
+   anything else. It holds `get_note` and `propose_memory_edits` and nothing more: no
+   `search_documents` (the widest path from the indexed corpus into a turn with no human in it), no
+   `delete_note` (deletion is not a write under the confinement policy, so it would remove any note
+   the curator can see; removals are edits in the proposed list), no messaging, calendar,
+   scheduling, egress or delegation, and the three globally granted tools withheld through
+   `excluded_global_tools` as `media_analyst` and `coder` do. Every context provider but `notes` is
+   excluded, because calendar, contacts, weather and home state do not come from the notes table and
+   no note-read confinement touches them. **It is run by the memory review task, not delegated to**:
+   the task hands it a rendered transcript bound to an evidence scope and a store revision, so an
+   arbitrary inbound request would carry neither (`allowed_delegation_sources: []`,
+   `delegation_security_level: blocked`, `allow_wake_llm: false`, no slash command). See
+   [docs/design/conversation-memory.md](docs/design/conversation-memory.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.

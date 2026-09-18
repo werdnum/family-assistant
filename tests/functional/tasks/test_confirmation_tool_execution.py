@@ -55,6 +55,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
@@ -2188,7 +2189,9 @@ async def test_durable_script_confirmation_rejects_stale_named_dependency(
     )
 
     assert (
-        await db.notes.get_by_title("Durable child effect", visibility_grants=None)
+        await db.notes.get_by_title(
+            "Durable child effect", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         is None
     )
     assert len(chat_interface.messages) == 1
@@ -2245,7 +2248,9 @@ async def test_old_script_confirmation_without_bindings_rejects_current_child(
     )
 
     assert (
-        await db.notes.get_by_title("Old approval effect", visibility_grants=None)
+        await db.notes.get_by_title(
+            "Old approval effect", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         is None
     )
     assert len(chat_interface.messages) == 1

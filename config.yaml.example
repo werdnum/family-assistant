@@ -105,6 +105,46 @@
 #         decision: "confirm"
 #         priority: 90
 
+# --- Conversation Memory ---
+# The household memory notes, and the background curator that keeps them. Off
+# out of the box: no shipped profile contributes, so nothing is reviewed and
+# nothing is written until a deployment opts in here.
+#
+# Opting in means setting BOTH settings on the profiles that should take part.
+# memory_read lets a profile see memory; memory_contribute feeds its
+# conversations to the curator. Contributing without reading is a startup error.
+# Turning contribution on records the moment, and only conversation from then on
+# is reviewed.
+# service_profiles:
+#   - id: "default_assistant"
+#     processing_config:
+#       memory_read: true
+#       memory_contribute: true
+#   - id: "complex_tasks"
+#     processing_config:
+#       memory_read: true
+#       memory_contribute: true   # top-level /complex conversations only; a delegation
+#                                 # into the profile is a subconversation, never reviewed
+#
+# The store's bounds and the review cadence are deployment-wide. The values
+# below are the shipped defaults; override only what you need.
+# memory_config:
+#   enabled: true
+#   core_note_max_chars: 6000
+#   topic_note_max_chars: 12000
+#   review_input_max_chars: 24000
+#   max_edits_per_review: 12
+#   core_note_title: "Household Memory"
+#   sweep_interval_minutes: 5
+#   idle_window_minutes:
+#     web: 30
+#     telegram: 90
+#   max_deferral_hours: 24
+#   contributing_interfaces: ["telegram", "web"]
+#
+# See docs/operations/CONFIGURATION_REFERENCE.md, "Conversation Memory", for
+# every field and what it bounds.
+
 # --- Service Profiles ---
 # Profiles defined here are merged with defaults.yaml by ID:
 #   - New IDs are added alongside the built-in profiles.

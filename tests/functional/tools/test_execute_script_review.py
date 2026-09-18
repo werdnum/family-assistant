@@ -49,6 +49,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewVerdict,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.scripts import scripts_table
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
@@ -419,7 +420,7 @@ async def test_approved_program_covers_new_taint_and_ordinary_effects_once(
     await _execute_script(provider, context, script=source)
 
     note = await context.db_context.notes.get_by_title(
-        "Script review", visibility_grants=None
+        "Script review", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None
     assert note.content == "runtime-derived"
@@ -1358,7 +1359,7 @@ async def test_static_named_descendants_share_outer_review(
     await _execute_script(provider, context, script='execute_script(name="child")')
 
     note = await context.db_context.notes.get_by_title(
-        "Closure effect", visibility_grants=None
+        "Closure effect", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None
     assert note.content == "executed"
@@ -1428,13 +1429,13 @@ async def test_static_dependency_changed_during_outer_review_cannot_run(
 
     assert (
         await context.db_context.notes.get_by_title(
-            "Stale effect", visibility_grants=None
+            "Stale effect", read_policy=NoteReadPolicy.UNRESTRICTED
         )
         is None
     )
     assert (
         await context.db_context.notes.get_by_title(
-            "Child entry effect", visibility_grants=None
+            "Child entry effect", read_policy=NoteReadPolicy.UNRESTRICTED
         )
         is None
     )
@@ -1466,7 +1467,7 @@ async def test_missing_static_dependency_fails_before_parent_effects(
 
     assert (
         await context.db_context.notes.get_by_title(
-            "Parent effect", visibility_grants=None
+            "Parent effect", read_policy=NoteReadPolicy.UNRESTRICTED
         )
         is None
     )
@@ -1511,7 +1512,7 @@ async def test_static_child_hard_deny_survives_parent_approval(
 
     assert (
         await context.db_context.notes.get_by_title(
-            "Denied effect", visibility_grants=None
+            "Denied effect", read_policy=NoteReadPolicy.UNRESTRICTED
         )
         is None
     )
@@ -1552,7 +1553,7 @@ async def test_dynamic_named_child_requires_independent_review(
     )
 
     note = await context.db_context.notes.get_by_title(
-        "Dynamic effect", visibility_grants=None
+        "Dynamic effect", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None
     assert note.content == "executed"

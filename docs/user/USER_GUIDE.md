@@ -21,6 +21,7 @@ just the part you need.
 | Guide                                                | Covers                                                                   |
 | ---------------------------------------------------- | ------------------------------------------------------------------------ |
 | [notes-and-skills.md](notes-and-skills.md)           | Saving facts as notes, and teaching the assistant reusable skills        |
+| [memory.md](memory.md)                               | What it remembers about your household on its own, and how to forget     |
 | [calendar.md](calendar.md)                           | Adding, finding, changing, and deleting calendar events, incl. Google    |
 | [scheduling.md](scheduling.md)                       | Reminders, follow-ups, one-off callbacks, and recurring schedules        |
 | [documents-and-search.md](documents-and-search.md)   | Indexing files and web pages, and searching everything you've stored     |
