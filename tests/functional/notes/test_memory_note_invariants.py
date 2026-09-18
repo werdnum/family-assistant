@@ -206,6 +206,68 @@ async def test_renaming_the_core_note_keeps_it_the_core(
         await _write_topic(db, "Routines", "- bins", include_in_prompt=True)
 
 
+@pytest.mark.asyncio
+async def test_a_note_taking_the_renamed_core_title_is_a_topic_note(
+    db_engine: AsyncEngine,
+) -> None:
+    """The configured title identifies the core note only until it has an id.
+
+    A rename leaves the configured title free, and the title is what a writer
+    controls: if it still meant "the core note", anyone could have a second
+    always-loaded memory note by naming one after the shipped default.
+    """
+    db = _db(db_engine)
+    await _write_topic(db, "Sam", "- likes trams")
+    core_id = await db.memory_store.get_core_note_id()
+    await db.notes.rename_and_update(
+        CORE_TITLE,
+        "Our Household",
+        "- small",
+        True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+
+    with pytest.raises(MemoryWriteError, match="Only the core memory note"):
+        await _write_topic(db, CORE_TITLE, "- mine", include_in_prompt=True)
+
+    await _write_topic(db, CORE_TITLE, "- mine")
+
+    impostor = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
+    assert impostor is not None
+    assert impostor.include_in_prompt is False
+    assert await db.memory_store.get_core_note_id() == core_id
+
+
+@pytest.mark.asyncio
+async def test_exactly_one_memory_note_is_always_loaded_after_a_rename(
+    db_engine: AsyncEngine,
+) -> None:
+    """The invariant the previous test is about, stated over the whole store."""
+    db = _db(db_engine)
+    await _write_topic(db, "Sam", "- likes trams")
+    await db.notes.rename_and_update(
+        CORE_TITLE,
+        "Our Household",
+        "- small",
+        True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await _write_topic(db, CORE_TITLE, "- mine")
+
+    async with db_engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                select(notes_table.c.title).where(
+                    notes_table.c.include_in_prompt.is_(True)
+                )
+            )
+        ).fetchall()
+
+    assert [row.title for row in rows] == ["Our Household"]
+
+
 # ---------------------------------------------------------------------------
 # Caps
 # ---------------------------------------------------------------------------

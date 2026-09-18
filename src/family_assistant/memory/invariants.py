@@ -23,6 +23,7 @@ The invariants, for a note carrying the ``memory`` visibility label:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -39,6 +40,21 @@ if TYPE_CHECKING:
     from family_assistant.storage.database import DatabaseTransaction
 
 MEMORY_LABEL = "memory"
+
+
+@dataclass(frozen=True)
+class CoreNote:
+    """The core memory note this write is being held against.
+
+    ``bootstrapped`` says the note did not exist until this call created it,
+    which is the only situation in which the configured title identifies the
+    core note. Afterwards the id is the only identity the core note has: a
+    person may rename it, and a note that takes the vacated title is an
+    ordinary topic note.
+    """
+
+    id: int
+    bootstrapped: bool
 
 
 class MemoryWriteError(Exception):
@@ -103,12 +119,12 @@ async def enforce_memory_invariants(
     """
     _check_provenance(provenance_metadata, title=title)
 
-    core_note_id = await ensure_core_note(txn, limits=limits, now=now)
+    core_note = await ensure_core_note(txn, limits=limits, now=now)
     writing_core = _writes_core_note(
         limits=limits,
         title=title,
         existing_note_id=existing_note_id,
-        core_note_id=core_note_id,
+        core_note=core_note,
     )
 
     if MEMORY_LABEL not in resolved_labels:
@@ -159,8 +175,8 @@ async def ensure_core_note(
     *,
     limits: MemoryLimits,
     now: datetime,
-) -> int:
-    """Return the core memory note's id, creating the note if there is none.
+) -> CoreNote:
+    """Return the core memory note, creating it if there is none.
 
     The core note is bootstrapped empty, always-loaded and memory-labelled, on
     the first memory write, so the store is never in the shape "some memory
@@ -173,7 +189,7 @@ async def ensure_core_note(
     """
     core_note_id = await txn.memory_store.get_core_note_id()
     if core_note_id is not None:
-        return core_note_id
+        return CoreNote(id=core_note_id, bootstrapped=False)
 
     existing = await txn.fetch_one(
         sa.select(notes_table.c.id, notes_table.c.visibility_labels).where(
@@ -190,7 +206,7 @@ async def ensure_core_note(
                 "keeping household memory."
             )
         await txn.memory_store.set_core_note_id(existing["id"])
-        return int(existing["id"])
+        return CoreNote(id=int(existing["id"]), bootstrapped=True)
 
     result = await txn.execute(
         sa.insert(notes_table).values(
@@ -217,7 +233,7 @@ async def ensure_core_note(
             "Could not create the core memory note; the memory write was refused."
         )
     await txn.memory_store.set_core_note_id(int(new_id))
-    return int(new_id)
+    return CoreNote(id=int(new_id), bootstrapped=True)
 
 
 def _writes_core_note(
@@ -225,18 +241,20 @@ def _writes_core_note(
     limits: MemoryLimits,
     title: str,
     existing_note_id: int | None,
-    core_note_id: int,
+    core_note: CoreNote,
 ) -> bool:
     """Whether this write targets the core note.
 
-    By id, so that renaming the core note keeps it the core note. The title
-    comparison covers the one case where the id is not yet known: the write
-    that created the core note is the same write ``ensure_core_note`` just
-    bootstrapped.
+    By id, so that renaming the core note keeps it the core note -- and so
+    that a note created later under the vacated title does not become a second
+    always-loaded one. The title comparison covers the one case where the id
+    cannot be known: the write that creates the core note is the same write
+    ``ensure_core_note`` just bootstrapped it for, so the row it would update
+    did not exist when the caller looked for it.
     """
     if existing_note_id is not None:
-        return existing_note_id == core_note_id
-    return title == limits.core_note_title
+        return existing_note_id == core_note.id
+    return core_note.bootstrapped and title == limits.core_note_title
 
 
 def _check_provenance(
