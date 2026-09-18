@@ -81,10 +81,19 @@ person rather than as the App, which gives up precisely the scoping that
 [judge-gated-engineer-side-effects.md](judge-gated-engineer-side-effects.md) chose an installation
 token for. Trading the blast radius for someone else's refresh loop is the wrong side of that trade.
 
-So the App keeps minting, and we keep rotating. `bearer_token` is the type; its `header_name` and
-`prefix` cover the `scheme` split the previous design already needed — REST takes `Bearer <token>`,
-while git-over-HTTPS takes `Basic base64("x-access-token:<token>")`, which is a prefix and a value
-like any other.
+So the App keeps minting, and we keep rotating. `bearer_token` is the type, and the `scheme` split
+the previous design already needed — REST takes `Bearer <token>`, git-over-HTTPS takes
+`Basic base64("x-access-token:<token>")` — survives it, but not for free. `prefix` prepends text to
+the stored value; it cannot encode it. A single credential holding the raw token would therefore
+render `Basic ghs_...` for the git rule, which is a 401.
+
+**One mint, one stored credential per scheme.** A run's `github_app` credentials are minted once and
+stored as separate ids: the bearer rule holds the raw token, the basic rule holds
+`base64("x-access-token:<token>")` under `prefix: "Basic"`. The encoding stays ours, as it is today;
+what moves is only where the encoded value lands. Rotation writes every scheme's id from the same
+mint, so the two cannot drift apart — a rotation that updated one and not the other would leave git
+and the REST API authenticating as tokens of different ages, which is the kind of partial success
+that reads as an agent being confused.
 
 ### Rule of Two
 
