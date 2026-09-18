@@ -105,7 +105,6 @@ exemptions:
       - src/family_assistant/web/routers/notes_api.py
       - src/family_assistant/web/routers/vector_search_api.py
       - src/family_assistant/indexing/notes_indexer.py
-      - src/family_assistant/memory/apply.py
       - src/family_assistant/tools/confirmation.py
       - .ast-grep/tests/conformance/no-unrestricted-note-read-policy-positive.py
       - test_*.py
@@ -120,9 +119,8 @@ exemptions:
       confinement for the same reason, and vector_search_api.py is the same UI's
       document search. notes_indexer.py indexes a note by id for every future
       reader; per-reader filtering happens at search time, in the vector store,
-      which is where a profile's read policy is applied to indexed content. memory/apply.py must see a target memory note whatever its
-      labels in order to validate it, and its own write policy carries the
-      `memory` floor. confirmation.py's existence lookup mirrors the repository's
+      which is where a profile's read policy is applied to indexed content.
+      confirmation.py's existence lookup mirrors the repository's
       unconditional one so the approver is shown the same preflight the write
       will run.
 

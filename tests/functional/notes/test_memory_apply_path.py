@@ -94,12 +94,38 @@ def _actor() -> MemoryActor:
     )
 
 
+def _unconfined_read_policy() -> NoteReadPolicy:
+    """The read policy of a profile with no grants configured that reads memory."""
+    return NoteReadPolicy.for_profile(
+        visibility_grants=None, required_labels=None, memory_read=True
+    )
+
+
+def _curator_read_policy() -> NoteReadPolicy:
+    """The shipped `memory_curator` read confinement: granted and floored on `memory`."""
+    return NoteReadPolicy.for_profile(
+        visibility_grants=["memory"], required_labels=["memory"], memory_read=True
+    )
+
+
+def _curator_write_policy() -> NoteWritePolicy:
+    """The shipped `memory_curator` write confinement."""
+    return NoteWritePolicy(
+        visibility_grants={"memory"},
+        default_labels=[MEMORY_LABEL],
+        required_labels=[MEMORY_LABEL],
+        allowed_labels=None,
+    )
+
+
 async def _apply(
     db: Database,
     edits: Sequence[MemoryEdit],
     *,
     expected_revision: int | None = None,
     evidence_scope: EvidenceScope | None = None,
+    read_policy: NoteReadPolicy | None = None,
+    write_policy: NoteWritePolicy | None = None,
     # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
     provenance_metadata: dict[str, object] | None = None,
     after_apply: Callable[[DatabaseTransaction], Awaitable[None]] | None = None,
@@ -112,6 +138,8 @@ async def _apply(
     return await apply_memory_edits_atomically(
         db,
         edits,
+        read_policy=read_policy or _unconfined_read_policy(),
+        write_policy=write_policy or NoteWritePolicy.UNCONSTRAINED,
         evidence_scope=evidence_scope or _scope(),
         expected_revision=revision,
         actor=_actor(),
@@ -610,7 +638,7 @@ async def test_a_target_note_that_is_not_memory_is_refused(
     )
 
     assert outcome.applied is False
-    assert "not part of memory" in outcome.rejections[0].reason
+    assert "not a memory note you can edit" in outcome.rejections[0].reason
     assert await _entries(db, "Shopping") == "- milk"
 
 
@@ -1201,3 +1229,159 @@ async def test_the_tool_refuses_a_malformed_proposal(db_engine: AsyncEngine) -> 
         await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# The caller's own confinement
+# ---------------------------------------------------------------------------
+
+HIDDEN_ENTRY = "Alice's counselling is on Tuesdays (Alice, 2026-09-10)."
+
+
+async def _seed_hidden_memory_note(db: Database) -> None:
+    """A memory note labelled beyond the curator's grants, so it hides from it."""
+    await db.notes.add_or_update(
+        "Private",
+        f"- {HIDDEN_ENTRY}",
+        False,
+        visibility_labels=[MEMORY_LABEL, "private"],
+        # Admin surface equivalent: the note is seeded, not written by a profile.
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_memory_note_the_caller_cannot_see_is_not_quoted_back(
+    db_engine: AsyncEngine,
+) -> None:
+    """A target_text miss must not become a read of a note get_note hides."""
+    db = _db(db_engine)
+    ids = await _seed_turn(db, count=1)
+    await _seed_hidden_memory_note(db)
+
+    outcome = await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.REMOVE,
+                note_title="Private",
+                target_text="something the writer never read",
+                message_ids=[ids[0]],
+            )
+        ],
+        read_policy=_curator_read_policy(),
+        write_policy=_curator_write_policy(),
+    )
+
+    assert outcome.applied is False
+    reason = outcome.rejections[0].reason
+    assert "not a memory note you can edit" in reason
+    assert HIDDEN_ENTRY not in reason
+    assert "counselling" not in reason
+
+
+@pytest.mark.asyncio
+async def test_an_entry_of_a_note_the_caller_cannot_see_is_not_removed(
+    db_engine: AsyncEngine,
+) -> None:
+    """The other half: quoting the entry exactly must not remove it either."""
+    db = _db(db_engine)
+    ids = await _seed_turn(db, count=1)
+    await _seed_hidden_memory_note(db)
+
+    outcome = await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.REMOVE,
+                note_title="Private",
+                target_text=HIDDEN_ENTRY,
+                message_ids=[ids[0]],
+            )
+        ],
+        read_policy=_curator_read_policy(),
+        write_policy=_curator_write_policy(),
+    )
+
+    assert outcome.applied is False
+    assert "not a memory note you can edit" in outcome.rejections[0].reason
+    assert await _entries(db, "Private") == f"- {HIDDEN_ENTRY}"
+
+
+@pytest.mark.asyncio
+async def test_a_move_destination_the_caller_cannot_see_is_refused(
+    db_engine: AsyncEngine,
+) -> None:
+    """A destination is resolved under the same read policy as a target."""
+    db = _db(db_engine)
+    ids = await _seed_turn(db, count=1)
+    await _seed_hidden_memory_note(db)
+    await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Sam",
+                entry="Sam prefers the tram.",
+                message_ids=[ids[0]],
+            )
+        ],
+        read_policy=_curator_read_policy(),
+        write_policy=_curator_write_policy(),
+    )
+
+    outcome = await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.MOVE,
+                note_title="Sam",
+                target_text=f"Sam prefers the tram. (refs: #{ids[0]})",
+                destination_note_title="Private",
+            )
+        ],
+        read_policy=_curator_read_policy(),
+        write_policy=_curator_write_policy(),
+    )
+
+    assert outcome.applied is False
+    assert "not a memory note you can edit" in outcome.rejections[0].reason
+    assert await _entries(db, "Private") == f"- {HIDDEN_ENTRY}"
+    assert "Sam prefers the tram." in await _entries(db, "Sam")
+
+
+@pytest.mark.asyncio
+async def test_the_confined_caller_still_edits_the_memory_notes_it_reads(
+    db_engine: AsyncEngine,
+) -> None:
+    """The curator's own grants still reach the core note and its topic notes."""
+    db = _db(db_engine)
+    ids = await _seed_turn(db, count=1)
+    await _seed_hidden_memory_note(db)
+
+    outcome = await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title=CORE_TITLE,
+                entry="The household eats at 6pm (Alice, 2026-09-17).",
+                message_ids=[ids[0]],
+            ),
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Sam",
+                entry="Sam prefers the tram (Alice, 2026-09-17).",
+                message_ids=[ids[0]],
+            ),
+        ],
+        read_policy=_curator_read_policy(),
+        write_policy=_curator_write_policy(),
+    )
+
+    assert outcome.applied is True
+    assert "The household eats at 6pm" in await _entries(db, CORE_TITLE)
+    assert "Sam prefers the tram" in await _entries(db, "Sam")
+    sam = await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+    assert sam is not None
+    assert sam.visibility_labels == [MEMORY_LABEL]

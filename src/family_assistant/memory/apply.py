@@ -30,6 +30,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NoReturn
 
+import sqlalchemy as sa
+
 from family_assistant.memory.edits import CITING_OPS, MemoryEdit, MemoryEditOp
 from family_assistant.memory.index import strip_topic_index
 from family_assistant.memory.invariants import (
@@ -38,8 +40,8 @@ from family_assistant.memory.invariants import (
     MemoryWriteError,
 )
 from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import (
-    NoteReadPolicy,
     NoteWritePolicy,
     NoteWritePolicyError,
 )
@@ -48,26 +50,54 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
     from datetime import datetime
 
-    import sqlalchemy as sa
-
     from family_assistant.memory.actor import MemoryActor
     from family_assistant.memory.edits import EvidenceScope
     from family_assistant.storage.database import Database, DatabaseTransaction
+    from family_assistant.storage.repositories.notes import NoteReadPolicy
 
-MEMORY_APPLY_WRITE_POLICY = NoteWritePolicy(
-    visibility_grants=None,
-    default_labels=[MEMORY_LABEL],
-    required_labels=[MEMORY_LABEL],
-    allowed_labels=None,
-)
-"""The confinement every note write from this module runs under.
 
-The floor creates a new target as a memory note and makes the repository refuse
-an existing note that is not one, so "every target note carries the ``memory``
-label" is held where the write happens rather than only in the preflight below.
-No ceiling: a deployment may add its own default labels to memory notes, and
-this path preserves whatever an existing note already carries.
-"""
+def memory_write_policy(caller: NoteWritePolicy) -> NoteWritePolicy:
+    """The caller's own note confinement with the ``memory`` floor added.
+
+    The apply path writes as the profile that called it, not as a privileged
+    memory writer: whatever the caller may not overwrite through
+    ``add_or_update_note`` it may not overwrite through an edit list either.
+    The floor is what this path adds on top -- it creates a new target as a
+    memory note and makes the repository refuse an existing note that is not
+    one, so "every target note carries the ``memory`` label" is held where the
+    write happens rather than only in the preflight.
+
+    The floor has to be reachable to be a floor, so ``memory`` is unioned into
+    the caller's grants and into its allowed-label ceiling where it has one; a
+    caller that is *denied* the label keeps that denial, which is what refuses
+    a profile that does not read memory at the repository as well as at the
+    tool. No ceiling is invented where the caller has none: a deployment may
+    add its own default labels to memory notes, and this path preserves
+    whatever an existing note already carries.
+    """
+    return NoteWritePolicy(
+        visibility_grants=(
+            None
+            if caller.visibility_grants is None
+            else set(caller.visibility_grants) | {MEMORY_LABEL}
+        ),
+        default_labels=[MEMORY_LABEL],
+        required_labels=_with_memory_label(caller.required_labels or []),
+        allowed_labels=(
+            None
+            if caller.allowed_labels is None
+            else _with_memory_label(caller.allowed_labels)
+        ),
+        denied_labels=caller.denied_labels,
+    )
+
+
+def _with_memory_label(labels: Sequence[str]) -> list[str]:
+    """``labels`` with the ``memory`` label appended if it is not already there."""
+    if MEMORY_LABEL in labels:
+        return list(labels)
+    return [*labels, MEMORY_LABEL]
+
 
 _BULLET = re.compile(r"^\s*[-*]\s+(?P<text>.*)$")
 
@@ -125,6 +155,8 @@ async def apply_memory_edits(
     txn: DatabaseTransaction,
     edits: Sequence[MemoryEdit],
     *,
+    read_policy: NoteReadPolicy,
+    write_policy: NoteWritePolicy,
     evidence_scope: EvidenceScope,
     expected_revision: int,
     actor: MemoryActor,
@@ -142,6 +174,12 @@ async def apply_memory_edits(
     Args:
         txn: The transaction the whole apply commits in.
         edits: The proposal, applied in order and all-or-nothing.
+        read_policy: The calling profile's own note read confinement. Every
+            target and move destination is resolved under it, so this path
+            cannot show -- or edit -- a memory note ``get_note`` would hide.
+        write_policy: The calling profile's own note write confinement, which
+            this path writes under with the ``memory`` floor added (see
+            :func:`memory_write_policy`).
         evidence_scope: The message rows this writer may cite.
         expected_revision: The store revision the proposal was computed against.
         actor: Who is writing, as the change log records it.
@@ -202,7 +240,12 @@ async def apply_memory_edits(
             )
         ) from conflict
 
-    workspace = _Workspace(txn, revision_before)
+    workspace = _Workspace(
+        txn,
+        revision_before,
+        read_policy=read_policy,
+        write_policy=memory_write_policy(write_policy),
+    )
     records = [
         await _stage_edit(workspace, index, edit) for index, edit in enumerate(edits)
     ]
@@ -233,6 +276,8 @@ async def apply_memory_edits_atomically(
     db: Database,
     edits: Sequence[MemoryEdit],
     *,
+    read_policy: NoteReadPolicy,
+    write_policy: NoteWritePolicy,
     evidence_scope: EvidenceScope,
     expected_revision: int,
     actor: MemoryActor,
@@ -256,6 +301,8 @@ async def apply_memory_edits_atomically(
         outcome = await apply_memory_edits(
             txn,
             edits,
+            read_policy=read_policy,
+            write_policy=write_policy,
             evidence_scope=evidence_scope,
             expected_revision=expected_revision,
             actor=actor,
@@ -461,29 +508,41 @@ class _Workspace:
     txn: DatabaseTransaction
     revision: int
     """The store revision a rejection from this workspace reports."""
+    read_policy: NoteReadPolicy
+    """The calling profile's read confinement, which every target is resolved under."""
+    write_policy: NoteWritePolicy
+    """The calling profile's write confinement, with the ``memory`` floor added."""
     notes: dict[str, _WorkingNote] = field(default_factory=dict)
     touched_titles: list[str] = field(default_factory=list)
 
     async def load(self, title: str, *, index: int) -> _WorkingNote:
         """Read a target note, creating a blank topic note if there is none.
 
+        Resolved under the caller's own read policy, so an edit list cannot
+        reach a memory note ``get_note`` hides from the same profile -- neither
+        to quote its entries back in a rejection nor to edit them. A row that
+        exists but is not visible is refused in the same words as one that is
+        visible and not a memory note: it is not a note this caller may edit,
+        and the reply says nothing further about it.
+
         Raises:
-            MemoryEditsRejected: if a note with this title exists and is not
-                part of memory.
+            MemoryEditsRejected: if a note with this title exists and is not a
+                memory note this caller may edit.
         """
         cached = self.notes.get(title)
         if cached is not None:
             return cached
 
-        note = await self.txn.notes.get_by_title(
-            title, read_policy=NoteReadPolicy.UNRESTRICTED
-        )
-        if note is not None and MEMORY_LABEL not in note.visibility_labels:
+        note = await self.txn.notes.get_by_title(title, read_policy=self.read_policy)
+        if (note is None and await self._title_taken(title)) or (
+            note is not None and MEMORY_LABEL not in note.visibility_labels
+        ):
             reject(
                 self.revision,
                 index,
-                f"'{title}' is an existing note that is not part of memory. "
-                "Memory edits may only touch memory notes; choose another title.",
+                f"'{title}' is not a memory note you can edit. Memory edits may "
+                "only touch the memory notes this profile reads; choose another "
+                "title.",
             )
         working = _WorkingNote(
             title=title,
@@ -502,6 +561,19 @@ class _Workspace:
         if title not in self.touched_titles:
             self.touched_titles.append(title)
         return working
+
+    async def _title_taken(self, title: str) -> bool:
+        """Whether any row holds this title, visible to this caller or not.
+
+        The existence question the read policy cannot answer, asked without
+        selecting the row's contents: a title the caller cannot see is still a
+        title it cannot create a note under, and refusing it here is what keeps
+        an invisible note's entries out of the rejection message.
+        """
+        row_id = await self.txn.fetch_value(
+            sa.select(notes_table.c.id).where(notes_table.c.title == title)
+        )
+        return row_id is not None
 
     async def flush(
         self,
@@ -525,7 +597,7 @@ class _Workspace:
                     content=render_entries(working.items),
                     include_in_prompt=working.include_in_prompt,
                     visibility_labels=None if working.exists else [MEMORY_LABEL],
-                    write_policy=MEMORY_APPLY_WRITE_POLICY,
+                    write_policy=self.write_policy,
                     provenance_metadata=provenance_metadata,
                 )
             except MemoryWriteError as error:

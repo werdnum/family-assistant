@@ -201,6 +201,11 @@ async def propose_memory_edits_tool(
     outcome = await apply_memory_edits_atomically(
         db_context,
         proposal.edits,
+        # The apply path runs as this profile, not as a privileged memory
+        # writer: a memory note this profile's own get_note hides is neither
+        # quoted back to it nor edited by it.
+        read_policy=exec_context.note_read_policy(),
+        write_policy=exec_context.note_write_policy(),
         evidence_scope=scope,
         expected_revision=expected_revision,
         actor=_resolve_actor(exec_context),
