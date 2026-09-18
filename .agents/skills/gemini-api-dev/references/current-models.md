@@ -136,7 +136,7 @@ New](https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash)
 | [Computer Use](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-computer-use-preview-10-2025) | A specialized model that can "see" a digital screen and perform UI actions like clicking, typing, and navigating to automate complex browser tasks. | ``` gemini-2.5-computer-use-preview-10-2025 ``` |
 | [Gemini Deep Research](https://ai.google.dev/gemini-api/docs/models/deep-research-preview-04-2026) | An agentic model that autonomously plans and executes multi-step research across hundreds of sources to produce cited, interactive reports. | ``` deep-research-preview-04-2026 ``` |
 | [Gemini Deep Research Max](https://ai.google.dev/gemini-api/docs/models/deep-research-max-preview-04-2026) | Maximum comprehensiveness for automated context gathering and synthesis across hundreds of sources. | ``` deep-research-max-preview-04-2026 ``` |
-| [Antigravity Agent](https://ai.google.dev/gemini-api/docs/models/antigravity-preview-05-2026) | A general-purpose managed agent that autonomously plans, reasons, runs code, manages files, and browses the web inside a secure, isolated Linux sandbox. | ``` antigravity-preview-05-2026 ``` |
+| [Antigravity Agent](https://ai.google.dev/gemini-api/docs/models/antigravity-preview-09-2026) | A general-purpose managed agent that autonomously plans, reasons, runs code, manages files, and browses the web inside a secure, isolated Linux sandbox. | ``` antigravity-preview-09-2026 ``` |
 
 ## Specialized task models
 

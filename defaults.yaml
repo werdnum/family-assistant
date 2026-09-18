@@ -1205,7 +1205,7 @@ service_profiles:
     description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent (Gemini 3.8 Flash) in a throwaway Google-hosted Linux sandbox, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data."
     processing_config:
       provider: "google"
-      llm_model: "antigravity-preview-05-2026"
+      llm_model: "antigravity-preview-09-2026"
       antigravity_config:
         model: "gemini-3.8-flash"
       # A whole turn here runs code in a sandbox with network access, which is

@@ -60,6 +60,23 @@ def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent(
     assert "/coder" in profile.slash_commands
 
 
+def test_shipped_coder_profile_names_a_live_agent_revision(
+    shipped_config: AppConfig,
+) -> None:
+    """Pin the agent revision so a retirement is a visible change, not an outage.
+
+    `is_interactions_agent_model` matches the whole `antigravity-*` family, so it
+    keeps routing a revision Google has already shut down -- the run then fails
+    at submit, in production, against an id nothing in the tree objected to.
+    Google retires each preview a few weeks after naming its successor, so the
+    shipped id has to be revisited on a schedule; asserting it here is what turns
+    that into an edit a reviewer sees.
+    """
+    processing_config = shipped_profile(shipped_config, "coder").processing_config
+
+    assert processing_config.llm_model == "antigravity-preview-09-2026"
+
+
 def test_shipped_coder_profile_configures_no_sandbox_credentials(
     shipped_config: AppConfig,
 ) -> None:
@@ -207,14 +224,14 @@ def test_antigravity_profile_with_retry_config_is_rejected() -> None:
         validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
-                llm_model="antigravity-preview-05-2026",
+                llm_model="antigravity-preview-09-2026",
                 provider="google",
                 retry_config=RetryConfig(
-                    primary=RetryModelConfig(model="antigravity-preview-05-2026"),
+                    primary=RetryModelConfig(model="antigravity-preview-09-2026"),
                     fallback=RetryModelConfig(model="gemini-3.8-flash"),
                 ),
             ),
-            "antigravity-preview-05-2026",
+            "antigravity-preview-09-2026",
         )
 
 
@@ -231,7 +248,7 @@ def test_antigravity_named_only_inside_a_retry_chain_is_rejected() -> None:
             ProcessingConfig(
                 provider="google",
                 retry_config=RetryConfig(
-                    primary=RetryModelConfig(model="antigravity-preview-05-2026"),
+                    primary=RetryModelConfig(model="antigravity-preview-09-2026"),
                     fallback=RetryModelConfig(model="gemini-3.8-flash"),
                 ),
             ),
@@ -248,10 +265,10 @@ def test_antigravity_profile_on_a_non_google_provider_is_rejected(
         validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
-                llm_model="antigravity-preview-05-2026",
+                llm_model="antigravity-preview-09-2026",
                 provider=provider,
             ),
-            "antigravity-preview-05-2026",
+            "antigravity-preview-09-2026",
         )
 
 

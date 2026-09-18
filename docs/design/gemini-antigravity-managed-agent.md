@@ -4,7 +4,7 @@
 
 Google's Interactions API exposes more than the Deep Research agents we already ride. The same
 `client.interactions.create()` transport also serves the **Antigravity managed agent**
-(`antigravity-preview-05-2026`): a general-purpose agent that plans and executes multi-step tasks —
+(`antigravity-preview-09-2026`): a general-purpose agent that plans and executes multi-step tasks —
 reasoning, code execution, file operations, web search and URL reading — inside an isolated,
 Google-hosted Linux sandbox. Unlike Deep Research, its reasoning model is chosen by the caller;
 `gemini-3.8-flash` is the current default of the Gemini 3.x Flash family it accepts.
@@ -17,7 +17,7 @@ agent", with only the submit step left agent-specific.
 
 Ship the agent as a profile alongside `research`/`research_max` rather than as a tool:
 
-- `coder` → agent `antigravity-preview-05-2026` reasoning with `gemini-3.8-flash`, slash command
+- `coder` → agent `antigravity-preview-09-2026` reasoning with `gemini-3.8-flash`, slash command
   `/coder`.
 
 The profile is named for the job, not the vendor: what it is for is writing and running code and

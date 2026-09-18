@@ -2578,7 +2578,7 @@ ______________________________________________________________________
 ### antigravity_config
 
 Per-profile `processing_config` block tuning the Google Antigravity managed agent. Read only when
-`llm_model` names the agent (`antigravity-preview-05-2026` or a later `antigravity-*` revision);
+`llm_model` names the agent (`antigravity-preview-09-2026` or a later `antigravity-*` revision);
 setting it on any other profile is a startup error rather than a silently discarded block.
 
 | Property  | Value                                                                   |
@@ -2678,7 +2678,7 @@ service_profiles:
   - id: "coder"
     processing_config:
       provider: "google"
-      llm_model: "antigravity-preview-05-2026"
+      llm_model: "antigravity-preview-09-2026"
       antigravity_config:
         model: "gemini-3.8-flash"
         max_total_tokens: 250000
