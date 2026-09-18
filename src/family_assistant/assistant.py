@@ -2277,11 +2277,11 @@ class Assistant:
 
         Two conditions, and both are deliberate. The master switch is what a
         deployment turns the whole mechanism off with; the contributor check is
-        what keeps the shipped configuration -- contribution off everywhere --
-        from running a query every few minutes that can only ever return
-        nothing. A sweep seeded by an earlier configuration and left behind by a
-        later one is harmless: the handler reads the same two conditions and
-        returns immediately.
+        what keeps a deployment that has turned contribution off on every
+        profile from running a query every few minutes that can only ever
+        return nothing. A sweep seeded by an earlier configuration and left
+        behind by a later one is harmless: the handler reads the same two
+        conditions and returns immediately.
         """
         settings = self.config.memory_config.to_review_settings()
         contributors = self._memory_contributing_profiles()

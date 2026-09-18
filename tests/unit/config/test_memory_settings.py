@@ -3,8 +3,8 @@
 Slice 4 of docs/design/conversation-memory.md, "Two settings, one convenience
 default". Reading memory and contributing to it are separate profile settings;
 contributing implies reading, and startup rejects a profile that claims one
-without the other. Both ship off, so no deployment receives model-written
-memory before milestone 7 turns contribution on deliberately.
+without the other. Both ship on for the two household profiles, and off for
+every other profile, which is the code default.
 """
 
 from __future__ import annotations
@@ -87,45 +87,75 @@ def test_both_settings_survive_the_config_loader(tmp_path: Path) -> None:
     assert profile.processing_config.memory_contribute is True
 
 
-def test_no_shipped_profile_contributes_to_memory(shipped_config: AppConfig) -> None:
-    """Contribution ships off everywhere; milestone 7 is what turns it on."""
+def test_only_the_household_profiles_contribute_to_memory(
+    shipped_config: AppConfig,
+) -> None:
+    """The two profiles a person talks to directly, and nothing else.
+
+    Every other shipped profile handles email, automations, delegated work or
+    media, which is either untrusted input or machine traffic; none of it is
+    household conversation, and none of it should teach the notebook.
+    """
     contributing = sorted(
         profile.id
         for profile in shipped_config.service_profiles
         if profile.processing_config.memory_contribute
     )
 
-    assert contributing == []
+    assert contributing == ["complex_tasks", "default_assistant"]
 
 
-def test_the_curator_is_the_only_shipped_profile_that_reads_memory(
+def test_the_shipped_memory_readers_are_the_household_profiles_and_the_curator(
     shipped_config: AppConfig,
 ) -> None:
-    """Milestone 2 decides which household profiles turn reading on."""
+    """Contribution implies reading, and the curator reads to curate."""
     reading = sorted(
         profile.id
         for profile in shipped_config.service_profiles
         if profile.processing_config.memory_read
     )
 
-    assert reading == ["memory_curator"]
+    assert reading == ["complex_tasks", "default_assistant", "memory_curator"]
 
 
 @pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])
 def test_the_household_profiles_carry_both_settings_explicitly(
     shipped_config: AppConfig, profile_id: str
 ) -> None:
-    """Written down rather than inherited, so the opt-in is visible.
+    """Written down rather than inherited, so the state is visible.
 
-    Both are off, which a code default would also give; the point is that an
-    operator reading `defaults.yaml` finds the switch and the comment saying
-    that turning memory on means setting both. Milestone 7 flips these.
+    An operator reading `defaults.yaml` finds both switches on the profile,
+    beside the comment saying how to turn memory off -- per profile, or for
+    everything through `memory_config.enabled`. Leaving either to the code
+    default would hide the household's memory behaviour from the file an
+    operator reads.
     """
     processing_config = shipped_profile(shipped_config, profile_id).processing_config
 
     assert processing_config.model_fields_set >= {"memory_read", "memory_contribute"}
-    assert processing_config.memory_read is False
-    assert processing_config.memory_contribute is False
+    assert processing_config.memory_read is True
+    assert processing_config.memory_contribute is True
+
+
+def test_the_application_counts_the_shipped_contributors(
+    shipped_config: AppConfig, provider_api_keys: None
+) -> None:
+    """The shipped defaults, read through the helper production uses.
+
+    `_memory_contributing_profiles` is what the enablement boundary and the
+    sweep are built from, so this is the statement that a deployment which
+    changes nothing contributes these two profiles and no others.
+    """
+    del provider_api_keys
+
+    assistant = Assistant(shipped_config, llm_client_overrides={})
+
+    # Reaching past the private name on purpose: asserting through the helper
+    # the application itself calls is what makes this a statement about
+    # production rather than about a re-derivation in a test.
+    contributing = assistant._memory_contributing_profiles()  # pylint: disable=protected-access
+
+    assert contributing == {"default_assistant", "complex_tasks"}
 
 
 def test_a_read_only_profile_does_not_feed_reviews(
@@ -133,15 +163,16 @@ def test_a_read_only_profile_does_not_feed_reviews(
 ) -> None:
     """Reading is not contributing, at the point the application counts them.
 
-    `_memory_contributing_profiles` is what the enablement boundary and the
-    sweep are built from, so a profile that only reads never reaches either --
-    its conversations produce no eligible rows and no review is enqueued for
-    them.
+    Turning contribution off on the household profiles leaves them reading
+    memory, and `_memory_contributing_profiles` -- what the enablement boundary
+    and the sweep are built from -- then finds nobody, so their conversations
+    produce no eligible rows and no review is enqueued for them.
     """
     del provider_api_keys
-    shipped_profile(
-        shipped_config, "default_assistant"
-    ).processing_config.memory_read = True
+    for profile_id in ("default_assistant", "complex_tasks"):
+        shipped_profile(
+            shipped_config, profile_id
+        ).processing_config.memory_contribute = False
 
     assistant = Assistant(shipped_config, llm_client_overrides={})
 

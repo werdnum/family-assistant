@@ -1,0 +1,114 @@
+"""What a deployment that changes nothing gets at startup.
+
+Milestone 7 of docs/design/conversation-memory.md turns contribution on by
+default, so the shipped configuration is now the configuration that runs
+memory. The unit tests pin the two settings as configuration; this one pins
+what startup does with them -- the enablement boundary it stamps and the sweep
+it schedules -- through the methods `Assistant.run` itself calls.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import pytest
+
+from family_assistant.assistant import Assistant
+from family_assistant.config_loader import load_config
+from family_assistant.memory.sweep import (
+    MEMORY_REVIEW_SWEEP_TASK_ID,
+    MEMORY_REVIEW_SWEEP_TASK_TYPE,
+)
+from family_assistant.storage.database import Database
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.config_models import AppConfig
+    from family_assistant.storage.repositories.tasks import TaskDict
+
+HOUSEHOLD_PROFILES = {"default_assistant", "complex_tasks"}
+
+
+async def _seeded_sweep(db: Database) -> TaskDict | None:
+    """The recurring sweep row, if startup left one behind."""
+    tasks = await db.tasks.get_all(task_type=MEMORY_REVIEW_SWEEP_TASK_TYPE)
+    return next(
+        (task for task in tasks if task["task_id"] == MEMORY_REVIEW_SWEEP_TASK_ID), None
+    )
+
+
+@pytest.fixture(name="shipped_assistant")
+def shipped_assistant_fixture(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> Assistant:
+    """An assistant over the shipped defaults, wired to the test database.
+
+    Constructing the real clients reads each provider's key from the
+    environment; nothing here issues a request.
+    """
+    for env_var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(env_var, f"fake-{env_var.lower()}-for-tests")
+    config: AppConfig = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+    assistant = Assistant(config, llm_client_overrides={})
+    assistant.database_engine = db_engine
+    return assistant
+
+
+@pytest.mark.asyncio
+async def test_startup_stamps_an_enablement_moment_for_the_household_profiles(
+    shipped_assistant: Assistant, db_engine: AsyncEngine
+) -> None:
+    """The boundary an upgrading deployment gets: nothing older is reviewed.
+
+    `record_enablement` runs on every startup, so this is also what decides
+    that months of existing conversation stay uncurated when a deployment
+    upgrades into the default.
+    """
+    before = datetime.now(UTC)
+
+    await shipped_assistant._record_memory_enablement()  # pylint: disable=protected-access - the method Assistant.run calls, which is the point
+
+    enablement = await Database(db_engine).memory_review.get_enablement()
+    assert set(enablement) == HOUSEHOLD_PROFILES
+    assert all(moment >= before for moment in enablement.values())
+
+
+@pytest.mark.asyncio
+async def test_startup_schedules_the_review_sweep(
+    shipped_assistant: Assistant, db_engine: AsyncEngine
+) -> None:
+    """Seeding is gated on `enabled` and on there being a contributor.
+
+    Both hold in the shipped configuration, so an operator who configures
+    nothing gets the recurring sweep that makes memory actually happen.
+    """
+    db = Database(db_engine)
+
+    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access - the method _setup_system_tasks calls, which is the point
+
+    sweep = await _seeded_sweep(db)
+    assert sweep is not None
+    interval = shipped_assistant.config.memory_config.sweep_interval_minutes
+    assert sweep["recurrence_rule"] == f"FREQ=MINUTELY;INTERVAL={interval}"
+
+
+@pytest.mark.asyncio
+async def test_turning_the_master_switch_off_schedules_no_sweep(
+    shipped_assistant: Assistant, db_engine: AsyncEngine
+) -> None:
+    """`memory_config.enabled: false` is the one switch that covers everything.
+
+    It leaves the profiles' settings alone and still seeds nothing, which is
+    what makes it the answer for a deployment that wants no memory at all.
+    """
+    shipped_assistant.config.memory_config.enabled = False
+    db = Database(db_engine)
+
+    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access - the method _setup_system_tasks calls, which is the point
+
+    assert await _seeded_sweep(db) is None

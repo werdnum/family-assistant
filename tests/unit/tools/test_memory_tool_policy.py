@@ -72,33 +72,35 @@ def test_the_memory_tool_is_registered(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])
-def test_a_profile_that_does_not_read_memory_does_not_hold_the_tool(
+def test_the_shipped_foreground_profiles_hold_the_tool(
     tmp_path: Path, profile_id: str
 ) -> None:
-    """The shipped foreground profiles read no memory yet, so the tool is withheld.
-
-    It would refuse every call it received, and `add_or_update_note` -- which
-    works -- is what a "remember this" should reach in the meantime.
-    """
+    """They read memory, so "remember this" reaches memory rather than a note."""
     config = _config(tmp_path)
 
-    assert _profile(config, profile_id).processing_config.memory_read is False
-    assert _holds_memory_tool(config, profile_id) is False
-
-
-@pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])
-def test_the_same_profile_holds_the_tool_once_it_reads_memory(
-    tmp_path: Path, profile_id: str
-) -> None:
-    """The grant is already there; `memory_read` is the whole of the difference."""
-    config = _config(tmp_path)
-    _profile(config, profile_id).processing_config.memory_read = True
-
+    assert _profile(config, profile_id).processing_config.memory_read is True
     assert _holds_memory_tool(config, profile_id) is True
 
 
+@pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])
+def test_the_same_profile_loses_the_tool_when_it_stops_reading_memory(
+    tmp_path: Path, profile_id: str
+) -> None:
+    """The grant stays; `memory_read` is the whole of the difference.
+
+    A deployment that turns memory off for a profile leaves the tool's grant in
+    the shipped policy untouched, and the tool must still disappear: it would
+    refuse every call it received, and `add_or_update_note` -- which works -- is
+    what a "remember this" should reach instead.
+    """
+    config = _config(tmp_path)
+    _profile(config, profile_id).processing_config.memory_read = False
+
+    assert _holds_memory_tool(config, profile_id) is False
+
+
 def test_the_curator_holds_the_tool(tmp_path: Path) -> None:
-    """The one shipped profile that reads memory, and the one that curates it."""
+    """The shipped profile whose whole job is curating memory."""
     config = _config(tmp_path)
 
     assert _profile(config, "memory_curator").processing_config.memory_read is True
