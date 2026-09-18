@@ -71,7 +71,9 @@ async def test_startup_stamps_an_enablement_moment_for_the_household_profiles(
     """
     before = datetime.now(UTC)
 
-    await shipped_assistant._record_memory_enablement()  # pylint: disable=protected-access - the method Assistant.run calls, which is the point
+    # Calling the private method on purpose: it is the one `Assistant.run`
+    # calls, so the assertion is about startup rather than about a stand-in.
+    await shipped_assistant._record_memory_enablement()  # pylint: disable=protected-access
 
     enablement = await Database(db_engine).memory_review.get_enablement()
     assert set(enablement) == HOUSEHOLD_PROFILES
@@ -89,7 +91,9 @@ async def test_startup_schedules_the_review_sweep(
     """
     db = Database(db_engine)
 
-    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access - the method _setup_system_tasks calls, which is the point
+    # Calling the private method on purpose: it is the one `_setup_system_tasks`
+    # calls, so the assertion is about startup rather than about a stand-in.
+    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access
 
     sweep = await _seeded_sweep(db)
     assert sweep is not None
@@ -109,6 +113,8 @@ async def test_turning_the_master_switch_off_schedules_no_sweep(
     shipped_assistant.config.memory_config.enabled = False
     db = Database(db_engine)
 
-    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access - the method _setup_system_tasks calls, which is the point
+    # Calling the private method on purpose: it is the one `_setup_system_tasks`
+    # calls, so the assertion is about startup rather than about a stand-in.
+    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access
 
     assert await _seeded_sweep(db) is None
