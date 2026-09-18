@@ -72,7 +72,20 @@ final class ChatViewModel {
     var draftAttachments: [ChatAttachment] = []
     var pendingConfirmations: [ChatPendingConfirmation] = []
     var isLoadingConversations = false
-    var isLoadingMessages = false
+    var isLoadingMessages = false {
+        // `sendDraft` refuses to send while messages load, so a follow-up steer
+        // that became ready during a load (e.g. a reattached turn retired while
+        // the follow stream's catch-up reload was in flight) must be drained
+        // once the load settles, or it strands with the composer already cleared.
+        didSet {
+            if oldValue, !isLoadingMessages, !queuedFollowUpSteers.isEmpty {
+                Task { [weak self] in
+                    await self?.sendNextQueuedFollowUpSteerIfReady()
+                }
+            }
+        }
+    }
+    @ObservationIgnored private var activeMessageLoads = 0
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
@@ -1164,13 +1177,22 @@ final class ChatViewModel {
         guard let id = conversationID ?? self.conversationID else {
             return
         }
+        activeMessageLoads += 1
         isLoadingMessages = true
         // Reset on EVERY exit, including the stale-selection guards below: a
         // conversation switch during the await returns early, and a leaked
         // `isLoadingMessages` would permanently disable the composer on the thread
         // the user moved to. Reachable when a delayed advisory retry lands after a
-        // switch.
-        defer { isLoadingMessages = false }
+        // switch. Loads can overlap (a follow-stream catch-up alongside a resync
+        // or retry), and each replaces `messages` wholesale, so the flag clears
+        // only when the LAST one settles: a send started while another load is
+        // still in flight would have its optimistic bubbles replaced away.
+        defer {
+            activeMessageLoads -= 1
+            if activeMessageLoads == 0 {
+                isLoadingMessages = false
+            }
+        }
         do {
             let response = try await apiClient.getMessages(conversationID: id)
             // The user may have switched conversations during the network await;
@@ -3207,7 +3229,7 @@ final class ChatViewModel {
     }
 
     private func sendNextQueuedFollowUpSteerIfReady() async {
-        guard !isStreaming, !queuedFollowUpSteers.isEmpty else {
+        guard !isStreaming, !isLoadingMessages, !queuedFollowUpSteers.isEmpty else {
             return
         }
         let followUp = queuedFollowUpSteers.removeFirst()

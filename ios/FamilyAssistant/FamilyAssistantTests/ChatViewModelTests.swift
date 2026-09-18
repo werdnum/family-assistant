@@ -1853,6 +1853,182 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.draftText, "")
     }
 
+    /// The follow stream's catch-up reload is in flight (`isLoadingMessages`)
+    /// when the recovered turn's steer resolves `.finished`. `sendDraft` refuses
+    /// to send during a load, so the queued follow-up must be sent once the load
+    /// settles rather than stranding with the composer already cleared.
+    func testRecoveredSteerFinishingDuringCatchUpLoadSendsFollowUpAfterLoad() async throws {
+        let preflightLookups = AtomicCounter()
+        let fullLoads = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        let catchUpLoad = HangingStream()
+        let steer = HangingStream()
+        let conversationID = "web_conv_steer_finished_during_load"
+        let messagesBody: @Sendable (String) -> String = { activeTurns in
+            """
+            {
+              "conversation_id":"\(conversationID)",
+              "messages":[],
+              "count":0,
+              "total_messages":0,
+              "has_more_before":false,
+              "has_more_after":false,
+              "active_turns":\(activeTurns)
+            }
+            """
+        }
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                if Self.queryItems(from: request)["limit"] == "0" {
+                    guard fullLoads.increment() == 1 else {
+                        return .json(messagesBody("[]"))
+                    }
+                    return .hangingStream(messagesBody("[]"), controller: catchUpLoad)
+                }
+                guard preflightLookups.increment() == 1 else {
+                    return .json(messagesBody("[]"))
+                }
+                return .json(
+                    messagesBody(
+                        #"[{"turn_id":"turn-ends-during-load","started_at":"2026-08-01T23:25:26Z","latest_seq":0,"status":"running"}]"#
+                    )
+                )
+            case ("POST", "/api/v1/chat/turns/turn-ends-during-load/steer"):
+                steerRequests.increment()
+                return .hangingStream(#"{"detail":"Turn is not running"}"#, statusCode: 409, controller: steer)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "send after the load")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"\#(conversationID)","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: conversationID)
+        model.draftText = "send after the load"
+        let send = Task { await model.sendDraft() }
+        try await waitUntil {
+            steerRequests.value == 1 && fullLoads.value == 1 && model.isLoadingMessages
+        }
+
+        steer.finish()
+        await send.value
+        XCTAssertFalse(model.isStreaming)
+        // Let the drain scheduled when the reattached turn retired run against
+        // the still-loading model.
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+        XCTAssertEqual(turnStarts.value, 0)
+
+        catchUpLoad.finish()
+        try await waitUntil { turnStarts.value == 1 }
+        XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
+    }
+
+    /// Two full message loads overlap: the queued follow-up (and any send) must
+    /// wait for the LAST one, because each load replaces `messages` wholesale and
+    /// would discard a turn's optimistic bubbles started while it was in flight.
+    func testQueuedFollowUpWaitsForEveryOverlappingMessageLoad() async throws {
+        let preflightLookups = AtomicCounter()
+        let fullLoads = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        let conversationListRequests = AtomicCounter()
+        let firstLoad = HangingStream()
+        let secondLoad = HangingStream()
+        let steer = HangingStream()
+        let conversationID = "web_conv_steer_finished_overlapping_loads"
+        let messagesBody: @Sendable (String) -> String = { activeTurns in
+            """
+            {
+              "conversation_id":"\(conversationID)",
+              "messages":[],
+              "count":0,
+              "total_messages":0,
+              "has_more_before":false,
+              "has_more_after":false,
+              "active_turns":\(activeTurns)
+            }
+            """
+        }
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                if Self.queryItems(from: request)["limit"] == "0" {
+                    switch fullLoads.increment() {
+                    case 1:
+                        return .hangingStream(messagesBody("[]"), controller: firstLoad)
+                    case 2:
+                        return .hangingStream(messagesBody("[]"), controller: secondLoad)
+                    default:
+                        return .json(messagesBody("[]"))
+                    }
+                }
+                guard preflightLookups.increment() == 1 else {
+                    return .json(messagesBody("[]"))
+                }
+                return .json(
+                    messagesBody(
+                        #"[{"turn_id":"turn-ends-during-loads","started_at":"2026-08-01T23:25:26Z","latest_seq":0,"status":"running"}]"#
+                    )
+                )
+            case ("POST", "/api/v1/chat/turns/turn-ends-during-loads/steer"):
+                steerRequests.increment()
+                return .hangingStream(#"{"detail":"Turn is not running"}"#, statusCode: 409, controller: steer)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "send after both loads")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"\#(conversationID)","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                conversationListRequests.increment()
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: conversationID)
+        model.draftText = "send after both loads"
+        let send = Task { await model.sendDraft() }
+        try await waitUntil { steerRequests.value == 1 && fullLoads.value == 1 }
+        let overlappingLoad = Task { await model.loadMessages(userInitiated: false) }
+        try await waitUntil { fullLoads.value == 2 }
+
+        steer.finish()
+        await send.value
+        XCTAssertFalse(model.isStreaming)
+
+        // The catch-up load refreshes the conversation list once it returns.
+        let listRequestsBeforeFirstLoad = conversationListRequests.value
+        firstLoad.finish()
+        try await waitUntil { conversationListRequests.value > listRequestsBeforeFirstLoad }
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+        XCTAssertTrue(model.isLoadingMessages)
+        XCTAssertEqual(turnStarts.value, 0)
+
+        secondLoad.finish()
+        await overlappingLoad.value
+        XCTAssertFalse(model.isLoadingMessages)
+        try await waitUntil { turnStarts.value == 1 }
+        XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
+    }
+
     func testNormalSendPreflightPreservesDraftEditedDuringLookup() async throws {
         let lookup = HangingStream()
         let lookupRequests = AtomicCounter()
