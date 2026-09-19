@@ -7,10 +7,11 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from family_assistant.config_models import AppConfig, MCPAdapterConfig
 from family_assistant.web.auth import MCP_ENDPOINT_PATH
+from family_assistant.web.mcp_adapter.config import adapter_config
 from family_assistant.web.mcp_adapter.oauth import install_oauth_routes
 from family_assistant.web.mcp_adapter.tools import register_tools
 
@@ -23,18 +24,6 @@ SERVER_INSTRUCTIONS = (
     "with ask_family_assistant; pass back the conversation_id it returns to continue "
     "the same conversation."
 )
-
-
-def adapter_config(app: FastAPI) -> MCPAdapterConfig:
-    """The adapter's configuration, read at request time.
-
-    ``create_app`` runs before the Assistant injects ``app.state.config``, so the
-    endpoint is always mounted and consults the config per request.
-    """
-    config: AppConfig | None = getattr(app.state, "config", None)
-    if config is None:
-        return MCPAdapterConfig()
-    return config.mcp_adapter
 
 
 class _EnabledGate:
@@ -90,7 +79,17 @@ def install_mcp_adapter(app: FastAPI) -> MCPAdapter:
     if isinstance(existing, MCPAdapter):
         return existing
     adapter = MCPAdapter()
-    app.mount(MCP_ENDPOINT_PATH, adapter.asgi_app, name="mcp_adapter")
+    # An exact route rather than a mount: a Starlette mount at ``/api/mcp`` only
+    # matches paths beneath it, and the bare endpoint is what MCP clients call.
+    app.router.routes.append(
+        Route(
+            MCP_ENDPOINT_PATH,
+            adapter.asgi_app,
+            methods=["GET", "POST", "DELETE"],
+            name="mcp_adapter",
+            include_in_schema=False,
+        )
+    )
     install_oauth_routes(app)
     app.state.mcp_adapter = adapter
     logger.debug("MCP adapter mounted at %s", MCP_ENDPOINT_PATH)

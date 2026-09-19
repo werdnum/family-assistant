@@ -24,6 +24,7 @@ from sqlalchemy import (
     event,
     text,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.pool.base import _ConnectionRecord
@@ -229,7 +230,33 @@ api_tokens_table = Table(
     Column(
         "parent_token_id", Integer, ForeignKey("api_tokens.id"), nullable=True
     ),  # Links refresh token to its API token
+    Column(
+        "oauth_client_id", String(64), nullable=True
+    ),  # The OAuth client an "mcp" token (and its refresh token) was issued to
     extend_existing=True,
+)
+
+
+# OAuth clients registered dynamically (RFC 7591) with the MCP adapter's
+# authorization server. ``client_metadata`` is the SDK's
+# ``OAuthClientInformationFull`` dump, client_secret included: the SDK compares
+# secrets in clear, and a client secret identifies the software, not a person
+# (see docs/design/mcp-adapter.md, "Deliberate simplifications").
+oauth_clients_table = Table(
+    "oauth_clients",
+    metadata,
+    Column("client_id", String(64), primary_key=True),
+    Column(
+        "client_metadata",
+        JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
+        nullable=False,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        server_default=func.now(),  # pylint: disable=not-callable
+        nullable=False,
+    ),
 )
 
 

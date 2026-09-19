@@ -2958,6 +2958,123 @@ service_profiles:
 
 ______________________________________________________________________
 
+## MCP Adapter (Family Assistant as an MCP server)
+
+`mcp_adapter` exposes the assistant to external MCP clients — a claude.ai custom connector, Claude
+Code, the Messages API MCP connector — as a Streamable HTTP server at `<SERVER_URL>/api/mcp` with
+one tool, `ask_family_assistant(question, conversation_id=None)`. The tool runs the question through
+the configured processing profile as the authenticated user and returns the reply and the
+conversation id; passing the id back continues the conversation. It reuses the non-streaming chat
+path, so a tool that needs approval leaves a durable pending confirmation for the user to approve
+from another client. The user-facing behaviour is described in
+[Connecting Claude](../user/connecting-claude.md); the design is in
+[docs/design/mcp-adapter.md](../design/mcp-adapter.md).
+
+The adapter is **off by default**. When it is off, `/api/mcp` and the OAuth endpoints below answer
+`404`, so a deployment that does not use it exposes none of the surface.
+
+### mcp_adapter.enabled
+
+Whether the MCP endpoint and its OAuth authorization server accept requests. Environment override:
+`MCP_ADAPTER_ENABLED`.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `false` |
+| Sensitive | No      |
+| Example   | `true`  |
+
+### mcp_adapter.profile_id
+
+The processing profile `ask_family_assistant` runs under. `null` means the default profile
+(`DEFAULT_SERVICE_PROFILE_ID`). A remote delegation-only profile (`remote_a2a`) is refused.
+Environment override: `MCP_ADAPTER_PROFILE_ID`.
+
+| Property  | Value                |
+| --------- | -------------------- |
+| Required  | No                   |
+| Default   | `null`               |
+| Sensitive | No                   |
+| Example   | `household_readonly` |
+
+```yaml
+mcp_adapter:
+  enabled: true
+  profile_id: null
+```
+
+### SERVER_URL must be the public HTTPS origin
+
+[`SERVER_URL`](#server_url) is the OAuth issuer and the protected-resource identifier: it is what
+the discovery documents advertise and what an OAuth client compares against the URL the user typed.
+It must therefore be the exact public origin the client connects to — `https`, the public hostname,
+no trailing path. A `SERVER_URL` of `http://localhost:8000` behind a public proxy produces metadata
+that points nowhere, and the connection fails at discovery. claude.ai will not connect to a
+non-HTTPS or unreachable host at all; its traffic originates from Anthropic's published egress range
+`160.79.104.0/21` (see the
+[network reference](https://claude.com/docs/connectors/building/authentication#network-reference)),
+which a firewall or WAF in front of the deployment must admit.
+
+### Endpoints a reverse proxy must pass through
+
+All of these live on the `SERVER_URL` origin. A proxy must forward them unchanged and pass `Host`
+and the request scheme through correctly (`X-Forwarded-Proto`), because the metadata is generated
+from `SERVER_URL` and the redirects in the consent flow are built from the incoming request.
+
+| Path                                                | Purpose                                                                                                                                         |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/mcp`                                     | The MCP endpoint (Streamable HTTP, stateless JSON). Unauthenticated requests get `401` with a `WWW-Authenticate` pointer to the metadata below. |
+| `GET /.well-known/oauth-protected-resource/api/mcp` | Protected-resource metadata: names the authorization server.                                                                                    |
+| `GET /.well-known/oauth-authorization-server`       | Authorization-server metadata: endpoint locations, PKCE `S256`, supported grants.                                                               |
+| `GET /authorize`                                    | Authorization request; redirects to the consent page.                                                                                           |
+| `GET`/`POST /mcp/consent`                           | Consent page. Requires a signed-in user, so `AuthMiddleware` sends a signed-out visitor through the OIDC login and back.                        |
+| `POST /token`                                       | Code exchange and refresh-token rotation (`application/x-www-form-urlencoded`).                                                                 |
+| `POST /register`                                    | Dynamic client registration (`application/json`).                                                                                               |
+| `POST /revoke`                                      | Token revocation.                                                                                                                               |
+
+`/authorize`, `/token`, `/register` and `/revoke` carry their own OAuth authentication and are
+listed as public routes in `AuthMiddleware`; the consent page deliberately is not, so the ordinary
+login redirect applies to it. The `/.well-known/` prefix is already public.
+
+### Credentials and token scoping
+
+Two credentials work on `/api/mcp`, and both are `api_tokens` rows:
+
+- **An ordinary API token** (Settings → API tokens, `/api/me/tokens`), sent as
+  `Authorization: Bearer <token>`. This is what Claude Code and the Messages API connector use, and
+  it carries the token's normal access to the whole API.
+- **An OAuth access token** issued by the consent flow. It is stored with `token_type = "mcp"` and
+  the client it was issued to, and `AuthMiddleware` accepts it **only** on the MCP endpoint: an
+  `mcp` token presented to any other `/api` route is rejected. A connector that was granted "ask the
+  assistant" cannot use its token to read the rest of the API. Refresh tokens use the existing
+  `refresh` type with a parent link, so revoking the access token cascades.
+
+OAuth grants appear on the user's token-management page named after the registered client, and
+revoking one there disconnects that connector. There is no separate admin surface.
+
+### Security posture
+
+- **Off by default.** Enabling it adds an OAuth authorization server to the deployment; do not
+  enable it without a real public HTTPS origin.
+- **Dynamic client registration is an unauthenticated write.** Anyone who can reach `/register` can
+  create a client record. A client record grants nothing by itself — every token is bound to a user
+  who signed in through OIDC and approved the consent page — but it is persisted, so an exposed
+  deployment can accumulate registrations. Registered clients survive restarts so a connector does
+  not have to be re-added after a deploy.
+- **Client secrets are stored as issued**, not hashed. The MCP SDK's client authenticator compares
+  them in clear, and a client secret identifies the software (Claude), not a person; the user's
+  authority is only ever in the hashed access token.
+- **Authorization codes and pending consents live in process memory.** They are single-use and
+  expire within minutes. A restart mid-flow means the user clicks **Connect** again; nothing else is
+  lost. In a multi-replica deployment the flow must be pinned to one replica.
+- **The turn is tainted as machine input**, the same as a message from an A2A peer: recognized
+  machine acting for a known user, not direct user input. The profile's taint policy decides what
+  that means for each tool. The adapter adds no data access and no side effects beyond what the
+  configured profile already has, so choose `profile_id` accordingly.
+
+______________________________________________________________________
+
 ## Configuration File Reference
 
 ### config.yaml

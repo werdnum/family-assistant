@@ -7,7 +7,7 @@ import logging
 import mimetypes
 import secrets
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -2290,22 +2290,115 @@ class ProfilesResponse(BaseModel):
     default_profile_id: str = Field(..., description="ID of the default profile")
 
 
-@chat_api_router.post("/v1/chat/send_message")  # Path relative to the prefix in api.py
-async def api_chat_send_message(
+def _select_processing_service(
+    request: Request,
     payload: ChatPromptRequest,
-    request: Request,  # To access app.state for config and service registry
-    current_user: Annotated[dict, Depends(get_current_user)],
-    default_processing_service: Annotated[
-        ProcessingService, Depends(get_processing_service)
-    ],  # Renamed for clarity
-    db_context: Annotated[Database, Depends(get_db)],
-    web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
-) -> ChatMessageResponse:
+    default_processing_service: ProcessingService,
+    conversation_id: str,
+) -> ProcessingService:
+    """The service a REST send runs under: ``payload.profile_id`` or the default.
+
+    A remote delegation-only profile is a 400; an unknown profile id falls back
+    to the default profile with a warning.
     """
-    Receives a user prompt via API, processes it using the specified or default
-    ProcessingService, and returns the assistant's reply.
+    profile_id_requested = payload.profile_id
+    if not profile_id_requested:
+        logger.info(
+            f"API chat request (no profile_id specified). Using default profile: '{default_processing_service.service_config.id}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
+        )
+        return default_processing_service
+
+    logger.info(
+        f"API chat request for profile_id: '{profile_id_requested}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
+    )
+    processing_services_registry = getattr(request.app.state, "processing_services", {})
+    candidate = processing_services_registry.get(profile_id_requested)
+    if candidate and candidate.kind == "remote":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Profile '{profile_id_requested}' is a remote delegation-only profile and cannot be used for direct chat.",
+        )
+    if candidate:
+        logger.info(
+            f"Using ProcessingService for profile_id: '{profile_id_requested}'."
+        )
+        return candidate
+    logger.warning(
+        f"Profile_id '{profile_id_requested}' not found in registry. Falling back to default profile: '{default_processing_service.service_config.id}'."
+    )
+    return default_processing_service
+
+
+async def _tool_calls_for_response(
+    db_context: Database, interface_type: str, conversation_id: str
+) -> list[ToolCallResponseItem] | None:
+    """Tool calls from the most recent assistant message that made any.
+
+    The repository returns typed messages without database metadata, so the
+    reply's own row cannot be matched by internal id; the newest assistant
+    message with tool calls stands in for it.
+    """
+    recent_messages = await db_context.message_history.get_recent(
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        limit=5,
+        max_age=timedelta(minutes=5),
+    )
+    assistant_msg = next(
+        (
+            msg
+            for msg in reversed(recent_messages)
+            if isinstance(msg, AssistantMessage) and msg.tool_calls
+        ),
+        None,
+    )
+    if assistant_msg is None or not assistant_msg.tool_calls:
+        return None
+    tool_calls_response: list[ToolCallResponseItem] = []
+    for tc in assistant_msg.tool_calls:
+        if isinstance(tc, ToolCallItem):
+            args = tc.function.arguments
+            if not isinstance(args, str):
+                args = json.dumps(args)
+            tool_calls_response.append({
+                "id": tc.id,
+                "type": tc.type,
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": args,
+                },
+            })
+        elif isinstance(tc, dict):
+            tool_calls_response.append(tc)
+    return tool_calls_response
+
+
+async def run_non_streaming_turn(
+    request: Request,
+    current_user: Mapping[str, object],
+    db_context: Database,
+    payload: ChatPromptRequest,
+    *,
+    processing_service: ProcessingService,
+    web_chat_interface: "WebChatInterface",
+    initial_taint_sources: Sequence[TaintSource] = (),
+) -> ChatMessageResponse:
+    """Run one complete non-streaming turn and return the reply.
+
+    Shared by ``POST /v1/chat/send_message`` and the MCP adapter's
+    ``ask_family_assistant`` tool, so both inherit conversation ownership, turn
+    idempotency, model tier resolution, the one-turn-per-conversation
+    reservation and durable deferred confirmations. Failures are raised as
+    ``HTTPException`` (404 for a conversation the caller does not own, 409 for a
+    conversation with a turn in flight, 400 for a tier the profile refuses);
+    callers that are not HTTP endpoints translate them.
+
+    ``initial_taint_sources`` is the trust the prompt text arrives with beyond
+    that of the authenticated user, for callers that are machines acting for
+    the user rather than the user themselves.
     """
     conversation_id = payload.conversation_id or str(uuid.uuid4())
+    acting_user_id = str(current_user["user_identifier"])
 
     # Enforce conversation ownership before processing: a client may not post
     # into a conversation that already belongs to another user (404, not 403).
@@ -2339,39 +2432,8 @@ async def api_chat_send_message(
         if existing_response is not None:
             return existing_response
 
-    # Determine which processing service to use
-    selected_processing_service = default_processing_service
-    profile_id_requested = payload.profile_id
-
-    if profile_id_requested:
-        logger.info(
-            f"API chat request for profile_id: '{profile_id_requested}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
-        )
-        processing_services_registry = getattr(
-            request.app.state, "processing_services", {}
-        )
-        candidate = processing_services_registry.get(profile_id_requested)
-        if candidate and candidate.kind == "remote":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Profile '{profile_id_requested}' is a remote delegation-only profile and cannot be used for direct chat.",
-            )
-        if candidate:
-            selected_processing_service = candidate
-            logger.info(
-                f"Using ProcessingService for profile_id: '{profile_id_requested}'."
-            )
-        else:
-            logger.warning(
-                f"Profile_id '{profile_id_requested}' not found in registry. Falling back to default profile: '{default_processing_service.service_config.id}'."
-            )
-    else:
-        logger.info(
-            f"API chat request (no profile_id specified). Using default profile: '{default_processing_service.service_config.id}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
-        )
-
     resolved_model_selection = _resolve_requested_model_tier(
-        selected_processing_service, payload.model_tier
+        processing_service, payload.model_tier
     )
 
     # One turn at a time per conversation: hold the same hub reservation the
@@ -2381,7 +2443,6 @@ async def api_chat_send_message(
     async with _reserve_non_streaming_turn(
         hub, conversation_id, turn_id=response_turn_id, user_id=user_id
     ) as reservation:
-        # Process user attachments if present
         trigger_content_parts: list[ContentPartDict] = [
             {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
         ]
@@ -2398,13 +2459,11 @@ async def api_chat_send_message(
                 conversation_id,
                 attachment_registry,
                 db_context,
-                current_user["user_identifier"],
+                acting_user_id,
             )
 
-        # Determine interface type - default to "api" if not specified
         interface_type = payload.interface_type or "api"
 
-        # Call the new centralized interaction handler
         # user_name surfaces in the system prompt and message history, so derive it
         # from the authenticated user rather than a generic placeholder.
         user_name_for_api = _user_name_for_chat(current_user)
@@ -2443,7 +2502,7 @@ async def api_chat_send_message(
             durable_request = await create_durable_confirmation(
                 confirmation_service=api_confirmation_service,
                 db_context=context.db_context,
-                target_user_id=current_user["user_identifier"],
+                target_user_id=acting_user_id,
                 tool_name=tool_name,
                 tool_call_id=call_id,
                 tool_args=tool_args,
@@ -2469,14 +2528,14 @@ async def api_chat_send_message(
                 ),
             )
 
-        result = await selected_processing_service.handle_chat_interaction(
+        result = await processing_service.handle_chat_interaction(
             db_context=db_context,
-            interface_type=interface_type,  # Use the interface_type from request or default "api"
+            interface_type=interface_type,
             conversation_id=conversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
             user_name=user_name_for_api,
-            user_id=current_user["user_identifier"],
+            user_id=acting_user_id,
             replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
             chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
             chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
@@ -2484,29 +2543,22 @@ async def api_chat_send_message(
             request_confirmation_callback=DeferredConfirmationCallbackAdapter(
                 api_confirmation_callback
             ),
-            trigger_attachments=trigger_attachments,  # Pass attachment metadata
+            trigger_attachments=trigger_attachments,
             turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
             model_selection=resolved_model_selection,
+            initial_taint_sources=initial_taint_sources or None,
         )
 
-        final_reply_content = result.text_reply
-        final_assistant_message_internal_id = result.assistant_message_internal_id
-        _final_reasoning_info = result.reasoning_info  # Not used by API response
-        error_traceback = result.error_traceback
-        _response_attachment_ids = (
-            result.attachment_ids
-        )  # Not yet included in API response
-
-        if error_traceback:
+        if result.error_traceback:
             logger.error(
-                f"Error processing API chat request for Conversation ID {conversation_id}: {error_traceback}"
+                f"Error processing API chat request for Conversation ID {conversation_id}: {result.error_traceback}"
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error processing request: {error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
+                detail=f"Error processing request: {result.error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
             )
 
-        if final_reply_content is None:
+        if result.text_reply is None:
             logger.error(
                 f"No final assistant reply content found for API chat. Conversation ID: {conversation_id}"
             )
@@ -2515,46 +2567,11 @@ async def api_chat_send_message(
                 detail="Assistant did not provide a textual reply.",
             )
 
-        # Fetch recent messages to get tool_calls if any
         tool_calls_response = None
-        if final_assistant_message_internal_id:
-            # Get recent messages from this conversation
-            recent_messages = await db_context.message_history.get_recent(
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                limit=5,  # Get last few messages
-                max_age=timedelta(minutes=5),
+        if result.assistant_message_internal_id:
+            tool_calls_response = await _tool_calls_for_response(
+                db_context, interface_type, conversation_id
             )
-            # Find the most recent assistant message (repository returns typed LLMMessage objects)
-            # Note: Cannot match by internal_id since typed messages don't include database metadata
-            # Use the most recent AssistantMessage from the list
-            assistant_msg = next(
-                (
-                    msg
-                    for msg in reversed(recent_messages)
-                    if isinstance(msg, AssistantMessage) and msg.tool_calls
-                ),
-                None,
-            )
-            if assistant_msg and assistant_msg.tool_calls:
-                # Convert ToolCallItem objects to dicts for API response
-                tool_calls_response = []
-                for tc in assistant_msg.tool_calls:
-                    if isinstance(tc, ToolCallItem):
-                        # Ensure arguments is a JSON string
-                        args = tc.function.arguments
-                        if not isinstance(args, str):
-                            args = json.dumps(args)
-                        tool_calls_response.append({
-                            "id": tc.id,
-                            "type": tc.type,
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": args,
-                            },
-                        })
-                    elif isinstance(tc, dict):
-                        tool_calls_response.append(tc)
 
         # A follower of this conversation learns about the reply from the
         # reservation's ``turn_ended``, published as the ``async with`` exits:
@@ -2566,12 +2583,42 @@ async def api_chat_send_message(
         # the conversation list twice per send.
         reservation.mark_complete()
         return ChatMessageResponse(
-            reply=final_reply_content,  # Back to original field name
-            conversation_id=conversation_id,  # Return the used/generated conversation_id
-            turn_id=response_turn_id,  # Return the turn_id generated for the response model
-            attachments=trigger_attachments,  # Include processed attachments in response
-            tool_calls=tool_calls_response,  # Include tool calls if any
+            reply=result.text_reply,
+            conversation_id=conversation_id,
+            turn_id=response_turn_id,
+            attachments=trigger_attachments,
+            tool_calls=tool_calls_response,
         )
+
+
+@chat_api_router.post("/v1/chat/send_message")  # Path relative to the prefix in api.py
+async def api_chat_send_message(
+    payload: ChatPromptRequest,
+    request: Request,  # To access app.state for config and service registry
+    current_user: Annotated[dict, Depends(get_current_user)],
+    default_processing_service: Annotated[
+        ProcessingService, Depends(get_processing_service)
+    ],
+    db_context: Annotated[Database, Depends(get_db)],
+    web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
+) -> ChatMessageResponse:
+    """
+    Receives a user prompt via API, processes it using the specified or default
+    ProcessingService, and returns the assistant's reply.
+    """
+    conversation_id = payload.conversation_id or str(uuid.uuid4())
+    selected_processing_service = _select_processing_service(
+        request, payload, default_processing_service, conversation_id
+    )
+    payload = payload.model_copy(update={"conversation_id": conversation_id})
+    return await run_non_streaming_turn(
+        request,
+        current_user,
+        db_context,
+        payload,
+        processing_service=selected_processing_service,
+        web_chat_interface=web_chat_interface,
+    )
 
 
 @chat_api_router.get("/v1/chat/conversations")

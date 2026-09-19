@@ -13,7 +13,7 @@ from sqlalchemy import insert, select, update  # Added select and update
 
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
-from family_assistant.web.auth import pwd_context  # For hashing
+from family_assistant.web.auth import BEARER_TOKEN_TYPES, pwd_context
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ async def add_api_token(
     expires_at: datetime | None = None,
     token_type: str = "api",
     parent_token_id: int | None = None,
+    oauth_client_id: str | None = None,
 ) -> int:
     """
     Adds a new API token to the database.
@@ -71,6 +72,9 @@ async def add_api_token(
         prefix: The token prefix for identification.
         created_at: The timestamp when the token was created.
         expires_at: Optional timestamp when the token should expire.
+        token_type: "api", "refresh", "mcp" or the internal "browser".
+        parent_token_id: The access token a refresh token belongs to.
+        oauth_client_id: The OAuth client an "mcp" token was issued to.
 
     Returns:
         The ID of the newly created API token.
@@ -90,6 +94,7 @@ async def add_api_token(
             is_revoked=False,
             token_type=token_type,
             parent_token_id=parent_token_id,
+            oauth_client_id=oauth_client_id,
         )
         .returning(api_tokens_table.c.id)
     )
@@ -197,8 +202,9 @@ async def get_api_tokens_for_user(
     db_context: DatabaseExecutor, user_identifier: str
 ) -> list[dict]:
     """
-    Retrieves all API tokens for a given user.
-    The hashed_token field is excluded for security.
+    Retrieves the bearer tokens ("api" and OAuth-issued "mcp") for a given user.
+    Refresh tokens are not listed: they are revoked with the token they belong
+    to. The hashed_token field is excluded for security.
 
     Args:
         db_context: The database context.
@@ -217,10 +223,11 @@ async def get_api_tokens_for_user(
             api_tokens_table.c.expires_at,
             api_tokens_table.c.last_used_at,
             api_tokens_table.c.is_revoked,
+            api_tokens_table.c.token_type,
         )
         .where(
             api_tokens_table.c.user_identifier == user_identifier,
-            api_tokens_table.c.token_type == "api",
+            api_tokens_table.c.token_type.in_(BEARER_TOKEN_TYPES),
         )
         .order_by(api_tokens_table.c.created_at.desc())
     )
