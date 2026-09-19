@@ -1,12 +1,13 @@
 """The mounted MCP endpoint: transport, enablement gate and lifecycle."""
 
 import logging
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -14,6 +15,9 @@ from family_assistant.web.auth import MCP_ENDPOINT_PATH
 from family_assistant.web.mcp_adapter.config import adapter_config
 from family_assistant.web.mcp_adapter.oauth import install_oauth_routes
 from family_assistant.web.mcp_adapter.tools import register_tools
+
+if TYPE_CHECKING:
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -49,25 +53,47 @@ class MCPAdapter:
     wrap it in: a Starlette sub-app rebinds ``scope["app"]`` to itself, and the
     tool needs the outer application's ``state`` (processing services, engine,
     config) exactly as a router does.
+
+    The SDK's session manager can be run once per instance, while an app's
+    lifespan may be entered many times (every ``TestClient`` context, for one),
+    so each ``run()`` builds a fresh server and the handler dispatches to the one
+    currently running.
     """
 
     def __init__(self) -> None:
-        self.mcp = FastMCP(
+        self._session_manager: StreamableHTTPSessionManager | None = None
+        self.asgi_app: ASGIApp = _EnabledGate(self._dispatch)
+
+    async def _dispatch(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self._session_manager is None:
+            response = JSONResponse(
+                status_code=503,
+                content={"detail": "MCP adapter is not running."},
+            )
+            await response(scope, receive, send)
+            return
+        await self._session_manager.handle_request(scope, receive, send)
+
+    @asynccontextmanager
+    async def run(self) -> AsyncIterator[None]:
+        """Serve requests for the duration of the context; enter it for the app's lifespan."""
+        if self._session_manager is not None:
+            raise RuntimeError("MCPAdapter.run() is already active.")
+        mcp = FastMCP(
             SERVER_NAME,
             instructions=SERVER_INSTRUCTIONS,
             stateless_http=True,
             json_response=True,
         )
-        register_tools(self.mcp)
+        register_tools(mcp)
         # Builds the session manager; the Starlette app it returns is unused.
-        self.mcp.streamable_http_app()
-        self.asgi_app: ASGIApp = _EnabledGate(
-            StreamableHTTPASGIApp(self.mcp.session_manager)
-        )
-
-    def run(self) -> AbstractAsyncContextManager[None]:
-        """The session manager's lifetime; enter it for the app's lifespan."""
-        return self.mcp.session_manager.run()
+        mcp.streamable_http_app()
+        self._session_manager = mcp.session_manager
+        try:
+            async with self._session_manager.run():
+                yield
+        finally:
+            self._session_manager = None
 
 
 def install_mcp_adapter(app: FastAPI) -> MCPAdapter:
