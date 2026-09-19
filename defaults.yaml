@@ -715,6 +715,17 @@ ucp_config:
   trusted_endpoint_suffixes:
     - "myshopify.com"
 
+# --- MCP adapter: Family Assistant as an MCP server ---
+# Lets an external MCP client (a claude.ai custom connector, Claude Code) call
+# `ask_family_assistant` at /api/mcp, authenticating with an API token or by
+# signing in through the built-in OAuth flow. SERVER_URL must be the public
+# HTTPS origin: it is the OAuth issuer and the resource identifier.
+# See docs/design/mcp-adapter.md.
+mcp_adapter:
+  enabled: false
+  # Processing profile the tool runs under; null means the default profile.
+  profile_id: null
+
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
 # Tool policy rules applied to *every* profile, regardless of the profile's own

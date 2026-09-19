@@ -1477,6 +1477,22 @@ class MCPConfig(BaseModel):
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class MCPAdapterConfig(BaseModel):
+    """Family Assistant as an MCP server for external clients.
+
+    Exposes ``ask_family_assistant`` over Streamable HTTP at ``/api/mcp`` and the
+    OAuth authorization server that claude.ai connectors sign in through. Off by
+    default: dynamic client registration is an unauthenticated surface an operator
+    who does not use the feature should not carry. See docs/design/mcp-adapter.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    # Processing profile the tool runs under; None means the default profile.
+    profile_id: str | None = None
+
+
 def mcp_servers_for_runtime(
     mcp_config: MCPConfig,
     # ast-grep-ignore: no-dict-any - Runtime MCP server dicts are heterogeneous by design
@@ -1987,6 +2003,7 @@ class AppConfig(BaseSettings):
     )
     gemini_live_config: GeminiLiveConfig = Field(default_factory=GeminiLiveConfig)
     mcp_config: MCPConfig = Field(default_factory=MCPConfig)
+    mcp_adapter: MCPAdapterConfig = Field(default_factory=MCPAdapterConfig)
     indexing_pipeline_config: IndexingPipelineConfig = Field(
         default_factory=IndexingPipelineConfig
     )

@@ -62,6 +62,14 @@ PUBLIC_PATHS = [
     re.compile(r"^/static(/.*)?$"),
     re.compile(r"^/favicon.ico$"),
     re.compile(r"^/\.well-known(/.*)?$"),
+    # OAuth 2.1 endpoints of the MCP adapter (docs/design/mcp-adapter.md). They
+    # carry their own authentication: client credentials at /token and /revoke,
+    # PKCE at /authorize, dynamic registration at /register. The consent page
+    # they lead to is deliberately not here so the login redirect applies to it.
+    re.compile(r"^/authorize$"),
+    re.compile(r"^/token$"),
+    re.compile(r"^/register$"),
+    re.compile(r"^/revoke$"),
     re.compile(r"^/manifest\.webmanifest$"),
     re.compile(r"^/sw\.js$"),
 ]
@@ -85,6 +93,29 @@ def extract_api_credential(request: Request) -> str | None:
 
 
 _AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"
+
+# Path of the MCP adapter endpoint (docs/design/mcp-adapter.md). Defined here
+# rather than imported from the adapter package because the middleware is what
+# confines ``mcp`` tokens to it, and the adapter imports from this module.
+MCP_ENDPOINT_PATH = "/api/mcp"
+MCP_TOKEN_TYPE = "mcp"
+# api_tokens rows a bearer credential may resolve to. ``mcp`` rows are OAuth
+# access tokens issued to an MCP client; AuthMiddleware rejects them anywhere
+# but the MCP endpoint.
+BEARER_TOKEN_TYPES: frozenset[str] = frozenset({"api", MCP_TOKEN_TYPE})
+
+
+def is_mcp_endpoint_path(path: str) -> bool:
+    return path == MCP_ENDPOINT_PATH or path.startswith(MCP_ENDPOINT_PATH + "/")
+
+
+def mcp_resource_metadata_url(server_url: str) -> str:
+    """Where an MCP client finds the OAuth protected-resource metadata."""
+    return (
+        server_url.rstrip("/")
+        + "/.well-known/oauth-protected-resource"
+        + MCP_ENDPOINT_PATH
+    )
 
 
 def set_request_authenticated_api_user(request: Request, user: User) -> None:
@@ -233,7 +264,7 @@ class AuthService:
         db = Database(self.database_engine)
         query = select(api_tokens_table).where(
             api_tokens_table.c.prefix == token_prefix,
-            api_tokens_table.c.token_type == "api",
+            api_tokens_table.c.token_type.in_(BEARER_TOKEN_TYPES),
         )
         token_row = await db.fetch_one(query)
 
@@ -283,6 +314,7 @@ class AuthService:
             "email": token_row["user_identifier"],  # Or actual email if available
             "source": "api_token",
             "token_id": token_row["id"],
+            "token_type": token_row["token_type"],
         }
 
     async def _user_from_jwt_token(self, token_value: str) -> dict | None:
@@ -675,6 +707,19 @@ class AuthMiddleware:
                 api_user = await auth_service.get_user_from_api_token(
                     f"Bearer {credential}", request
                 )
+                if (
+                    api_user
+                    and api_user.get("token_type") == MCP_TOKEN_TYPE
+                    and not is_mcp_endpoint_path(request_path)
+                ):
+                    # An OAuth grant to an MCP client is a grant to ask the
+                    # assistant, not to the REST API the user's own tokens reach.
+                    logger.warning(
+                        "MCP access token %s presented outside the MCP endpoint (%s); rejecting.",
+                        api_user.get("token_id"),
+                        request_path,
+                    )
+                    api_user = None
                 if api_user:
                     # Bearer identity is request-local. Only the explicit
                     # /api/auth/token-session bridge may persist it into a
@@ -693,14 +738,24 @@ class AuthMiddleware:
                     "No session or valid API token for API path %s; rejecting with 401.",
                     request_path,
                 )
+                www_authenticate = 'Bearer realm="api", error="missing_token"'
+                if is_mcp_endpoint_path(request_path):
+                    # The pointer an MCP client follows to discover the OAuth
+                    # authorization server (RFC 9728); claude.ai reads it only
+                    # from a 401.
+                    app_config = getattr(getattr(app, "state", None), "config", None)
+                    server_url = getattr(app_config, "server_url", None)
+                    if server_url:
+                        www_authenticate = (
+                            'Bearer realm="mcp", error="invalid_token", '
+                            f'resource_metadata="{mcp_resource_metadata_url(server_url)}"'
+                        )
                 unauthorized = JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={
                         "detail": "Not authenticated: session or API token required."
                     },
-                    headers={
-                        "WWW-Authenticate": 'Bearer realm="api", error="missing_token"'
-                    },
+                    headers={"WWW-Authenticate": www_authenticate},
                 )
                 await unauthorized(scope, receive, send)
                 return
