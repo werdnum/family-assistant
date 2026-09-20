@@ -12,7 +12,7 @@ import secrets
 from typing import Annotated
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Form, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from family_assistant.web.dependencies import get_current_user
@@ -105,24 +105,29 @@ def _expired() -> HTMLResponse:
     )
 
 
-def _not_enabled() -> HTMLResponse:
-    return _page(
-        "Not found",
-        "<h1>Not found</h1><p>The MCP adapter is not enabled on this server.</p>",
-        status_code=status.HTTP_404_NOT_FOUND,
-    )
+async def consent_user(request: Request) -> dict:
+    """Authenticate the consent page, unless the adapter is off.
+
+    Enablement is checked before authentication so a disabled adapter answers
+    404 for a signed-out visitor too, rather than a 401 or a login redirect
+    from a dependency that would otherwise run first.
+    """
+    if not adapter_config(request.app).enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="MCP adapter is not enabled.",
+        )
+    return await get_current_user(request)
 
 
 @consent_router.get(CONSENT_PATH, name=CONSENT_ROUTE_NAME, include_in_schema=False)
 async def consent_page(
     request: Request,
     request_id: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(consent_user)],
 ) -> HTMLResponse:
     """Show who is asking and what approving grants."""
     del current_user  # Authentication is the point; the decision names the user.
-    if not adapter_config(request.app).enabled:
-        return _not_enabled()
     pending = oauth_server(request.app).provider.pending_consent(request_id)
     if pending is None:
         return _expired()
@@ -133,14 +138,12 @@ async def consent_page(
 @consent_router.post(CONSENT_PATH, include_in_schema=False)
 async def consent_decision(
     request: Request,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(consent_user)],
     request_id: Annotated[str, Form()],
     decision: Annotated[str, Form()],
     nonce: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Turn the user's decision into the client's redirect."""
-    if not adapter_config(request.app).enabled:
-        return _not_enabled()
     expected_nonce = _session_nonce(request, None)
     if expected_nonce is not None and not (
         nonce and secrets.compare_digest(expected_nonce, nonce)

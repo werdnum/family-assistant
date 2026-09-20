@@ -519,10 +519,17 @@ async def test_unauthenticated_mcp_request_points_at_resource_metadata(
     ],
 )
 async def test_everything_is_404_when_disabled(
-    app_fixture: FastAPI, db_engine: AsyncEngine, method: str, path: str
+    app_fixture: FastAPI,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
 ) -> None:
     _configure(app_fixture, db_engine, enabled=False)
     install_mcp_adapter(app_fixture)
+    # With authentication on, a signed-out visitor still gets the adapter's
+    # 404 rather than a challenge or a login redirect.
+    monkeypatch.setattr(app_fixture.state.auth_service, "auth_enabled", True)
     async with AsyncClient(
         transport=ASGITransport(app=app_fixture), base_url="http://testserver"
     ) as http:
