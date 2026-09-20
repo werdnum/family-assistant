@@ -47,6 +47,12 @@ GITHUB_APP_PRIVATE_KEY_PATH_ENV = "GITHUB_APP_PRIVATE_KEY_PATH"
 
 GITHUB_API_BASE_URL = "https://api.github.com"
 
+# Where the Interactions API keeps stored credentials. The egress proxy resolves
+# a stored id per outbound request rather than reading a header frozen into the
+# interaction at submit, which is what lets a token change under a run that is
+# already in flight.
+GENERATIVE_LANGUAGE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
 # GitHub caps App JWT lifetime at 10 minutes and rejects an `iat` in its own
 # future, so the token is backdated to absorb clock skew between us and GitHub.
 _APP_JWT_LIFETIME = timedelta(minutes=9)
@@ -268,6 +274,104 @@ def _parse_expiry(raw: object) -> datetime | None:
     except ValueError:
         logger.warning("Unparseable GitHub token expiry %r; using a 1h default", raw)
         return None
+
+
+class AntigravityCredentialStore:
+    """Writes minted tokens into the Interactions API credential store.
+
+    A stored credential is referenced from an allowlist rule by id, and the
+    proxy resolves that id on every outbound request. Replacing the stored
+    value therefore reaches runs that are already in flight -- observed against
+    the live API, not inferred from the documentation -- which is the whole
+    reason a minted token goes here rather than into a submit-time header.
+
+    The store renders every credential as ``Authorization: Bearer <token>``.
+    ``header_name`` and ``prefix`` are accepted on create and then ignored on
+    the wire, so nothing here offers them: a caller that needs another header
+    or scheme cannot be served by the store at all and belongs on the
+    ``transform`` path.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str = GENERATIVE_LANGUAGE_BASE_URL,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._http_client = http_client
+        self._owns_client = http_client is None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=15.0)
+        return self._http_client
+
+    async def aclose(self) -> None:
+        """Close the HTTP client if this store created it."""
+        if self._http_client is not None and self._owns_client:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "x-goog-api-key": self._api_key,
+            "Content-Type": "application/json",
+        }
+
+    async def ensure(self, credential_id: str, token: str) -> None:
+        """Store ``token`` under ``credential_id``, creating the id if needed.
+
+        Written as update-then-create rather than create-then-update because
+        the steady state is a credential that already exists: every rotation
+        tick and every submit after the first takes the single-request path.
+        """
+        client = self._client()
+        body = {"type": "bearer_token", "token": token}
+        try:
+            response = await client.patch(
+                f"{self._base_url}/credentials/{credential_id}",
+                headers=self._headers(),
+                json=body,
+            )
+            if response.status_code == httpx.codes.NOT_FOUND:
+                response = await client.post(
+                    f"{self._base_url}/credentials",
+                    headers=self._headers(),
+                    json={"id": credential_id, **body},
+                )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise AntigravityEgressError(
+                f"Storing egress credential {credential_id!r} failed: "
+                f"{e.response.status_code} {e.response.text}"
+            ) from e
+        except httpx.HTTPError as e:
+            raise AntigravityEgressError(
+                f"Storing egress credential {credential_id!r} failed: {e}"
+            ) from e
+        logger.info("Stored Antigravity egress credential %r", credential_id)
+
+    async def delete(self, credential_id: str) -> None:
+        """Remove a stored credential. Absent is success -- the end state holds."""
+        try:
+            response = await self._client().delete(
+                f"{self._base_url}/credentials/{credential_id}",
+                headers=self._headers(),
+            )
+            if response.status_code != httpx.codes.NOT_FOUND:
+                response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise AntigravityEgressError(
+                f"Deleting egress credential {credential_id!r} failed: "
+                f"{e.response.status_code} {e.response.text}"
+            ) from e
+        except httpx.HTTPError as e:
+            raise AntigravityEgressError(
+                f"Deleting egress credential {credential_id!r} failed: {e}"
+            ) from e
 
 
 def _render_header_value(scheme: str, token: str) -> str:
