@@ -95,7 +95,7 @@ _AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"
 # rather than imported from the adapter package because the middleware is what
 # confines ``mcp`` tokens to it, and the adapter imports from this module.
 MCP_ENDPOINT_PATH = "/api/mcp"
-MCP_CONSENT_PATH = "/mcp/consent"
+MCP_CONSENT_PATH = route_auth.MCP_CONSENT_PATH
 MCP_TOKEN_TYPE = "mcp"
 # api_tokens rows a bearer credential may resolve to. ``mcp`` rows are OAuth
 # access tokens issued to an MCP client; AuthMiddleware rejects them anywhere

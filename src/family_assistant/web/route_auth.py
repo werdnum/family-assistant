@@ -148,6 +148,10 @@ OAUTH_PROTOCOL_PATHS: frozenset[str] = frozenset({
     "/register",
     "/revoke",
 })
+# The consent page's form POST. It is authenticated, not public, but FastAPI
+# buffers a form body before its dependencies run, so the cap applies here too.
+MCP_CONSENT_PATH = "/mcp/consent"
+BODY_CAPPED_PAGE_PATHS: frozenset[str] = OAUTH_PROTOCOL_PATHS | {MCP_CONSENT_PATH}
 
 
 def api_route_body_limit(method: str, path: str) -> int | None:
@@ -155,12 +159,13 @@ def api_route_body_limit(method: str, path: str) -> int | None:
 
     The no-default-auth routes are reachable unauthenticated (bootstrap and
     public receivers), so their bodies are capped before buffering, as are the
-    public OAuth protocol endpoints. Default-auth routes are excluded — they
-    legitimately carry large payloads such as attachment uploads.
+    OAuth protocol endpoints and the consent form. Default-auth routes are
+    excluded — they legitimately carry large payloads such as attachment
+    uploads.
     """
     if method.upper() not in {"POST", "PUT", "PATCH"}:
         return None
-    if path in OAUTH_PROTOCOL_PATHS:
+    if path in BODY_CAPPED_PAGE_PATHS:
         return BOOTSTRAP_BODY_LIMIT_BYTES
     if not is_api_path(path) or api_route_requires_default_auth(method, path):
         return None

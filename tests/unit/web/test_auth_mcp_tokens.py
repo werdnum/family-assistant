@@ -108,7 +108,9 @@ async def test_disabled_adapter_reaches_its_own_gate_unauthenticated(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/authorize", "/token", "/register", "/revoke"])
+@pytest.mark.parametrize(
+    "path", ["/authorize", "/token", "/register", "/revoke", MCP_CONSENT_PATH]
+)
 async def test_oauth_protocol_endpoints_cap_request_bodies(path: str) -> None:
     stack = BootstrapBodyLimitMiddleware(_ok_app)
     transport = ASGITransport(app=stack)
