@@ -182,6 +182,10 @@ class StoreFullError(Exception):
     """The store holds ``MAX_PENDING_ENTRIES`` live entries."""
 
 
+class _GrantGone(Exception):
+    """Aborts a rotation whose grant or refresh token was revoked or spent first."""
+
+
 class _ExpiringStore[T]:
     """A bounded in-process dict whose entries expire after ``ttl_seconds``.
 
@@ -441,65 +445,85 @@ class FamilyAssistantOAuthProvider(
     ) -> OAuthToken:
         """Rotate in place: the ``mcp`` row is the grant, and it keeps its id.
 
-        The refresh token is consumed by a conditional write on its own row, so
-        two requests racing with the same token cannot both mint a replacement.
-        The access row then takes the new secret and expiry under the same
-        ``is_revoked = false`` condition, so a revoke that lands first (from the
-        token page, say) wins and the rotation fails with ``invalid_grant``.
-        Only the refresh row is replaced. Because the row a user sees on the
-        token page never changes identity, revoking it disconnects the client
-        however many times it has refreshed.
+        The grant row is updated first and the refresh row consumed second, both
+        under ``is_revoked = false``: the same parent-then-child lock order
+        ``revoke_api_token`` uses, so a refresh racing a revocation from the
+        token page cannot deadlock, and whichever lands first wins. Two requests
+        racing with the same refresh token cannot both mint a replacement,
+        because only one consume flips the row. Only the refresh row is
+        replaced, so the entry a user sees on the token page never changes
+        identity and revoking it disconnects the client however many times it
+        has refreshed.
+
+        ``TokenError`` is a frozen dataclass and cannot be re-raised through the
+        transaction context, so the block aborts with an internal exception and
+        the OAuth error is raised after it.
         """
         minted = await _mint_pair()
         now = datetime.now(UTC)
-        async with self._db().transaction() as txn:
-            consumed = await txn.execute(
-                update(api_tokens_table)
-                .where(
-                    api_tokens_table.c.id == refresh_token.token_id,
-                    api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
-                )
-                .values(is_revoked=True, last_used_at=now)
-                .returning(api_tokens_table.c.id)
-            )
-            if consumed.scalar_one_or_none() is None:
-                raise TokenError("invalid_grant", "refresh token is no longer valid")
-            rotated = await txn.execute(
-                update(api_tokens_table)
-                .where(
-                    api_tokens_table.c.id == refresh_token.parent_token_id,
-                    api_tokens_table.c.token_type == MCP_TOKEN_TYPE,
-                    api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
-                )
-                .values(
-                    hashed_token=minted.access.hashed_secret,
-                    prefix=minted.access.prefix,
-                    expires_at=now + ACCESS_TOKEN_TTL,
-                    last_used_at=now,
-                )
-                .returning(api_tokens_table.c.name)
-            )
-            grant_name = rotated.scalar_one_or_none()
-            if grant_name is None:
-                raise TokenError("invalid_grant", "refresh token is no longer valid")
-            await api_tokens_storage.add_api_token(
-                db_context=txn,
-                user_identifier=refresh_token.user_identifier,
-                name=f"{grant_name} (refresh)",
-                hashed_token=minted.refresh.hashed_secret,
-                prefix=minted.refresh.prefix,
-                created_at=minted.refresh.created_at,
-                expires_at=now + REFRESH_TOKEN_TTL,
-                token_type="refresh",
-                parent_token_id=refresh_token.parent_token_id,
-                oauth_client_id=client.client_id,
-            )
+        try:
+            async with self._db().transaction() as txn:
+                await self._rotate_grant(txn, client, refresh_token, minted, now)
+        except _GrantGone:
+            raise TokenError(
+                "invalid_grant", "refresh token is no longer valid"
+            ) from None
         logger.info(
             "Rotated MCP access token for client %s, user %s",
             client.client_id,
             refresh_token.user_identifier,
         )
         return _token_response(minted, scopes)
+
+    @staticmethod
+    async def _rotate_grant(
+        txn: DatabaseTransaction,
+        client: OAuthClientInformationFull,
+        refresh_token: StoredRefreshToken,
+        minted: _MintedPair,
+        now: datetime,
+    ) -> None:
+        rotated = await txn.execute(
+            update(api_tokens_table)
+            .where(
+                api_tokens_table.c.id == refresh_token.parent_token_id,
+                api_tokens_table.c.token_type == MCP_TOKEN_TYPE,
+                api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+            )
+            .values(
+                hashed_token=minted.access.hashed_secret,
+                prefix=minted.access.prefix,
+                expires_at=now + ACCESS_TOKEN_TTL,
+                last_used_at=now,
+            )
+            .returning(api_tokens_table.c.name)
+        )
+        grant_name = rotated.scalar_one_or_none()
+        if grant_name is None:
+            raise _GrantGone
+        consumed = await txn.execute(
+            update(api_tokens_table)
+            .where(
+                api_tokens_table.c.id == refresh_token.token_id,
+                api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+            )
+            .values(is_revoked=True, last_used_at=now)
+            .returning(api_tokens_table.c.id)
+        )
+        if consumed.scalar_one_or_none() is None:
+            raise _GrantGone
+        await api_tokens_storage.add_api_token(
+            db_context=txn,
+            user_identifier=refresh_token.user_identifier,
+            name=f"{grant_name} (refresh)",
+            hashed_token=minted.refresh.hashed_secret,
+            prefix=minted.refresh.prefix,
+            created_at=minted.refresh.created_at,
+            expires_at=now + REFRESH_TOKEN_TTL,
+            token_type="refresh",
+            parent_token_id=refresh_token.parent_token_id,
+            oauth_client_id=client.client_id,
+        )
 
     # --- Verification and revocation ---
 
