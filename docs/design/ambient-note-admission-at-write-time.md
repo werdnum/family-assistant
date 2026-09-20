@@ -67,6 +67,15 @@ for it in a clean turn or edits it in the Notes UI; that write is trusted and th
 eligible. There is no review queue, no attestation, and no readmission machinery: the readmission
 *is* a write.
 
+**A write promotes an ineligible note only if it replaces every piece of ambient material it does
+not re-judge.** The repository merges partial writes — an `append` keeps the existing body, and a
+call that omits attachment ids keeps the existing attachments — while the gate sees only what the
+call carries. A partial write to an ineligible note therefore keeps the note ineligible, whatever
+its own disposition; only a write that supplies the whole body and the whole attachment set decides
+eligibility afresh. A partial write to an eligible note still crosses the gate (it adds ambient
+material) and can demote it. The rule is evaluated in the repository, against the resolved
+post-merge note, so no caller can promote by omission.
+
 ### The ambient-write gate
 
 A write of ambient material is an `ambient_prompt_write` sink — a new `SinkClass` beside
@@ -164,7 +173,7 @@ the rest supply a decision from their own trust:
   is poisoning every turn become ineligible on upgrade and can be restored by editing them in the
   Notes UI; nothing about their content or labels changes.
 
-### Observe mode
+### Observe mode and pending verdicts
 
 **Eligibility follows the verdict; the mode decides only whether the write is refused.** Under
 `taint_policy.mode: observe` the judge still runs (the risk-adjudicated design preserves the outcome
@@ -174,6 +183,17 @@ fallback — still succeeds, because nothing blocks in observe mode, but the not
 **ineligible**, and the tool result says so. Eligibility is never granted by the mode being lenient,
 so switching the deployment to `enforce` later finds no note that was admitted only because
 enforcement was off; the switch changes which writes are refused, not which notes are ambient.
+
+In observe mode the verdict is not known when the write lands: the shadow review runs detached from
+the tool call, so the note is persisted before the judge answers. Executable definitions already
+have this shape and solve it with a pending-verdict record — the write carries a pending write id,
+and the review's resolution attaches the verdict to the record it examined. Notes reuse that
+mechanism rather than adding one: a gated write whose verdict is still pending is stored
+**ineligible-pending**, and the verdict's resolution is the one other event that changes a note's
+eligibility, flipping it to eligible on an admitting verdict and leaving it ineligible otherwise. A
+pending note is ineligible on every ambient read in the meantime, so a note is never ambient before
+it has been admitted, in either mode. Enforce mode, where the verdict is awaited before the write
+executes, is the degenerate case in which the pending window is empty.
 
 This is a real change in observe mode — today a tainted prompt note both lands in context and
 re-taints every later turn — and it is the intended one: observe mode exists to measure what
@@ -185,8 +205,8 @@ enforcement would have removed.
 - **Titles of tainted, non-ambient notes are dropped from the catalog rather than gated.** The model
   can still find such a note by `list_notes` or search. Uncommon case, reasonable behaviour.
 - **Eligibility is not bound to a content hash.** Automations need one because the definition is
-  immutable and fires unattended; a note is re-decided by every write to it, so the current write's
-  decision is always the current content's decision.
+  immutable and fires unattended; a note is re-decided by every full write to it, and a partial
+  write cannot promote it, so the current eligibility always speaks for the current content.
 - **No cure for explicit reads.** An admitted note's stored taint is still merged by `get_note`.
   Curing it there would let one adjudicated write launder content into an unlimited number of later
   turns' egress; the ambient cure is bounded to "present in context", which is what was judged.
@@ -202,9 +222,12 @@ enforcement would have removed.
 ## Work plan
 
 1. **Eligibility storage and backfill.** Add the stored eligibility to notes as a required write
-   parameter, backfilled from provenance as above; the three ambient repository reads filter on it.
+   parameter, backfilled from provenance as above; the three ambient repository reads filter on it,
+   and the repository applies the no-promotion-by-partial-write rule against the resolved note.
    Verified by repository tests that a high-tier note is absent from prompt notes, skills and
-   excluded titles, and present in `get_note`, `list_notes` and search.
+   excluded titles, and present in `get_note`, `list_notes` and search; and that an append or an
+   attachment-omitting update to an ineligible note leaves it ineligible while a full write decides
+   afresh.
 2. **Write-time decision.** Tool writes decide eligibility from the turn's taint and the gate's
    disposition; web API writes stamp trusted provenance and eligibility; memory apply passes
    through. Verified by tool tests covering each gated write shape, the ungated tainted create, and
@@ -214,7 +237,10 @@ enforcement would have removed.
    existing row, so it is authorised inside the tool rather than at dispatch, through the same
    `authorize_taint_sink` path the profile-level sink check uses). Verified by policy tests for each
    tier and mode: an admitting verdict makes the note eligible, a denying verdict and the `deny`
-   fallback leave it ineligible, and an operator override of the fallback to `confirm` holds.
+   fallback leave it ineligible, and an operator override of the fallback to `confirm` holds. In
+   observe mode the write is stored ineligible-pending through the definition-record pending-verdict
+   mechanism and the verdict's resolution flips it; verified by a test that a note is absent from
+   ambient reads until an admitting shadow verdict lands, and stays absent after a denying one.
 4. **Context assembly.** The notes provider stops restoring provenance and reports only a count of
    ineligible notes. Verified by a functional test that a conversation with a poisoned prompt note
    starts at `trusted_user` after the note is ineligible, and by re-reading the taint-audit endpoint
