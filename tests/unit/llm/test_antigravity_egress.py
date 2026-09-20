@@ -25,6 +25,7 @@ from family_assistant.config_models import (
     AntigravityEnvironmentConfig,
 )
 from family_assistant.llm.antigravity_egress import (
+    AntigravityCredentialStore,
     AntigravityEgressError,
     AntigravityEgressResolver,
     GitHubAppInstallationTokenSource,
@@ -454,3 +455,106 @@ def test_allowlist_outside_allowlist_mode_is_rejected(network: str) -> None:
 def test_environment_is_optional_on_antigravity_config() -> None:
     """The shipped profile configures no environment at all."""
     assert AntigravityConfig().environment is None
+
+
+class _CredentialStoreStub:
+    """Stands in for the Interactions API credential store."""
+
+    def __init__(self, *, existing: set[str] | None = None) -> None:
+        self.existing = existing if existing is not None else set()
+        self.requests: list[httpx.Request] = []
+        self.failure: int | None = None
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.failure is not None:
+            return httpx.Response(self.failure, json={"error": {"message": "nope"}})
+        credential_id = request.url.path.rsplit("/", 1)[-1]
+        if request.method == "PATCH":
+            if credential_id not in self.existing:
+                return httpx.Response(404, json={"error": {"code": "not_found"}})
+            return httpx.Response(200, json={"id": credential_id, "status": "active"})
+        if request.method == "POST":
+            body = json.loads(request.content)
+            self.existing.add(body["id"])
+            return httpx.Response(200, json={"id": body["id"], "status": "active"})
+        if request.method == "DELETE":
+            if credential_id not in self.existing:
+                return httpx.Response(404, json={"error": {"code": "not_found"}})
+            self.existing.discard(credential_id)
+            return httpx.Response(200, json={})
+        raise AssertionError(f"unexpected method {request.method}")
+
+    def store(self) -> AntigravityCredentialStore:
+        return AntigravityCredentialStore(
+            api_key="test-api-key",
+            base_url="https://generativelanguage.googleapis.com/v1beta",
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(self.handler)),
+        )
+
+
+async def test_storing_an_absent_credential_creates_it() -> None:
+    """First run for a deployment: the PATCH 404s and the POST establishes it."""
+    stub = _CredentialStoreStub()
+    await stub.store().ensure("fa-coder-github", "ghs_token")
+
+    assert [r.method for r in stub.requests] == ["PATCH", "POST"]
+    assert json.loads(stub.requests[1].content) == {
+        "id": "fa-coder-github",
+        "type": "bearer_token",
+        "token": "ghs_token",
+    }
+
+
+async def test_storing_an_existing_credential_takes_one_request() -> None:
+    """The steady state -- every rotation tick after the first -- is a lone PATCH."""
+    stub = _CredentialStoreStub(existing={"fa-coder-github"})
+    await stub.store().ensure("fa-coder-github", "ghs_rotated")
+
+    assert [r.method for r in stub.requests] == ["PATCH"]
+    assert json.loads(stub.requests[0].content) == {
+        "type": "bearer_token",
+        "token": "ghs_rotated",
+    }
+
+
+async def test_stored_credential_carries_no_header_name_or_prefix() -> None:
+    """The proxy ignores both, so offering them would advertise a lie.
+
+    Measured against the live API: a credential created with
+    ``header_name: "X-Custom-Hdr"`` and ``prefix: "Basic"`` still arrived as
+    ``authorization: "Bearer <token>"``.
+    """
+    stub = _CredentialStoreStub(existing={"fa-coder-github"})
+    await stub.store().ensure("fa-coder-github", "ghs_token")
+
+    body = json.loads(stub.requests[0].content)
+    assert "header_name" not in body
+    assert "prefix" not in body
+
+
+async def test_the_api_key_travels_as_a_header_not_a_query_parameter() -> None:
+    """A key in the URL lands in logs and proxy access records; a header does not."""
+    stub = _CredentialStoreStub(existing={"fa-coder-github"})
+    await stub.store().ensure("fa-coder-github", "ghs_token")
+
+    request = stub.requests[0]
+    assert request.headers["x-goog-api-key"] == "test-api-key"
+    assert "test-api-key" not in str(request.url)
+
+
+async def test_a_refused_store_write_raises() -> None:
+    """A run that reaches a private repo unauthenticated fails deep inside the
+    agent as a 404, which reads as confusion rather than a credential problem."""
+    stub = _CredentialStoreStub(existing={"fa-coder-github"})
+    stub.failure = 403
+    with pytest.raises(AntigravityEgressError, match="403"):
+        await stub.store().ensure("fa-coder-github", "ghs_token")
+
+
+async def test_deleting_an_absent_credential_succeeds() -> None:
+    """Delete states an end state; a credential already gone satisfies it."""
+    stub = _CredentialStoreStub()
+    await stub.store().delete("fa-coder-github")
+
+    assert [r.method for r in stub.requests] == ["DELETE"]
