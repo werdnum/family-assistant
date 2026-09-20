@@ -61,12 +61,15 @@ Two credentials work, and they are the same credential under the hood:
    user; the token endpoint exchanges it for an access token.
 
 An OAuth access token is a row in `api_tokens` with `token_type = "mcp"` and the OAuth client it was
-issued to. It is verified by the same code path as an API token, with one difference enforced in
-`AuthMiddleware`: an `mcp` token authenticates only requests to the MCP endpoint. A connector that
-was granted "ask the assistant" cannot use its token to call the rest of the REST API. Refresh
-tokens reuse the existing `refresh` token type and parent link, so revoking the access token
-cascades. Because the tokens are `api_tokens` rows, the token-management page lists them alongside
-the user's other tokens and revocation works from there with no new UI.
+issued to. That row *is* the grant: a refresh rotates its secret and expiry in place and replaces
+only the refresh row, so the entry a user sees on the token page keeps its identity however many
+times the client has refreshed, and revoking it disconnects the client. It is verified by the same
+code path as an API token, with one difference enforced in `AuthMiddleware`: an `mcp` token
+authenticates only requests to the MCP endpoint. A connector that was granted "ask the assistant"
+cannot use its token to call the rest of the REST API. Refresh tokens reuse the existing `refresh`
+token type and parent link, so revoking the access token cascades. Because the tokens are
+`api_tokens` rows, the token-management page lists them alongside the user's other tokens and
+revocation works from there with no new UI.
 
 ### Trust
 

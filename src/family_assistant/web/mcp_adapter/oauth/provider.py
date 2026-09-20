@@ -422,14 +422,19 @@ class FamilyAssistantOAuthProvider(
         refresh_token: StoredRefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        """Rotate: retire the old pair and issue a new one atomically.
+        """Rotate in place: the ``mcp`` row is the grant, and it keeps its id.
 
         The refresh token is consumed by a conditional write on its own row, so
-        two requests racing with the same token cannot both mint a replacement:
-        only the one whose update flips ``is_revoked`` proceeds. Revoking the
-        parent then retires the spent access token as well.
+        two requests racing with the same token cannot both mint a replacement.
+        The access row then takes the new secret and expiry under the same
+        ``is_revoked = false`` condition, so a revoke that lands first (from the
+        token page, say) wins and the rotation fails with ``invalid_grant``.
+        Only the refresh row is replaced. Because the row a user sees on the
+        token page never changes identity, revoking it disconnects the client
+        however many times it has refreshed.
         """
         minted = await _mint_pair()
+        now = datetime.now(UTC)
         async with self._db().transaction() as txn:
             consumed = await txn.execute(
                 update(api_tokens_table)
@@ -437,17 +442,41 @@ class FamilyAssistantOAuthProvider(
                     api_tokens_table.c.id == refresh_token.token_id,
                     api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
                 )
-                .values(is_revoked=True, last_used_at=datetime.now(UTC))
+                .values(is_revoked=True, last_used_at=now)
                 .returning(api_tokens_table.c.id)
             )
             if consumed.scalar_one_or_none() is None:
                 raise TokenError("invalid_grant", "refresh token is no longer valid")
-            revoked = await api_tokens_storage.revoke_api_token(
-                txn, refresh_token.parent_token_id, refresh_token.user_identifier
+            rotated = await txn.execute(
+                update(api_tokens_table)
+                .where(
+                    api_tokens_table.c.id == refresh_token.parent_token_id,
+                    api_tokens_table.c.token_type == MCP_TOKEN_TYPE,
+                    api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+                )
+                .values(
+                    hashed_token=minted.access.hashed_secret,
+                    prefix=minted.access.prefix,
+                    expires_at=now + ACCESS_TOKEN_TTL,
+                    last_used_at=now,
+                )
+                .returning(api_tokens_table.c.name)
             )
-            if not revoked:
+            grant_name = rotated.scalar_one_or_none()
+            if grant_name is None:
                 raise TokenError("invalid_grant", "refresh token is no longer valid")
-            await _insert_pair(txn, client, refresh_token.user_identifier, minted)
+            await api_tokens_storage.add_api_token(
+                db_context=txn,
+                user_identifier=refresh_token.user_identifier,
+                name=f"{grant_name} (refresh)",
+                hashed_token=minted.refresh.hashed_secret,
+                prefix=minted.refresh.prefix,
+                created_at=minted.refresh.created_at,
+                expires_at=now + REFRESH_TOKEN_TTL,
+                token_type="refresh",
+                parent_token_id=refresh_token.parent_token_id,
+                oauth_client_id=client.client_id,
+            )
         logger.info(
             "Rotated MCP access token for client %s, user %s",
             client.client_id,

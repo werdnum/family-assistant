@@ -641,3 +641,28 @@ async def test_full_consent_store_refuses_rather_than_evicting(
     # The first request is still waiting for its user.
     page = await client.get(first_consent_url)
     assert page.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_rotation_keeps_the_grant_row_so_revoking_it_disconnects(
+    client: AsyncClient, app_fixture: FastAPI, db_engine: AsyncEngine
+) -> None:
+    client_id, tokens = await _grant(client)
+    db = Database(engine=db_engine)
+    listed_before = await api_tokens_storage.get_api_tokens_for_user(db, "test_user")
+    (grant_id,) = [t["id"] for t in listed_before if t["token_type"] == "mcp"]
+
+    rotated = (await _refresh(client, client_id, tokens["refresh_token"])).json()
+    listed_after = await api_tokens_storage.get_api_tokens_for_user(db, "test_user")
+    assert [t["id"] for t in listed_after if t["token_type"] == "mcp"] == [grant_id]
+
+    assert await api_tokens_storage.revoke_api_token(db, grant_id, "test_user")
+    assert (
+        await api_tokens_storage.validate_token_by_value(
+            db, rotated["access_token"], expected_type="mcp"
+        )
+        is None
+    )
+    assert (
+        await _refresh(client, client_id, rotated["refresh_token"])
+    ).status_code == 400
