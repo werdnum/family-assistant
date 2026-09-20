@@ -230,6 +230,7 @@ class FamilyAssistantOAuthProvider(
 
     def __init__(self, engine: Callable[[], AsyncEngine]) -> None:
         self._engine = engine
+        self._registration_lock = asyncio.Lock()
         self._pending_consents = _ExpiringStore[PendingConsent](
             PENDING_CONSENT_TTL_SECONDS, lambda c: c.created_at
         )
@@ -255,17 +256,33 @@ class FamilyAssistantOAuthProvider(
         are pruned oldest first, and if every stored client is in use the new
         one is refused rather than evicting a working connector.
         """
-        db = self._db()
-        if await oauth_clients_storage.count_clients(db) >= MAX_REGISTERED_CLIENTS:
-            await oauth_clients_storage.prune_idle_clients(
-                db, keep_at_most=MAX_REGISTERED_CLIENTS - 1
+        # Admission is serialised in-process and the decision and insert share
+        # one transaction, so concurrent registrations cannot each observe the
+        # same headroom and all take it. The adapter's flow state is already
+        # per-process (pending consents, codes), so a process-level lock is
+        # the matching bound.
+        # The SDK's RegistrationError is a frozen dataclass, which cannot be
+        # re-raised through a context manager, so the decision is taken inside
+        # the transaction and the refusal raised after it.
+        async with self._registration_lock, self._db().transaction() as txn:
+            admitted = await self._admit_registration(txn)
+            if admitted:
+                await oauth_clients_storage.add_client(txn, client_info)
+        if not admitted:
+            raise RegistrationError(
+                "invalid_client_metadata",
+                "Too many registered clients; revoke an unused connector first.",
             )
-            if await oauth_clients_storage.count_clients(db) >= MAX_REGISTERED_CLIENTS:
-                raise RegistrationError(
-                    "invalid_client_metadata",
-                    "Too many registered clients; revoke an unused connector first.",
-                )
-        await oauth_clients_storage.add_client(db, client_info)
+
+    @staticmethod
+    async def _admit_registration(txn: DatabaseTransaction) -> bool:
+        """Whether one more client fits, pruning idle registrations to make room."""
+        if await oauth_clients_storage.count_clients(txn) < MAX_REGISTERED_CLIENTS:
+            return True
+        await oauth_clients_storage.prune_idle_clients(
+            txn, keep_at_most=MAX_REGISTERED_CLIENTS - 1
+        )
+        return await oauth_clients_storage.count_clients(txn) < MAX_REGISTERED_CLIENTS
 
     # --- Authorization and consent ---
 
