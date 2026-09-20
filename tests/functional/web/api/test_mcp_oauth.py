@@ -724,3 +724,29 @@ async def test_parallel_consent_flows_keep_their_own_nonces(
     ]
     assert [r.status_code for r in redirects] == [302, 302]
     assert states == [["one"], ["two"]]
+
+
+@pytest.mark.asyncio
+async def test_revoking_with_an_expired_access_token_still_kills_the_grant(
+    client: AsyncClient, db_engine: AsyncEngine
+) -> None:
+    client_id, tokens = await _grant(client)
+    db = Database(engine=db_engine)
+    await db.execute(
+        sa_update(api_tokens_table)
+        .where(
+            api_tokens_table.c.oauth_client_id == client_id,
+            api_tokens_table.c.token_type == "mcp",
+        )
+        .values(expires_at=datetime.now(UTC) - timedelta(hours=1))
+    )
+
+    revoked = await client.post(
+        "/revoke",
+        data={"token": tokens["access_token"], "client_id": client_id, **PUBLIC_CLIENT},
+    )
+
+    assert revoked.status_code == 200, revoked.text
+    assert (
+        await _refresh(client, client_id, tokens["refresh_token"])
+    ).status_code == 400

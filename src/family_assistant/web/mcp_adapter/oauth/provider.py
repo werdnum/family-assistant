@@ -528,8 +528,16 @@ class FamilyAssistantOAuthProvider(
     # --- Verification and revocation ---
 
     async def load_access_token(self, token: str) -> StoredAccessToken | None:
+        """Identify the grant an access token belongs to, expired or not.
+
+        Expiry is enforced where tokens are accepted (``AuthMiddleware`` for
+        the endpoint, the SDK's bearer backend via ``expires_at``); here the
+        row is only being named, and the SDK's revocation handler must be able
+        to revoke a grant by an access token that has already lapsed while its
+        refresh token is still live.
+        """
         row = await api_tokens_storage.validate_token_by_value(
-            self._db(), token, expected_type=MCP_TOKEN_TYPE
+            self._db(), token, expected_type=MCP_TOKEN_TYPE, include_expired=True
         )
         if row is None or row["oauth_client_id"] is None:
             return None

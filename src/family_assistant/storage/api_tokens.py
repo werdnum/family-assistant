@@ -359,11 +359,18 @@ async def validate_token_by_value(
     db_context: DatabaseExecutor,
     token_value: str,
     expected_type: str = "refresh",
+    *,
+    include_expired: bool = False,
 ) -> dict | None:
     """Validate a token (API or refresh) by its raw value (prefix + secret).
 
     Returns the token row as a dict if valid, None otherwise.
     Does NOT update last_used_at (caller should do that if needed).
+
+    ``include_expired`` returns a row whose ``expires_at`` has passed, for a
+    caller that needs to identify a credential rather than accept it (OAuth
+    revocation names a grant by an access token that may already have expired).
+    Revoked rows are never returned.
     """
     if len(token_value) <= TOKEN_PREFIX_LENGTH:
         return None
@@ -387,6 +394,9 @@ async def validate_token_by_value(
 
     if row_dict["is_revoked"]:
         return None
+
+    if include_expired:
+        return row_dict
 
     now = datetime.now(UTC)
     expires_at = row_dict["expires_at"]
