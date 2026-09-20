@@ -11,16 +11,18 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from starlette.types import Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from family_assistant.web.auth import (
     MCP_ENDPOINT_PATH,
     PUBLIC_PATHS,
     AuthMiddleware,
     AuthService,
+    BootstrapBodyLimitMiddleware,
     is_mcp_endpoint_path,
     mcp_resource_metadata_url,
 )
+from family_assistant.web.route_auth import BOOTSTRAP_BODY_LIMIT_BYTES
 
 
 async def _ok_app(scope: Scope, receive: Receive, send: Send) -> None:
@@ -90,17 +92,26 @@ async def test_api_token_still_reaches_the_mcp_endpoint(client: AsyncClient) -> 
     assert response.status_code == 200
 
 
-@pytest.mark.asyncio
-async def test_unauthenticated_mcp_request_advertises_resource_metadata() -> None:
-    middleware = AuthMiddleware(_ok_app, _TypedTokenAuthService())
-
+def _with_app_state(middleware: AuthMiddleware, *, enabled: bool) -> ASGIApp:
     async def app_with_config(scope: Scope, receive: Receive, send: Send) -> None:
         scope["app"] = SimpleNamespace(
             state=SimpleNamespace(
-                config=SimpleNamespace(server_url="https://fa.example.com/")
+                config=SimpleNamespace(
+                    server_url="https://fa.example.com/",
+                    mcp_adapter=SimpleNamespace(enabled=enabled),
+                )
             )
         )
         await middleware(scope, receive, send)
+
+    return app_with_config
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_mcp_request_advertises_resource_metadata() -> None:
+    app_with_config = _with_app_state(
+        AuthMiddleware(_ok_app, _TypedTokenAuthService()), enabled=True
+    )
 
     transport = ASGITransport(app=app_with_config)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
@@ -110,6 +121,31 @@ async def test_unauthenticated_mcp_request_advertises_resource_metadata() -> Non
         'resource_metadata="https://fa.example.com/.well-known/oauth-protected-resource/api/mcp"'
         in response.headers["WWW-Authenticate"]
     )
+
+
+@pytest.mark.asyncio
+async def test_disabled_adapter_reaches_its_own_gate_unauthenticated() -> None:
+    """Off means 404 from the endpoint gate, not a challenge for an absent server."""
+    app_with_config = _with_app_state(
+        AuthMiddleware(_ok_app, _TypedTokenAuthService()), enabled=False
+    )
+    transport = ASGITransport(app=app_with_config)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post(MCP_ENDPOINT_PATH)
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/authorize", "/token", "/register", "/revoke"])
+async def test_oauth_protocol_endpoints_cap_request_bodies(path: str) -> None:
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        small = await c.post(path, content=b"x" * 200)
+        oversized = await c.post(path, content=b"x" * (BOOTSTRAP_BODY_LIMIT_BYTES + 1))
+    assert small.status_code == 200
+    assert oversized.status_code == 413
 
 
 @pytest.mark.asyncio

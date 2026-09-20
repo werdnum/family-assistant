@@ -66,10 +66,7 @@ PUBLIC_PATHS = [
     # carry their own authentication: client credentials at /token and /revoke,
     # PKCE at /authorize, dynamic registration at /register. The consent page
     # they lead to is deliberately not here so the login redirect applies to it.
-    re.compile(r"^/authorize$"),
-    re.compile(r"^/token$"),
-    re.compile(r"^/register$"),
-    re.compile(r"^/revoke$"),
+    *(re.compile(rf"^{re.escape(path)}$") for path in route_auth.OAUTH_PROTOCOL_PATHS),
     re.compile(r"^/manifest\.webmanifest$"),
     re.compile(r"^/sw\.js$"),
 ]
@@ -107,6 +104,13 @@ BEARER_TOKEN_TYPES: frozenset[str] = frozenset({"api", MCP_TOKEN_TYPE})
 
 def is_mcp_endpoint_path(path: str) -> bool:
     return path == MCP_ENDPOINT_PATH or path.startswith(MCP_ENDPOINT_PATH + "/")
+
+
+def mcp_adapter_enabled(app: object) -> bool:
+    """Whether ``mcp_adapter.enabled`` is set on the app's injected config."""
+    app_config = getattr(getattr(app, "state", None), "config", None)
+    adapter_config = getattr(app_config, "mcp_adapter", None)
+    return bool(getattr(adapter_config, "enabled", False))
 
 
 def mcp_resource_metadata_url(server_url: str) -> str:
@@ -620,6 +624,12 @@ class AuthMiddleware:
             if pattern.match(request_path):
                 await self.app(scope, receive, send)
                 return
+
+        if is_mcp_endpoint_path(request_path) and not mcp_adapter_enabled(app):
+            # A disabled adapter is a 404 from its own gate, not an OAuth
+            # challenge advertising an authorization server that is off.
+            await self.app(scope, receive, send)
+            return
 
         is_api_request = route_auth.is_api_path(request_path)
         if not is_api_request and not auth_service.auth_enabled:

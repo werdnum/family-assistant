@@ -31,7 +31,7 @@ from mcp.server.auth.provider import (
 )
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage import api_tokens as api_tokens_storage
@@ -386,11 +386,24 @@ class FamilyAssistantOAuthProvider(
     ) -> OAuthToken:
         """Rotate: retire the old pair and issue a new one atomically.
 
-        Revoking the parent cascades to the refresh token being spent, so a
-        refresh token is single use.
+        The refresh token is consumed by a conditional write on its own row, so
+        two requests racing with the same token cannot both mint a replacement:
+        only the one whose update flips ``is_revoked`` proceeds. Revoking the
+        parent then retires the spent access token as well.
         """
         minted = await _mint_pair()
         async with self._db().transaction() as txn:
+            consumed = await txn.execute(
+                update(api_tokens_table)
+                .where(
+                    api_tokens_table.c.id == refresh_token.token_id,
+                    api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+                )
+                .values(is_revoked=True, last_used_at=datetime.now(UTC))
+                .returning(api_tokens_table.c.id)
+            )
+            if consumed.scalar_one_or_none() is None:
+                raise TokenError("invalid_grant", "refresh token is no longer valid")
             revoked = await api_tokens_storage.revoke_api_token(
                 txn, refresh_token.parent_token_id, refresh_token.user_identifier
             )
