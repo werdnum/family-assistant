@@ -690,3 +690,37 @@ async def test_registration_cap_prunes_clients_whose_grants_have_expired(
 
     assert response.status_code == 201, response.text
     assert await oauth_clients_storage.get_client(db, lapsed_client_id) is None
+
+
+@pytest.mark.asyncio
+async def test_parallel_consent_flows_keep_their_own_nonces(
+    client: AsyncClient,
+) -> None:
+    registration = await _register(client)
+    _, challenge = _pkce_pair()
+    urls = [
+        await _authorize(client, registration["client_id"], challenge, state=state)
+        for state in ("one", "two")
+    ]
+    # Both pages are open before either form is submitted.
+    forms = []
+    for url in urls:
+        page = await client.get(url)
+        nonce = re.search(r'name="nonce" value="([^"]+)"', page.text)
+        assert nonce is not None
+        forms.append((parse_qs(urlparse(url).query)["request_id"][0], nonce.group(1)))
+
+    redirects = [
+        await client.post(
+            "/mcp/consent",
+            data={"request_id": request_id, "decision": "approve", "nonce": nonce},
+        )
+        for request_id, nonce in forms
+    ]
+
+    states = [
+        parse_qs(urlparse(redirect.headers["location"]).query)["state"]
+        for redirect in redirects
+    ]
+    assert [r.status_code for r in redirects] == [302, 302]
+    assert states == [["one"], ["two"]]

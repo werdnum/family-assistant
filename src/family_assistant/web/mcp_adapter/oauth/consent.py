@@ -27,26 +27,36 @@ from family_assistant.web.mcp_adapter.oauth.routes import oauth_server
 logger = logging.getLogger(__name__)
 
 CONSENT_ROUTE_NAME = "mcp_consent"
-CSRF_SESSION_KEY = "mcp_consent_nonce"
+CSRF_SESSION_KEY = "mcp_consent_nonces"
+# Consent flows one browser may hold open at once; older nonces are dropped.
+MAX_SESSION_NONCES = 10
 
 consent_router = APIRouter()
 
 
-def _session_nonce(request: Request, nonce: str | None) -> str | None:
-    """Store ``nonce`` in the session and return it, or None without sessions.
+def _session_nonce(request: Request, request_id: str, nonce: str | None) -> str | None:
+    """Store ``nonce`` for ``request_id`` in the session, or None without sessions.
 
     Without ``SessionMiddleware`` there is no cookie-based identity for a
     cross-site form post to ride on, so there is nothing for the nonce to
-    protect; a session that exists must carry it.
+    protect; a session that exists must carry it. Nonces are keyed by consent
+    request so two flows open in the same browser do not invalidate each other;
+    with ``nonce`` None the matching entry is consumed.
     """
     try:
         session = request.session
     except AssertionError:
         return None
+    nonces: dict[str, str] = dict(session.get(CSRF_SESSION_KEY) or {})
     if nonce is None:
-        return session.pop(CSRF_SESSION_KEY, None) or ""
-    session[CSRF_SESSION_KEY] = nonce
-    return nonce
+        expected = nonces.pop(request_id, "")
+    else:
+        nonces[request_id] = nonce
+        for stale in list(nonces)[: max(0, len(nonces) - MAX_SESSION_NONCES)]:
+            del nonces[stale]
+        expected = nonce
+    session[CSRF_SESSION_KEY] = nonces
+    return expected
 
 
 def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
@@ -132,7 +142,7 @@ async def consent_page(
     pending = oauth_server(request.app).provider.pending_consent(request_id)
     if pending is None:
         return _expired()
-    nonce = _session_nonce(request, secrets.token_urlsafe(16))
+    nonce = _session_nonce(request, request_id, secrets.token_urlsafe(16))
     return _page("Connect to Family Assistant", _consent_form(pending, nonce))
 
 
@@ -145,7 +155,7 @@ async def consent_decision(
     nonce: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Turn the user's decision into the client's redirect."""
-    expected_nonce = _session_nonce(request, None)
+    expected_nonce = _session_nonce(request, request_id, None)
     if expected_nonce is not None and not (
         nonce and secrets.compare_digest(expected_nonce, nonce)
     ):
