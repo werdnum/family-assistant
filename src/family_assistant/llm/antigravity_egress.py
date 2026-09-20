@@ -86,6 +86,7 @@ class EgressAllowlistEntry(TypedDict, total=False):
 
     domain: str
     transform: list[dict[str, str]]
+    credential: str
 
 
 class EgressAllowlistPayload(TypedDict):
@@ -233,6 +234,23 @@ class GitHubAppInstallationTokenSource:
             )
         return token, _parse_expiry(payload.get("expires_at"))
 
+    def stored_credential_id(self) -> str:
+        """The store id this installation's token is written under.
+
+        Derived from the installation rather than configured, so that two
+        deployments sharing one API project collide only when they are the same
+        installation -- in which case they would be writing the same token and
+        the collision is harmless. An id chosen by hand could have them quietly
+        authenticating as each other instead.
+        """
+        installation_id = self._env.get(GITHUB_APP_INSTALLATION_ID_ENV)
+        if not installation_id:
+            raise AntigravityEgressError(
+                "GitHub App egress credential requires "
+                f"{GITHUB_APP_INSTALLATION_ID_ENV}"
+            )
+        return f"fa-egress-github-app-{installation_id}"
+
     async def token(self) -> str:
         """Return an installation access token, minting one per run.
 
@@ -374,6 +392,28 @@ class AntigravityCredentialStore:
             ) from e
 
 
+def _belongs_in_the_store(credential: AntigravityEgressCredentialConfig) -> bool:
+    """Whether the store can carry this credential, and needs to.
+
+    Two properties, both required, neither a list of kinds:
+
+    1. **The value expires**, so it must be able to change while a run is in
+       flight. Only a minted kind does; a static token gains nothing from the
+       store and would sit there unexpiring, where removing its rule from our
+       config would no longer revoke it.
+    2. **The store can express its wire form**, which is
+       ``Authorization: Bearer <token>`` and nothing else. A `basic` scheme --
+       what GitHub requires for git-over-HTTPS -- cannot be rendered there at
+       any encoding, so it stays on the transform path and keeps that path's
+       ceiling.
+    """
+    return (
+        credential.type == "github_app"
+        and credential.scheme == "bearer"
+        and credential.header_name == "Authorization"
+    )
+
+
 def _render_header_value(scheme: str, token: str) -> str:
     """Render a credential as an ``Authorization`` value in the given scheme."""
     if scheme == "basic":
@@ -392,6 +432,7 @@ class AntigravityEgressResolver:
         config: AntigravityEnvironmentConfig,
         *,
         github_app_tokens: GitHubAppInstallationTokenSource | None = None,
+        credential_store: AntigravityCredentialStore | None = None,
         env: Mapping[str, str] | None = None,
         clock: Clock | None = None,
     ) -> None:
@@ -400,6 +441,7 @@ class AntigravityEgressResolver:
         # Created lazily so a config with no GitHub rule never constructs an
         # HTTP client or reads a key it does not need.
         self._github_app_tokens = github_app_tokens
+        self._credential_store = credential_store
         self._clock = clock
 
     def _github_source(self) -> GitHubAppInstallationTokenSource:
@@ -410,9 +452,15 @@ class AntigravityEgressResolver:
         return self._github_app_tokens
 
     async def aclose(self) -> None:
-        """Release any HTTP client this resolver created."""
+        """Release any HTTP client this resolver created.
+
+        Both collaborators close only a client they built themselves, so this
+        is safe whether they were injected or created lazily here.
+        """
         if self._github_app_tokens is not None:
             await self._github_app_tokens.aclose()
+        if self._credential_store is not None:
+            await self._credential_store.aclose()
 
     async def _credential_header(
         self, credential: AntigravityEgressCredentialConfig
@@ -431,6 +479,25 @@ class AntigravityEgressResolver:
             token = raw
         return {credential.header_name: _render_header_value(credential.scheme, token)}
 
+    async def _store_credential(self) -> str | None:
+        """Mint a token into the store and return its id, or ``None``.
+
+        ``None`` means the caller should build a header instead: a deployment
+        that configured no API key for the store has no way to use one. That
+        degrades a rule to the submit-time ceiling rather than failing the run,
+        because the ceiling is a weaker credential, never a wider one.
+        """
+        if self._credential_store is None:
+            logger.info(
+                "No credential store configured; the egress credential rides a "
+                "submit-time header and expires with the token it started on."
+            )
+            return None
+        source = self._github_source()
+        credential_id = source.stored_credential_id()
+        await self._credential_store.ensure(credential_id, await source.token())
+        return credential_id
+
     async def resolve_network(self) -> EgressNetworkPayload | None:
         """Resolve the network block, minting every credential it names."""
         if self._config.network == "default":
@@ -440,10 +507,19 @@ class AntigravityEgressResolver:
 
         entries: list[EgressAllowlistEntry] = []
         for rule in self._config.allowlist:
-            transform: dict[str, str] = dict(rule.headers)
-            if rule.credential is not None:
-                transform.update(await self._credential_header(rule.credential))
             entry: EgressAllowlistEntry = {"domain": rule.domain}
+            transform: dict[str, str] = dict(rule.headers)
+            credential = rule.credential
+            if credential is not None:
+                stored_id = (
+                    await self._store_credential()
+                    if _belongs_in_the_store(credential)
+                    else None
+                )
+                if stored_id is not None:
+                    entry["credential"] = stored_id
+                else:
+                    transform.update(await self._credential_header(credential))
             if transform:
                 # The API takes a list of flat single-header objects rather
                 # than one object with several keys.

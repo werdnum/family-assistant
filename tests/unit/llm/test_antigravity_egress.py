@@ -558,3 +558,183 @@ async def test_deleting_an_absent_credential_succeeds() -> None:
     await stub.store().delete("fa-coder-github")
 
     assert [r.method for r in stub.requests] == ["DELETE"]
+
+
+def _github_rule(scheme: str, domain: str) -> dict[str, object]:
+    return {
+        "domain": domain,
+        "credential": {"type": "github_app", "scheme": scheme},
+    }
+
+
+async def _resolve_with_store(
+    rules: list[dict[str, object]],
+    stub: _CredentialStoreStub,
+    github: _GitHubStub,
+    env: dict[str, str],
+    clock: MockClock,
+) -> object:
+    resolver = AntigravityEgressResolver(
+        AntigravityEnvironmentConfig.model_validate({
+            "network": "allowlist",
+            "allowlist": rules,
+        }),
+        github_app_tokens=_token_source(github, env, clock),
+        credential_store=stub.store(),
+        env=env,
+    )
+    return await resolver.resolve_network()
+
+
+async def test_a_bearer_github_rule_carries_a_stored_credential_id(
+    rsa_private_key_pem: str,
+) -> None:
+    """The REST rule: the store can render it, so it gains mid-run refresh."""
+    env = _github_env(rsa_private_key_pem)
+    stub = _CredentialStoreStub()
+    github = _GitHubStub()
+
+    payload = await _resolve_with_store(
+        [_github_rule("bearer", "api.github.com")], stub, github, env, MockClock(_NOW)
+    )
+
+    assert payload == {
+        "allowlist": [
+            {
+                "domain": "api.github.com",
+                "credential": "fa-egress-github-app-97135764",
+            }
+        ]
+    }
+    assert json.loads(stub.requests[-1].content)["token"] == "ghs_installation_token"
+
+
+async def test_a_basic_github_rule_keeps_its_header(
+    rsa_private_key_pem: str,
+) -> None:
+    """Git-over-HTTPS needs Basic, which the store cannot emit at any encoding.
+
+    So the git rule stays on the transform path and keeps that path's ceiling.
+    """
+    env = _github_env(rsa_private_key_pem)
+    stub = _CredentialStoreStub()
+    github = _GitHubStub()
+
+    payload = await _resolve_with_store(
+        [_github_rule("basic", "github.com")], stub, github, env, MockClock(_NOW)
+    )
+
+    expected = base64.b64encode(b"x-access-token:ghs_installation_token").decode()
+    assert payload == {
+        "allowlist": [
+            {
+                "domain": "github.com",
+                "transform": [{"Authorization": f"Basic {expected}"}],
+            }
+        ]
+    }
+    assert stub.requests == []
+
+
+async def test_both_schemes_together_split_by_mechanism(
+    rsa_private_key_pem: str,
+) -> None:
+    """The shipped shape for a credentialed deployment: REST stored, git not."""
+    env = _github_env(rsa_private_key_pem)
+    stub = _CredentialStoreStub()
+    github = _GitHubStub()
+
+    payload = await _resolve_with_store(
+        [
+            _github_rule("bearer", "api.github.com"),
+            _github_rule("basic", "github.com"),
+            {"domain": "*"},
+        ],
+        stub,
+        github,
+        env,
+        MockClock(_NOW),
+    )
+
+    assert isinstance(payload, dict)
+    entries = payload["allowlist"]
+    assert "credential" in entries[0]
+    assert "transform" not in entries[0]
+    assert "transform" in entries[1]
+    assert "credential" not in entries[1]
+    assert entries[2] == {"domain": "*"}
+
+
+async def test_a_static_bearer_never_reaches_the_store(
+    rsa_private_key_pem: str,
+) -> None:
+    """A static token would sit in the store unexpiring, where removing its
+    rule from our config would no longer revoke it."""
+    env = {**_github_env(rsa_private_key_pem), "SOME_TOKEN": "static-value"}
+    stub = _CredentialStoreStub()
+    github = _GitHubStub()
+
+    payload = await _resolve_with_store(
+        [
+            {
+                "domain": "api.example.com",
+                "credential": {"type": "bearer", "token_env": "SOME_TOKEN"},
+            }
+        ],
+        stub,
+        github,
+        env,
+        MockClock(_NOW),
+    )
+
+    assert payload == {
+        "allowlist": [
+            {
+                "domain": "api.example.com",
+                "transform": [{"Authorization": "Bearer static-value"}],
+            }
+        ]
+    }
+    assert stub.requests == []
+
+
+async def test_without_a_store_a_bearer_rule_falls_back_to_a_header(
+    rsa_private_key_pem: str,
+) -> None:
+    """A deployment with no store keeps working, at the submit-time ceiling.
+
+    The ceiling is a weaker credential, never a wider one, so degrading here
+    costs availability rather than safety.
+    """
+    env = _github_env(rsa_private_key_pem)
+    resolver = AntigravityEgressResolver(
+        AntigravityEnvironmentConfig.model_validate({
+            "network": "allowlist",
+            "allowlist": [_github_rule("bearer", "api.github.com")],
+        }),
+        github_app_tokens=_token_source(_GitHubStub(), env, MockClock(_NOW)),
+        env=env,
+    )
+
+    assert await resolver.resolve_network() == {
+        "allowlist": [
+            {
+                "domain": "api.github.com",
+                "transform": [{"Authorization": "Bearer ghs_installation_token"}],
+            }
+        ]
+    }
+
+
+async def test_the_stored_id_names_the_installation_it_authenticates_as(
+    rsa_private_key_pem: str,
+) -> None:
+    """Two deployments on one API project collide only when they are the same
+    installation -- where they would be writing the same token anyway."""
+    clock = MockClock(_NOW)
+    first = _token_source(_GitHubStub(), _github_env(rsa_private_key_pem), clock)
+    other_env = {**_github_env(rsa_private_key_pem), "GITHUB_APP_INSTALLATION_ID": "42"}
+    second = _token_source(_GitHubStub(), other_env, clock)
+
+    assert first.stored_credential_id() == "fa-egress-github-app-97135764"
+    assert second.stored_credential_id() == "fa-egress-github-app-42"
