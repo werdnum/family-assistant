@@ -26,6 +26,7 @@ from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_user
 from family_assistant.web.models import ChatPromptRequest
 from family_assistant.web.routers.chat_api import run_non_streaming_turn
+from family_assistant.web.web_chat_interface import WebChatInterface
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,21 @@ def _select_processing_service(request: Request) -> ProcessingService:
     return service
 
 
+def _mcp_chat_interface(request: Request) -> WebChatInterface:
+    """The interface that saves into MCP conversations, registered at startup.
+
+    Deferred work started from an MCP turn (an approved confirmation's result)
+    is delivered through ``chat_interfaces[MCP_INTERFACE_TYPE]``; the turn uses
+    the same one so everything it leaves behind lands where the client's next
+    call will read it.
+    """
+    interfaces = getattr(request.app.state, "chat_interfaces", None) or {}
+    interface = interfaces.get(MCP_INTERFACE_TYPE)
+    if not isinstance(interface, WebChatInterface):
+        raise ToolError("MCP adapter has no registered chat interface.")
+    return interface
+
+
 def _tool_error_for(exc: HTTPException) -> ToolError:
     """Translate a failure of the shared turn into a tool result the caller reads."""
     if exc.status_code == status.HTTP_404_NOT_FOUND:
@@ -134,7 +150,7 @@ def register_tools(mcp: FastMCP) -> None:
                 Database(request.app.state.database_engine),
                 payload,
                 processing_service=processing_service,
-                web_chat_interface=request.app.state.web_chat_interface,
+                web_chat_interface=_mcp_chat_interface(request),
                 initial_taint_sources=(mcp_caller_taint_source(current_user),),
             )
         except HTTPException as exc:

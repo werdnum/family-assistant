@@ -21,7 +21,10 @@ The turn itself is the existing non-streaming chat path (`POST /api/v1/chat/send
 extracted into a function the REST endpoint and the MCP tool both call. Everything that path already
 gets right — conversation ownership, one turn per conversation, model tier resolution, durable
 deferred confirmations when a tool needs approval, idempotent turn ids — is inherited rather than
-re-implemented. The MCP surface adds transport and authentication, not behaviour.
+re-implemented. The MCP surface adds transport and authentication, not behaviour. MCP conversations
+live in their own history partition, and an `mcp`-typed instance of the web chat interface is
+registered for it, so work that finishes after the turn (an approved confirmation's result, a
+reminder) is delivered into that partition, where the client's next call reads it.
 
 ### Transport
 

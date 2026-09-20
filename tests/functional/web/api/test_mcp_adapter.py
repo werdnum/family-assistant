@@ -23,6 +23,7 @@ from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.database import Database
 from family_assistant.web.mcp_adapter import MCPAdapter, install_mcp_adapter
+from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
 
 MCP_URL = "http://testserver/api/mcp"
@@ -55,6 +56,12 @@ def mcp_app(
     """
     profile_id = api_test_processing_service.service_config.id
     app_fixture.state.processing_services = {profile_id: api_test_processing_service}
+    # As the production lifespan does: the mcp-typed interface saves into the
+    # adapter's own history partition.
+    app_fixture.state.chat_interfaces = {
+        "web": app_fixture.state.web_chat_interface,
+        "mcp": WebChatInterface(db_engine, interface_type="mcp"),
+    }
     _configure_adapter(app_fixture, db_engine, MCPAdapterConfig(enabled=True))
     app_fixture.router.routes[:] = [
         route
@@ -258,3 +265,27 @@ async def test_disabled_adapter_is_not_found(
         )
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_interface_saves_into_the_mcp_partition(
+    db_engine: AsyncEngine,
+) -> None:
+    """Deferred results delivered through chat_interfaces["mcp"] land where the
+    client's next call reads them."""
+    interface = WebChatInterface(db_engine, interface_type="mcp")
+    db = Database(engine=db_engine)
+    await db.message_history.add_message(
+        UserMessage(content="approve that"),
+        interface_type="mcp",
+        conversation_id="mcp-deferred",
+        user_id="test_user",
+        timestamp=datetime.now(UTC),
+    )
+
+    await interface.send_message("mcp-deferred", "Done: the note was saved.")
+
+    history = await db.message_history.get_recent(
+        interface_type="mcp", conversation_id="mcp-deferred", limit=5
+    )
+    assert [m.content for m in history][-1] == "Done: the note was saved."
