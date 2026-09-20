@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime
 
 from mcp.shared.auth import OAuthClientInformationFull
-from sqlalchemy import delete, exists, insert, select
+from sqlalchemy import delete, exists, insert, or_, select
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import api_tokens_table, oauth_clients_table
@@ -55,16 +55,22 @@ async def count_clients(db_context: DatabaseExecutor) -> int:
 async def prune_idle_clients(db_context: DatabaseExecutor, keep_at_most: int) -> int:
     """Delete the oldest clients holding no live token until at most ``keep_at_most`` remain.
 
-    A client with an unrevoked token is a working connector and is never
-    pruned; one with none is a registration that never completed, or a grant
-    the user has since revoked, and can be re-registered at no cost.
+    A client with an unrevoked, unexpired token is a working connector and is
+    never pruned; one with none is a registration that never completed, or a
+    grant the user has since revoked or let lapse, and can be re-registered at
+    no cost.
     """
     excess = await count_clients(db_context) - keep_at_most
     if excess <= 0:
         return 0
+    now = datetime.now(UTC)
     has_live_token = exists().where(
         api_tokens_table.c.oauth_client_id == oauth_clients_table.c.client_id,
         api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+        or_(
+            api_tokens_table.c.expires_at.is_(None),
+            api_tokens_table.c.expires_at > now,
+        ),
     )
     idle = await db_context.fetch_all(
         select(oauth_clients_table.c.client_id)

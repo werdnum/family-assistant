@@ -11,6 +11,7 @@ import secrets
 from base64 import urlsafe_b64encode
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -18,6 +19,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -666,3 +668,25 @@ async def test_rotation_keeps_the_grant_row_so_revoking_it_disconnects(
     assert (
         await _refresh(client, client_id, rotated["refresh_token"])
     ).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_registration_cap_prunes_clients_whose_grants_have_expired(
+    client: AsyncClient, db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oauth_provider, "MAX_REGISTERED_CLIENTS", 1)
+    lapsed_client_id, _ = await _grant(client)
+    db = Database(engine=db_engine)
+    await db.execute(
+        sa_update(api_tokens_table)
+        .where(api_tokens_table.c.oauth_client_id == lapsed_client_id)
+        .values(expires_at=datetime.now(UTC) - timedelta(days=1))
+    )
+
+    response = await client.post(
+        "/register",
+        json={"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"},
+    )
+
+    assert response.status_code == 201, response.text
+    assert await oauth_clients_storage.get_client(db, lapsed_client_id) is None
