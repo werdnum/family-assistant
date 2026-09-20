@@ -23,9 +23,12 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from family_assistant.config_models import AppConfig, MCPAdapterConfig
 from family_assistant.storage import api_tokens as api_tokens_storage
+from family_assistant.storage import oauth_clients as oauth_clients_storage
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
 from family_assistant.web.mcp_adapter import install_mcp_adapter
+from family_assistant.web.mcp_adapter.oauth import provider as oauth_provider
+from family_assistant.web.mcp_adapter.oauth import routes as oauth_routes
 
 ISSUER = "http://localhost:8000"
 REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
@@ -536,3 +539,52 @@ async def test_everything_is_404_when_disabled(
         response = await http.request(method, path)
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_registration_is_rate_limited_per_address(
+    client: AsyncClient, app_fixture: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oauth_routes, "REGISTRATION_RATE_LIMIT", 2)
+
+    await _register(client)
+    await _register(client)
+    response = await client.post(
+        "/register",
+        json={"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "60"
+
+
+@pytest.mark.asyncio
+async def test_registration_cap_prunes_idle_clients_but_keeps_live_grants(
+    client: AsyncClient, db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oauth_provider, "MAX_REGISTERED_CLIENTS", 2)
+    granted_client_id, _ = await _grant(client)
+    idle = await _register(client)
+
+    newest = await _register(client)
+
+    db = Database(engine=db_engine)
+    assert await oauth_clients_storage.get_client(db, granted_client_id) is not None
+    assert await oauth_clients_storage.get_client(db, idle["client_id"]) is None
+    assert await oauth_clients_storage.get_client(db, newest["client_id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_registration_cap_refuses_when_every_client_is_in_use(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oauth_provider, "MAX_REGISTERED_CLIENTS", 1)
+    await _grant(client)
+
+    response = await client.post(
+        "/register",
+        json={"redirect_uris": [REDIRECT_URI], "token_endpoint_auth_method": "none"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_client_metadata"

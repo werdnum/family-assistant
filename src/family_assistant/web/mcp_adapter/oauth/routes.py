@@ -30,10 +30,16 @@ from family_assistant.web.mcp_adapter.oauth.provider import (
     REVOCATION_OPTIONS,
     FamilyAssistantOAuthProvider,
 )
+from family_assistant.web.routers.errors_api import ErrorIntakeRateLimiter
 
 logger = logging.getLogger(__name__)
 
 AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server"
+REGISTRATION_PATH = "/register"
+# Registrations one address may attempt per limiter window. A client registers
+# once per connection; the limit exists for the unauthenticated write, not for
+# legitimate use.
+REGISTRATION_RATE_LIMIT = 10
 PROTECTED_RESOURCE_METADATA_PATH = (
     "/.well-known/oauth-protected-resource" + MCP_ENDPOINT_PATH
 )
@@ -56,6 +62,7 @@ class OAuthServer:
     provider: FamilyAssistantOAuthProvider
     router: Router
     protected_resource: ProtectedResourceMetadataHandler
+    registration_limiter: ErrorIntakeRateLimiter
 
 
 def _issuer_url(app: FastAPI) -> str:
@@ -78,6 +85,11 @@ def oauth_server(app: FastAPI) -> OAuthServer:
         if existing is not None
         else FamilyAssistantOAuthProvider(lambda: app.state.database_engine)
     )
+    registration_limiter = (
+        existing.registration_limiter
+        if existing is not None
+        else ErrorIntakeRateLimiter(REGISTRATION_RATE_LIMIT)
+    )
     issuer = AnyHttpUrl(issuer_url)
     server = OAuthServer(
         issuer_url=issuer_url,
@@ -98,6 +110,7 @@ def oauth_server(app: FastAPI) -> OAuthServer:
                 resource_name="Family Assistant",
             )
         ),
+        registration_limiter=registration_limiter,
     )
     app.state.mcp_oauth_server = server
     logger.debug("MCP OAuth authorization server built for issuer %s", issuer_url)
@@ -119,7 +132,24 @@ class _AuthServerDispatch:
         if not adapter_config(app).enabled:
             await _not_enabled(scope, receive, send)
             return
-        await oauth_server(app).router(scope, receive, send)
+        server = oauth_server(app)
+        if scope["path"] == REGISTRATION_PATH and scope["method"] == "POST":
+            # Registration is an unauthenticated write; admit it per address
+            # the way public error intake is admitted.
+            client = scope.get("client")
+            client_address = client[0] if client else "unknown"
+            if not server.registration_limiter.allow(f"address:{client_address}"):
+                response = JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": "invalid_client_metadata",
+                        "error_description": "Too many registration attempts; try again later.",
+                    },
+                    headers={"Retry-After": "60"},
+                )
+                await response(scope, receive, send)
+                return
+        await server.router(scope, receive, send)
 
 
 class _ProtectedResourceDispatch:

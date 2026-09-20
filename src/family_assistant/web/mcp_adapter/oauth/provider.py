@@ -26,6 +26,7 @@ from mcp.server.auth.provider import (
     AuthorizationParams,
     OAuthAuthorizationServerProvider,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -60,6 +61,10 @@ AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60
 # A consent request outlives an authorization code: the user may have to sign
 # in first, and OIDC round trips are slow.
 PENDING_CONSENT_TTL_SECONDS = 10 * 60
+# Dynamic registrations a deployment keeps. A household has a handful of
+# connectors; the bound exists so an unauthenticated caller cannot grow the
+# table without limit.
+MAX_REGISTERED_CLIENTS = 200
 # Both stores are bounded so an unauthenticated /authorize cannot grow memory
 # without limit; evicting the oldest entry only costs that user another click.
 MAX_PENDING_ENTRIES = 1000
@@ -233,7 +238,24 @@ class FamilyAssistantOAuthProvider(
         return await oauth_clients_storage.get_client(self._db(), client_id)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        await oauth_clients_storage.add_client(self._db(), client_info)
+        """Persist a dynamic registration, keeping the table bounded.
+
+        Registration is unauthenticated, so the table must not grow without
+        limit: past the cap, registrations that never produced a live token
+        are pruned oldest first, and if every stored client is in use the new
+        one is refused rather than evicting a working connector.
+        """
+        db = self._db()
+        if await oauth_clients_storage.count_clients(db) >= MAX_REGISTERED_CLIENTS:
+            await oauth_clients_storage.prune_idle_clients(
+                db, keep_at_most=MAX_REGISTERED_CLIENTS - 1
+            )
+            if await oauth_clients_storage.count_clients(db) >= MAX_REGISTERED_CLIENTS:
+                raise RegistrationError(
+                    "invalid_client_metadata",
+                    "Too many registered clients; revoke an unused connector first.",
+                )
+        await oauth_clients_storage.add_client(db, client_info)
 
     # --- Authorization and consent ---
 

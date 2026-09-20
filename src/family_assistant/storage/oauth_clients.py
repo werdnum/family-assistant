@@ -8,9 +8,10 @@ import logging
 from datetime import UTC, datetime
 
 from mcp.shared.auth import OAuthClientInformationFull
-from sqlalchemy import insert, select
+from sqlalchemy import delete, exists, insert, select
+from sqlalchemy.sql import functions as func
 
-from family_assistant.storage.base import oauth_clients_table
+from family_assistant.storage.base import api_tokens_table, oauth_clients_table
 from family_assistant.storage.database import DatabaseExecutor
 
 logger = logging.getLogger(__name__)
@@ -42,3 +43,41 @@ async def get_client(
     if row is None:
         return None
     return OAuthClientInformationFull.model_validate(row["client_metadata"])
+
+
+async def count_clients(db_context: DatabaseExecutor) -> int:
+    row = await db_context.fetch_one(
+        select(func.count(oauth_clients_table.c.client_id).label("count"))
+    )
+    return int(row["count"]) if row else 0
+
+
+async def prune_idle_clients(db_context: DatabaseExecutor, keep_at_most: int) -> int:
+    """Delete the oldest clients holding no live token until at most ``keep_at_most`` remain.
+
+    A client with an unrevoked token is a working connector and is never
+    pruned; one with none is a registration that never completed, or a grant
+    the user has since revoked, and can be re-registered at no cost.
+    """
+    excess = await count_clients(db_context) - keep_at_most
+    if excess <= 0:
+        return 0
+    has_live_token = exists().where(
+        api_tokens_table.c.oauth_client_id == oauth_clients_table.c.client_id,
+        api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+    )
+    idle = await db_context.fetch_all(
+        select(oauth_clients_table.c.client_id)
+        .where(~has_live_token)
+        .order_by(oauth_clients_table.c.created_at)
+        .limit(excess)
+    )
+    idle_ids = [row["client_id"] for row in idle]
+    if idle_ids:
+        await db_context.execute(
+            delete(oauth_clients_table).where(
+                oauth_clients_table.c.client_id.in_(idle_ids)
+            )
+        )
+        logger.info("Pruned %d idle OAuth client registrations", len(idle_ids))
+    return len(idle_ids)

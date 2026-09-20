@@ -93,7 +93,10 @@ unauthenticated write, and an operator who does not use the feature should not c
   is only ever in the hashed access token. Registered clients are persisted so a restart does not
   invalidate a connector.
 - **No Client ID Metadata Documents, no pre-registered clients.** Dynamic registration is what
-  claude.ai and Claude Code do out of the box.
+  claude.ai and Claude Code do out of the box. Because it is an unauthenticated write, it is
+  admitted per address at the same rate as public error intake, and the table is capped: past the
+  cap, registrations that never produced a live token are pruned oldest first, and a registration is
+  refused rather than evicting a working connector.
 - **The consent page is server-rendered HTML.** It is one form with two buttons, reached only mid
   OAuth flow, and the OIDC callback precedent already renders server-side; a React route would add a
   frontend build dependency to a protocol handshake.
