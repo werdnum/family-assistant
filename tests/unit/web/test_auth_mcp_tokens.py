@@ -1,8 +1,11 @@
 """AuthMiddleware behaviour specific to the MCP adapter (docs/design/mcp-adapter.md).
 
 An OAuth access token issued to an MCP client is an ``api_tokens`` row of type
-``mcp``. It authenticates the MCP endpoint and nothing else, and the endpoint's
-401 tells a client where to find the OAuth protected-resource metadata.
+``mcp``. Its confinement to the MCP endpoint lives in the token lookup, which
+tests/functional/web/api/test_mcp_oauth.py exercises against the database; this
+file covers what the middleware itself decides: the disabled-adapter gate, the
+401 challenge pointing at the OAuth protected-resource metadata, the public
+protocol paths and their body caps.
 """
 
 from collections.abc import AsyncGenerator
@@ -14,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from family_assistant.web.auth import (
+    MCP_CONSENT_PATH,
     MCP_ENDPOINT_PATH,
     PUBLIC_PATHS,
     AuthMiddleware,
@@ -35,8 +39,8 @@ async def _ok_app(scope: Scope, receive: Receive, send: Send) -> None:
     await send({"type": "http.response.body", "body": b"ok"})
 
 
-class _TypedTokenAuthService(AuthService):
-    """Auth enabled; the bearer value names the token type it resolves to."""
+class _RejectingAuthService(AuthService):
+    """Auth enabled; no session and no credential resolves."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -45,51 +49,15 @@ class _TypedTokenAuthService(AuthService):
     async def get_user_from_api_token(
         self, auth_header: str, request: object
     ) -> dict | None:
-        token_type = auth_header.removeprefix("Bearer ")
-        if token_type not in {"api", "mcp"}:
-            return None
-        return {
-            "sub": "token-user",
-            "name": "token-user",
-            "email": "token-user",
-            "source": "api_token",
-            "token_id": 7,
-            "token_type": token_type,
-        }
+        return None
 
 
 @pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient]:
-    middleware = AuthMiddleware(_ok_app, _TypedTokenAuthService())
+    middleware = AuthMiddleware(_ok_app, _RejectingAuthService())
     transport = ASGITransport(app=middleware)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         yield c
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path", [MCP_ENDPOINT_PATH, MCP_ENDPOINT_PATH + "/"])
-async def test_mcp_token_authenticates_the_mcp_endpoint(
-    client: AsyncClient, path: str
-) -> None:
-    response = await client.post(path, headers={"Authorization": "Bearer mcp"})
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "path", ["/api/notes/", "/api/v1/chat/send_message", "/api/me/tokens"]
-)
-async def test_mcp_token_is_rejected_elsewhere(client: AsyncClient, path: str) -> None:
-    response = await client.post(path, headers={"Authorization": "Bearer mcp"})
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_api_token_still_reaches_the_mcp_endpoint(client: AsyncClient) -> None:
-    response = await client.post(
-        MCP_ENDPOINT_PATH, headers={"Authorization": "Bearer api"}
-    )
-    assert response.status_code == 200
 
 
 def _with_app_state(middleware: AuthMiddleware, *, enabled: bool) -> ASGIApp:
@@ -110,7 +78,7 @@ def _with_app_state(middleware: AuthMiddleware, *, enabled: bool) -> ASGIApp:
 @pytest.mark.asyncio
 async def test_unauthenticated_mcp_request_advertises_resource_metadata() -> None:
     app_with_config = _with_app_state(
-        AuthMiddleware(_ok_app, _TypedTokenAuthService()), enabled=True
+        AuthMiddleware(_ok_app, _RejectingAuthService()), enabled=True
     )
 
     transport = ASGITransport(app=app_with_config)
@@ -124,14 +92,17 @@ async def test_unauthenticated_mcp_request_advertises_resource_metadata() -> Non
 
 
 @pytest.mark.asyncio
-async def test_disabled_adapter_reaches_its_own_gate_unauthenticated() -> None:
-    """Off means 404 from the endpoint gate, not a challenge for an absent server."""
+@pytest.mark.parametrize("path", [MCP_ENDPOINT_PATH, MCP_CONSENT_PATH])
+async def test_disabled_adapter_reaches_its_own_gate_unauthenticated(
+    path: str,
+) -> None:
+    """Off means 404 from the adapter's own gates, not a challenge or a login."""
     app_with_config = _with_app_state(
-        AuthMiddleware(_ok_app, _TypedTokenAuthService()), enabled=False
+        AuthMiddleware(_ok_app, _RejectingAuthService()), enabled=False
     )
     transport = ASGITransport(app=app_with_config)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
-        response = await c.post(MCP_ENDPOINT_PATH)
+        response = await c.post(path)
     assert response.status_code == 200
     assert response.text == "ok"
 

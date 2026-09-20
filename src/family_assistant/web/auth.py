@@ -95,6 +95,7 @@ _AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"
 # rather than imported from the adapter package because the middleware is what
 # confines ``mcp`` tokens to it, and the adapter imports from this module.
 MCP_ENDPOINT_PATH = "/api/mcp"
+MCP_CONSENT_PATH = "/mcp/consent"
 MCP_TOKEN_TYPE = "mcp"
 # api_tokens rows a bearer credential may resolve to. ``mcp`` rows are OAuth
 # access tokens issued to an MCP client; AuthMiddleware rejects them anywhere
@@ -104,6 +105,11 @@ BEARER_TOKEN_TYPES: frozenset[str] = frozenset({"api", MCP_TOKEN_TYPE})
 
 def is_mcp_endpoint_path(path: str) -> bool:
     return path == MCP_ENDPOINT_PATH or path.startswith(MCP_ENDPOINT_PATH + "/")
+
+
+def is_mcp_adapter_path(path: str) -> bool:
+    """Paths the adapter gates itself when disabled: the endpoint and consent page."""
+    return is_mcp_endpoint_path(path) or path == MCP_CONSENT_PATH
 
 
 def mcp_adapter_enabled(app: object) -> bool:
@@ -236,11 +242,16 @@ class AuthService:
     async def get_user_from_api_token(
         self,
         auth_header: str,
-        request: Request,  # pylint: disable=unused-argument
+        request: Request,
     ) -> dict | None:
         """
         Verifies an API token and returns user information if valid.
         Updates the token's last_used_at timestamp.
+
+        An ``mcp`` row (an OAuth grant to an MCP client) resolves only for a
+        request to the MCP endpoint. Enforced here, in the one lookup both the
+        middleware and the request dependencies call, so a route the middleware
+        exempts cannot accept a credential the endpoint restriction denies.
         """
         if not auth_header.startswith("Bearer "):
             return None
@@ -307,6 +318,16 @@ class AuthService:
         )
         await db.execute(update_query)
         # No need to commit explicitly if Database handles transaction lifecycle
+
+        if token_row["token_type"] == MCP_TOKEN_TYPE and not is_mcp_endpoint_path(
+            request.scope["path"]
+        ):
+            logger.warning(
+                "MCP access token %s presented outside the MCP endpoint (%s); rejecting.",
+                token_row["id"],
+                request.scope["path"],
+            )
+            return None
 
         logger.info(
             f"API token authenticated for user: {token_row['user_identifier']} (Token ID: {token_row['id']})"
@@ -625,9 +646,10 @@ class AuthMiddleware:
                 await self.app(scope, receive, send)
                 return
 
-        if is_mcp_endpoint_path(request_path) and not mcp_adapter_enabled(app):
-            # A disabled adapter is a 404 from its own gate, not an OAuth
-            # challenge advertising an authorization server that is off.
+        if is_mcp_adapter_path(request_path) and not mcp_adapter_enabled(app):
+            # A disabled adapter is a 404 from its own gates (endpoint and
+            # consent page), not an OAuth challenge or a login redirect for a
+            # server that is off.
             await self.app(scope, receive, send)
             return
 
@@ -717,19 +739,6 @@ class AuthMiddleware:
                 api_user = await auth_service.get_user_from_api_token(
                     f"Bearer {credential}", request
                 )
-                if (
-                    api_user
-                    and api_user.get("token_type") == MCP_TOKEN_TYPE
-                    and not is_mcp_endpoint_path(request_path)
-                ):
-                    # An OAuth grant to an MCP client is a grant to ask the
-                    # assistant, not to the REST API the user's own tokens reach.
-                    logger.warning(
-                        "MCP access token %s presented outside the MCP endpoint (%s); rejecting.",
-                        api_user.get("token_id"),
-                        request_path,
-                    )
-                    api_user = None
                 if api_user:
                     # Bearer identity is request-local. Only the explicit
                     # /api/auth/token-session bridge may persist it into a

@@ -38,7 +38,7 @@ from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage import oauth_clients as oauth_clients_storage
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database, DatabaseTransaction
-from family_assistant.web.auth import MCP_TOKEN_TYPE
+from family_assistant.web.auth import MCP_CONSENT_PATH, MCP_TOKEN_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ PENDING_CONSENT_TTL_SECONDS = 10 * 60
 # without limit; evicting the oldest entry only costs that user another click.
 MAX_PENDING_ENTRIES = 1000
 
-CONSENT_PATH = "/mcp/consent"
+CONSENT_PATH = MCP_CONSENT_PATH
 
 
 @dataclass(frozen=True)

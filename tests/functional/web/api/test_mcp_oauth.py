@@ -308,15 +308,26 @@ async def test_access_token_reaches_the_mcp_endpoint(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Authenticated by the middleware's default rule.
+        "/api/me/tokens",
+        # Exempt from the middleware; its own dependency resolves the bearer, so
+        # the restriction has to hold in the token lookup itself.
+        "/api/diagnostics/export",
+    ],
+)
 async def test_access_token_is_rejected_outside_the_mcp_endpoint(
-    client: AsyncClient, app_fixture: FastAPI, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    app_fixture: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
 ) -> None:
     _, tokens = await _grant(client)
     monkeypatch.setattr(app_fixture.state.auth_service, "auth_enabled", True)
 
-    response = await client.get(
-        "/api/me/tokens", headers=_bearer(tokens["access_token"])
-    )
+    response = await client.get(path, headers=_bearer(tokens["access_token"]))
 
     assert response.status_code == 401
 
