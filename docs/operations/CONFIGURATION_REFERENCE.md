@@ -2976,7 +2976,10 @@ The adapter is **off by default**. When it is off, `/api/mcp` and the OAuth endp
 ### mcp_adapter.enabled
 
 Whether the MCP endpoint and its OAuth authorization server accept requests. Environment override:
-`MCP_ADAPTER_ENABLED`.
+`MCP_ADAPTER_ENABLED`. Enabling it requires an authentication mode: OIDC (`OIDC_CLIENT_ID`,
+`OIDC_CLIENT_SECRET`, `OIDC_DISCOVERY_URL`, `SESSION_SECRET_KEY`) or signed-JWT API tokens
+(`JWT_SIGNING_KEY`). With neither configured the application serves every request as a development
+user, so an enabled adapter is refused at startup rather than answering anyone who finds it.
 
 | Property  | Value   |
 | --------- | ------- |

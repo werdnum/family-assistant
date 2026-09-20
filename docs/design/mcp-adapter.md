@@ -83,6 +83,9 @@ the profile already has.
 
 The whole adapter is off unless `mcp_adapter.enabled` is set. Dynamic client registration is an
 unauthenticated write, and an operator who does not use the feature should not carry that surface.
+Enabling it with no authentication mode configured (neither OIDC nor a signed-JWT key) is a startup
+error: in that mode the application serves every request as a development user, which is tolerable
+on a LAN but not on a surface built to be reached by claude.ai.
 
 ## Deliberate simplifications
 
