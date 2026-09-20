@@ -25,7 +25,7 @@ assistant…" makes it explicit when you want to be sure.
 Each question Claude passes on starts a conversation in Family Assistant, and Claude keeps hold of
 its reference. Follow-ups in the same Claude chat continue that conversation, so "and what about
 Sunday?" means what you'd expect. The conversation also shows up in **History** in the web app,
-where you can read it or carry it on yourself.
+where you can read what was asked and answered; to carry it on, keep talking to Claude.
 
 ## Approving actions
 

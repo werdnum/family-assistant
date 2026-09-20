@@ -20,6 +20,7 @@ from family_assistant.web.mcp_adapter.config import adapter_config
 from family_assistant.web.mcp_adapter.oauth.provider import (
     CONSENT_PATH,
     PendingConsent,
+    StoreFullError,
 )
 from family_assistant.web.mcp_adapter.oauth.routes import oauth_server
 
@@ -156,7 +157,17 @@ async def consent_decision(
         )
     provider = oauth_server(request.app).provider
     if decision == "approve":
-        redirect = provider.approve_consent(request_id, current_user["user_identifier"])
+        try:
+            redirect = provider.approve_consent(
+                request_id, current_user["user_identifier"]
+            )
+        except StoreFullError:
+            return _page(
+                "Try again shortly",
+                "<h1>Too many connections are being set up right now</h1>"
+                "<p>Go back to the application that sent you here and try again in a few minutes.</p>",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
     else:
         redirect = provider.deny_consent(request_id)
     if redirect is None:

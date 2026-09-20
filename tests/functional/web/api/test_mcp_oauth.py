@@ -545,7 +545,7 @@ async def test_everything_is_404_when_disabled(
 async def test_registration_is_rate_limited_per_address(
     client: AsyncClient, app_fixture: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(oauth_routes, "REGISTRATION_RATE_LIMIT", 2)
+    monkeypatch.setattr(oauth_routes, "ADMISSION_RATE_LIMIT", 2)
 
     await _register(client)
     await _register(client)
@@ -588,3 +588,56 @@ async def test_registration_cap_refuses_when_every_client_is_in_use(
 
     assert response.status_code == 400
     assert response.json()["error"] == "invalid_client_metadata"
+
+
+@pytest.mark.asyncio
+async def test_authorization_is_rate_limited_per_address(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oauth_routes, "ADMISSION_RATE_LIMIT", 2)
+    registration = await _register(client)
+    _, challenge = _pkce_pair()
+    await _authorize(client, registration["client_id"], challenge)
+
+    response = await client.get(
+        "/authorize",
+        params={
+            "client_id": registration["client_id"],
+            "response_type": "code",
+            "redirect_uri": REDIRECT_URI,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        },
+    )
+
+    assert response.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_full_consent_store_refuses_rather_than_evicting(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(oauth_provider, "MAX_PENDING_ENTRIES", 1)
+    registration = await _register(client)
+    _, challenge = _pkce_pair()
+    first_consent_url = await _authorize(client, registration["client_id"], challenge)
+
+    second = await client.get(
+        "/authorize",
+        params={
+            "client_id": registration["client_id"],
+            "response_type": "code",
+            "redirect_uri": REDIRECT_URI,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": "second",
+        },
+    )
+
+    assert second.status_code == 302
+    refused = parse_qs(urlparse(second.headers["location"]).query)
+    assert refused["error"] == ["temporarily_unavailable"]
+    assert refused["state"] == ["second"]
+    # The first request is still waiting for its user.
+    page = await client.get(first_consent_url)
+    assert page.status_code == 200

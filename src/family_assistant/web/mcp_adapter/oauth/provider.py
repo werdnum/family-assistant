@@ -24,6 +24,7 @@ from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
+    AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
     RegistrationError,
@@ -177,8 +178,17 @@ def _token_response(minted: _MintedPair, scopes: list[str]) -> OAuthToken:
     )
 
 
+class StoreFullError(Exception):
+    """The store holds ``MAX_PENDING_ENTRIES`` live entries."""
+
+
 class _ExpiringStore[T]:
-    """A bounded in-process dict whose entries expire after ``ttl_seconds``."""
+    """A bounded in-process dict whose entries expire after ``ttl_seconds``.
+
+    At capacity a new entry is refused rather than evicting a live one: an
+    unauthenticated caller able to fill the store may deny new flows for its
+    TTL, but cannot make a real user's in-progress consent vanish.
+    """
 
     def __init__(self, ttl_seconds: float, created_at: Callable[[T], float]) -> None:
         self._ttl = ttl_seconds
@@ -191,11 +201,11 @@ class _ExpiringStore[T]:
             k for k, v in self._entries.items() if now - self._created_at(v) > self._ttl
         ]:
             del self._entries[key]
-        while len(self._entries) >= MAX_PENDING_ENTRIES:
-            del self._entries[next(iter(self._entries))]
 
     def put(self, key: str, value: T) -> None:
         self._evict()
+        if len(self._entries) >= MAX_PENDING_ENTRIES:
+            raise StoreFullError
         self._entries[key] = value
 
     def pop(self, key: str) -> T | None:
@@ -268,15 +278,21 @@ class FamilyAssistantOAuthProvider(
         the SDK's handler hands it to the browser as a redirect ``Location``.
         """
         request_id = secrets.token_urlsafe(32)
-        self._pending_consents.put(
-            request_id,
-            PendingConsent(
-                request_id=request_id,
-                client=client,
-                params=params,
-                created_at=time.monotonic(),
-            ),
-        )
+        try:
+            self._pending_consents.put(
+                request_id,
+                PendingConsent(
+                    request_id=request_id,
+                    client=client,
+                    params=params,
+                    created_at=time.monotonic(),
+                ),
+            )
+        except StoreFullError:
+            raise AuthorizeError(
+                "temporarily_unavailable",
+                "Too many connection requests are waiting for approval; try again shortly.",
+            ) from None
         return f"{CONSENT_PATH}?{urlencode({'request_id': request_id})}"
 
     def pending_consent(self, request_id: str) -> PendingConsent | None:
