@@ -41,6 +41,7 @@ from family_assistant.llm import (
     describe_attachment_for_fallback,
 )
 from family_assistant.llm.antigravity_egress import (
+    AntigravityCredentialStore,
     AntigravityEgressResolver,
     EgressNetworkResolver,
 )
@@ -369,8 +370,12 @@ class GoogleGenAIClient(BaseLLMClient):
                 antigravity_egress_resolver
             )
         elif antigravity_environment is not None:
+            # The store writes with the same API key the interaction is
+            # submitted under, because the credential it holds is only
+            # reachable from that project in the first place.
             self._owned_antigravity_egress = AntigravityEgressResolver(
-                antigravity_environment
+                antigravity_environment,
+                credential_store=AntigravityCredentialStore(api_key=api_key),
             )
             self._antigravity_egress = self._owned_antigravity_egress
         else:
