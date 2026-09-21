@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "AUTHENTICATED_SITE_TOOLS_DEFINITION",
     "finalize_authenticated_run",
+    "route_jar",
     "run_authenticated_site_task_tool",
 ]
 
@@ -153,7 +154,7 @@ class _JarRouting:
     login_required: str | None
 
 
-async def _route_jar(
+async def route_jar(
     backend: RemoteBrowserBackend, site: AuthenticatedSiteConfig
 ) -> _JarRouting:
     if site.jar_id is None:
@@ -470,7 +471,7 @@ async def _start_run(
         exec_context, config, _spec(site_id, site, jar_id=None)
     )
     try:
-        routing = await _route_jar(probe_backend, site)
+        routing = await route_jar(probe_backend, site)
     except BrowserBackendError as exc:
         logger.warning("Jar routing failed for site %s: %s", site_id, exc)
         return _error(f"Could not check the saved {site.display_name} login: {exc}")

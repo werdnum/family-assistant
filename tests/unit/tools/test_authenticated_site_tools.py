@@ -22,7 +22,7 @@ from family_assistant.config_models import (
     BrowserHandoffConfig,
     RemoteA2AAuthConfig,
 )
-from family_assistant.tools.authenticated_sites import _route_jar
+from family_assistant.tools.authenticated_sites import route_jar
 from family_assistant.tools.browser_autofill import (
     AutofillUnavailableError,
     browser_autofill_tool,
@@ -295,7 +295,7 @@ def _jar_backend(jar: JsonDict, probe: JsonDict) -> RemoteBrowserBackend:
 @pytest.mark.asyncio
 async def test_a_fresh_jar_is_loaded_with_its_generation() -> None:
     backend = _jar_backend({"generation": 4, "invalidated_at": None}, {"fresh": True})
-    routing = await _route_jar(backend, _site())
+    routing = await route_jar(backend, _site())
     assert routing.jar_id == "jar_1"
     assert routing.generation == 4
     assert routing.login_required is None
@@ -305,7 +305,7 @@ async def test_a_fresh_jar_is_loaded_with_its_generation() -> None:
 async def test_a_lapsed_jar_with_a_credential_runs_jarless() -> None:
     """Stale state is not worth carrying: the run starts at the login form."""
     backend = _jar_backend({"generation": 4, "invalidated_at": None}, {"fresh": False})
-    routing = await _route_jar(backend, _site())
+    routing = await route_jar(backend, _site())
     assert routing.jar_id is None
     assert routing.login_required is None
 
@@ -313,7 +313,7 @@ async def test_a_lapsed_jar_with_a_credential_runs_jarless() -> None:
 @pytest.mark.asyncio
 async def test_a_lapsed_jar_without_a_credential_needs_a_human() -> None:
     backend = _jar_backend({"generation": 4, "invalidated_at": None}, {"fresh": False})
-    routing = await _route_jar(backend, _site(credential_alias=None))
+    routing = await route_jar(backend, _site(credential_alias=None))
     assert routing.login_required is not None
     assert "expired" in routing.login_required
 
@@ -324,7 +324,7 @@ async def test_a_revoked_jar_disables_autofill_as_well() -> None:
     backend = _jar_backend(
         {"generation": 4, "invalidated_at": "2026-09-01T00:00:00Z"}, {"fresh": True}
     )
-    routing = await _route_jar(backend, _site())
+    routing = await route_jar(backend, _site())
     assert routing.jar_id is None
     assert routing.login_required is not None
     assert "revoked" in routing.login_required
@@ -333,13 +333,13 @@ async def test_a_revoked_jar_disables_autofill_as_well() -> None:
 @pytest.mark.asyncio
 async def test_a_deleted_jar_is_treated_as_revoked() -> None:
     backend = _jar_backend({"__missing__": True}, {"fresh": True})
-    routing = await _route_jar(backend, _site())
+    routing = await route_jar(backend, _site())
     assert routing.login_required is not None
 
 
 @pytest.mark.asyncio
 async def test_a_site_with_no_jar_starts_at_the_login_form() -> None:
     backend = _jar_backend({}, {})
-    routing = await _route_jar(backend, _site(jar_id=None))
+    routing = await route_jar(backend, _site(jar_id=None))
     assert routing.jar_id is None
     assert routing.login_required is None
