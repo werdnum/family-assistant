@@ -2781,24 +2781,28 @@ class TaskWorker:
             "running_timeout_seconds", DELEGATION_RUN_STALE_SECONDS
         )
         created_before = now - timedelta(seconds=running_timeout_seconds)
-        reaped = await exec_context.db_context.delegation_runs.reap_stale(
-            now=now,
+        stale = await exec_context.db_context.delegation_runs.find_stale(
             created_before=created_before,
-            error=(
-                "The delegated run did not complete within the allowed time "
-                "and was marked failed."
-            ),
         )
+        reaped = 0
+        for run in stale:
+            if await self._fail_delegation_run(
+                exec_context,
+                delegation_id=run["delegation_id"],
+                error=(
+                    "The delegated run did not complete within the allowed time "
+                    "and was marked failed."
+                ),
+                local_failure_kind="stranded",
+                force_notify=True,
+            ):
+                reaped += 1
         if reaped:
             logger.warning(
                 "Reaped %d stale delegation run(s) older than %.0fs.",
-                len(reaped),
+                reaped,
                 running_timeout_seconds,
             )
-        # A reaped run has no live caller waiting to deliver inline, so notify
-        # unconditionally even if it was never handed off.
-        for run in reaped:
-            await self._force_notify_delegation(exec_context, run)
 
         # Awaiting-remote runs whose poll task was lost (so the per-poll
         # wall-clock cap never fires) are given up here once past the cap:
@@ -2807,7 +2811,7 @@ class TaskWorker:
         await self._reap_stale_awaiting_remote(exec_context, now=now)
 
         # Recover terminal runs whose completion notification was never
-        # delivered. Two cases reap_stale (queued/running only) cannot reach:
+        # delivered. Two cases the stale-run sweep (queued/running only) cannot reach:
         # a caller that crashed after the run finished but before delivering
         # inline or claiming the handoff leaves a terminal run with
         # handed_off_at NULL that the worker's gated notify skipped; and a
@@ -3192,6 +3196,7 @@ class TaskWorker:
         error: str,
         local_failure_kind: DelegationLocalFailureKind | None = None,
         on_committed: Callable[[], Awaitable[None]] | None = None,
+        force_notify: bool = False,
     ) -> bool:
         """Mark a delegation run failed (committed immediately) and notify.
 
@@ -3230,7 +3235,7 @@ class TaskWorker:
         if on_committed is not None:
             await on_committed()
         await self._schedule_delegation_reconcile(exec_context, run)
-        await self._deliver_terminal_delegation(exec_context, run, force=False)
+        await self._deliver_terminal_delegation(exec_context, run, force=force_notify)
         return True
 
     def _observable_target_for(

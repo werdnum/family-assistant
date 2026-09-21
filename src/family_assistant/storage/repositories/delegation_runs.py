@@ -667,6 +667,8 @@ class DelegationRunsRepository(BaseRepository):
             .values(**values, updated_at=datetime.now(UTC))
             .returning(delegation_runs_table)
         )
+        if values.get("local_failure_kind") == "stranded":
+            stmt = stmt.where(delegation_runs_table.c.status.in_(["queued", "running"]))
         result = await self._execute_with_logging("terminate_delegation_run", stmt)
         row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
@@ -685,35 +687,15 @@ class DelegationRunsRepository(BaseRepository):
             notified_at=notified_at,
         )
 
-    async def reap_stale(
-        self,
-        *,
-        now: datetime,
-        created_before: datetime,
-        error: str,
-    ) -> list[DelegationRunDict]:
-        """Fail non-terminal delegation runs created before ``created_before``.
-
-        Covers both ``queued`` runs (whose owning task was lost before it ever
-        started) and ``running`` runs (interrupted mid-flight), keyed on
-        ``created_at`` so a run with no ``started_at`` is still reaped. Returns
-        the rows that were transitioned so the caller can notify for each.
-        """
+    async def find_stale(self, *, created_before: datetime) -> list[DelegationRunDict]:
+        """Find stranded queued/running runs for settlement by the task worker."""
         stmt = (
-            update(delegation_runs_table)
+            select(delegation_runs_table)
             .where(delegation_runs_table.c.status.in_(["queued", "running"]))
             .where(delegation_runs_table.c.created_at < created_before)
-            .values(
-                status="failed",
-                error=error,
-                completed_at=now,
-                local_failure_kind="stranded",
-                updated_at=now,
-            )
-            .returning(delegation_runs_table)
         )
-        result = await self._execute_with_logging("reap_stale_delegation_runs", stmt)
-        return [self._row_to_dict(dict(row)) for row in result.all()]
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
 
     async def find_terminal_unnotified(
         self, *, completed_before: datetime

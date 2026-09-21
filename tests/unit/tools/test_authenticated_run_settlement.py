@@ -10,6 +10,7 @@ window in which the caller is told `running` for a run that has finished.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -17,12 +18,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
+from sqlalchemy import update
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage.database import Database
+from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.repositories.delegation_runs import (
     DelegationRunsRepository,
 )
@@ -33,6 +36,7 @@ from family_assistant.tools.browser_backend import (
     AuthenticatedSessionSpec,
     BrowserBackendError,
     RemoteBrowserBackend,
+    authenticated_binding_for,
     bind_authenticated_session,
     release_authenticated_session,
 )
@@ -45,7 +49,11 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.storage.delegation_runs import AuthenticatedSiteEnvelope
+    from family_assistant.storage.delegation_runs import (
+        AuthenticatedSiteEnvelope,
+        DelegationLocalFailureKind,
+    )
+    from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
 
 pytestmark = pytest.mark.asyncio
 
@@ -142,7 +150,7 @@ def _context(
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "session_read", "persistence", "missing_binding"]
+    "failure", [None, "session_read", "persistence", "missing_binding", "cleanup"]
 )
 async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
     db_engine: AsyncEngine,
@@ -172,6 +180,12 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         "session_id": SESSION_ID,
     }
     await db.delegation_runs.set_authenticated_site_state(delegation_id, running)
+    if failure == "cleanup":
+        await db.execute(
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(created_at=SystemClock().now() - timedelta(hours=2))
+        )
     bind_authenticated_session(
         subconversation_id,
         AuthenticatedSessionBinding(
@@ -218,15 +232,39 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         )
 
     monkeypatch.setattr(DelegationRunsRepository, "mark_completed", observe_then_mark)
+    mark_failed = DelegationRunsRepository.mark_failed
+
+    async def observe_then_fail(
+        self: DelegationRunsRepository,
+        *,
+        delegation_id: str,
+        error: str,
+        completed_at: datetime,
+        local_failure_kind: DelegationLocalFailureKind | None = None,
+    ) -> DelegationRunDict | None:
+        run = await self.get_by_delegation_id(delegation_id)
+        seen_when_terminal.append(run["authenticated_site_json"] if run else None)
+        return await mark_failed(
+            self,
+            delegation_id=delegation_id,
+            error=error,
+            completed_at=completed_at,
+            local_failure_kind=local_failure_kind,
+        )
+
+    monkeypatch.setattr(DelegationRunsRepository, "mark_failed", observe_then_fail)
 
     target = _FakeSiteWorker()
     processing_service = SimpleNamespace(
-        service_config=SimpleNamespace(id="default_assistant"),
+        service_config=SimpleNamespace(
+            id="cleanup_worker" if failure == "cleanup" else "default_assistant"
+        ),
         processing_services_registry={"authenticated_browser_profile": target},
         home_assistant_client=None,
         attachment_registry=None,
     )
     chat_interface = cast("ChatInterface", AsyncMock(spec=ChatInterface))
+    cast("AsyncMock", chat_interface.send_message).return_value = "delivered"
     exec_context = _context(db, processing_service, chat_interface)
     worker = TaskWorker(
         processing_service=cast("Any", processing_service),
@@ -238,6 +276,11 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
     )
 
     async def execute() -> None:
+        if failure == "cleanup":
+            await worker.handle_delegation_run_cleanup(
+                exec_context, {"running_timeout_seconds": 60.0}
+            )
+            return
         await worker.handle_delegated_profile_run(
             exec_context,
             {
@@ -263,11 +306,13 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
     settled = seen_when_terminal[0]
     assert settled is not None
     assert settled["status"] == (
-        "failed" if failure == "missing_binding" else "completed"
+        "failed" if failure in {"missing_binding", "cleanup"} else "completed"
     )
     # The reply is not on the row yet at that point, so the summary proves the
     # settle read it from the result rather than from the row it precedes.
-    assert settled.get("summary") == WORKER_REPLY
+    assert settled.get("summary") == ("" if failure == "cleanup" else WORKER_REPLY)
     run = await db.delegation_runs.get_by_delegation_id(delegation_id)
     assert run is not None
-    assert run["status"] == "completed"
+    assert run["status"] == ("failed" if failure == "cleanup" else "completed")
+    if failure == "cleanup":
+        assert authenticated_binding_for(subconversation_id) is None

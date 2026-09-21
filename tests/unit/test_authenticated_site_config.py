@@ -9,6 +9,7 @@ authenticated run must stop the application from starting.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import pytest
@@ -374,4 +375,16 @@ def test_authenticated_profiles_cannot_grant_arbitrary_handback(
         shipped_config_data, profile_id, {"tools_policy": policy}
     )
     with pytest.raises(ValidationError, match="browser_claim_handback"):
+        _validate(data, {"hellofresh": VALID_SITE})
+
+
+def test_argument_only_global_grant_is_rejected(
+    shipped_config_data: dict[str, Any],
+) -> None:
+    data = copy.deepcopy(shipped_config_data)
+    data["global_tools_policy"]["rules"].append({
+        "match": {"argument_equals": {"target_service_id": "complex_tasks"}},
+        "decision": "allow",
+    })
+    with pytest.raises(ValidationError, match="without explicit names"):
         _validate(data, {"hellofresh": VALID_SITE})

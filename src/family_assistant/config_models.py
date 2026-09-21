@@ -2386,6 +2386,7 @@ class AppConfig(BaseSettings):
     def _unanalysable_global_grants(self) -> list[str]:
         """Global granting rules whose reach cannot be decided statically.
 
+        Argument-only grants have no bounded set of tool names.
         A tag or MCP-server matcher grants by a property the registry supplies
         at runtime, so which tools it hands an authenticated profile is not
         knowable here. Since those grants outrank the profile's own policy, the
@@ -2399,7 +2400,10 @@ class AppConfig(BaseSettings):
             for index, rule in enumerate(self.global_tools_policy.rules)
             if rule.decision is not ToolPolicyDecision.DENY
             and (
-                rule.match.tags_all or rule.match.tags_any or rule.match.mcp_server_ids
+                not rule.match.names
+                or rule.match.tags_all
+                or rule.match.tags_any
+                or rule.match.mcp_server_ids
             )
         ]
 
@@ -2430,7 +2434,7 @@ class AppConfig(BaseSettings):
         unanalysable = self._unanalysable_global_grants()
         if unanalysable:
             msg = (
-                "global_tools_policy grants tools by tag or MCP server "
+                "global_tools_policy grants tools without explicit names, or by tag or MCP server "
                 f"({', '.join(unanalysable)}), which outranks an authenticated "
                 "browser profile's own policy and cannot be checked against the "
                 "admissible tool set. Configuring an authenticated site with "
