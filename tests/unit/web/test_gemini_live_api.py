@@ -191,6 +191,9 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
     instruction = body["system_instruction"]
     assert "say one short thing before you start" in instruction
     assert "Do NOT narrate each step" in instruction
+    # Only the progress update in between waits on a reminder; the answer itself
+    # must never be gated behind one that a quick lookup never earns.
+    assert "Answering is never held back" in instruction
     # The model is told to wait to be told, and the client is served the same key
     # and threshold it is told to wait for.
     assert f"`{VOICE_SILENCE_REMINDER_KEY}`" in instruction
