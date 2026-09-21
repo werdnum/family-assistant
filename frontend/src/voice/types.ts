@@ -168,6 +168,14 @@ export interface EphemeralTokenResponse {
   system_instruction: string;
   model: string;
   config: GeminiLiveConfig;
+  /**
+   * Key to attach to a tool result when the assistant has been silent too long.
+   * Served by the backend so it always matches the key the system instruction
+   * names.
+   */
+  voice_reminder_key?: string;
+  /** How long the assistant may stay silent, in seconds, before that reminder. */
+  voice_reminder_after_seconds?: number;
 }
 
 /**

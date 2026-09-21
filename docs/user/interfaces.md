@@ -93,6 +93,11 @@ that extra step means an occasional short pause before the assistant acts on an 
 exception is anything that would normally ask you to approve it first: a voice conversation has no
 way to show you an approval prompt, so the assistant will ask you to do those in chat instead.
 
+When a question needs looking up, the assistant says one short thing — "let me check" — and then
+works quietly rather than talking you through each step, so there is room to speak without talking
+over it. If the lookup runs long it will say something again to let you know it is still there, and
+you can ask "are you still there?" at any point without it starting over.
+
 ### Pages
 
 The menu is grouped into **Information**, **Operations**, and **Settings**:

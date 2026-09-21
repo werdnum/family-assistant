@@ -23,6 +23,8 @@ from family_assistant.tools.metadata import (
 from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.routers.gemini_live_api import (
+    VOICE_SILENCE_REMINDER_AFTER_SECONDS,
+    VOICE_SILENCE_REMINDER_KEY,
     _convert_json_schema_type_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
     _convert_properties_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
     gemini_live_router,
@@ -184,8 +186,16 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
     declarations = body["tools"][0]["functionDeclarations"]
     assert [declaration["name"] for declaration in declarations] == ["safe_tool"]
     assert tools_provider.calls == [False]
-    # Tool calls are silent on the user's end, so voice must narrate them.
-    assert "Before you call a tool, briefly say" in body["system_instruction"]
+    # Tool calls are silent on the user's end, so voice opens with one short
+    # acknowledgement -- and then stays quiet rather than narrating every step.
+    instruction = body["system_instruction"]
+    assert "say one short thing before you start" in instruction
+    assert "Do NOT narrate each step" in instruction
+    # The model is told to wait to be told, and the client is served the same key
+    # and threshold it is told to wait for.
+    assert f"`{VOICE_SILENCE_REMINDER_KEY}`" in instruction
+    assert body["voice_reminder_key"] == VOICE_SILENCE_REMINDER_KEY
+    assert body["voice_reminder_after_seconds"] == VOICE_SILENCE_REMINDER_AFTER_SECONDS
 
 
 class _RecordingContextProvider:

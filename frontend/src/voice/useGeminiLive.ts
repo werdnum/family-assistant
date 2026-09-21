@@ -106,6 +106,13 @@ export function useGeminiLive(): GeminiLiveState {
   } | null>(null);
   // Gap threshold in ms - start new entry if gap exceeds this
   const TRANSCRIPTION_GAP_MS = 2000;
+  // The model has no clock of its own, so the system instruction tells it not to
+  // guess when another spoken update is due and to wait to be told. These refs
+  // are how it gets told: the timestamp of the last thing that broke the silence
+  // (assistant audio, the user speaking, or a reminder already sent), and the key
+  // and threshold the backend serves alongside the token.
+  const silenceBrokenAtRef = useRef<number>(Date.now());
+  const voiceReminderRef = useRef<{ key: string; afterMs: number } | null>(null);
 
   // Audio hooks
   const audioPlayback = useAudioPlayback();
@@ -122,6 +129,7 @@ export function useGeminiLive(): GeminiLiveState {
     (audioData: string) => {
       const pcmData = base64ToArrayBuffer(audioData);
       audioPlayback.queueAudio(pcmData);
+      silenceBrokenAtRef.current = Date.now();
       setActivityState('speaking');
     },
     [audioPlayback]
@@ -138,6 +146,12 @@ export function useGeminiLive(): GeminiLiveState {
 
     const now = Date.now();
     const last = lastTranscriptRef.current;
+
+    // While the user is talking there is no dead air to apologise for, so their
+    // speech restarts the clock just as the assistant's own does.
+    if (role === 'user') {
+      silenceBrokenAtRef.current = now;
+    }
 
     // Check if we should append to existing entry or create new one
     const shouldAppend =
@@ -283,10 +297,34 @@ export function useGeminiLive(): GeminiLiveState {
 
       // Send tool responses back to Gemini
       try {
-        const functionResponses = responses.map((r) => ({
+        // A tool result is the only thing that reaches a model waiting on one, so
+        // this is where the silence is reported. A single slow call therefore gets
+        // no update until it returns; the acknowledgement before the lookup starts
+        // is what covers that, and a sequence of calls is reminded between them.
+        const reminder = voiceReminderRef.current;
+        const silentFor = Date.now() - silenceBrokenAtRef.current;
+        const remindNow = reminder !== null && silentFor >= reminder.afterMs;
+        if (remindNow) {
+          // Re-arm from here rather than from the assistant's next word: if it
+          // ignores the reminder, the user is owed another one an interval later.
+          silenceBrokenAtRef.current = Date.now();
+        }
+
+        const functionResponses = responses.map((r, index) => ({
           id: r.id,
           name: r.name,
-          response: r.response,
+          // One reminder per round trip, on the first result, so a batch of tool
+          // calls does not repeat it once per call.
+          response:
+            remindNow && reminder !== null && index === 0
+              ? {
+                  ...r.response,
+                  [reminder.key]:
+                    `You have been silent for about ${Math.round(silentFor / 1000)} ` +
+                    'seconds. Say a few words to the user so they know you are still ' +
+                    'working, then carry on.',
+                }
+              : r.response,
         }));
 
         await sessionRef.current.sendToolResponse({ functionResponses });
@@ -458,6 +496,14 @@ export function useGeminiLive(): GeminiLiveState {
         }
 
         const tokenData: EphemeralTokenResponse = await tokenResponse.json();
+        voiceReminderRef.current =
+          tokenData.voice_reminder_key && typeof tokenData.voice_reminder_after_seconds === 'number'
+            ? {
+                key: tokenData.voice_reminder_key,
+                afterMs: tokenData.voice_reminder_after_seconds * 1000,
+              }
+            : null;
+        silenceBrokenAtRef.current = Date.now();
 
         setConnectingStatus('Connecting to Gemini...');
 
