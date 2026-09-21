@@ -260,11 +260,16 @@ async def finalize_authenticated_run(
 ) -> None:
     """Settle an authenticated run's session and persist its typed result.
 
-    Called once, from the worker, when the delegated turn stops. Exactly one
-    owner closes the session: a run that reached a parked outcome leaves it
-    alive for the resume handle to reclaim, and every other outcome closes it
-    here. A run whose worker dies without reaching this is left to the
-    lifetime backstop.
+    Called from the worker whenever a delegated run stops, on any path: the
+    turn finishing, the turn raising, and every guard that fails a run before
+    it executes. Settling is idempotent on the persisted status, so routing
+    every one of those through here costs nothing and leaves no path that
+    strands a session.
+
+    Exactly one owner closes the session: a run that reached a parked outcome
+    leaves it alive for the resume handle to reclaim, and every other outcome
+    closes it here. A run whose worker dies without reaching this at all is
+    left to the lifetime backstop.
     """
     run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         delegation_id
@@ -272,6 +277,12 @@ async def finalize_authenticated_run(
     if run is None or run["authenticated_site_json"] is None:
         return
     envelope = run["authenticated_site_json"]
+    if envelope["status"] != "running":
+        # Already settled. Every failure path routes through here, so a run
+        # that failed after parking would otherwise have its parked outcome
+        # overwritten by a second settle that no longer has the binding to read
+        # it from -- turning a resumable session into a lost one.
+        return
     binding = authenticated_binding_for(run["subconversation_id"])
     status: AuthenticatedSiteTaskStatus
     handoff_url: str | None = None

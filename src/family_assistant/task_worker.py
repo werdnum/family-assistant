@@ -2082,9 +2082,6 @@ class TaskWorker:
                 delegation_id=delegation_id,
                 error=error,
             )
-            await self._settle_authenticated_run(
-                exec_context, delegation_id, failed=True
-            )
             return
 
         await self._finalize_delegation_run(exec_context, delegation_id, result)
@@ -3211,6 +3208,11 @@ class TaskWorker:
             return False
         if on_committed is not None:
             await on_committed()
+        # The one chokepoint every failing path reaches -- the pre-execution
+        # guards, the inline turn raising, the poll, the timeout, the reaper --
+        # so an authenticated run's browser session is released here rather
+        # than at each of them, and no new failure path can forget to.
+        await self._settle_authenticated_run(exec_context, delegation_id, failed=True)
         await self._schedule_delegation_reconcile(exec_context, run)
         await self._deliver_terminal_delegation(exec_context, run, force=False)
         return True
