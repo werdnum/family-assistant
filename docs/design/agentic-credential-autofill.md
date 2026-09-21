@@ -70,7 +70,7 @@ An `authenticated_sites` entry (#1136 configuration model) may bind a Keychute c
 ```yaml
 authenticated_sites:
   hellofresh:
-    jar_id: "jar_0123456789abcdef0123456789abcdef"
+    jar_id: "jar_0123456789abcdef0123456789abcdef"   # optional when a credential is bound (see jars)
     authenticated_origins:
       - "https://www.hellofresh.com.au"
     credential:
@@ -122,13 +122,17 @@ deterministic operation. Both fields still come from Keychute so the flow works 
 ### Keychute flow
 
 browser-server registers as a Keychute client (`max_tier: trusted-client`, `mechanisms: [autofill]`)
-— unchanged from the previous revision, and requiring no Keychute server changes. On the first
-`browser_autofill` call it creates the access request (page origins = the session's configured
-authenticated origins; context passed through from FA: site, objective snippet, acting user), waits,
-reads the single-use grant, fills, and drops the plaintext. Standing grants give the steady state
-(auto-approve or notify-only per Keychute policy); the first release per site gets Keychute's
-approval page, where the operator sees the server-parsed grant. Every release is audited with the
-`secret_version_id` actually decrypted.
+— unchanged from the previous revision, and requiring no Keychute server changes. Keychute caps
+releasing-tier grants at one read, so the unit of release is the **fill step**: each
+`browser_autofill` call creates its own access request (page origins = the session's configured
+authenticated origins; context passed through from FA: site, objective snippet, acting user, and
+which step this is), waits, reads that request's single-use grant, fills, and drops the plaintext.
+The request's idempotency key is per step and is reused only across `approval_pending` retries of
+that same step, so a retry resumes the same request rather than minting a second one, and the
+password step of a username-first login is a fresh request with its own grant — under a standing
+grant that is two auto-approved (or notify-only) releases seconds apart, not two human approvals.
+The first release per site gets Keychute's approval page, where the operator sees the server-parsed
+grant. Every release is audited with the `secret_version_id` actually decrypted.
 
 ## Load-bearing boundaries
 
@@ -195,7 +199,13 @@ destination checks above; a hostile approved origin is out of scope.
 **Jars are valuable persistence, not a prerequisite for login.** A credential-enabled session is an
 ordinary #1136 site-capability session — usually created from the configured jar, and usable even
 when that jar is stale (the agent logs in and continues) or, for a site whose sessions never
-persist, potentially without meaningful jar state at all.
+persist, without a jar at all. To make the jarless case concrete rather than implied: `jar_id` is
+**optional** on an `authenticated_sites` entry that carries a `credential`. When it is absent,
+`run_authenticated_site_task` creates the session with no storage state but the same confinement —
+browser-server accepts the confinement origin set explicitly on credential-enabled session creation
+(validated against the site's configured `authenticated_origins`), instead of deriving confinement
+only from a loaded jar. Every other boundary — read-back protection from creation, profile
+validation, containment — is identical; the agent's first act is simply to log in.
 
 Automatic jar refresh after a successful in-session login is a **deferred follow-up**, added only if
 measured expiry friction justifies it. When it is added, the correctness rules from the previous
@@ -231,12 +241,15 @@ credential-bearing, and the mailbox interaction belongs to the taint machinery's
 ## Build order
 
 1. **browser-server:** the Keychute client (request/wait/read against the in-cluster URL, internal
-   CA); credential binding on `create_session`; the `autofill` endpoint with granted-constraint
-   destination checks, serialized target binding, element sanity checks, and one-fill-per-read;
+   CA); credential binding on `create_session`, with explicit confinement origins accepted for
+   jarless credential-enabled sessions; the `autofill` endpoint with granted-constraint destination
+   checks, serialized target binding, element sanity checks, and one request + one single-use read
+   per fill step (per-step idempotency, reused only across `approval_pending` retries);
    credential-enabled read-back protection from creation. Security regression tests: plaintext in no
    response/event/log/exception; fill refused off-origin, in iframes, on new-password fields, after
    target invalidation, and in non-credential sessions; snapshot/screenshot redaction and `exec`
-   denial active before the first fill.
+   denial active before the first fill; a jarless credential session confined identically to a
+   jar-loaded one.
 2. **family-assistant:** `credential` on `authenticated_sites` entries; the `browser_autofill` tool
    in the authenticated browser profiles (admitted by the mechanical browser-server-mediated
    validation); `approval_pending`/`needs_human` surfacing through the #1136 result contract;
