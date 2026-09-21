@@ -109,6 +109,18 @@ timeout. The walker and the resolver share that predicate as one in-page functio
 drift. For the remote backend this check lives in browser-server's click, type and select handlers;
 the local backend does the same in its own evaluate step.
 
+### A protected control reports whether it holds a value, not what it is
+
+The walker copies an element's `value` into its node, which is how a snapshot shows a filled-in
+form. For a protected control -- every `input[type=password]`, plus any element a credential
+autofill has touched -- it does not: the node carries `value_masked: true` and `has_value:
+true`/`false` instead, so the agent can tell an empty login form from a filled one without the
+value reaching it. Protection is tracked by element, stamped as `data-fa-protected` alongside the
+ref, so a page that later changes the input's type -- a "show password" toggle -- does not turn the
+node back into readable text. The stamp is part of the shared walker, so it holds identically on
+both backends, and it is orthogonal to ref identity: `value` has never been part of what makes a
+ref name its node, so masking one changes nothing about staleness.
+
 ### Browser operations run in order, and a batch hands back one set of refs
 
 The tool loop runs a response's tool calls concurrently. Every browser operation for a conversation,

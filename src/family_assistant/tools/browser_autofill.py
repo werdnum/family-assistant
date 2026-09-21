@@ -89,7 +89,12 @@ _REFUSAL_GUIDANCE: dict[str, str] = {
         "ask again if you are still on the login form."
     ),
     "keychute_unavailable": (
-        "The credential service is unreachable, so no fill is possible now."
+        "The credential service is unreachable, so no fill is possible now. "
+        "Stop rather than retrying; nothing here will make it answer."
+    ),
+    "grant_invalid": (
+        "The stored credential does not have the part you asked for. Stop here "
+        "and report which part is missing, so it can be corrected."
     ),
 }
 
@@ -148,6 +153,8 @@ def _validate_refs(field_refs: list[str] | None) -> None:
 
 def _filled_result(response: JsonDict) -> ToolResult:
     filled = response.get("filled")
+    # A `ref` may be null for a field browser-server auto-detected and that was
+    # never in a snapshot, so the kind is what is named back to the model.
     kinds = (
         ", ".join(
             str(entry.get("kind", "field"))

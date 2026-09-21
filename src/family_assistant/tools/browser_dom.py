@@ -88,6 +88,12 @@ class SnapshotNode(TypedDict):
     name: str
     href: NotRequired[str]
     value: NotRequired[str]
+    # A protected control -- every password input, plus any element an autofill
+    # touched -- reports whether it holds a value instead of what the value is.
+    # ``value`` is absent on such a node however the field is later retyped, so
+    # a "show password" toggle does not turn it back into readable text.
+    value_masked: NotRequired[bool]
+    has_value: NotRequired[bool]
     tag: NotRequired[str]
     input_type: NotRequired[str]
     children: NotRequired[list[SnapshotNode]]

@@ -78,7 +78,16 @@ _WALKER_HELPERS_JS = r"""
   const REF_ATTR = 'data-fa-ref';
   const ROLE_ATTR = 'data-fa-role';
   const NAME_ATTR = 'data-fa-name';
+  // A control whose value must never be copied into a snapshot: every password
+  // input, plus any element an autofill has touched (which keeps the stamp when
+  // a "show password" toggle changes the input's type).
+  const PROTECTED_ATTR = 'data-fa-protected';
   const REF_PATTERN = /^e[0-9]+$/;
+
+  function isProtected(el) {
+    if (el.hasAttribute && el.hasAttribute(PROTECTED_ATTR)) return true;
+    return el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'password';
+  }
 
   const ROLE_MAP = {
     A: 'link', BUTTON: 'button', SELECT: 'combobox',
@@ -229,8 +238,16 @@ SNAPSHOT_JS = (
       const node = { ref, role, name };
       const href = el.getAttribute('href');
       if (href) node.href = href;
-      const value = el.value;
-      if (typeof value === 'string' && value) node.value = value;
+      if (isProtected(el)) {
+        // Stamp on sight so the control stays protected after a type change, and
+        // report only whether it holds something — never what.
+        if (!el.hasAttribute(PROTECTED_ATTR)) el.setAttribute(PROTECTED_ATTR, '1');
+        node.value_masked = true;
+        node.has_value = typeof el.value === 'string' && el.value.length > 0;
+      } else {
+        const value = el.value;
+        if (typeof value === 'string' && value) node.value = value;
+      }
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
         node.tag = el.tagName.toLowerCase();
         const t = el.getAttribute('type');
