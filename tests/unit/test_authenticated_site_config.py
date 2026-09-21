@@ -431,3 +431,15 @@ def test_authenticated_delegation_route_must_accept_its_sources(
     _profile(data, profile_id)["processing_config"]["allowed_delegation_sources"] = []
     with pytest.raises(ValidationError, match="must accept allowed_delegation_sources"):
         _validate(data, {"hellofresh": VALID_SITE})
+
+
+def test_glob_exclusions_withhold_global_grants(
+    shipped_config_data: dict[str, Any],
+) -> None:
+    data = copy.deepcopy(shipped_config_data)
+    for profile_id in (
+        "authenticated_browser_profile",
+        "authenticated_browser_visual_profile",
+    ):
+        _profile(data, profile_id)["excluded_global_tools"] = ["*"]
+    _validate(data, {"hellofresh": VALID_SITE})

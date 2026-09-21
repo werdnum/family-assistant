@@ -260,7 +260,11 @@ def _derive_status(
         )
     if binding.approval_pending_request_id is not None:
         return "approval_pending", None
-    if binding.bad_password_recorded or binding.autofill_refusal is not None:
+    if (
+        binding.bad_password_recorded
+        or binding.autofill_refusal is not None
+        or binding.handoff_failed
+    ):
         return "needs_human", None
     return "completed", None
 

@@ -218,6 +218,8 @@ class FakeBrowserServer:
                 else {"status": "filled", "filled": [{"kind": "password"}]}
             )
             return httpx.Response(200, json={**reply, "origin": ORIGIN})
+        if path.endswith("/handoff"):
+            return httpx.Response(500, json={"detail": "handoff unavailable"})
         if path.endswith("/close"):
             return httpx.Response(200, json={})
         if request.method == "GET":
@@ -817,5 +819,24 @@ async def test_terminal_autofill_refusal_cannot_settle_as_completed(
         conversation_id=f"conv-refused-{reason}",
     )
     reply = await harness.ask("Please sign in and check my order.")
+    assert f"{DISPLAY_NAME}: needs_human." in reply
+    assert browser_server.sessions_closed == 1
+
+
+async def test_failed_handoff_cannot_settle_as_completed(
+    app_config: AppConfig,
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[object, object, object]],
+    browser_server: FakeBrowserServer,
+) -> None:
+    harness = await _harness(
+        app_config=app_config,
+        db_engine=db_engine,
+        task_worker_manager=task_worker_manager,
+        worker_llm=_worker_llm("browser_request_handoff", {"reason": "OTP required"}),
+        resume=ResumeHandle(),
+        conversation_id="conv-failed-handoff",
+    )
+    reply = await harness.ask("Please check my order.")
     assert f"{DISPLAY_NAME}: needs_human." in reply
     assert browser_server.sessions_closed == 1

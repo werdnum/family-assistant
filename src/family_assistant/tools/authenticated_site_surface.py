@@ -15,6 +15,7 @@ depends on a registry that changes under the configuration.
 
 from __future__ import annotations
 
+from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
 
 from family_assistant.tools.metadata import ToolTag
@@ -208,7 +209,11 @@ def surface_violations(
             )
         )
 
-    missing_exclusions = sorted(globally_granted_tools - excluded_global_tools)
+    missing_exclusions = sorted(
+        name
+        for name in globally_granted_tools
+        if not any(fnmatchcase(name, pattern) for pattern in excluded_global_tools)
+    )
     if missing_exclusions:
         problems.append(
             "it does not withhold the globally granted tool(s) "
