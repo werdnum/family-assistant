@@ -44,7 +44,9 @@ final class EphemeralTokenTests: XCTestCase {
         "vad": {"automatic": true, "start_of_speech_sensitivity": "DEFAULT", "silence_duration_ms": 700},
         "car_audio_vad": {"start_of_speech_sensitivity": "START_SENSITIVITY_LOW", "prefix_padding_ms": 300}
       },
-      "profile_id": "default_assistant"
+      "profile_id": "default_assistant",
+      "voice_reminder_key": "voice_mode_reminder",
+      "voice_reminder_after_seconds": 20
     }
     """
 
@@ -69,6 +71,8 @@ final class EphemeralTokenTests: XCTestCase {
         )
         XCTAssertNotNil(token.expiresAt)
         XCTAssertEqual(token.profileID, "default_assistant")
+        XCTAssertEqual(token.voiceReminderKey, "voice_mode_reminder")
+        XCTAssertEqual(token.voiceReminderAfterSeconds, 20)
     }
 
     func testDecodeUsesConfigDefaultsWhenSectionsMissing() throws {
@@ -90,6 +94,10 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig())
         XCTAssertEqual(token.config.carAudioActivityDetection, VoiceActivityDetectionConfig())
         XCTAssertTrue(token.tools.isEmpty)
+        // A server that predates the fields sends an instruction that never
+        // mentions the reminder either, so the client must not invent one.
+        XCTAssertNil(token.voiceReminderKey)
+        XCTAssertNil(token.voiceReminderAfterSeconds)
     }
 
     func testFetchEphemeralTokenPostsProfileAndAuthorizes() async throws {

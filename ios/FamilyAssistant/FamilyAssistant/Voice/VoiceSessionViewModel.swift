@@ -99,6 +99,14 @@ final class VoiceSessionViewModel {
     /// for another tool. The gap is the model's own silence, which is invisible
     /// to the backend and indistinguishable from a dropped call on the user's end.
     private var toolResultsSentAt: ContinuousClock.Instant?
+    /// When the silence the user hears was last broken -- by assistant speech,
+    /// by the user speaking, or by a reminder already sent. The model has no
+    /// clock, so this is what decides whether its next tool result should carry
+    /// one; see ``voiceReminder``.
+    private var silenceBrokenAt = ContinuousClock.now
+    /// The key and threshold the backend served with the token, or nil when it
+    /// served neither and its instruction therefore asks for no reminder.
+    private var voiceReminder: (key: String, afterSeconds: Int)?
     private var interruptionCount = 0
     private var activityDetectionProfile = "default"
 
@@ -205,6 +213,12 @@ final class VoiceSessionViewModel {
         // requested profile the same way we asked for it, so keep that.
         resolvedProfileID = token.profileID ?? requestedProfileID
         toolRunner.profileID = resolvedProfileID
+        if let key = token.voiceReminderKey, let afterSeconds = token.voiceReminderAfterSeconds {
+            voiceReminder = (key: key, afterSeconds: afterSeconds)
+        } else {
+            voiceReminder = nil
+        }
+        silenceBrokenAt = .now
 
         diagnostics.record("token_received", fields: ["function_count": String(token.tools.reduce(0) {
             $0 + ($1["functionDeclarations"]?.arrayValue?.count ?? 0)
@@ -327,10 +341,13 @@ final class VoiceSessionViewModel {
                 assistantSpeechStartedAt = .now
             }
             isAssistantSpeaking = true
+            silenceBrokenAt = .now
             audio.enqueue(data)
         case let .outputTranscription(text):
             transcript.appendAssistant(text)
         case let .inputTranscription(text):
+            // While the user is talking there is no dead air to apologise for.
+            silenceBrokenAt = .now
             transcript.appendUser(text)
         case .turnComplete, .generationComplete:
             isAssistantSpeaking = false
@@ -381,6 +398,35 @@ final class VoiceSessionViewModel {
         }.joined(separator: ",")
     }
 
+    /// Tells the model, on its way back from a tool, that its silence has run
+    /// long enough to owe the user another word.
+    ///
+    /// A tool result is the one channel that reaches a model already waiting on
+    /// one, so this is where the verdict is delivered. The reminder rides on the
+    /// first result only, so a batch of calls does not repeat it once per call,
+    /// and it is added beside the payload rather than replacing it.
+    private func applyingSilenceReminder(
+        to responses: [GeminiFunctionResponse]
+    ) -> [GeminiFunctionResponse] {
+        guard let voiceReminder, let first = responses.first,
+              case .object(var payload) = first.response
+        else {
+            return responses
+        }
+        let silentFor = Int((ContinuousClock.now - silenceBrokenAt) / .seconds(1))
+        guard silentFor >= voiceReminder.afterSeconds else { return responses }
+        // Re-arm from here rather than from the assistant's next word: if it
+        // ignores the reminder, the user is owed another one an interval later.
+        silenceBrokenAt = .now
+        payload[voiceReminder.key] = .string(
+            "You have been silent for about \(silentFor) seconds. Say a few words "
+                + "to the user so they know you are still working, then carry on."
+        )
+        var updated = responses
+        updated[0] = GeminiFunctionResponse(id: first.id, name: first.name, response: .object(payload))
+        return updated
+    }
+
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
         guard !calls.isEmpty else { return }
         let keys = calls.map { $0.id ?? UUID().uuidString }
@@ -416,8 +462,9 @@ final class VoiceSessionViewModel {
                 "queue_ms": String(Int((startedAt - receivedAt) / .milliseconds(1))),
                 "execution_ms": Self.milliseconds(since: startedAt),
             ]
+            let outgoing = self.applyingSilenceReminder(to: responses)
             do {
-                try await session.sendToolResponses(responses)
+                try await session.sendToolResponses(outgoing)
             } catch {
                 // Hanging up cancels this task and closes the socket under it;
                 // that is an ordinary end, not a failure to report.

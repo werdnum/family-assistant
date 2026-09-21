@@ -134,6 +134,9 @@ private final class FakeTokenProvider: VoiceTokenProviding {
     /// What the backend reports the session resolved onto. Nil models a server
     /// that predates the field.
     var resolvedProfileID: String?
+    /// How long the assistant may stay silent before a tool result carries a
+    /// reminder. Nil models a server that serves neither field.
+    var voiceReminderAfterSeconds: Int?
     private(set) var requestedProfileIDs: [String?] = []
 
     func fetchEphemeralToken(profileID: String?) async throws -> EphemeralToken {
@@ -154,7 +157,9 @@ private final class FakeTokenProvider: VoiceTokenProviding {
                 activityDetection: activityDetection,
                 carAudioActivityDetection: carAudioActivityDetection
             ),
-            profileID: resolvedProfileID
+            profileID: resolvedProfileID,
+            voiceReminderKey: voiceReminderAfterSeconds == nil ? nil : "voice_mode_reminder",
+            voiceReminderAfterSeconds: voiceReminderAfterSeconds
         )
     }
 }
@@ -556,6 +561,42 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(
             session.sentToolResponses.first?.first?.response,
             .object(["result": .object(["ok": .bool(true)])])
+        )
+    }
+
+    func testLongSilenceIsReportedOnTheNextToolResult() async throws {
+        // The model has no clock, so the client decides another spoken update is
+        // due. At a zero threshold every lookup qualifies, which is what lets a
+        // test see the reminder the assistant would otherwise wait for.
+        tokenProvider.voiceReminderAfterSeconds = 0
+        toolExecutor.handler = { _, _ in .object(["result": .string("27C")]) }
+        let model = makeModel()
+        await model.start()
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
+
+        let payload = try XCTUnwrap(session.sentToolResponses.first?.first?.response)
+        guard case .object(let fields) = payload else {
+            return XCTFail("Expected an object payload, got \(payload)")
+        }
+        XCTAssertNotNil(fields["voice_mode_reminder"], "A long silence should be reported")
+        XCTAssertEqual(fields["result"], JSONValue.string("27C"), "The reminder rides alongside the result")
+    }
+
+    func testShortSilenceLeavesTheToolResultAlone() async throws {
+        tokenProvider.voiceReminderAfterSeconds = 60
+        toolExecutor.handler = { _, _ in .object(["result": .string("27C")]) }
+        let model = makeModel()
+        await model.start()
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
+
+        XCTAssertEqual(
+            session.sentToolResponses.first?.first?.response,
+            .object(["result": .string("27C")]),
+            "A quick lookup should carry no reminder"
         )
     }
 

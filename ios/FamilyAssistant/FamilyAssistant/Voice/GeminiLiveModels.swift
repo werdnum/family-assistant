@@ -27,6 +27,14 @@ struct EphemeralToken: Equatable {
     /// the profile it requested, which is what such a server resolves too, and a
     /// nil all the way down means the default profile at both ends.
     let profileID: String?
+    /// The system instruction tells the model not to guess when another spoken
+    /// update is due and to wait until a field of this name appears beside a
+    /// tool result. Timing that silence is the client's job, so the backend
+    /// serves the key it named and how long the assistant may stay quiet before
+    /// it is used. Nil against a server that predates the fields, which serves
+    /// an instruction that does not mention the key either.
+    let voiceReminderKey: String?
+    let voiceReminderAfterSeconds: Int?
 
     init(
         token: String,
@@ -35,7 +43,9 @@ struct EphemeralToken: Equatable {
         systemInstruction: String,
         tools: [JSONValue],
         config: VoiceLiveConfig,
-        profileID: String? = nil
+        profileID: String? = nil,
+        voiceReminderKey: String? = nil,
+        voiceReminderAfterSeconds: Int? = nil
     ) {
         self.token = token
         self.expiresAt = expiresAt
@@ -44,6 +54,8 @@ struct EphemeralToken: Equatable {
         self.tools = tools
         self.config = config
         self.profileID = profileID
+        self.voiceReminderKey = voiceReminderKey
+        self.voiceReminderAfterSeconds = voiceReminderAfterSeconds
     }
 }
 
@@ -56,6 +68,8 @@ extension EphemeralToken: Decodable {
         case tools
         case config
         case profileID = "profile_id"
+        case voiceReminderKey = "voice_reminder_key"
+        case voiceReminderAfterSeconds = "voice_reminder_after_seconds"
     }
 
     init(from decoder: Decoder) throws {
@@ -66,6 +80,10 @@ extension EphemeralToken: Decodable {
         tools = try container.decodeIfPresent([JSONValue].self, forKey: .tools) ?? []
         config = try container.decode(VoiceLiveConfig.self, forKey: .config)
         profileID = try container.decodeIfPresent(String.self, forKey: .profileID)
+        voiceReminderKey = try container.decodeIfPresent(String.self, forKey: .voiceReminderKey)
+        voiceReminderAfterSeconds = try container.decodeIfPresent(
+            Int.self, forKey: .voiceReminderAfterSeconds
+        )
         let expiresRaw = try container.decodeIfPresent(String.self, forKey: .expiresAt)
         expiresAt = expiresRaw.flatMap(VoiceLiveDateParser.date(from:))
     }
