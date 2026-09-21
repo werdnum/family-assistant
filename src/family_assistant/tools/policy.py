@@ -116,6 +116,7 @@ class PolicyRule(BaseModel):
     decision: ToolPolicyDecision
     priority: int = Field(default=0, ge=0, le=MAX_POLICY_RULE_PRIORITY)
     description: str = ""
+    advertise_conditional_grant: bool = True
 
 
 class ToolPolicyConfig(BaseModel):
@@ -292,17 +293,15 @@ class PolicyEngine:
         denial is what the tool is advertised as; rules are already ordered by
         effective priority, so that is the strongest grant available.
 
-        Only a profile's own policy and the operator's supply pins. The
-        `profile` layer is synthesised rather than authored -- it carries the
-        self-delegation rule every profile gets, pinned to its own id -- and
-        treating that as a grant would advertise `delegate_to_service` in
-        profiles that are meant to hold no tools at all.
+        The synthetic self-delegation rule opts out of conditional advertisement:
+        it permits an internal call without adding tools to an otherwise empty
+        profile. Authored global grants remain eligible.
         """
         for resolved_rule in self._policy.rules:
             match = resolved_rule.match
             if not match.argument_equals:
                 continue
-            if resolved_rule.layer == "profile":
+            if not resolved_rule.rule.advertise_conditional_grant:
                 continue
             if resolved_rule.decision is ToolPolicyDecision.DENY:
                 continue

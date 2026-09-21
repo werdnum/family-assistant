@@ -150,9 +150,11 @@ async def test_filled_result_names_the_kind_and_carries_no_value(
     bound: tuple[AuthenticatedSessionBinding, list[httpx.Request]],
 ) -> None:
     binding, seen = bound
+    binding.autofill_refusal = "no_eligible_field"
     result = await browser_autofill_tool(
         _exec_context(), field_refs=["e12"], kind="password"
     )
+    assert binding.autofill_refusal is None
     assert "Filled the stored password" in result.get_text()
     body = json.loads(seen[-1].content)
     assert body["fields"] == [{"ref": "e12", "kind": "password"}]
@@ -391,3 +393,19 @@ async def test_terminal_refusal_starts_a_new_fill_step(
     assert keys[0] == keys[1]
     assert keys[1] != keys[2]
     assert not binding.step_keys
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "probe",
+    [
+        {"fresh": False, "missing": True},
+        {"fresh": False, "invalidated_at": "2026-09-01"},
+    ],
+)
+async def test_probe_time_revocation_disables_autofill(probe: JsonDict) -> None:
+    backend = _jar_backend({"generation": 4, "invalidated_at": None}, probe)
+    routing = await route_jar(backend, _site())
+    assert routing.jar_id is None
+    assert routing.login_required is not None
+    assert "revoked" in routing.login_required

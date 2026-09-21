@@ -825,9 +825,7 @@ class RemoteBrowserBackend:
                 f"status read (generation {expected_jar_generation}) and session "
                 f"creation (generation {generation!r})"
             )
-        if spec.credential_alias is not None and body.get("credential_alias") != (
-            spec.credential_alias
-        ):
+        if body.get("credential_alias") != spec.credential_alias:
             raise AuthenticatedSessionMismatchError(
                 f"browser-server pinned credential alias "
                 f"{body.get('credential_alias')!r} to the session for site "
@@ -1304,6 +1302,7 @@ class AuthenticatedSessionBinding:
     # an outstanding approval must not turn a parked run into a completed one.
     approval_pending_request_id: str | None = None
     bad_password_recorded: bool = False
+    autofill_refusal: str | None = None
 
 
 # Keyed by the delegated run's subconversation id, which is what a running

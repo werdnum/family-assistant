@@ -2497,6 +2497,31 @@ class AppConfig(BaseSettings):
                         f"{profile_id!r}: {detail}."
                     )
                     raise ValueError(msg)
+                if (
+                    role == "browser_profile"
+                    and profile.tools_config.async_delegation_enabled
+                ):
+                    msg = (
+                        f"Authenticated site {site_id!r} browser profile {profile_id!r} "
+                        "must disable async_delegation_enabled so visual delegation "
+                        "finishes within the authenticated session lifetime."
+                    )
+                    raise ValueError(msg)
+                allowed_sources = profile.processing_config.allowed_delegation_sources
+                required_sources = (
+                    set(site.caller_profiles)
+                    if role == "browser_profile"
+                    else {site.browser_profile}
+                )
+                if allowed_sources is not None:
+                    rejected_sources = sorted(required_sources - set(allowed_sources))
+                    if rejected_sources:
+                        msg = (
+                            f"Authenticated site {site_id!r} {role} {profile_id!r} "
+                            "must accept allowed_delegation_sources from "
+                            f"{', '.join(rejected_sources)}."
+                        )
+                        raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

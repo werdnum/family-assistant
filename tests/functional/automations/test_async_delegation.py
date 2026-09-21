@@ -57,7 +57,10 @@ from family_assistant.services.tool_call_review import (
 )
 from family_assistant.storage import message_history_table
 from family_assistant.storage.database import Database
-from family_assistant.storage.delegation_runs import delegation_runs_table
+from family_assistant.storage.delegation_runs import (
+    AuthenticatedSiteTaskStatus,
+    delegation_runs_table,
+)
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     DelegatedProfileRunPayload,
@@ -4547,3 +4550,56 @@ def _review_prompt_for(trigger: TriggerReviewInput) -> str:
     content = cast("UserMessage", messages[-1]).content
     assert isinstance(content, str)
     return content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["approval_pending", "handoff_pending"])
+async def test_background_authenticated_outcome_survives_generic_worker_prose(
+    db_engine: AsyncEngine,
+    status: AuthenticatedSiteTaskStatus,
+) -> None:
+    processing_service = FakeWakeCapableSourceService(
+        FakeDelegatableService(), wake_result_status="error"
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "delivered"
+    db = Database(engine=db_engine)
+    delegation_id = "authenticated_background"
+    await _create_run(db, delegation_id=delegation_id)
+    await db.delegation_runs.mark_handed_off(delegation_id, SystemClock().now())
+    await db.delegation_runs.mark_completed(
+        delegation_id=delegation_id,
+        result_text="I am done.",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+        authenticated_site_state={
+            "site_id": "shop",
+            "status": status,
+            "summary": "I am done.",
+            "handoff_url": "https://browser.example/takeover",
+        },
+    )
+    worker = _build_worker(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db, cast("ProcessingService", processing_service), chat_interface
+        ),
+        _payload(delegation_id),
+    )
+    rows = await db.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == TEST_CONVERSATION_ID
+        )
+    )
+    wake_data = next(
+        row["content"]
+        for row in rows
+        if row["content"] and "Authenticated site task outcome" in row["content"]
+    )
+    chat_interface.send_message.assert_awaited_once()
+    for delivered in (wake_data, chat_interface.send_message.await_args.kwargs["text"]):
+        assert f"shop: {status}." in delivered
+        assert "https://browser.example/takeover" in delivered
+        assert f"resume='{delegation_id}'" in delivered

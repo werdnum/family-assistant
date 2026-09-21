@@ -795,3 +795,27 @@ async def test_caller_prompt_and_discovery_list_only_authorized_sites(
     unknown = await run_authenticated_site_task_tool(context, "unknown-site", OBJECTIVE)
     assert SITE_ID in unknown.get_text()
     assert "private-owner-service" not in unknown.get_text()
+
+
+@pytest.mark.parametrize(
+    "reason", ["policy_denied", "no_alias", "grant_invalid", "keychute_unavailable"]
+)
+async def test_terminal_autofill_refusal_cannot_settle_as_completed(
+    app_config: AppConfig,
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[object, object, object]],
+    browser_server: FakeBrowserServer,
+    reason: str,
+) -> None:
+    browser_server.autofill_replies = [{"status": "refused", "reason": reason}]
+    harness = await _harness(
+        app_config=app_config,
+        db_engine=db_engine,
+        task_worker_manager=task_worker_manager,
+        worker_llm=_worker_llm("browser_autofill", {"kind": "password"}),
+        resume=ResumeHandle(),
+        conversation_id=f"conv-refused-{reason}",
+    )
+    reply = await harness.ask("Please sign in and check my order.")
+    assert f"{DISPLAY_NAME}: needs_human." in reply
+    assert browser_server.sessions_closed == 1

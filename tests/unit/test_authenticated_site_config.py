@@ -406,3 +406,28 @@ def test_operator_grants_cannot_widen_authenticated_profiles(
     )
     with pytest.raises(ValidationError, match="operator_tools_policy"):
         _validate(data, {"hellofresh": VALID_SITE})
+
+
+def test_authenticated_visual_delegation_must_run_inline(
+    shipped_config_data: dict[str, Any],
+) -> None:
+    data = copy.deepcopy(shipped_config_data)
+    _profile(data, "authenticated_browser_profile")["tools_config"][
+        "async_delegation_enabled"
+    ] = True
+    with pytest.raises(ValidationError, match="must disable async_delegation_enabled"):
+        _validate(data, {"hellofresh": VALID_SITE})
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    ["authenticated_browser_profile", "authenticated_browser_visual_profile"],
+)
+def test_authenticated_delegation_route_must_accept_its_sources(
+    shipped_config_data: dict[str, Any],
+    profile_id: str,
+) -> None:
+    data = copy.deepcopy(shipped_config_data)
+    _profile(data, profile_id)["processing_config"]["allowed_delegation_sources"] = []
+    with pytest.raises(ValidationError, match="must accept allowed_delegation_sources"):
+        _validate(data, {"hellofresh": VALID_SITE})

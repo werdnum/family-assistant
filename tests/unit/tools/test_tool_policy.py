@@ -655,7 +655,7 @@ def test_a_pinned_grant_carries_its_confirmation_requirement() -> None:
 
 
 def test_the_synthesised_self_delegation_pin_advertises_nothing() -> None:
-    """The profile layer is generated, not authored, so it grants no surface.
+    """The synthetic self-delegation rule adds no advertised surface.
 
     Every profile receives a self-delegation rule pinned to its own id. Reading
     that as a conditional grant would advertise delegate_to_service in profiles
@@ -672,6 +672,7 @@ def test_the_synthesised_self_delegation_pin_advertises_nothing() -> None:
                     ),
                     decision=ToolPolicyDecision.ALLOW,
                     priority=50,
+                    advertise_conditional_grant=False,
                 )
             ]
         ),
@@ -680,3 +681,26 @@ def test_the_synthesised_self_delegation_pin_advertises_nothing() -> None:
         _delegate_descriptor(), can_confirm=True
     )
     assert advertised.decision is ToolPolicyDecision.DENY
+
+
+def test_argument_pinned_global_grant_is_advertised() -> None:
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(default_decision=ToolPolicyDecision.DENY),
+        profile=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": "worker"},
+                    ),
+                    decision=ToolPolicyDecision.ALLOW,
+                )
+            ]
+        ),
+    )
+    assert (
+        engine.evaluate_for_advertisement(
+            _delegate_descriptor(), can_confirm=True
+        ).decision
+        is ToolPolicyDecision.ALLOW
+    )

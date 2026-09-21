@@ -2635,6 +2635,11 @@ ______________________________________________________________________
 
 ## Global Tool Policy
 
+Argument-pinned granting rules can advertise a tool even when calls with other arguments are denied.
+The rule field `advertise_conditional_grant` defaults to `true`; the synthetic self-delegation rule
+sets it to `false` so it does not add a tool to an otherwise empty profile. Execution still
+evaluates the full policy and arguments.
+
 ### global_tools_policy
 
 Top-level config section whose tool-policy rules are injected into **every** profile's tool-policy
@@ -3051,9 +3056,10 @@ keep passing.
 ### Granting the tool
 
 `run_authenticated_site_task` ships granted to `default_assistant` and `complex_tasks`, behind a
-`confirm` rule — one confirmation per task, not per action. Relaxing that to `allow` is reasonable
-once a site has been watched working; it is a per-deployment call. The browser profiles themselves
-never receive it, so page content cannot open a second authenticated session from inside a run.
+`confirm` rule — each start or resume requires confirmation; browser actions within the run do not.
+Relaxing that to `allow` is reasonable once a site has been watched working; it is a per-deployment
+call. The browser profiles themselves never receive it, so page content cannot open a second
+authenticated session from inside a run.
 
 `browser_handoff_config.handoff_capable_profiles` must include both authenticated profiles for the
 remote browser to be used for them; the shipped default does.

@@ -170,6 +170,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.authenticated_site_results import authenticated_site_result
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
@@ -4138,6 +4139,18 @@ class TaskWorker:
 
     def _delegation_wakeup_data_text(self, run: DelegationRunDict) -> str:
         """Build lower-priority data for a completed delegation wakeup."""
+        envelope = run["authenticated_site_json"]
+        if envelope is not None:
+            result = authenticated_site_result(
+                envelope["site_id"], envelope, delegation_id=run["delegation_id"]
+            )
+            return (
+                f"Authenticated site task outcome.\n\n"
+                f"Delegation reference: {run['delegation_id']}\n"
+                f"Target profile: {run['target_service_id']}\n"
+                f"Original request: {run['request_text']}\n\n"
+                f"{result.text}"
+            )
         if run["status"] == "completed":
             result_text = (
                 run["result_text"]
@@ -4196,6 +4209,14 @@ class TaskWorker:
         received one would be a claim this cannot check -- the failure notice
         can itself have failed to deliver.
         """
+        envelope = run["authenticated_site_json"]
+        if envelope is not None:
+            return (
+                authenticated_site_result(
+                    envelope["site_id"], envelope, delegation_id=run["delegation_id"]
+                ).text
+                or ""
+            )
         if run["status"] == "completed":
             result_text = (
                 run["result_text"]

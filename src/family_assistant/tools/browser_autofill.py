@@ -247,6 +247,7 @@ async def browser_autofill_tool(
         signature = f"{kind or 'auto'}:{','.join(sorted(field_refs or ()))}"
         binding.step_keys.pop(signature, None)
     if status == "filled":
+        binding.autofill_refusal = None
         return _filled_result(response)
     if status == "approval_pending":
         request_id = response.get("request_id")
@@ -254,6 +255,7 @@ async def browser_autofill_tool(
             str(request_id) if request_id is not None else step_key
         )
         return _approval_pending_result(response)
+    binding.autofill_refusal = str(response.get("reason") or "refused")
     if response.get("reason") == "bad_password_recorded":
         binding.bad_password_recorded = True
     return _refused_result(response)

@@ -221,7 +221,8 @@ async def test_session_not_marked_authenticated_is_refused() -> None:
 
 
 @pytest.mark.asyncio
-async def test_alias_mismatch_is_refused() -> None:
+@pytest.mark.parametrize("alias", ["hellofresh", None])
+async def test_alias_mismatch_is_refused(alias: str | None) -> None:
     server = partial(
         _server,
         session_body={
@@ -231,7 +232,7 @@ async def test_alias_mismatch_is_refused() -> None:
             "credential_alias": "someone_elses_account",
         },
     )
-    backend, _ = await _backend(server)
+    backend, _ = await _backend(server, _spec(alias=alias))
     with pytest.raises(AuthenticatedSessionMismatchError, match="pinned credential"):
         await backend.start_authenticated_session()
 

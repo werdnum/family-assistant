@@ -22,6 +22,7 @@ from family_assistant.storage.delegation_runs import (
     TERMINAL_DELEGATION_STATUSES,
     AuthenticatedSiteEnvelope,
 )
+from family_assistant.tools.authenticated_site_results import authenticated_site_result
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
@@ -171,7 +172,17 @@ async def route_jar(
         # No saved login at all: the run starts at the login form.
         return _JarRouting(jar_id=None, generation=None, login_required=None)
     jar = await backend.get_jar(site.jar_id)
-    revoked = bool(jar.get("missing")) or jar.get("invalidated_at") is not None
+    probe = (
+        await backend.probe_jar(site.jar_id)
+        if not jar.get("missing") and jar.get("invalidated_at") is None
+        else {}
+    )
+    revoked = (
+        bool(jar.get("missing"))
+        or jar.get("invalidated_at") is not None
+        or bool(probe.get("missing"))
+        or probe.get("invalidated_at") is not None
+    )
     if revoked:
         return _JarRouting(
             jar_id=None,
@@ -182,7 +193,6 @@ async def route_jar(
                 "save the login before retrying."
             ),
         )
-    probe = await backend.probe_jar(site.jar_id)
     if probe.get("fresh"):
         generation = jar.get("generation")
         return _JarRouting(
@@ -201,40 +211,6 @@ async def route_jar(
             "login, then retry."
         ),
     )
-
-
-def _envelope_result(
-    site: AuthenticatedSiteConfig,
-    envelope: AuthenticatedSiteEnvelope,
-    *,
-    delegation_id: str | None,
-) -> ToolResult:
-    """Render a typed outcome for the caller, keeping browser provenance.
-
-    The summary and any evidence in here came off a page, so they stay ordinary
-    untrusted tool output: the tool result carries no trust claim beyond the
-    status, which orchestration decided.
-    """
-    status = envelope["status"]
-    lines = [f"{site.display_name}: {status}."]
-    summary = envelope.get("summary")
-    if summary:
-        lines.append(str(summary))
-    detail = envelope.get("detail")
-    if detail:
-        lines.append(str(detail))
-    handoff_url = envelope.get("handoff_url")
-    if handoff_url:
-        lines.append(f"Take over the browser here: {handoff_url}")
-    if status in PARKED_AUTHENTICATED_STATUSES and delegation_id:
-        lines.append(
-            f"When that is done, call this tool again with resume="
-            f"{delegation_id!r} to carry on."
-        )
-    data = cast("dict[str, object]", dict(envelope))
-    if delegation_id:
-        data["resume"] = delegation_id
-    return ToolResult(text="\n".join(lines), data=data)
 
 
 async def _close_session(backend: RemoteBrowserBackend) -> None:
@@ -284,7 +260,7 @@ def _derive_status(
         )
     if binding.approval_pending_request_id is not None:
         return "approval_pending", None
-    if binding.bad_password_recorded:
+    if binding.bad_password_recorded or binding.autofill_refusal is not None:
         return "needs_human", None
     return "completed", None
 
@@ -393,7 +369,9 @@ async def _resume(
         return denied
 
     if envelope["status"] not in PARKED_AUTHENTICATED_STATUSES:
-        return _envelope_result(site, envelope, delegation_id=resume)
+        return authenticated_site_result(
+            site.display_name, envelope, delegation_id=resume
+        )
     return await _resume_parked(exec_context, run, envelope, config, site_id, site)
 
 
@@ -466,8 +444,8 @@ async def _resume_parked(
     binding = authenticated_binding_for(run["subconversation_id"])
     if binding is None:
         await _discard_parked_session(exec_context, run, envelope, config)
-        return _envelope_result(
-            site,
+        return authenticated_site_result(
+            site.display_name,
             {
                 **envelope,
                 "status": "failed",
@@ -643,8 +621,8 @@ async def _start_run(
         await _close_session(probe_backend)
 
     if routing.login_required is not None:
-        return _envelope_result(
-            site,
+        return authenticated_site_result(
+            site.display_name,
             {
                 "site_id": site_id,
                 "status": "login_required",
@@ -664,8 +642,8 @@ async def _start_run(
     except BrowserBackendError as exc:
         logger.warning("Authenticated session for %s failed to start: %s", site_id, exc)
         await _close_session(backend)
-        return _envelope_result(
-            site,
+        return authenticated_site_result(
+            site.display_name,
             {"site_id": site_id, "status": "failed", "detail": str(exc)},
             delegation_id=None,
         )
@@ -760,7 +738,9 @@ async def _settled_result(
                 "resume": started.delegation_id,
             },
         )
-    settled = _envelope_result(site, envelope, delegation_id=started.delegation_id)
+    settled = authenticated_site_result(
+        site.display_name, envelope, delegation_id=started.delegation_id
+    )
     return ToolResult(
         text=settled.get_text(),
         # The worker's own attachments -- screenshots it chose to show -- are
