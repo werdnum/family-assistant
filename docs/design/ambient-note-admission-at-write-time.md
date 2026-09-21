@@ -194,10 +194,18 @@ the rest supply a decision from their own trust:
 - **Memory apply** writes only from transcript chunks the review already rejected for external
   taint, and stamps the (clean) reviewing turn's provenance; its notes are eligible.
 - **Core-memory bootstrap and index refresh** (`ensure_core_note`, `refresh_core_memory_index`)
-  write the prompt-included core note directly against the table rather than through
-  `add_or_update`. They are deployment-authored structure, not content from any turn, and stamp
-  eligible explicitly as trusted internal writers. The eligibility column has no database default,
-  so a raw write that omits it fails rather than inheriting one.
+  today write the prompt-included core note directly against the table. They move into repository
+  helpers that take the admission decision like every other write, and stamp eligible explicitly as
+  trusted internal writers: the core note is deployment-authored structure, not content from any
+  turn.
+
+A required parameter is only a chokepoint if nothing writes around it, and a raw `UPDATE` would: it
+leaves the previous eligibility in place under new content. So the chokepoint is enforced by a
+conformance rule, not by the schema alone: an ast-grep rule forbids `insert(notes_table)` and
+`update(notes_table)` outside the notes repository module, so a future raw writer fails lint rather
+than persisting content the gate never saw. The eligibility column additionally has no database
+default, so an insert that omits it fails outright.
+
 - **Call transcripts** (the Asterisk route) are authored by whoever was on the call and are never
   meant as ambient context; they are written ineligible.
 - **Existing rows** get eligibility backfilled from their stored provenance: below
@@ -278,9 +286,10 @@ enforcement would have removed.
    afresh.
 2. **Write-time decision.** Tool writes decide eligibility from the turn's taint and the gate's
    disposition; web API writes stamp trusted provenance and eligibility; memory apply passes
-   through; core-memory bootstrap and index refresh stamp eligible explicitly. Verified by tool
-   tests covering each gated write shape, the ungated tainted create, the web restore path, and a
-   fresh-database memory bootstrap.
+   through; core-memory bootstrap and index refresh go through repository helpers and stamp eligible
+   explicitly, and the ast-grep rule forbids raw note-table writes outside the repository. Verified
+   by tool tests covering each gated write shape, the ungated tainted create, the web restore path,
+   and a fresh-database memory bootstrap; and by the conformance check rejecting a raw write.
 3. **The sink and its cells.** `ambient_prompt_write` in the matrix, defaults and config surface,
    resolved for the gated write shapes (the update-of-a-prompt-included-note shape needs the
    existing row, so it is authorised inside the tool rather than at dispatch, through the same
