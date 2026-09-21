@@ -38,6 +38,14 @@ def get_gemini_live_config(request: Request) -> GeminiLiveConfig:
     return GeminiLiveConfig.from_app_state(request.app.state)
 
 
+# The model has no clock, so it cannot judge when its silence has gone on long
+# enough to need another word to the user. The client times that instead and
+# hands the verdict back under this key on a tool result, which is the one
+# channel that always reaches the model mid-lookup.
+VOICE_SILENCE_REMINDER_KEY = "voice_mode_reminder"
+VOICE_SILENCE_REMINDER_AFTER_SECONDS = 20
+
+
 # Type aliases for dynamic JSON schema structures.
 # These must be dict[str, Any] because tool schemas are arbitrary JSON structures
 # defined externally (OpenAI function calling format) with variable nested properties.
@@ -57,6 +65,22 @@ class EphemeralTokenResponse(BaseModel):
     system_instruction: str
     model: str
     config: GeminiLiveConfig
+    voice_reminder_key: str = Field(
+        default=VOICE_SILENCE_REMINDER_KEY,
+        description=(
+            "The key the client adds to a tool result to tell the model its "
+            "silence has run long. The system instruction names the same key, "
+            "so both sides are served from here rather than agreeing by "
+            "coincidence."
+        ),
+    )
+    voice_reminder_after_seconds: int = Field(
+        default=VOICE_SILENCE_REMINDER_AFTER_SECONDS,
+        description=(
+            "How long the assistant may stay silent, in seconds, before the "
+            "client attaches that reminder to the next tool result."
+        ),
+    )
     profile_id: str = Field(
         description=(
             "The profile the session actually runs under, after resolving the "
@@ -249,12 +273,22 @@ async def _format_system_prompt(
         "[Voice Mode Active] You are currently in voice conversation mode. "
         "Keep responses concise and conversational. Speak naturally as if talking to the user.\n"
         "The user hears nothing while you look things up, and silence sounds like a "
-        "dropped call. Before you call a tool, briefly say what you are doing, such as "
-        '"Let me check the pool." If answering takes more than one tool call, give a '
-        "short update between steps. If the user asks whether you are still there while "
-        "you are working, tell them you are still on it rather than starting the lookup "
-        "again. Keep these updates to a few words, and never state a result, progress "
-        "or estimate you do not actually have."
+        "dropped call. So when a request needs work, say one short thing before you "
+        'start -- "I\'m on it", "let me check the pool" -- and then work quietly. Do '
+        "NOT narrate each step: no announcement before every tool call, and no running "
+        "commentary between them. Most lookups finish in a few seconds, and back-to-back "
+        "narration leaves the user no room to speak while making a quick answer feel "
+        "slower than it was.\n"
+        "Answering is never held back by any of this: the moment you have what the "
+        "user asked for, tell them. What waits is the progress update in between. "
+        "You cannot tell how much time has passed, so do not try to judge when one is "
+        f"due -- a `{VOICE_SILENCE_REMINDER_KEY}` field appears alongside a tool result "
+        "when it is. Give a progress update when that field appears and not otherwise, "
+        "keep it to a few words, and never read the field aloud or mention that you "
+        "were prompted.\n"
+        "If the user asks whether you are still there while you are working, tell them "
+        "you are still on it rather than starting the lookup again. Never state a "
+        "result, progress or estimate you do not actually have."
     )
     guidance = turn_context_guidance(
         includes_aggregated_context=service_config.include_aggregated_context,

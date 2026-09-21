@@ -19,6 +19,10 @@ from typing import Any
 import pytest
 from playwright.async_api import Page, Route
 
+from family_assistant.web.routers.gemini_live_api import (
+    VOICE_SILENCE_REMINDER_AFTER_SECONDS,
+    VOICE_SILENCE_REMINDER_KEY,
+)
 from tests.functional.web.conftest import WebTestFixture
 
 
@@ -109,8 +113,18 @@ async def test_tool_execution_api_nonexistent_tool(
     )
 
 
-async def _setup_mock_token_endpoint(page: Page, base_url: str) -> None:
-    """Set up mock response for the ephemeral token endpoint."""
+async def _setup_mock_token_endpoint(
+    page: Page,
+    base_url: str,
+    *,
+    voice_reminder_after_seconds: int = VOICE_SILENCE_REMINDER_AFTER_SECONDS,
+) -> None:
+    """Set up mock response for the ephemeral token endpoint.
+
+    ``voice_reminder_after_seconds`` is how long the assistant may stay silent
+    before the client attaches a reminder to a tool result; 0 makes every tool
+    round trip carry one.
+    """
     expires_at = (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
 
     async def mock_token_response(route: Route) -> None:
@@ -134,6 +148,8 @@ async def _setup_mock_token_endpoint(page: Page, base_url: str) -> None:
                 ],
                 "system_instruction": "You are a helpful voice assistant.",
                 "model": "gemini-3.8-live",
+                "voice_reminder_key": VOICE_SILENCE_REMINDER_KEY,
+                "voice_reminder_after_seconds": voice_reminder_after_seconds,
                 "config": {
                     "model": "gemini-3.8-live",
                     "voice": {"name": "Puck"},
@@ -492,4 +508,91 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
     mic_level = page.get_by_test_id("voice-mic-level")
     assert await mic_level.is_visible(), (
         "Mic level meter should be visible during capture"
+    )
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_voice_tool_response_carries_silence_reminder(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """A long silence is reported to the model on the next tool result.
+
+    The model has no clock, so the client is what decides another spoken update
+    is due. With the threshold at zero every tool round trip qualifies, which is
+    what lets a test see the reminder the assistant would otherwise wait for.
+    """
+    page = web_test_fixture.page
+    base_url = web_test_fixture.base_url
+
+    await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
+    await _setup_mock_audio_apis(page)
+    await _setup_mock_token_endpoint(page, base_url, voice_reminder_after_seconds=0)
+
+    async def fulfil_tool_call(route: Route) -> None:
+        await route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "result": {"notes": []}}),
+        )
+
+    await page.route("**/api/tools/execute/**", fulfil_tool_call)
+
+    await page.goto(f"{base_url}/voice")
+    await page.wait_for_selector("button:has-text('Start')", timeout=10000)
+    await page.click("button:has-text('Start')")
+
+    await page.wait_for_function(
+        "window.__TEST_TOOL_RESPONSES__ && window.__TEST_TOOL_RESPONSES__.length > 0",
+        timeout=15000,
+    )
+
+    func_response = (await page.evaluate("window.__TEST_TOOL_RESPONSES__"))[0][
+        "functionResponses"
+    ][0]
+    assert VOICE_SILENCE_REMINDER_KEY in func_response["response"], (
+        f"Tool result should carry the silence reminder, got: "
+        f"{func_response['response']}"
+    )
+    assert "result" in func_response["response"], (
+        "The reminder must ride alongside the tool result, not replace it"
+    )
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_voice_tool_response_omits_reminder_while_silence_is_short(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    """A lookup that finishes quickly gets no reminder, so nothing is narrated."""
+    page = web_test_fixture.page
+    base_url = web_test_fixture.base_url
+
+    await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
+    await _setup_mock_audio_apis(page)
+    await _setup_mock_token_endpoint(page, base_url)
+
+    async def fulfil_tool_call(route: Route) -> None:
+        await route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "result": {"notes": []}}),
+        )
+
+    await page.route("**/api/tools/execute/**", fulfil_tool_call)
+
+    await page.goto(f"{base_url}/voice")
+    await page.wait_for_selector("button:has-text('Start')", timeout=10000)
+    await page.click("button:has-text('Start')")
+
+    await page.wait_for_function(
+        "window.__TEST_TOOL_RESPONSES__ && window.__TEST_TOOL_RESPONSES__.length > 0",
+        timeout=15000,
+    )
+
+    func_response = (await page.evaluate("window.__TEST_TOOL_RESPONSES__"))[0][
+        "functionResponses"
+    ][0]
+    assert VOICE_SILENCE_REMINDER_KEY not in func_response["response"], (
+        f"A quick lookup should carry no reminder, got: {func_response['response']}"
     )
