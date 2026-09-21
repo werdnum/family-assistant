@@ -973,7 +973,7 @@ workstream touching mailbox taint — `sensitive_read_broadening` in
    protection in authenticated-site sessions. Regression tests: plaintext in no
    response/event/log/exception; fills refused off the granted origin, in iframes, on new-password
    fields, after target invalidation, and outside authenticated-site sessions; masking, transfer
-   interception, denial, and `exec` denial active before the first fill; a jarless session confined
+   interception, and `exec` denial active before the first fill; a jarless session confined
    identically to a jar-loaded one; a fill for any alias but the pinned one refused.
 2. **family-assistant:** `credential_alias` on `authenticated_sites`, pinned onto the session at
    creation; the `browser_autofill` tool (no alias argument) in the authenticated profiles;
