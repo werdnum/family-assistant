@@ -355,3 +355,23 @@ def test_profile_with_aggregated_context_is_rejected(
     )
     with pytest.raises(ValidationError, match="include_aggregated_context"):
         _validate(data, {"hellofresh": VALID_SITE})
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    ["authenticated_browser_profile", "authenticated_browser_visual_profile"],
+)
+def test_authenticated_profiles_cannot_grant_arbitrary_handback(
+    shipped_config_data: dict[str, Any], profile_id: str
+) -> None:
+    policy = {
+        "default_decision": "deny",
+        "rules": [
+            {"match": {"names": ["browser_claim_handback"]}, "decision": "allow"}
+        ],
+    }
+    data = _with_profile_change(
+        shipped_config_data, profile_id, {"tools_policy": policy}
+    )
+    with pytest.raises(ValidationError, match="browser_claim_handback"):
+        _validate(data, {"hellofresh": VALID_SITE})

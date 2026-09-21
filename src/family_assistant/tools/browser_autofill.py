@@ -241,8 +241,9 @@ async def browser_autofill_tool(
         },
     )
     status = response.get("status")
-    if status == "filled":
+    if status != "approval_pending":
         binding.approval_pending_request_id = None
+    if status == "filled":
         return _filled_result(response)
     if status == "approval_pending":
         request_id = response.get("request_id")

@@ -343,3 +343,25 @@ async def test_a_site_with_no_jar_starts_at_the_login_form() -> None:
     routing = await route_jar(backend, _site(jar_id=None))
     assert routing.jar_id is None
     assert routing.login_required is None
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        [
+            {"status": "approval_pending", "request_id": "req_7"},
+            {"status": "refused", "reason": reason},
+        ]
+        for reason in ("policy_denied", "request_expired", "grant_invalid")
+    ],
+    indirect=True,
+)
+@pytest.mark.asyncio
+async def test_a_terminal_refusal_clears_the_pending_approval(
+    bound: tuple[AuthenticatedSessionBinding, list[httpx.Request]],
+) -> None:
+    binding, _ = bound
+    await browser_autofill_tool(_exec_context(), kind="password")
+    assert binding.approval_pending_request_id == "req_7"
+    await browser_autofill_tool(_exec_context(), kind="password")
+    assert binding.approval_pending_request_id is None

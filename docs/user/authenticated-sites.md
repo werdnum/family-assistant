@@ -68,7 +68,8 @@ waiting for you also ends if the assistant service restarts; ask it to start the
 
 **"The household has to approve releasing this credential"** — the assistant needs to use your
 stored password and the approval has not come through yet. Approve it, then tell the assistant to
-carry on.
+carry on. If you deny the request or it expires, the task stops waiting for that approval; you can
+ask for a new task when you are ready.
 
 **"Sign in again and save the login"** — the saved login has expired, or was revoked, and there is
 no stored password to sign in with. Do the sign-in yourself, save it, and ask again.

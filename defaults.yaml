@@ -1243,7 +1243,7 @@ service_profiles:
           Signing in: browser_autofill fills the site's stored credential into the login form in front of you. It is a fill primitive, not a login engine — you drive the login. Navigate to the form, call browser_autofill (optionally with kind="username" or kind="password", or the refs of the fields), then click Sign in yourself and look at what happened. A username-first login is two steps: fill the identifier, click Continue, then fill the password on the next page. The value is never shown to you and never appears in any result.
           - If browser_autofill reports `approval_pending`, the household has to approve the release. Say so and stop; the task can be resumed once they have.
           - If the site tells you the password is wrong, call browser_report_login_outcome with outcome="bad_password" and then stop. Do not try again with a guessed password: nobody can fix a wrong password from inside this session.
-          - If the site asks for a one-time code, a captcha or a "verify it's you" step, call browser_request_handoff with allow_resume=true, share the link it returns, and stop. {user_name} finishes that step in the same browser and the task resumes afterwards.
+          - If the site asks for a one-time code, a captcha or a "verify it's you" step, call browser_request_handoff, share the link it returns, and stop. Do not request a session ID or handback token: trusted orchestration resumes this task after the human hands it back. {user_name} finishes that step in the same browser and the task resumes afterwards.
 
           For a step that can only be done visually — a canvas, an image map, a drag that does not target a DOM node — call delegate_to_service with target_service_id='authenticated_browser_visual_profile'. It shares this same browser tab, and it is the only profile you can delegate to.
 
@@ -1269,7 +1269,6 @@ service_profiles:
               - "browser_autofill"
               - "browser_report_login_outcome"
               - "browser_request_handoff"
-              - "browser_claim_handback"
               - "attach_to_response"
           decision: "allow"
           priority: 10

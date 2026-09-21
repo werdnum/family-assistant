@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -269,4 +270,39 @@ async def test_a_recorded_bad_password_refuses_every_later_fill(
     response = await backend.autofill(step_key="password-2")
     assert response["status"] == "refused"
     assert response["reason"] == "bad_password_recorded"
+    await backend.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_resume", [False, True])
+async def test_authenticated_otp_handoff_returns_through_server_side_claim(
+    allow_resume: bool,
+) -> None:
+    backend = _backend()
+    session_id = await backend.start_authenticated_session()
+    await backend.goto(f"{ORIGIN}/login")
+    handoff = await backend.request_handoff(
+        reason="otp",
+        handoff_note="Enter the code",
+        expected_origin=ORIGIN,
+        allow_resume=allow_resume,
+    )
+    token = parse_qs(urlsplit(str(handoff["handoff_url"])).query)["token"][0]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=browser_server_app), base_url=_SERVICE_URL
+    ) as client:
+        claim = await client.post(
+            f"/v1/sessions/{session_id}/claim", json={"token": token}
+        )
+        assert claim.status_code == 200
+        handback = await client.post(
+            f"/v1/sessions/{session_id}/handover",
+            json={"token": claim.json()["control_token"]},
+        )
+        assert handback.status_code == 200
+        assert handback.json()["handover_token"] is None
+    await backend.claim_handback_server_side(session_id)
+    state = await backend.session_state()
+    assert state["state"] == "agent_active"
+    assert state["confine_origins"] == [ORIGIN]
     await backend.close()

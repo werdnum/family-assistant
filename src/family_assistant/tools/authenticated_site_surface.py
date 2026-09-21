@@ -46,6 +46,8 @@ NON_AUTHENTICATED_BROWSER_TOOLS: frozenset[str] = frozenset({
     "browser_exec",
     # Raw DOM extraction bypasses the snapshot walker's read-back masking.
     "browser_extract",
+    # A model-selected handback can replace this run's confined session.
+    "browser_claim_handback",
     # Dragging a selection into a visible control is a value-transfer channel
     # out of a protected field.
     "drag_and_drop",

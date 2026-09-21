@@ -1187,7 +1187,13 @@ class RemoteBrowserBackend:
         payload: JsonDict = {
             "reason": reason,
             "handoff_note": handoff_note,
-            "allowed_resume": "after_sanitize" if allow_resume else "never",
+            # Authenticated handback is a separate server-side transition that
+            # always sanitizes. Legacy resumable handoffs reject OTP/jar sessions.
+            "allowed_resume": (
+                "after_sanitize"
+                if allow_resume and self._authenticated is None
+                else "never"
+            ),
         }
         if expected_origin is not None:
             payload["expected_origin"] = expected_origin
