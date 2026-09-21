@@ -7,9 +7,11 @@ Proposed.
 If accepted, this design supersedes the **Family Assistant policy and product surface** in
 [browser-cookie-jars.md](browser-cookie-jars.md) and the implementation direction in
 [PR #1018](https://github.com/werdnum/family-assistant/pull/1018). It does not replace
-browser-server's cookie-jar mechanism. It also leaves the Keychute autofill design in
-[PR #1069](https://github.com/werdnum/family-assistant/pull/1069) as a later, optional
-session-refresh path.
+browser-server's cookie-jar mechanism. It also now contains the **Keychute credential autofill**
+design (its own section below) as the second, per-site login-acquisition path of the same capability
+— folded in from [PR #1069](https://github.com/werdnum/family-assistant/pull/1069), superseding the
+[PR #833](https://github.com/werdnum/family-assistant/pull/833) credential-broker draft and the
+separate `agentic-credential-autofill.md` that earlier revisions of PR #1069 carried.
 
 ## Decision
 
@@ -22,7 +24,10 @@ The implementation uses Family Assistant's existing processing-profile and deleg
 - the tool creates a fresh browser-server session from the configured jar;
 - the task runs under static authenticated variants of the existing `browser_profile` and
   `browser_visual_profile`, sharing the same browser session through the existing delegation path;
-- the browser profiles receive the normal browser tools, but no jar-selection or credential tools;
+- the browser profiles receive the normal browser tools, but no jar-selection or
+  credential-management tools (the one credential-adjacent addition is `browser_autofill` on a
+  credential-bound session — see the autofill section — which exposes no credential choice and no
+  credential material);
 - browser-server confines the session to the configured authenticated origins.
 
 There is no new per-site worker type, dynamically synthesized profile, or universal read-only
@@ -416,11 +421,14 @@ Illustrative operator configuration:
 authenticated_sites:
   hellofresh:
     display_name: "HelloFresh"
-    jar_id: "jar_0123456789abcdef0123456789abcdef"
+    jar_id: "jar_0123456789abcdef0123456789abcdef"   # optional when a credential is bound (autofill section)
     start_url: "https://www.hellofresh.com.au/menus"
     authenticated_origins:
       - "https://www.hellofresh.com.au"
     navigation_allowlist: []
+    credential:                    # optional: enables Keychute autofill (autofill section)
+      secret_name: "hellofresh-login"
+      alias: "hellofresh"          # model-visible name; defaults to the site id
     authorized_users:
       - "andrew"
     caller_profiles:
@@ -698,12 +706,19 @@ controls remain the chokepoints for that separate concern.
 
 ### Initial provisioning
 
+For a jar-backed site:
+
 1. A human opens a browser-server session.
 2. The human signs in under exclusive browser control and completes MFA or SSO.
 3. The human saves the login as a cookie jar.
 4. The operator binds the jar to an authenticated-site configuration entry and documents the damage
    envelope.
 5. The configured caller profiles may use it under their normal tool policy.
+
+For a credential-backed site (first-party password login — see the autofill section), no human login
+happens at all: the operator stores the password in Keychute, adds the `credential` binding to the
+site entry, and the first run logs itself in — the one human touch is Keychute's approval of the
+first release, unless a standing grant already covers it.
 
 ### Normal task
 
@@ -719,20 +734,188 @@ controls remain the chokepoints for that separate concern.
 
 ### Expired login
 
+For a site **without** a bound credential:
+
 1. A probe or task detects that the jar is stale.
 2. The tool returns `login_required` with the site name and a trusted handoff action.
 3. A human signs in and refreshes the same jar in place.
 4. The task may be retried from its original objective.
 
+For a site **with** a bound credential (the autofill section), a stale or invalidated jar does not
+take the `login_required` exit — that exit would wait for a human before any delegated session
+exists, and `browser_autofill` lives only inside a session. Instead the tool creates the session
+**jarless** (an invalidated jar is mechanically unloadable anyway, and stale state is not worth
+carrying), with the same confinement supplied explicitly from the configured
+`authenticated_origins`, and the run begins at the login form. `needs_human` is the exit when
+autofill itself fails — bad password, unexpected challenge, MFA.
+
 The agent does not invalidate a jar solely because a page claims the session expired. Independent
 probing or explicit human action remains the source of truth.
 
-### Later autonomous refresh
+## Keychute credential autofill
 
-If measured expiry friction justifies it, browser-server may perform the Keychute-backed first-party
-credential fill described in [PR #1069](https://github.com/werdnum/family-assistant/pull/1069). The
-flow refreshes the configured jar; it does not expose credentials to either browser profile. SSO and
-unusual MFA remain human handoff paths.
+The second login-acquisition path, folded in from
+[PR #1069](https://github.com/werdnum/family-assistant/pull/1069) (which supersedes the
+[PR #833](https://github.com/werdnum/family-assistant/pull/833) credential-broker draft): when a run
+on a configured site hits a login form — expired session, password re-prompt, a site whose sessions
+never persist — the agent can have the operator's stored password filled into that form and continue
+the task, with the value never entering LLM context, tool results, message history, or logs.
+
+**Jars and autofill are per-site alternatives, not a sequence.** A site entry may carry `jar_id`,
+`credential`, or both. A jar is the only path for SSO and MFA-per-login sites — a human performs
+that login and the jar persists it — and the quieter path everywhere else: a persisted session
+cookie is how real browsers behave, where a fresh password login from datacenter automation on every
+task is exactly the shape bot defenses, step-up challenges, and "new sign-in" alerts are tuned to
+catch, and it puts a Keychute release plus the flakiest page on the site into every task's critical
+path. A bound credential is the only path for a site whose sessions never persist, removes the human
+provisioning step entirely for first-party-password sites, and repairs expiry without a human. Which
+combination a site gets is an operator choice per entry; credential-only for a password site is a
+legitimate configuration, and running one such site that way is the cheap experiment that answers
+the fresh-login-tolerance question with data.
+
+### Three risks, separated
+
+1. **Giving a site its own password is the intended operation** — not a risk to design against.
+2. **The password reaching the model transcript, tool results, or logs is a credential leak**,
+   prevented mechanically: Keychute's delivery model plus the read-back protections below.
+3. **The authenticated agent doing something unwanted inside the already-authorized account is the
+   bounded-damage risk this document already accepts.** It does not justify a login-only principal
+   whose authority ends at login, a terminal login session, or a post-fill lock — earlier revisions
+   of PR #1069 built exactly that, and it was architecture-generated complexity: the very next
+   useful operation after login is operating the account, which the operator authorized when they
+   enabled the site. Autofill is therefore a primitive on the ordinary bound session, and the same
+   agent continues the task afterwards.
+
+What Keychute contributes as-is (no server changes): approval UX, standing grants, idempotent
+request/wait, origin constraints, single-use grant reads, non-secret grant metadata, and audit.
+browser-server registers as the Keychute `trusted-client` (`mechanisms: [autofill]`) and receives
+the credential bytes directly; Family Assistant requests the operation and receives status and
+metadata, never plaintext.
+
+### Credential binding
+
+The `credential` field on an `authenticated_sites` entry (configuration model above) binds one
+Keychute secret to the site. `run_authenticated_site_task` passes the binding at session creation
+(service-auth only, like `jar_id`); it is fixed for the session's lifetime and makes the session
+**credential-enabled**: the read-back protections below apply from creation, and `browser_autofill`
+becomes available. Sessions without a binding are unchanged and the tool refuses in them. `jar_id`
+becomes optional when a credential is bound: with no jar (or a stale/invalidated one — see Expired
+login), the session is created jarless with the confinement origin set supplied explicitly from
+`authenticated_origins`, validated by browser-server, and confined identically to a jar-loaded
+session.
+
+Credential identifiers need **authorization, not secrecy**: the alias and site id are ordinary
+model-visible data; what the model cannot do is choose a different credential, browse the Keychute
+store, or fill outside the granted origins — the binding and browser-server enforce that, not
+identifier hiding.
+
+### The tool
+
+```text
+browser_autofill(credential_alias, field_refs?) ->
+    filled | approval_pending | refused(reason)
+```
+
+A browser-server primitive (`POST /v1/sessions/{id}/autofill`, service-token auth) surfaced to the
+authenticated browser profiles. It **fills — it is not a login engine**: the agent navigates to the
+login form, requests the fill, clicks Sign in, inspects the (redacted) result, and continues.
+Multi-page (username-first) logins happen in steps — one call fills the identifier, the agent clicks
+Continue, a second call fills the password. The account email is usually legitimate model-visible
+data already; nothing forces the sequence into one atomic deterministic operation.
+
+- `filled`: eligible field(s) on the checked page were filled; metadata names field kinds, never
+  values.
+- `approval_pending`: Keychute needs an operator decision. browser-server long-polls the wait
+  endpoint within the tool-call budget; an approval that outlasts the run parks the session under
+  the `handoff_pending` pattern (Session binding above) — the typed resume handle retries the same
+  per-step request against the same session, with the fill's target re-validation still applying. A
+  lapsed park window means a fresh session and request, possibly a fresh approval: the cost of a
+  very slow first approval, moot once the standing grant exists.
+- `refused(reason)`: wrong origin, no eligible field, target invalidated by navigation, policy
+  denial, alias not bound, or a bad-password outcome already recorded in this session.
+
+Keychute caps releasing-tier grants at one read, so the unit of release is the **fill step**: each
+call creates its own access request (page origins = the configured authenticated origins; context
+passed through from FA: site, objective snippet, acting user, step) and reads that request's
+single-use grant. The per-step idempotency key is reused only across `approval_pending` retries of
+the same step. Under a standing grant a two-step login is two auto-approved or notify-only releases
+seconds apart; the first release per site gets Keychute's approval page. Every release is audited
+with the `secret_version_id` decrypted.
+
+### Load-bearing boundaries
+
+Enforced in browser-server, the component that owns the page:
+
+1. **Check the real destination.** The model saying `origin=hellofresh.com` is not evidence: at fill
+   time the actual target document's origin is verified against the constraints on the **granted**
+   capability (Keychute exposes grant metadata because an approval may narrow the request),
+   including after an approval wait. Main-frame-only fills in V1 — no iframes.
+2. **Bind the fill to the checked page and element.** Resolve, validate, and fill as one serialized
+   operation; a navigation or document replacement in between — the site can navigate itself while
+   an approval is pending — fails the fill rather than filling whatever is there now.
+3. **Element sanity checks, honestly labelled.** Password only into `input[type=password]`; explicit
+   `autocomplete=new-password`/confirm fields rejected; identifier into a text/email/tel input,
+   `autocomplete=username` preferred. Cheap and worthwhile — not proof the approved site cannot read
+   its own field, and heuristic ambiguity is a `refused`, not a reason to build a
+   login-classification subsystem.
+4. **Containment is this document's existing boundaries, unchanged.** No jar selection, no Keychute
+   browsing, no other credential, no cross-origin reach; `browser_autofill` is admissible under the
+   mechanical tool validation because it is browser-server-mediated.
+5. **Bounded retries.** One fill per grant read, and a read is not a login submission: on a clear
+   bad-password outcome the session records it, further fills are refused, and the run returns
+   `needs_human`. No automatic re-request loop; a persisted needs-attention latch is a later upgrade
+   only if unattended retry workflows become real. MFA and unexpected challenges go to the human
+   handoff; IdP/SSO credentials and autonomous MFA are deferred for blast radius, not declared
+   impossible.
+
+### Read-back protection
+
+The prerequisite for the session continuing after a fill is that the model cannot read the secret
+back out of the page. Current browser-server does not provide this: the snapshot walker copies
+non-empty `el.value` into model-facing snapshots, screenshot/raw-extract/`exec` are exposed, and
+`exec` is default-denied only when `session.jar_id` is set. A credential-enabled session therefore
+enforces, from creation — so no page listener can be installed before the fill:
+
+- form control values redacted from snapshots;
+- screenshots mask form controls (including after a "show password" toggle) or are denied;
+- no `exec`, raw-DOM extract, or equivalent escape hatches, jar or no jar;
+- the secret in no tool arguments, results, events, exception text, traces, or logs — the jar
+  store's cookie-value discipline extended to the fill path.
+
+Modest, testable claims. The stated residual: once filled, the approved origin's own JavaScript can
+read the field — the same exposure as any password manager; the controls are which sites the
+operator wires up and the destination checks above.
+
+### Jars, refresh, and what is deferred
+
+Jars are persistence, not a login prerequisite. Automatic jar refresh after a successful in-session
+login is deferred until expiry friction demands it; when added, the correctness rules from the
+earlier PR #1069 revisions remain binding — refresh targets the exact configured `jar_id`, preserves
+stored scope and probe, and saves only probe-verified state. Also deferred or cut: the login-only
+broker profile and post-fill lock (withdrawn), deterministic multi-page login orchestration, a
+generic login-vs-signup classifier, TOTP-seeds-in-Keychute, and magic-link login (a separate
+workstream touching mailbox taint — `sensitive_read_broadening` in
+[runtime-taint-machinery.md](runtime-taint-machinery.md) — never a scope expansion here).
+
+### Autofill build order
+
+1. **browser-server:** Keychute client (in-cluster URL, internal CA); credential binding and
+   explicit confinement origins on `create_session`; the autofill endpoint with granted-constraint
+   destination checks, serialized target binding, element checks, one request + one read per fill
+   step; read-back protection from creation. Regression tests: plaintext in no
+   response/event/log/exception; fills refused off-origin, in iframes, on new-password fields, after
+   target invalidation, in non-credential sessions; redaction and `exec` denial active before the
+   first fill; a jarless credential session confined identically to a jar-loaded one.
+2. **family-assistant:** `credential` on `authenticated_sites`; the `browser_autofill` tool in the
+   authenticated profiles; `approval_pending` as a parked resumable outcome; credential-bound
+   stale-jar runs routed to the jarless session; startup validation of the binding; docs.
+3. **Keychute / kube-config:** register the `browser-server` client — no server changes.
+4. **Prove it** on a real password login, then extend only in response to observed failures.
+
+Open questions: the mechanical form of the "clear bad-password outcome" (agent report plus a small
+per-session fill cap as deterministic backstop — leaning both); notify-only cadence for standing
+autofill grants (every release, until volume says otherwise); secret format (one structured
+`{"username": …, "password": …}` secret per site account).
 
 ## Failure behavior
 
@@ -747,6 +930,9 @@ The high-level tool returns a small set of actionable outcomes:
 - `handoff_pending`: the worker handed the browser to the human and parked the session; the result
   carries the takeover link and a typed resume handle that a follow-up invocation consumes after
   handback;
+- `approval_pending` (credential-bound sites only): a Keychute release needs an operator decision
+  that outlasted the run; the session parks exactly as for `handoff_pending`, and the resume handle
+  retries the same fill step after approval (autofill section);
 - `needs_human`: unsupported MFA, SSO, hard bot blocks, or ambiguous workflow a human cannot unblock
   mid-session — fully terminal, with jar refresh and retry as the human path;
 - `site_changed`: expected site structure or completion evidence no longer matches;
