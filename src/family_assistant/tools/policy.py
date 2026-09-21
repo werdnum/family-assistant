@@ -281,10 +281,19 @@ class PolicyEngine:
         )
 
     def _conditional_grant(self, descriptor: ToolDescriptor) -> PolicyEvaluation | None:
-        """The highest-priority argument-pinned rule that would grant *descriptor*.
+        """The advertisement outcome for a tool granted only for some arguments.
 
-        Only a profile's own policy and the operator's count. The `profile`
-        layer is synthesised rather than authored -- it carries the
+        Each argument-pinned granting rule is re-evaluated *as a whole policy
+        question*: what would this engine decide for a call carrying exactly
+        the arguments the pin names? That is the same decision execution will
+        make, so a higher-priority argument-free deny, or a `confirm`/`review`
+        sitting above the pin, is honoured here rather than being second-guessed
+        by a parallel decision path. The first pin whose evaluation is not a
+        denial is what the tool is advertised as; rules are already ordered by
+        effective priority, so that is the strongest grant available.
+
+        Only a profile's own policy and the operator's supply pins. The
+        `profile` layer is synthesised rather than authored -- it carries the
         self-delegation rule every profile gets, pinned to its own id -- and
         treating that as a grant would advertise `delegate_to_service` in
         profiles that are meant to hold no tools at all.
@@ -301,13 +310,15 @@ class PolicyEngine:
                 descriptor
             ):
                 continue
+            evaluation = self.evaluate(
+                descriptor, arguments=dict(match.argument_equals)
+            )
+            if evaluation.decision is ToolPolicyDecision.DENY:
+                continue
             return PolicyEvaluation(
-                decision=resolved_rule.decision,
-                reason=(
-                    f"{resolved_rule.description or 'matched ' + resolved_rule.layer}"
-                    " (granted for specific arguments)"
-                ),
-                matched_rule=resolved_rule,
+                decision=evaluation.decision,
+                reason=f"{evaluation.reason} (granted for specific arguments)",
+                matched_rule=evaluation.matched_rule,
             )
         return None
 
