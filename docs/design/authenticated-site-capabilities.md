@@ -383,12 +383,14 @@ visual result to continue and the outer run is already backgroundable — so exa
 session for its whole lifetime and no backgrounded child can outlive its parent's cleanup. A run
 that completes within the inline window returns its result and the session closes; a run that hands
 off to the background takes the session with it, the caller receives a typed `running` result
-carrying the run's opaque handle, and the run closes the session when it reaches a terminal state.
-The background completion machinery persists only text and attachments and its notification is
-advisory, so the typed `AuthenticatedSiteTaskResult` — any resume handle included — is persisted
-durably on the delegation run's record at terminal state, wherever the run executed; the caller
-retrieves it by presenting the run's opaque handle back to the high-level tool, never by
-reconstructing it from notification text. Exactly one owner closes the session. An
+carrying the run's opaque handle, and the run closes the session when it reaches a terminal state —
+unless that terminal state is a resumable parked outcome (`handoff_pending`, `approval_pending`), in
+which case the session parks until the resume handle is consumed or the bounded park window or
+lifetime backstop expires. The background completion machinery persists only text and attachments
+and its notification is advisory, so the typed `AuthenticatedSiteTaskResult` — any resume handle
+included — is persisted durably on the delegation run's record at terminal state, wherever the run
+executed; the caller retrieves it by presenting the run's opaque handle back to the high-level tool,
+never by reconstructing it from notification text. Exactly one owner closes the session. An
 idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
 state, and jar revocation still terminates the session immediately regardless of owner.
 
@@ -412,8 +414,10 @@ resume handle finds the lease already reclaimable. `needs_human` remains the ful
 for steps a human cannot unblock mid-session (unsupported MFA or SSO at login, hard bot blocks),
 where the human path is refreshing the jar and retrying from the original objective.
 
-The browser session closes when its owning run ends, unless the user has taken human control. The
-saved jar remains the only durable browser capability.
+The browser session closes when its owning run ends, unless the run ended in a resumable parked
+outcome — `handoff_pending` (the user has taken human control) or `approval_pending` (a Keychute
+decision is outstanding) — in which case it parks, still origin-confined and fail-closed for agent
+commands, until resumption or expiry. The saved jar remains the only durable browser capability.
 
 ## Configuration model
 
@@ -739,7 +743,8 @@ notify-only) that makes later releases silent.
 5. The browser profile may delegate visual steps to `authenticated_browser_visual_profile` using the
    shared session.
 6. The result returns with browser provenance preserved.
-7. The session closes unless a human handoff is active.
+7. The session closes unless the run parked in a resumable outcome (`handoff_pending`,
+   `approval_pending`).
 
 ### Expired login
 
