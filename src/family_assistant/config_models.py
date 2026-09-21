@@ -2357,22 +2357,51 @@ class AppConfig(BaseSettings):
                 raise ValueError(msg)
         return self
 
-    def _globally_granted_tool_names(self) -> frozenset[str]:
-        """Literal tool names `global_tools_policy` confers on every profile.
+    def _globally_granted_tool_names(
+        self, known_tools: frozenset[str]
+    ) -> frozenset[str]:
+        """Tool names `global_tools_policy` confers on every profile.
 
-        Glob and tag rules are left out on purpose: this set drives a
-        *requirement* to exclude, and a requirement derived from a pattern
-        would name something no profile can write down.
+        A glob is expanded against the tool registry rather than skipped. A
+        global grant lands in a layer a profile's own policy cannot refuse, so a
+        grant of `get_*` reaches an authenticated profile exactly as a literal
+        name does; leaving it out would let the widest kind of grant be the one
+        the check never sees.
         """
         if self.global_tools_policy is None:
             return frozenset()
-        return frozenset(
-            name
-            for rule in self.global_tools_policy.rules
+        granted: set[str] = set()
+        for rule in self.global_tools_policy.rules:
+            if rule.decision is ToolPolicyDecision.DENY:
+                continue
+            for name in rule.match.names or ():
+                if _is_glob(name):
+                    granted.update(
+                        tool for tool in known_tools if fnmatchcase(tool, name)
+                    )
+                else:
+                    granted.add(name)
+        return frozenset(granted)
+
+    def _unanalysable_global_grants(self) -> list[str]:
+        """Global granting rules whose reach cannot be decided statically.
+
+        A tag or MCP-server matcher grants by a property the registry supplies
+        at runtime, so which tools it hands an authenticated profile is not
+        knowable here. Since those grants outrank the profile's own policy, the
+        honest answer is to refuse the site configuration rather than to
+        validate a surface that may be wider than it looks.
+        """
+        if self.global_tools_policy is None:
+            return []
+        return [
+            (rule.description or f"rule {index}")
+            for index, rule in enumerate(self.global_tools_policy.rules)
             if rule.decision is not ToolPolicyDecision.DENY
-            for name in (rule.match.names or ())
-            if not _is_glob(name)
-        )
+            and (
+                rule.match.tags_all or rule.match.tags_any or rule.match.mcp_server_ids
+            )
+        ]
 
     @model_validator(mode="after")
     def validate_authenticated_sites(self) -> AppConfig:
@@ -2398,8 +2427,22 @@ class AppConfig(BaseSettings):
             surface_violations,
         )
 
+        unanalysable = self._unanalysable_global_grants()
+        if unanalysable:
+            msg = (
+                "global_tools_policy grants tools by tag or MCP server "
+                f"({', '.join(unanalysable)}), which outranks an authenticated "
+                "browser profile's own policy and cannot be checked against the "
+                "admissible tool set. Configuring an authenticated site with "
+                "such a rule in place would validate a surface that may be "
+                "wider than it looks; name the tools instead."
+            )
+            raise ValueError(msg)
+
         admissible = admissible_tools(LOCAL_TOOL_METADATA_BY_NAME)
-        globally_granted = self._globally_granted_tool_names()
+        globally_granted = self._globally_granted_tool_names(
+            frozenset(LOCAL_TOOL_METADATA_BY_NAME)
+        )
         profiles_by_id = {profile.id: profile for profile in self.service_profiles}
 
         for site_id, site in sorted(self.authenticated_sites.items()):

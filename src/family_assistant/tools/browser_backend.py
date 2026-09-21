@@ -1280,6 +1280,16 @@ def bind_authenticated_session(
     _authenticated_bindings[subconversation_id] = binding
 
 
+def release_borrowed_session(subconversation_id: str) -> None:
+    """Drop one borrowed entry, leaving the owning run's binding in place.
+
+    A child turn that borrowed its parent's session releases through here. The
+    owner's cascading release would take the parent's own entry with it, since
+    both name the same binding object, and the parent run is still using it.
+    """
+    _authenticated_bindings.pop(subconversation_id, None)
+
+
 def release_authenticated_session(subconversation_id: str) -> None:
     """Drop a binding and every memoized child of it."""
     binding = _authenticated_bindings.pop(subconversation_id, None)
@@ -1299,6 +1309,34 @@ def authenticated_binding_for(
     return _authenticated_bindings.get(subconversation_id)
 
 
+def authenticated_profile_ids(
+    exec_context: ToolExecutionContext,
+) -> frozenset[str]:
+    """Profiles that may only ever operate inside an authenticated session.
+
+    Read from the site configuration rather than from a hard-coded list, so an
+    operator who points a site at their own profile gets the same fail-closed
+    treatment as the shipped ones.
+    """
+    service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(service, "app_config", None) if service is not None else None
+    sites = getattr(app_config, "authenticated_sites", None) if app_config else None
+    if not sites:
+        return frozenset()
+    return frozenset(
+        profile_id
+        for site in sites.values()
+        for profile_id in (site.browser_profile, site.visual_profile)
+    )
+
+
+def _requires_authenticated_binding(exec_context: ToolExecutionContext) -> bool:
+    profile_id = getattr(exec_context, "processing_profile_id", None)
+    return profile_id is not None and profile_id in authenticated_profile_ids(
+        exec_context
+    )
+
+
 async def resolve_authenticated_binding(
     exec_context: ToolExecutionContext,
 ) -> AuthenticatedSessionBinding | None:
@@ -1312,7 +1350,9 @@ async def resolve_authenticated_binding(
     """
     # Checked first so the ordinary browsing path -- every conversation in a
     # deployment that configures no authenticated site -- costs one dict test
-    # and never touches the context or the database.
+    # and never touches the context or the database. A turn that *must* have a
+    # binding is not let through on this shortcut: its absence is the
+    # fail-closed case, decided by the caller.
     if not _authenticated_bindings:
         return None
     subconversation_id = getattr(exec_context, "subconversation_id", None)
@@ -1364,6 +1404,19 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
     binding = await resolve_authenticated_binding(exec_context)
     if binding is not None:
         return binding.backend
+    if _requires_authenticated_binding(exec_context):
+        # An authenticated browser profile with no bound session has nothing it
+        # is allowed to drive. Falling through would hand it the conversation's
+        # ordinary backend, which would create a fresh *unconfined* session --
+        # the exact escape the never-re-provision rule exists to prevent. It
+        # happens for real after a restart, when a queued authenticated run
+        # outlives the in-process binding, so it fails closed rather than
+        # quietly widening.
+        raise AuthenticatedSessionUnavailableError(
+            "This profile only operates inside an authenticated-site session, "
+            "and no session is bound to this run. The run cannot continue; "
+            "start the task again."
+        )
     config = _remote_enabled(exec_context)
     if config is not None:
         session_key = exec_context.conversation_id or "default"

@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -39,7 +40,7 @@ from family_assistant.tools.types import (
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import AsyncIterator, Iterable
     from datetime import datetime
 
     from family_assistant.config_models import ToolsConfig
@@ -417,6 +418,62 @@ async def _synchronous_delegation_result(
         len(content_parts),
         subconversation_id,
     )
+    # This path mints a subconversation with no delegation-run row, so a child
+    # turn cannot find its way back to a parent run. An authenticated-site
+    # session therefore has to be handed down explicitly: the semantic-to-visual
+    # hop runs here (async handoff is off for that profile), and without this
+    # the visual worker would resolve no binding and be handed the
+    # conversation's ordinary, unconfined browser instead of the authenticated
+    # tab it is supposed to share.
+    async with _inherited_authenticated_binding(exec_context, subconversation_id):
+        return await _run_synchronous_delegation(
+            exec_context,
+            target_service=target_service,
+            target_service_id=target_service_id,
+            content_parts=content_parts,
+            model_selection=model_selection,
+            subconversation_id=subconversation_id,
+        )
+
+
+@asynccontextmanager
+async def _inherited_authenticated_binding(
+    exec_context: ToolExecutionContext, subconversation_id: str
+) -> AsyncIterator[None]:
+    """Lend this turn's authenticated session to one inline child turn.
+
+    Bound for the child's lifetime only, and released afterwards, so ownership
+    still does not fan out: the child borrows the parent's session and never
+    outlives it.
+    """
+    # Local import: browser_backend imports the tools package transitively.
+    from family_assistant.tools.browser_backend import (  # noqa: PLC0415
+        bind_authenticated_session,
+        release_borrowed_session,
+        resolve_authenticated_binding,
+    )
+
+    binding = await resolve_authenticated_binding(exec_context)
+    if binding is None:
+        yield
+        return
+    bind_authenticated_session(subconversation_id, binding)
+    try:
+        yield
+    finally:
+        release_borrowed_session(subconversation_id)
+
+
+async def _run_synchronous_delegation(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service: Any,  # noqa: ANN401 - target is a registry-resolved processing service
+    target_service_id: str,
+    content_parts: list[ContentPartDict],
+    model_selection: ResolvedModelSelection,
+    subconversation_id: str,
+) -> ToolResult:
+    """Run the inline delegated turn and render its result."""
     try:
         result = await target_service.handle_chat_interaction(
             db_context=exec_context.db_context,

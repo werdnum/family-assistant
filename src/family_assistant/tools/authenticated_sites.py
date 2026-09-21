@@ -32,6 +32,7 @@ from family_assistant.tools.browser_backend import (
     release_authenticated_session,
 )
 from family_assistant.tools.services import (
+    StartedDelegation,
     await_started_delegation,
     start_delegation,
 )
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "AUTHENTICATED_SITE_TOOLS_DEFINITION",
     "finalize_authenticated_run",
+    "lease_not_reclaimable",
     "route_jar",
     "run_authenticated_site_task_tool",
 ]
@@ -415,6 +417,9 @@ async def _resume_parked(
             delegation_id=run["delegation_id"],
             backend=backend,
         )
+    not_reclaimable = await lease_not_reclaimable(binding, envelope)
+    if not_reclaimable is not None:
+        return not_reclaimable
     started = await start_delegation(
         exec_context,
         target_service_id=site.browser_profile,
@@ -431,7 +436,56 @@ async def _resume_parked(
     await exec_context.db_context.delegation_runs.set_authenticated_site_state(
         started.delegation_id, {**envelope, "status": "running"}
     )
-    return await await_started_delegation(exec_context, started)
+    return await _settled_result(exec_context, site, started)
+
+
+# Session states in which the agent does not hold the lease. Starting a
+# delegated turn in any of them would have the worker's first browser command
+# refused, which -- since an authenticated session is never re-provisioned --
+# ends the run instead of waiting.
+_HUMAN_HELD_STATES = frozenset({
+    "handoff_requested",
+    "human_active",
+    "handover_requested",
+})
+
+
+async def lease_not_reclaimable(
+    binding: AuthenticatedSessionBinding, envelope: AuthenticatedSiteEnvelope
+) -> ToolResult | None:
+    """Keep a run parked unless the agent can actually drive the session again.
+
+    The handback token is minted by browser-server when the human finishes and
+    is shown only to them; it is deliberately not something the resume handle or
+    the conversation carries. So the lease is confirmed by reading the session's
+    own state rather than by presenting a token: only once the session is back
+    under agent control does the resumed turn start. While it is not, the run
+    stays parked and says so, instead of starting a worker whose first command
+    would be refused.
+    """
+    try:
+        state = await binding.backend.session_state()
+    except BrowserBackendError as exc:
+        logger.warning("Could not read the parked session's state: %s", exc)
+        return _error(
+            "The parked browser session could not be read, so the task cannot "
+            f"be resumed: {exc}"
+        )
+    session_state = state.get("state")
+    if session_state not in _HUMAN_HELD_STATES:
+        return None
+    parked: AuthenticatedSiteEnvelope = {**envelope, "status": "handoff_pending"}
+    lines = [
+        "The browser is still with the person who took it over"
+        if session_state != "handover_requested"
+        else "The browser has been handed back but the agent has not been "
+        "given control of it yet",
+        "so the task is still waiting. Resume it again once that is done.",
+    ]
+    return ToolResult(
+        text=" ".join(lines),
+        data=cast("dict[str, object]", dict(parked)),
+    )
 
 
 async def run_authenticated_site_task_tool(
@@ -546,7 +600,51 @@ async def _start_run(
             "caller_profile_id": exec_context.processing_profile_id,
         },
     )
-    return await await_started_delegation(exec_context, started)
+    return await _settled_result(exec_context, site, started)
+
+
+async def _settled_result(
+    exec_context: ToolExecutionContext,
+    site: AuthenticatedSiteConfig,
+    started: StartedDelegation,
+) -> ToolResult:
+    """Wait on the run, then answer with its typed outcome rather than prose.
+
+    A run that settles inside the inline window has already been given a status
+    and, where it parked, a session waiting on a resume handle. Returning the
+    worker's reply text alone would hide both: the caller would not learn that
+    an approval is outstanding, would have no handle to resume with, and would
+    be blocked from starting another run by a park it cannot see. A run that
+    backgrounds instead gets an explicit `running` handle.
+    """
+    inline = await await_started_delegation(exec_context, started)
+    run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
+        started.delegation_id
+    )
+    envelope = run["authenticated_site_json"] if run is not None else None
+    if envelope is None or envelope["status"] == "running":
+        return ToolResult(
+            text=(
+                f"{site.display_name}: running. "
+                f"{inline.get_text()}\n\n"
+                f"Call this tool again with resume={started.delegation_id!r} for "
+                "the outcome."
+            ),
+            attachments=inline.attachments,
+            data={
+                "site_id": envelope["site_id"] if envelope else None,
+                "status": "running",
+                "resume": started.delegation_id,
+            },
+        )
+    settled = _envelope_result(site, envelope, delegation_id=started.delegation_id)
+    return ToolResult(
+        text=settled.get_text(),
+        # The worker's own attachments -- screenshots it chose to show -- are
+        # the evidence for what it reports, so they travel with the outcome.
+        attachments=inline.attachments,
+        data=settled.get_data(),
+    )
 
 
 def _worker_request(site_id: str, site: AuthenticatedSiteConfig, objective: str) -> str:
