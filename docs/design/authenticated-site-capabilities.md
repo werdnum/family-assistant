@@ -410,16 +410,19 @@ and in-progress form state do not. Losing mid-form progress to a challenge is ac
 behaviour for reversible household sites; a workflow that needs same-page resumption is a future
 explicit policy, not the default. The handback token that reclaims the lease is minted by
 browser-server only when the human finishes, so it cannot ride in the resume handle and must not
-ride in the conversation: it is exchanged server-side between browser-server and Family Assistant's
-trusted orchestration, bound to the parked session's record — whether by callback or by polling the
-session's handover state is construction detail for the implementing PR — so that consuming the
-resume handle finds the lease already reclaimable. `needs_human` remains the fully terminal outcome
-for steps a human cannot unblock mid-session (an SSO redirect out of the confined origin set, hard
-bot blocks, a bad password on an autofill site), where the human path depends on the acquisition
-path — refresh the jar where one exists, correct the Keychute secret for an autofill-only site — and
-then retry from the original objective. A challenge the human *can* complete in the parked session —
-an MFA code, a captcha — is `handoff_pending`, not this; the one rule is stated in the autofill
-section's bounded-retries boundary and applied everywhere.
+ride in the conversation: reclaiming the lease is therefore a server-side exchange between trusted
+orchestration and browser-server, in which the human's own handover is the signal that they are
+finished and the service credential that already creates and drives these sessions is the authority.
+The resume reads the parked session's handover state and, where it says the browser has been handed
+back, takes the lease with no token at all; while the human still holds it the run stays parked and
+says so, and a session that is gone fails the run rather than being re-provisioned. Nobody is ever
+asked to relay a code. `needs_human` remains the fully terminal outcome for steps a human cannot
+unblock mid-session (an SSO redirect out of the confined origin set, hard bot blocks, a bad password
+on an autofill site), where the human path depends on the acquisition path — refresh the jar where
+one exists, correct the Keychute secret for an autofill-only site — and then retry from the original
+objective. A challenge the human *can* complete in the parked session — an MFA code, a captcha — is
+`handoff_pending`, not this; the one rule is stated in the autofill section's bounded-retries
+boundary and applied everywhere.
 
 The browser session closes when its owning run ends, unless the run ended in a resumable parked
 outcome — `handoff_pending` (the user has taken human control) or `approval_pending` (a Keychute
@@ -1146,8 +1149,8 @@ HelloFresh adapter or keep the task human-operated.
 - Surface `login_required` without exposing the full jar inventory to the model.
 - Support human refresh of the same jar ID and retry from the original objective.
 - Park a handed-off session under exclusive human control, and rebind it when a follow-up invocation
-  resumes the terminal delegated run after handback, receiving the handback token from
-  browser-server server-side rather than through the conversation.
+  resumes the terminal delegated run after handback, reclaiming the lease server-side on the service
+  credential rather than through anything relayed in the conversation.
 - Resolve browser-server refresh/UI gaps only as required by this flow.
 
 ### M4 — HelloFresh end-to-end workflow
@@ -1350,5 +1353,5 @@ This is a design-only change. Before implementation:
 - add end-to-end tests for jar opacity, origin confinement, human-control exclusivity, stale login,
   session cleanup, revocation, result provenance, inability of browser profiles to acquire a second
   authenticated session, and the complete handoff-and-resume cycle: takeover-link delivery,
-  server-side receipt of the handback token, and resumption after sanitized fresh-page recovery with
-  the authenticated session and worker context preserved.
+  server-side reclaim of the lease once the human hands back, and resumption after sanitized
+  fresh-page recovery with the authenticated session and worker context preserved.

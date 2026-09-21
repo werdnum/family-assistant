@@ -1211,6 +1211,33 @@ class RemoteBrowserBackend:
         self._session_id = session_id
         return resp.json()
 
+    async def claim_handback_server_side(self, session_id: str) -> JsonDict:
+        """Take an authenticated session's lease back with no token at all.
+
+        The handback token is minted for the human who finished the step and
+        the design forbids routing it through the conversation, so trusted
+        orchestration has nothing to present. browser-server accepts the
+        human's own handover POST as the signal instead, and this service
+        token as the authority -- which is no weaker, since the same token
+        created the session and drives it. The claim is refused unless the
+        session is an authenticated-site one awaiting handover, and the page is
+        sanitized and reopened inside the confinement set before anything here
+        can observe it.
+        """
+        if self._authenticated is None:
+            raise BrowserBackendError(
+                "a token-less handback claim is only for authenticated-site "
+                "sessions; an ordinary session is reclaimed with the handback "
+                "token the human was shown"
+            )
+        resp = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/agent-claim",
+            headers=self._headers(),
+        )
+        self._raise_for_status(resp, "agent-claim")
+        self._session_id = session_id
+        return cast("JsonDict", resp.json())
+
     async def close(self) -> None:
         try:
             if self._session_id is not None:

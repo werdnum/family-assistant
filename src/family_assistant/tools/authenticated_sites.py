@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "AUTHENTICATED_SITE_TOOLS_DEFINITION",
     "finalize_authenticated_run",
-    "lease_not_reclaimable",
+    "reclaim_lease",
     "route_jar",
     "run_authenticated_site_task_tool",
 ]
@@ -234,6 +234,30 @@ async def _close_session(backend: RemoteBrowserBackend) -> None:
         await backend.close()
 
 
+# Session states in which the human, not the agent, is holding the browser.
+# Starting a delegated turn in any of them would have the worker's first
+# command refused, which -- since an authenticated session is never
+# re-provisioned -- ends the run instead of waiting. `sanitize_pending` is the
+# same answer for a moment mid-handback: the page is still being closed and
+# reopened at the confined origin.
+_HUMAN_HELD_STATES = frozenset({
+    "handoff_requested",
+    "human_active",
+    "human_sensitive",
+    "sanitize_pending",
+})
+# States in which the agent already holds the lease and can simply carry on.
+_AGENT_HELD_STATES = frozenset({"agent_active", "agent_resumable"})
+# The human has finished and handed the session back; it is waiting to be
+# claimed by whoever drives it on this side.
+_HANDED_BACK_STATE = "handover_requested"
+# Every state in which the run is waiting on the household rather than on
+# itself, handback included: a session handed back between the last command
+# and the settle is still a run that parked, and settling it as finished would
+# close the browser the resume is meant to pick up.
+_SESSION_PARKED_STATES = _HUMAN_HELD_STATES | {_HANDED_BACK_STATE}
+
+
 def _derive_status(
     binding: AuthenticatedSessionBinding, session_state: object
 ) -> tuple[AuthenticatedSiteTaskStatus, str | None]:
@@ -246,7 +270,7 @@ def _derive_status(
     """
     state = session_state if isinstance(session_state, dict) else {}
     handoff_url = state.get("handoff_url")
-    if state.get("state") in {"handoff_requested", "human_active"}:
+    if state.get("state") in _SESSION_PARKED_STATES:
         return "handoff_pending", (
             str(handoff_url) if isinstance(handoff_url, str) else None
         )
@@ -396,6 +420,31 @@ async def _discard_parked_session(
     )
 
 
+async def _persist_resume_verdict(
+    exec_context: ToolExecutionContext,
+    run: DelegationRunDict,
+    verdict: ToolResult,
+) -> None:
+    """Record a resume that did not start a turn, if it changed the outcome.
+
+    A run still parked keeps the outcome it already has. A run whose session is
+    gone is settled here instead: it will never be resumable again, so leaving
+    it parked would offer a handle that can only fail, and the binding would
+    outlive the session it names.
+    """
+    data = verdict.get_data()
+    if not isinstance(data, dict):
+        return
+    settled = cast("AuthenticatedSiteEnvelope", data)
+    if settled["status"] in PARKED_AUTHENTICATED_STATUSES:
+        return
+    await exec_context.db_context.delegation_runs.set_authenticated_site_state(
+        run["delegation_id"], settled
+    )
+    release_authenticated_session(run["subconversation_id"])
+    _active_runs.pop(run["conversation_id"], None)
+
+
 async def _resume_parked(
     exec_context: ToolExecutionContext,
     run: DelegationRunDict,
@@ -427,9 +476,10 @@ async def _resume_parked(
             delegation_id=run["delegation_id"],
             backend=backend,
         )
-    not_reclaimable = await lease_not_reclaimable(binding, envelope)
-    if not_reclaimable is not None:
-        return not_reclaimable
+    verdict = await reclaim_lease(binding, envelope)
+    if verdict is not None:
+        await _persist_resume_verdict(exec_context, run, verdict)
+        return verdict
     started = await start_delegation(
         exec_context,
         target_service_id=site.browser_profile,
@@ -449,29 +499,22 @@ async def _resume_parked(
     return await _settled_result(exec_context, site, started)
 
 
-# Session states in which the agent does not hold the lease. Starting a
-# delegated turn in any of them would have the worker's first browser command
-# refused, which -- since an authenticated session is never re-provisioned --
-# ends the run instead of waiting.
-_HUMAN_HELD_STATES = frozenset({
-    "handoff_requested",
-    "human_active",
-    "handover_requested",
-})
-
-
-async def lease_not_reclaimable(
+async def reclaim_lease(
     binding: AuthenticatedSessionBinding, envelope: AuthenticatedSiteEnvelope
 ) -> ToolResult | None:
-    """Keep a run parked unless the agent can actually drive the session again.
+    """Get the lease back, or say why the run cannot carry on.
 
-    The handback token is minted by browser-server when the human finishes and
-    is shown only to them; it is deliberately not something the resume handle or
-    the conversation carries. So the lease is confirmed by reading the session's
-    own state rather than by presenting a token: only once the session is back
-    under agent control does the resumed turn start. While it is not, the run
-    stays parked and says so, instead of starting a worker whose first command
-    would be refused.
+    ``None`` once the agent can drive the session again -- either it never lost
+    the lease, or the human has handed it back and the token-less server-side
+    claim has just taken it. The handback token is minted for the human and
+    must not ride through the conversation, so the session's own state is what
+    is read and browser-server's service-side claim is what reclaims it; no
+    code is relayed by anyone.
+
+    Otherwise the returned result carries the envelope the run now has: still
+    ``handoff_pending`` while the human holds it, and ``failed`` once the
+    session is gone, because an authenticated session is never re-provisioned
+    and a fresh one would not carry the login this task was authorized for.
     """
     try:
         state = await binding.backend.session_state()
@@ -481,20 +524,43 @@ async def lease_not_reclaimable(
             "The parked browser session could not be read, so the task cannot "
             f"be resumed: {exc}"
         )
-    session_state = state.get("state")
-    if session_state not in _HUMAN_HELD_STATES:
+    session_state = str(state.get("state") or "")
+    if session_state == _HANDED_BACK_STATE:
+        try:
+            await binding.backend.claim_handback_server_side(
+                str(state.get("session_id") or binding.backend.session_id or "")
+            )
+        except BrowserBackendError as exc:
+            logger.warning("Could not claim the handed-back session: %s", exc)
+            return _error(
+                "The browser was handed back but could not be picked up again, "
+                f"so the task cannot be resumed: {exc}"
+            )
         return None
-    parked: AuthenticatedSiteEnvelope = {**envelope, "status": "handoff_pending"}
-    lines = [
-        "The browser is still with the person who took it over"
-        if session_state != "handover_requested"
-        else "The browser has been handed back but the agent has not been "
-        "given control of it yet",
-        "so the task is still waiting. Resume it again once that is done.",
-    ]
+    if session_state in _AGENT_HELD_STATES:
+        return None
+    if session_state in _HUMAN_HELD_STATES:
+        parked: AuthenticatedSiteEnvelope = {**envelope, "status": "handoff_pending"}
+        return ToolResult(
+            text=(
+                "The browser is still with the person who took it over, so the "
+                "task is still waiting. Resume it again once they are done."
+            ),
+            data=cast("dict[str, object]", dict(parked)),
+        )
+    lost: AuthenticatedSiteEnvelope = {
+        **envelope,
+        "status": "failed",
+        "session_id": None,
+        "detail": (
+            f"The browser session for this task is {session_state or 'gone'}, and "
+            "an authenticated session is never replaced with a fresh one. Start "
+            "the task again."
+        ),
+    }
     return ToolResult(
-        text=" ".join(lines),
-        data=cast("dict[str, object]", dict(parked)),
+        text=str(lost["detail"]),
+        data=cast("dict[str, object]", dict(lost)),
     )
 
 

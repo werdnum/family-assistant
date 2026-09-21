@@ -18,6 +18,7 @@ from browser_handoff_service.models import TERMINAL_STATES, SessionState, now_ut
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
+    AuthenticatedSessionSpec,
     BrowserBackendError,
     RemoteBrowserBackend,
     StaleRefError,
@@ -51,7 +52,11 @@ async def _clear_browser_server_state() -> None:
     browser_server_registry.workers.clear()
 
 
-def _make_backend(*, conversation_id: str = "integ-conv-1") -> RemoteBrowserBackend:
+def _make_backend(
+    *,
+    conversation_id: str = "integ-conv-1",
+    authenticated: AuthenticatedSessionSpec | None = None,
+) -> RemoteBrowserBackend:
     """Return a RemoteBrowserBackend wired to the real browser-server app via ASGITransport."""
     transport = httpx.ASGITransport(app=browser_server_app)
     client = httpx.AsyncClient(
@@ -70,6 +75,15 @@ def _make_backend(*, conversation_id: str = "integ-conv-1") -> RemoteBrowserBack
         config=cfg,
         conversation_id=conversation_id,
         client=client,
+        authenticated=authenticated,
+    )
+
+
+def _human_client() -> httpx.AsyncClient:
+    """A client with no service token, standing in for the person's browser."""
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=browser_server_app),
+        base_url=_SERVICE_URL,
     )
 
 
@@ -604,5 +618,120 @@ async def test_click_on_a_ref_the_page_never_issued_raises_stale_ref() -> None:
         with pytest.raises(StaleRefError) as exc:
             await backend.click("e999999")
         assert exc.value.ref == "e999999"
+    finally:
+        await backend.close()
+
+
+_CONFINED_ORIGIN = "https://confined.example.test"
+
+
+@pytest.mark.integration
+async def test_an_authenticated_session_is_handed_back_without_any_token() -> None:
+    """The whole park-and-return cycle, with nothing relayed through the chat.
+
+    A person finishes the step the run parked on and hands the browser back;
+    the resume reclaims the lease on the service token alone, because the
+    handback token is minted for them and must not travel through the
+    conversation. What comes back is the same session -- still signed in, still
+    confined -- not a fresh one.
+    """
+    backend = _make_backend(
+        conversation_id="integ-auth-handback",
+        authenticated=AuthenticatedSessionSpec(
+            site_id="testsite",
+            jar_id=None,
+            confine_origins=frozenset({_CONFINED_ORIGIN}),
+            credential_alias=None,
+        ),
+    )
+    human = _human_client()
+    try:
+        session_id = await backend.start_authenticated_session()
+        await backend.goto(f"{_CONFINED_ORIGIN}/orders")
+
+        handoff = await backend.request_handoff(
+            reason="other",
+            handoff_note="Please enter the code we were sent",
+            expected_origin=None,
+            allow_resume=True,
+        )
+        handoff_token = str(handoff["handoff_url"]).split("token=", 1)[1]
+        claimed = await human.post(
+            f"/v1/sessions/{session_id}/claim", json={"token": handoff_token}
+        )
+        assert claimed.status_code == 200, claimed.text
+        handed_over = await human.post(
+            f"/v1/sessions/{session_id}/handover",
+            json={
+                "token": claimed.json()["control_token"],
+                "handoff_note": "Code entered",
+            },
+        )
+        assert handed_over.status_code == 200, handed_over.text
+
+        # What the resume path reads before deciding anything.
+        assert (await backend.session_state())["state"] == "handover_requested"
+
+        reclaimed = await backend.claim_handback_server_side(session_id)
+
+        assert reclaimed["state"] == "agent_active"
+        assert reclaimed["session_id"] == session_id
+        snapshot = await backend.raw_snapshot(1)
+        assert "roots" in snapshot
+
+        # Confinement survives the round trip: the reclaimed session is the
+        # bounded one the run was authorized for, not a widened copy of it.
+        await backend.goto("https://elsewhere.example.test/")
+        assert backend.current_url.startswith(_CONFINED_ORIGIN)
+    finally:
+        await backend.close()
+        await human.aclose()
+
+
+@pytest.mark.integration
+async def test_a_token_less_claim_is_refused_while_the_human_still_holds_it() -> None:
+    """Only the person's own handover makes the session claimable again."""
+    backend = _make_backend(
+        conversation_id="integ-auth-still-held",
+        authenticated=AuthenticatedSessionSpec(
+            site_id="testsite",
+            jar_id=None,
+            confine_origins=frozenset({_CONFINED_ORIGIN}),
+            credential_alias=None,
+        ),
+    )
+    human = _human_client()
+    try:
+        session_id = await backend.start_authenticated_session()
+        await backend.goto(f"{_CONFINED_ORIGIN}/orders")
+        handoff = await backend.request_handoff(
+            reason="other",
+            handoff_note="Please enter the code we were sent",
+            expected_origin=None,
+            allow_resume=True,
+        )
+        claimed = await human.post(
+            f"/v1/sessions/{session_id}/claim",
+            json={"token": str(handoff["handoff_url"]).split("token=", 1)[1]},
+        )
+        assert claimed.status_code == 200, claimed.text
+
+        assert (await backend.session_state())["state"] == "human_active"
+        with pytest.raises(BrowserBackendError, match="agent-claim"):
+            await backend.claim_handback_server_side(session_id)
+    finally:
+        await backend.close()
+        await human.aclose()
+
+
+@pytest.mark.integration
+async def test_an_ordinary_session_cannot_be_claimed_without_a_token() -> None:
+    """The token-less claim is for authenticated sessions and nothing else."""
+    backend = _make_backend(conversation_id="integ-plain-claim")
+    try:
+        await backend.goto("https://example.test/account")
+        session_id = _session_id_for_conversation("integ-plain-claim")
+        with pytest.raises(BrowserBackendError, match="authenticated-site"):
+            await backend.claim_handback_server_side(session_id)
     finally:
         await backend.close()

@@ -54,10 +54,16 @@ quietly sign back in. Setting it up again is a deliberate act.
 Some steps need you. The assistant will say which, and the task waits for you rather than guessing.
 
 **"Take over the browser here: …"** — the site asked for something only you can do: a one-time code,
-a "verify it's you" tap, a captcha. Open the link, finish that step in the browser that appears,
-then hand it back. Tell the assistant you are done and it carries on with the same task. The page
-you were on is reloaded fresh afterwards, so anything half-typed into a form is lost — worth knowing
-if you were mid-way through something.
+a "verify it's you" tap, a captcha. Open the link, finish that step in the browser that appears, and
+press the button on that page to hand it back. Then tell the assistant to carry on: it picks the
+browser back up by itself, still signed in and still locked to the same site. There is no code to
+copy out of that page and paste into the chat — if you are asked for one, that is not this feature.
+The page you were on is reloaded fresh when the assistant takes over, so anything half-typed into a
+form is lost — worth knowing if you were mid-way through something.
+
+If you have not handed it back yet, the assistant simply says the task is still waiting; ask again
+once you are done. If you leave it long enough for the browser to be closed or to expire, the task
+ends and has to be started again — it will not quietly open a new browser in its place.
 
 **"The household has to approve releasing this credential"** — the assistant needs to use your
 stored password and the approval has not come through yet. Approve it, then tell the assistant to

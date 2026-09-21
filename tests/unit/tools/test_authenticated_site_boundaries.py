@@ -21,7 +21,7 @@ from family_assistant.config_models import (
     BrowserHandoffConfig,
     RemoteA2AAuthConfig,
 )
-from family_assistant.tools.authenticated_sites import lease_not_reclaimable
+from family_assistant.tools.authenticated_sites import reclaim_lease
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
@@ -91,13 +91,21 @@ def _context(
     )
 
 
-def _backend(*, session_state: str = "agent_active") -> RemoteBrowserBackend:
+def _backend(
+    *,
+    session_state: str = "agent_active",
+    claims: list[httpx.Request] | None = None,
+) -> RemoteBrowserBackend:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and "/v1/sessions/" in request.url.path:
             return httpx.Response(
                 200, json={"session_id": "bs_auth", "state": session_state}
             )
-        return httpx.Response(200, json={"session_id": "bs_auth"})
+        if request.url.path.endswith("/agent-claim") and claims is not None:
+            claims.append(request)
+        return httpx.Response(
+            200, json={"session_id": "bs_auth", "state": "agent_active"}
+        )
 
     return RemoteBrowserBackend(
         BrowserHandoffConfig(
@@ -282,46 +290,77 @@ def test_a_global_deny_by_tag_is_not_a_grant(configured: AppConfig) -> None:
     assert AppConfig.model_validate(data).authenticated_sites
 
 
+PARKED_ENVELOPE: AuthenticatedSiteEnvelope = {
+    "site_id": "hellofresh",
+    "status": "handoff_pending",
+    "session_id": "bs_auth",
+}
+
+
+def _parked_binding(
+    state: str, claims: list[httpx.Request] | None = None
+) -> AuthenticatedSessionBinding:
+    backend = _backend(session_state=state, claims=claims)
+    backend.adopt_session("bs_auth")
+    return AuthenticatedSessionBinding(
+        site_id="hellofresh", delegation_id="delegation_1", backend=backend
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "state", ["handoff_requested", "human_active", "handover_requested"]
+    "state",
+    ["handoff_requested", "human_active", "human_sensitive", "sanitize_pending"],
 )
-async def test_a_parked_run_stays_parked_until_the_agent_holds_the_lease(
+async def test_a_parked_run_stays_parked_while_the_human_holds_the_browser(
     state: str,
 ) -> None:
     """Resuming before handback would end the run, not continue it.
 
     The worker's first browser command on a session it does not hold is
     refused, and an authenticated session is never re-provisioned, so starting
-    the turn early turns a resumable park into a dead run. `handover_requested`
-    counts as not held: the human has finished, but the agent has not been
-    given control back yet.
+    the turn early turns a resumable park into a dead run.
     """
-    backend = _backend(session_state=state)
-    backend.adopt_session("bs_auth")
-    binding = AuthenticatedSessionBinding(
-        site_id="hellofresh", delegation_id="delegation_1", backend=backend
-    )
-    envelope: AuthenticatedSiteEnvelope = {
-        "site_id": "hellofresh",
-        "status": "handoff_pending",
-        "session_id": "bs_auth",
-    }
-    parked = await lease_not_reclaimable(binding, envelope)
+    parked = await reclaim_lease(_parked_binding(state), PARKED_ENVELOPE)
     assert parked is not None
-    assert parked.get_data() == {**envelope, "status": "handoff_pending"}
+    assert parked.get_data() == {**PARKED_ENVELOPE, "status": "handoff_pending"}
+
+
+@pytest.mark.asyncio
+async def test_a_handed_back_session_is_claimed_without_a_token() -> None:
+    """The handback token is the human's, so nothing here can present it.
+
+    browser-server takes the human's own handover as the signal and this
+    service's token as the authority, so the resume reclaims the lease itself
+    instead of asking anyone to relay a code.
+    """
+    claims: list[httpx.Request] = []
+    binding = _parked_binding("handover_requested", claims)
+
+    assert await reclaim_lease(binding, PARKED_ENVELOPE) is None
+    assert len(claims) == 1
+    assert not claims[0].content
 
 
 @pytest.mark.asyncio
 async def test_a_reclaimed_session_lets_the_run_continue() -> None:
-    backend = _backend(session_state="agent_active")
-    backend.adopt_session("bs_auth")
-    binding = AuthenticatedSessionBinding(
-        site_id="hellofresh", delegation_id="delegation_1", backend=backend
-    )
-    envelope: AuthenticatedSiteEnvelope = {
-        "site_id": "hellofresh",
-        "status": "handoff_pending",
-        "session_id": "bs_auth",
-    }
-    assert await lease_not_reclaimable(binding, envelope) is None
+    assert await reclaim_lease(_parked_binding("agent_active"), PARKED_ENVELOPE) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["expired", "cancelled", "completed", "failed"])
+async def test_a_session_that_is_gone_fails_the_run_rather_than_reopening_one(
+    state: str,
+) -> None:
+    """A session is never re-provisioned, so there is nothing left to resume.
+
+    A fresh one would not carry the login this task was authorized for, so the
+    run ends and says to start again, instead of offering a handle that can
+    only fail.
+    """
+    lost = await reclaim_lease(_parked_binding(state), PARKED_ENVELOPE)
+    assert lost is not None
+    data = lost.get_data()
+    assert isinstance(data, dict)
+    assert data["status"] == "failed"
+    assert data["session_id"] is None
