@@ -258,7 +258,11 @@ def _derive_status(
 
 
 async def finalize_authenticated_run(
-    exec_context: ToolExecutionContext, delegation_id: str, *, failed: bool
+    exec_context: ToolExecutionContext,
+    delegation_id: str,
+    *,
+    failed: bool,
+    result_text: str | None = None,
 ) -> None:
     """Settle an authenticated run's session and persist its typed result.
 
@@ -267,6 +271,12 @@ async def finalize_authenticated_run(
     it executes. Settling is idempotent on the persisted status, so routing
     every one of those through here costs nothing and leaves no path that
     strands a session.
+
+    It runs *before* the delegation row is marked terminal, which is what makes
+    the envelope visible to anyone the terminal row wakes up. The turn's reply
+    is therefore not on the row yet and is passed in as ``result_text``; a
+    caller that has no reply to hand (every failing path) falls back to
+    whatever the row already carries.
 
     Exactly one owner closes the session: a run that reached a parked outcome
     leaves it alive for the resume handle to reclaim, and every other outcome
@@ -302,7 +312,7 @@ async def finalize_authenticated_run(
     settled: AuthenticatedSiteEnvelope = {
         **envelope,
         "status": status,
-        "summary": run["result_text"] or "",
+        "summary": result_text or run["result_text"] or "",
         "final_url": binding.backend.current_url if binding else None,
         "handoff_url": handoff_url,
         "session_id": (

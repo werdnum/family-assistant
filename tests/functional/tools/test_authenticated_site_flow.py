@@ -44,11 +44,8 @@ from family_assistant.tools.browser_backend import (
     AuthenticatedSessionSpec,
     RemoteBrowserBackend,
 )
-from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import (
     MatcherArgs,
-    MatcherFunction,
-    ResponseGenerator,
     RuleBasedMockLLMClient,
     extract_text_from_content,
     last_real_message,
@@ -294,17 +291,15 @@ def _newest_text(kwargs: MatcherArgs) -> str:
     return extract_text_from_content(message.content) if message is not None else ""
 
 
-def _caller_llm(
-    resume: ResumeHandle, *, follow_running: bool = True
-) -> RuleBasedMockLLMClient:
+def _caller_llm(resume: ResumeHandle) -> RuleBasedMockLLMClient:
     """A caller that asks for the site task, then reports what it got back.
 
-    A run the worker has not finished settling when the caller's wait ends
-    comes back as ``running`` with a handle, and the tool's own instruction is
-    then to call again with it. Following that instruction is what a model is
-    told to do, and it is what makes the settled outcome the one this test
-    reads. A test that wants to see a *parked* outcome for itself turns it off
-    with ``follow_running``, because calling again on a parked run resumes it.
+    A run that is still going when the caller's wait ends comes back as
+    ``running`` with a handle, and the tool's own instruction is then to call
+    again with it; following that instruction is what a model is told to do.
+    Only a run that genuinely outlives the inline window says ``running``: a
+    run that finished or parked has settled before its row went terminal, so
+    the caller's first result already carries the outcome.
     """
 
     def ask_for_the_site_task(_kwargs: MatcherArgs) -> LLMOutput:
@@ -328,12 +323,9 @@ def _caller_llm(
             },
         )
 
-    follow: list[tuple[MatcherFunction, ResponseGenerator]] = (
-        [(still_running, ask_again)] if follow_running else []
-    )
     return RuleBasedMockLLMClient(
         rules=[
-            *follow,
+            (still_running, ask_again),
             (
                 lambda kwargs: _newest_role(kwargs) == "tool",
                 lambda kwargs: LLMOutput(content=_newest_text(kwargs)),
@@ -423,11 +415,10 @@ async def _harness(
     worker_llm: RuleBasedMockLLMClient,
     resume: ResumeHandle,
     conversation_id: str,
-    follow_running: bool = True,
 ) -> Harness:
     caller = await _service(
         profile_id=CALLER_PROFILE_ID,
-        llm=_caller_llm(resume, follow_running=follow_running),
+        llm=_caller_llm(resume),
         app_config=app_config,
     )
     worker = await _service(
@@ -446,29 +437,19 @@ def _resume_handle(reply: str) -> str:
     return match.group(1)
 
 
-async def _settled_envelope(
+async def _envelope(
     engine: AsyncEngine, delegation_id: str
 ) -> AuthenticatedSiteEnvelope:
-    """The run's typed outcome, once the worker has settled its session.
+    """The run's typed outcome, read once rather than waited for.
 
-    The worker marks the run terminal and settles the session as two steps, so
-    a caller's wait can end in between; what the run settled *as* is read from
-    the row rather than inferred from whichever of the two the caller saw.
+    The session is settled before the run row goes terminal, so a caller that
+    has been handed a run's outcome has been handed its envelope too.
     """
-    db = Database(engine=engine)
-
-    async def settled() -> AuthenticatedSiteEnvelope | None:
-        run = await db.delegation_runs.get_by_delegation_id(delegation_id)
-        envelope = run["authenticated_site_json"] if run is not None else None
-        return (
-            envelope
-            if envelope is not None and envelope["status"] != "running"
-            else None
-        )
-
-    envelope = await wait_for_condition(
-        settled, description=f"delegation run {delegation_id} to settle"
+    run = await Database(engine=engine).delegation_runs.get_by_delegation_id(
+        delegation_id
     )
+    assert run is not None
+    envelope = run["authenticated_site_json"]
     assert envelope is not None
     return envelope
 
@@ -544,15 +525,13 @@ async def test_a_resumed_run_asks_about_the_same_login_step(
         worker_llm=_worker_llm("browser_autofill", {"kind": "password"}),
         resume=resume,
         conversation_id="conv-approval",
-        # The caller must not answer a `running` result by calling again here:
-        # on a parked run that instruction *is* the resume, and this test does
-        # the resuming itself.
-        follow_running=False,
     )
 
     parked = await harness.ask("Please sign in and check my order.")
+
+    assert f"{DISPLAY_NAME}: approval_pending." in parked
     resume.delegation_id = _resume_handle(parked)
-    envelope = await _settled_envelope(db_engine, resume.delegation_id)
+    envelope = await _envelope(db_engine, resume.delegation_id)
     assert envelope["status"] == "approval_pending"
     assert envelope.get("session_id") == SESSION_ID
     assert browser_server.sessions_closed == 0

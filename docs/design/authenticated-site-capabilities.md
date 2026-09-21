@@ -390,7 +390,10 @@ lifetime backstop expires. The background completion machinery persists only tex
 and its notification is advisory, so the typed `AuthenticatedSiteTaskResult` — any resume handle
 included — is persisted durably on the delegation run's record at terminal state, wherever the run
 executed; the caller retrieves it by presenting the run's opaque handle back to the high-level tool,
-never by reconstructing it from notification text. Exactly one owner closes the session. An
+never by reconstructing it from notification text. The terminal row is what wakes a waiting caller,
+so the session is settled and that result persisted **before** the row becomes terminal — otherwise
+a caller woken by the row reads a run that has already finished or parked as still `running`, and a
+parked session's resume handle is not there to read. Exactly one owner closes the session. An
 idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
 state, and jar revocation still terminates the session immediately regardless of owner.
 

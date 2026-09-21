@@ -2084,19 +2084,36 @@ class TaskWorker:
             )
             return
 
+        # Settled before the row goes terminal, never after: the caller's
+        # inline wait ends on the terminal row, so a settle that followed it
+        # would leave a window in which the caller is told `running` for a run
+        # that has already finished or parked -- and the resume handle for a
+        # parked session would not be there to read. The result text is passed
+        # in because it is not persisted on the row yet.
+        await self._settle_authenticated_run(
+            exec_context,
+            delegation_id,
+            failed=result.error_traceback is not None,
+            result_text=result.text_reply,
+        )
         await self._finalize_delegation_run(exec_context, delegation_id, result)
-        await self._settle_authenticated_run(exec_context, delegation_id, failed=False)
 
     @staticmethod
     async def _settle_authenticated_run(
-        exec_context: ToolExecutionContext, delegation_id: str, *, failed: bool
+        exec_context: ToolExecutionContext,
+        delegation_id: str,
+        *,
+        failed: bool,
+        result_text: str | None = None,
     ) -> None:
         """Close or park an authenticated-site run's browser session.
 
         The one place a delegated run's terminal state is known on the side
-        that owns the session, so it is the one owner that closes it. A failure
-        here must not turn a finished run back into a failed one, so it is
-        logged and left to the lifetime backstop.
+        that owns the session, so it is the one owner that closes it. It runs
+        before the run row is marked terminal, so that whatever reads the
+        terminal row already sees the typed envelope. A failure here must not
+        turn a finished run back into a failed one, so it is logged and left to
+        the lifetime backstop.
         """
         # Local import: family_assistant.tools imports this module.
         from family_assistant.tools.authenticated_sites import (  # noqa: PLC0415
@@ -2104,7 +2121,9 @@ class TaskWorker:
         )
 
         try:
-            await finalize_authenticated_run(exec_context, delegation_id, failed=failed)
+            await finalize_authenticated_run(
+                exec_context, delegation_id, failed=failed, result_text=result_text
+            )
         except Exception:
             logger.exception(
                 "Failed to settle the authenticated-site session for delegation "
@@ -3198,6 +3217,16 @@ class TaskWorker:
         Returns whether this caller won the CAS.
         """
         clock = exec_context.clock or self.clock
+        # The one chokepoint every failing path reaches -- the pre-execution
+        # guards, the inline turn raising, the poll, the timeout, the reaper --
+        # so an authenticated run's browser session is released here rather
+        # than at each of them, and no new failure path can forget to. It runs
+        # before the row goes terminal for the same reason the success path
+        # does: a caller waiting on the terminal row must not read it before
+        # the typed envelope exists. Settling is idempotent on the persisted
+        # envelope, so a caller that then loses the terminal CAS has changed
+        # nothing a winner had already settled.
+        await self._settle_authenticated_run(exec_context, delegation_id, failed=True)
         run = await exec_context.db_context.delegation_runs.mark_failed(
             delegation_id=delegation_id,
             error=error,
@@ -3208,11 +3237,6 @@ class TaskWorker:
             return False
         if on_committed is not None:
             await on_committed()
-        # The one chokepoint every failing path reaches -- the pre-execution
-        # guards, the inline turn raising, the poll, the timeout, the reaper --
-        # so an authenticated run's browser session is released here rather
-        # than at each of them, and no new failure path can forget to.
-        await self._settle_authenticated_run(exec_context, delegation_id, failed=True)
         await self._schedule_delegation_reconcile(exec_context, run)
         await self._deliver_terminal_delegation(exec_context, run, force=False)
         return True
