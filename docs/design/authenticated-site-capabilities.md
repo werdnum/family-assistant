@@ -919,39 +919,38 @@ Enforced in browser-server, the component that owns the page:
 ### Read-back protection
 
 The prerequisite for the session continuing after a fill is that the model cannot read the secret
-back out of the page. Current browser-server does not provide this: the snapshot walker copies
-non-empty `el.value` into model-facing snapshots, screenshot/raw-extract/`exec` are exposed, and
-`exec` is default-denied only when `session.jar_id` is set. Every authenticated-site session
-therefore enforces the following uniformly, from creation — there is no separate credential-enabled
-session type to get wrong, no fill-time transition, and no window before a fill in which anything
-could be staged:
+back out of the page through its own tools. This is a **best-effort, fundamentally leaky boundary**,
+and the design says so rather than pretending otherwise: a browser is an open-ended input and
+rendering surface, and there is no confidence that every channel by which a filled value could reach
+a model-visible observation has been spotted in advance. What the design commits to is the property,
+the place it is enforced, and how holes are handled:
 
-- **credential-bearing controls masked, tracked by element**: every `input[type=password]` is
-  value-redacted in snapshots and masked in screenshots from session creation, and the fill path
-  additionally tracks the exact elements it filled and keeps masking *them* for as long as they
-  exist — surviving a "show password" toggle that flips the control's type to text. Other form
-  values stay visible: an authenticated task must be able to read ordinary selects, quantities, and
-  drafts, and masking every control would break the capability's normal work while buying nothing
-  beyond the accepted residual below — a page that relocates the secret into arbitrary DOM could
-  just as well render it as plain text, which no form-control masking reaches;
-- **no value transfer out of protected controls by model-driven input**: masking observations does
-  not stop the visual profile's raw keyboard and mouse from moving a revealed password *somewhere
-  the model can see* — focus the control, copy, and paste into a contenteditable or search box; or
-  select it and `drag_and_drop` the selection into an unprotected text control, whose value then
-  appears in the next snapshot or screenshot. Enumerating channels is the wrong shape for this
-  boundary, so the rule is per element: browser-server intercepts selection, copy/cut, and dragstart
-  on every protected control it tracks — from creation, surviving type flips — so no model-driven
-  input can carry a value out of one. V1 may additionally deny clipboard access in
-  authenticated-site sessions wholesale and withhold `drag_and_drop` from the authenticated visual
-  profile, since household tasks rarely need either, but those are conveniences on top of the
-  element rule, not the boundary;
-- no `exec`, raw-DOM extract, or equivalent escape hatches, jar or no jar;
-- the secret in no tool arguments, results, events, exception text, traces, or logs — the jar
-  store's cookie-value discipline extended to the fill path.
+- **The property.** A value the fill placed in a protected control does not reach the model through
+  browser-server's observation channels (snapshots, screenshots, extraction) or through any
+  model-driven input that moves it somewhere those channels can see. The secret appears in no tool
+  argument, result, event, exception text, trace, or log.
+- **The enforcement.** Deterministic controls in browser-server, at its observation and input
+  chokepoints, applied uniformly to every authenticated-site session from creation: protected
+  controls (every `input[type=password]`, plus the exact elements a fill touched) are tracked by
+  element — surviving type changes such as a "show password" toggle — masked in observations, and
+  fenced against value transfer by model-driven input; `exec`, raw-DOM extract, and equivalent
+  escape hatches are absent, jar or no jar. Other form values stay visible, because ordinary
+  authenticated work needs them and blanket masking buys nothing against the residual below.
+- **The known channels are the initial test set, not the specification.** Today's list — the
+  snapshot walker copying `el.value`, screenshots of a revealed field, copy/paste into a visible
+  text control, `drag_and_drop` of a selection into one — is what the first implementation must
+  close and test. Session-wide clipboard denial and withholding `drag_and_drop` from the
+  authenticated visual profile are cheap conveniences on top, not the boundary.
+- **How holes are handled.** Further channels will be found. They are implementation findings for
+  the browser-server PR that builds these controls, where the specific mechanism can be debated and
+  tested, not reasons to reopen this design. A newly found channel is closed at the same chokepoints
+  under the same property; it does not change the architecture.
 
-Modest, testable claims. The stated residual: once filled, the approved origin's own JavaScript can
-read the field and place its value anywhere — the same exposure as any password manager; the
-controls are which sites the operator wires up and the destination checks above, not masking.
+The accepted residuals, stated plainly: the boundary is best-effort against a determined
+prompt-injection campaign, not proof; and once filled, the approved origin's own JavaScript can read
+the field and place its value anywhere — the same exposure as any password manager. The controls
+that matter against that are which sites the operator wires up and the destination checks above, not
+masking.
 
 ### Jars, refresh, and what is deferred
 
