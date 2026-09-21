@@ -934,12 +934,17 @@ could be staged:
   drafts, and masking every control would break the capability's normal work while buying nothing
   beyond the accepted residual below — a page that relocates the secret into arbitrary DOM could
   just as well render it as plain text, which no form-control masking reaches;
-- **no clipboard read-back**: masking observations does not stop the visual profile's raw keyboard
-  from focusing a revealed password control, copying it, and pasting it into a contenteditable or
-  search box whose rendered text the model *can* see. Authenticated-site sessions therefore block
-  clipboard transfer out of protected controls — tracked by element, surviving type flips — and V1
-  may simply deny clipboard access in these sessions wholesale, since household tasks rarely need
-  it;
+- **no value transfer out of protected controls by model-driven input**: masking observations does
+  not stop the visual profile's raw keyboard and mouse from moving a revealed password *somewhere
+  the model can see* — focus the control, copy, and paste into a contenteditable or search box; or
+  select it and `drag_and_drop` the selection into an unprotected text control, whose value then
+  appears in the next snapshot or screenshot. Enumerating channels is the wrong shape for this
+  boundary, so the rule is per element: browser-server intercepts selection, copy/cut, and dragstart
+  on every protected control it tracks — from creation, surviving type flips — so no model-driven
+  input can carry a value out of one. V1 may additionally deny clipboard access in
+  authenticated-site sessions wholesale and withhold `drag_and_drop` from the authenticated visual
+  profile, since household tasks rarely need either, but those are conveniences on top of the
+  element rule, not the boundary;
 - no `exec`, raw-DOM extract, or equivalent escape hatches, jar or no jar;
 - the secret in no tool arguments, results, events, exception text, traces, or logs — the jar
   store's cookie-value discipline extended to the fill path.
@@ -967,9 +972,9 @@ workstream touching mailbox taint — `sensitive_read_broadening` in
    target binding, element checks, one request + one read per fill step; uniform read-back
    protection in authenticated-site sessions. Regression tests: plaintext in no
    response/event/log/exception; fills refused off the granted origin, in iframes, on new-password
-   fields, after target invalidation, and outside authenticated-site sessions; masking, clipboard
-   denial, and `exec` denial active before the first fill; a jarless session confined identically to
-   a jar-loaded one; a fill for any alias but the pinned one refused.
+   fields, after target invalidation, and outside authenticated-site sessions; masking, transfer
+   interception, denial, and `exec` denial active before the first fill; a jarless session confined
+   identically to a jar-loaded one; a fill for any alias but the pinned one refused.
 2. **family-assistant:** `credential_alias` on `authenticated_sites`, pinned onto the session at
    creation; the `browser_autofill` tool (no alias argument) in the authenticated profiles;
    `approval_pending` as a parked resumable outcome; stale-jar runs for alias-bearing sites routed
