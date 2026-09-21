@@ -188,7 +188,8 @@ The browser processing profile must not be able to:
 - inspect or choose arbitrary cookie jars;
 - retrieve a password, OTP, cookie value, or origin-storage value;
 - load another authenticated site from within the browser task;
-- call Keychute for another secret;
+- obtain a Keychute release that no policy row or human approved (it may *request* a fill by alias
+  through `browser_autofill`; Keychute decides — autofill section);
 - invoke Gmail, Calendar, Notes, Home Assistant, messaging, code execution, task management, or
   other household capabilities directly;
 - delegate to any processing profile other than the site's configured visual profile;
@@ -752,8 +753,11 @@ take the `login_required` exit — that exit would wait for a human before any d
 exists, and `browser_autofill` lives only inside a session. Instead the tool creates the session
 **jarless** (an invalidated jar is mechanically unloadable anyway, and stale state is not worth
 carrying), with the same confinement supplied explicitly from the configured
-`authenticated_origins`, and the run begins at the login form. `needs_human` is the exit when
-autofill itself fails — bad password, unexpected challenge, MFA.
+`authenticated_origins`, and the run begins at the login form. If the login raises a challenge a
+human can complete in the live session (an MFA code, a captcha), the run takes the existing
+`handoff_pending` path — the human finishes it in the parked session and handback resumes the task;
+`needs_human` is the exit only for what no one can finish mid-session — a bad password, an SSO
+redirect out of scope, a hard bot block.
 
 The agent does not invalidate a jar solely because a page claims the session expired. Independent
 probing or explicit human action remains the source of truth.
@@ -893,9 +897,14 @@ Enforced in browser-server, the component that owns the page:
 5. **Bounded retries.** One fill per grant read, and a read is not a login submission: on a clear
    bad-password outcome the session records it, further fills are refused, and the run returns
    `needs_human`. No automatic re-request loop; a persisted needs-attention latch is a later upgrade
-   only if unattended retry workflows become real. MFA and unexpected challenges go to the human
-   handoff; IdP/SSO credentials and autonomous MFA are deferred for blast radius, not declared
-   impossible.
+   only if unattended retry workflows become real. Challenges follow one rule, the same one the
+   failure contract already draws: a challenge a human **can complete in the live session** — an MFA
+   code, a captcha, a "verify it's you" click — is the existing `handoff_pending` path (the session
+   parks under human control, the human finishes it, handback resumes the task with the
+   authenticated cookies intact under the sanitized-recovery semantics in Session binding); what
+   **no one can finish mid-session** — a bad password, an SSO redirect out of the confined origin
+   set, a hard bot block — is terminal `needs_human`. Autonomous completion of MFA and IdP/SSO
+   credentials are deferred for blast radius, not declared impossible.
 
 ### Read-back protection
 
@@ -980,8 +989,10 @@ The high-level tool returns a small set of actionable outcomes:
 - `approval_pending` (autofill sites only): a Keychute release needs an operator decision that
   outlasted the run; the session parks exactly as for `handoff_pending`, and the resume handle
   retries the same fill step after approval (autofill section);
-- `needs_human`: unsupported MFA, SSO, hard bot blocks, or ambiguous workflow a human cannot unblock
-  mid-session — fully terminal, with jar refresh and retry as the human path;
+- `needs_human`: SSO, hard bot blocks, a bad password on an autofill site, or an ambiguous workflow
+  a human cannot unblock mid-session — fully terminal, with jar refresh (or a corrected Keychute
+  secret) and retry as the human path. A challenge the human *can* complete in the parked session,
+  MFA codes included, is `handoff_pending`, not this;
 - `site_changed`: expected site structure or completion evidence no longer matches;
 - `failed`: browser or delegated-profile failure with no claimed completion.
 
@@ -1027,8 +1038,8 @@ HelloFresh adapter or keep the task human-operated.
     excludes `exec`, globally granted tools, and ambient household context, and whose delegation
     reaches only the configured visual profile.
 05. It can select and save ordinary meal choices without asking for jar-load confirmation.
-06. Neither browser profile can list or choose another jar, call Keychute, or invoke unrelated
-    household tools.
+06. Neither browser profile can list or choose another jar, obtain an unapproved Keychute release,
+    or invoke unrelated household tools.
 07. Browser-server blocks top-level navigation and forms outside the configured origin set.
 08. The result names the meals selected and retains external/browser provenance when returned to the
     caller.
@@ -1121,7 +1132,10 @@ HelloFresh adapter or keep the task human-operated.
 Only after the vertical slice is in regular use:
 
 - add scheduled execution under a dedicated existing processing profile;
-- add Keychute-backed jar refresh if expiry is a recurring burden;
+- add Keychute credential autofill per the autofill section's own build order, for sites where a
+  password login is the better acquisition path or jar expiry is a recurring burden — it is a
+  per-site alternative to a saved jar, not a jar-refresh mechanism; automatic jar refresh after an
+  in-session login comes after that, and only if measured;
 - add more sites after an explicit damage-envelope review, which must revisit whether an
   observe-mode DOM-path action judge is a prerequisite for that envelope;
 - build a narrow deterministic adapter only for a workflow whose hard guarantee justifies ongoing
