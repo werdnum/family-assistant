@@ -161,18 +161,20 @@ async def test_filled_result_names_the_kind_and_carries_no_value(
 
 
 @pytest.mark.asyncio
-async def test_each_login_step_gets_its_own_reusable_key(
+async def test_each_completed_fill_gets_a_new_key(
     bound: tuple[AuthenticatedSessionBinding, list[httpx.Request]],
 ) -> None:
-    """A retry replays its step's request; the next step opens a new one."""
+    """A later fill is a new release even when it targets the same field."""
     binding, seen = bound
     context = _exec_context()
     await browser_autofill_tool(context, kind="username")
     await browser_autofill_tool(context, kind="username")
     await browser_autofill_tool(context, kind="password")
     keys = [json.loads(request.content)["step_key"] for request in seen]
-    assert keys == ["username-1", "username-1", "password-2"]
-    assert len(binding.step_keys) == 2
+    assert len(set(keys)) == 3
+    assert keys[0].startswith("username-")
+    assert keys[2].startswith("password-")
+    assert not binding.step_keys
 
 
 @pytest.mark.parametrize(
@@ -365,3 +367,27 @@ async def test_a_terminal_refusal_clears_the_pending_approval(
     assert binding.approval_pending_request_id == "req_7"
     await browser_autofill_tool(_exec_context(), kind="password")
     assert binding.approval_pending_request_id is None
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        [
+            {"status": "approval_pending", "request_id": "req_1"},
+            {"status": "refused", "reason": "target_invalidated"},
+            {"status": "filled", "filled": [{"kind": "password"}]},
+        ]
+    ],
+    indirect=True,
+)
+@pytest.mark.asyncio
+async def test_terminal_refusal_starts_a_new_fill_step(
+    bound: tuple[AuthenticatedSessionBinding, list[httpx.Request]],
+) -> None:
+    binding, seen = bound
+    for _ in range(3):
+        await browser_autofill_tool(_exec_context(), kind="password")
+    keys = [json.loads(request.content)["step_key"] for request in seen]
+    assert keys[0] == keys[1]
+    assert keys[1] != keys[2]
+    assert not binding.step_keys

@@ -135,6 +135,7 @@ if TYPE_CHECKING:
     )
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.authenticated_sites import AuthenticatedRunSettlement
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
@@ -2084,42 +2085,22 @@ class TaskWorker:
             )
             return
 
-        # Settled before the row goes terminal, never after: the caller's
-        # inline wait ends on the terminal row, so a settle that followed it
-        # would leave a window in which the caller is told `running` for a run
-        # that has already finished or parked -- and the resume handle for a
-        # parked session would not be there to read. The result text is passed
-        # in because it is not persisted on the row yet.
-        await self._settle_authenticated_run(
-            exec_context,
-            delegation_id,
-            failed=result.error_traceback is not None,
-            result_text=result.text_reply,
-        )
         await self._finalize_delegation_run(exec_context, delegation_id, result)
 
     @staticmethod
-    async def _settle_authenticated_run(
+    async def _prepare_authenticated_run(
         exec_context: ToolExecutionContext,
         delegation_id: str,
         *,
         failed: bool,
         result_text: str | None = None,
-    ) -> None:
-        """Close or park an authenticated-site run's browser session.
-
-        The one place a delegated run's terminal state is known on the side
-        that owns the session, so it is the one owner that closes it. It runs
-        before the run row is marked terminal, so that whatever reads the
-        terminal row already sees the typed envelope. Settlement errors propagate
-        so the task can retry without publishing an inconsistent terminal row.
-        """
+    ) -> AuthenticatedRunSettlement | None:
         # Local import: family_assistant.tools imports this module.
         from family_assistant.tools.authenticated_sites import (  # noqa: PLC0415
-            finalize_authenticated_run,
+            prepare_authenticated_run,
         )
 
-        await finalize_authenticated_run(
+        return await prepare_authenticated_run(
             exec_context, delegation_id, failed=failed, result_text=result_text
         )
 
@@ -2175,11 +2156,18 @@ class TaskWorker:
         """
         clock = exec_context.clock or self.clock
         completed_at = clock.now()
+        settlement = await self._prepare_authenticated_run(
+            exec_context,
+            delegation_id,
+            failed=result.error_traceback is not None,
+            result_text=result.text_reply,
+        )
         if result.error_traceback:
             terminal_run = await exec_context.db_context.delegation_runs.mark_failed(
                 delegation_id=delegation_id,
                 error=result.error_traceback,
                 completed_at=completed_at,
+                authenticated_site_state=settlement.envelope if settlement else None,
                 local_failure_kind=local_failure_kind,
             )
         else:
@@ -2188,6 +2176,7 @@ class TaskWorker:
                 result_text=result.text_reply,
                 result_attachment_ids=result.attachment_ids or [],
                 completed_at=completed_at,
+                authenticated_site_state=settlement.envelope if settlement else None,
             )
         if terminal_run is None:
             # Already terminal (a concurrent reaper/poll won) or gone; the winner
@@ -2197,6 +2186,8 @@ class TaskWorker:
                 delegation_id,
             )
             return False
+        if settlement is not None:
+            await settlement.on_committed()
         if on_committed is not None:
             await on_committed()
         await self._schedule_delegation_reconcile(exec_context, terminal_run)
@@ -3214,24 +3205,20 @@ class TaskWorker:
         Returns whether this caller won the CAS.
         """
         clock = exec_context.clock or self.clock
-        # The one chokepoint every failing path reaches -- the pre-execution
-        # guards, the inline turn raising, the poll, the timeout, the reaper --
-        # so an authenticated run's browser session is released here rather
-        # than at each of them, and no new failure path can forget to. It runs
-        # before the row goes terminal for the same reason the success path
-        # does: a caller waiting on the terminal row must not read it before
-        # the typed envelope exists. Settling is idempotent on the persisted
-        # envelope, so a caller that then loses the terminal CAS has changed
-        # nothing a winner had already settled.
-        await self._settle_authenticated_run(exec_context, delegation_id, failed=True)
+        settlement = await self._prepare_authenticated_run(
+            exec_context, delegation_id, failed=True
+        )
         run = await exec_context.db_context.delegation_runs.mark_failed(
             delegation_id=delegation_id,
             error=error,
             completed_at=clock.now(),
+            authenticated_site_state=settlement.envelope if settlement else None,
             local_failure_kind=local_failure_kind,
         )
         if run is None:
             return False
+        if settlement is not None:
+            await settlement.on_committed()
         if on_committed is not None:
             await on_committed()
         await self._schedule_delegation_reconcile(exec_context, run)

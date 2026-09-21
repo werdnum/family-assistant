@@ -39,6 +39,8 @@ from family_assistant.tools.services import (
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from family_assistant.config_models import AppConfig, AuthenticatedSiteConfig
     from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.storage.delegation_runs import AuthenticatedSiteTaskStatus
@@ -49,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AUTHENTICATED_SITE_TOOLS_DEFINITION",
-    "finalize_authenticated_run",
+    "prepare_authenticated_run",
     "reclaim_lease",
     "route_jar",
     "run_authenticated_site_task_tool",
@@ -282,31 +284,23 @@ def _derive_status(
     return "completed", None
 
 
-async def finalize_authenticated_run(
+@dataclass(frozen=True, slots=True)
+class AuthenticatedRunSettlement:
+    envelope: AuthenticatedSiteEnvelope
+    on_committed: Callable[[], Awaitable[None]]
+
+
+async def prepare_authenticated_run(
     exec_context: ToolExecutionContext,
     delegation_id: str,
     *,
     failed: bool,
     result_text: str | None = None,
-) -> None:
-    """Settle an authenticated run's session and persist its typed result.
+) -> AuthenticatedRunSettlement | None:
+    """Read the outcome without publishing it or changing the browser lifetime.
 
-    Called from the worker whenever a delegated run stops, on any path: the
-    turn finishing, the turn raising, and every guard that fails a run before
-    it executes. Settling is idempotent on the persisted status, so routing
-    every one of those through here costs nothing and leaves no path that
-    strands a session.
-
-    It runs *before* the delegation row is marked terminal, which is what makes
-    the envelope visible to anyone the terminal row wakes up. The turn's reply
-    is therefore not on the row yet and is passed in as ``result_text``; a
-    caller that has no reply to hand (every failing path) falls back to
-    whatever the row already carries.
-
-    Exactly one owner closes the session: a run that reached a parked outcome
-    leaves it alive for the resume handle to reclaim, and every other outcome
-    closes it here. A run whose worker dies without reaching this at all is
-    left to the lifetime backstop.
+    The worker stores the envelope in its terminal compare-and-set update.
+    Only the winner invokes on_committed to close or park the bound session.
     """
     run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         delegation_id
@@ -340,21 +334,22 @@ async def finalize_authenticated_run(
             binding.backend.session_id if (binding is not None and parked) else None
         ),
     }
-    await exec_context.db_context.delegation_runs.set_authenticated_site_state(
-        delegation_id, settled
-    )
-    if not parked:
-        if binding is not None:
-            await _close_session(binding.backend)
-        release_authenticated_session(run["subconversation_id"])
-        _active_runs.pop(run["conversation_id"], None)
-    logger.info(
-        "Authenticated run %s for site %s settled as %s (parked=%s)",
-        delegation_id,
-        envelope["site_id"],
-        status,
-        parked,
-    )
+
+    async def on_committed() -> None:
+        if not parked:
+            if binding is not None:
+                await _close_session(binding.backend)
+            release_authenticated_session(run["subconversation_id"])
+            _active_runs.pop(run["conversation_id"], None)
+        logger.info(
+            "Authenticated run %s for site %s settled as %s (parked=%s)",
+            delegation_id,
+            envelope["site_id"],
+            status,
+            parked,
+        )
+
+    return AuthenticatedRunSettlement(settled, on_committed)
 
 
 async def _resume(

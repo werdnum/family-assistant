@@ -421,6 +421,7 @@ class DelegationRunsRepository(BaseRepository):
         result_text: str | None,
         result_attachment_ids: list[str],
         completed_at: datetime,
+        authenticated_site_state: AuthenticatedSiteEnvelope | None = None,
     ) -> DelegationRunDict | None:
         """Mark a non-terminal delegation run completed (atomic CAS).
 
@@ -431,6 +432,11 @@ class DelegationRunsRepository(BaseRepository):
         """
         return await self._terminate(
             delegation_id,
+            **(
+                {"authenticated_site_json": authenticated_site_state}
+                if authenticated_site_state is not None
+                else {}
+            ),
             status="completed",
             result_text=result_text,
             result_attachment_ids_json=result_attachment_ids,
@@ -443,6 +449,7 @@ class DelegationRunsRepository(BaseRepository):
         delegation_id: str,
         error: str,
         completed_at: datetime,
+        authenticated_site_state: AuthenticatedSiteEnvelope | None = None,
         local_failure_kind: DelegationLocalFailureKind | None = None,
     ) -> DelegationRunDict | None:
         """Mark a non-terminal delegation run failed (atomic CAS).
@@ -457,6 +464,11 @@ class DelegationRunsRepository(BaseRepository):
         """
         return await self._terminate(
             delegation_id,
+            **(
+                {"authenticated_site_json": authenticated_site_state}
+                if authenticated_site_state is not None
+                else {}
+            ),
             status="failed",
             error=error,
             completed_at=completed_at,

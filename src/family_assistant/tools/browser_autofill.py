@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from typing import TYPE_CHECKING
 
 from family_assistant.tools.browser_backend import (
@@ -137,7 +138,7 @@ def _step_key(
     existing = binding.step_keys.get(signature)
     if existing is not None:
         return existing
-    step_key = f"{kind or 'auto'}-{len(binding.step_keys) + 1}"
+    step_key = f"{kind or 'auto'}-{uuid.uuid4().hex}"
     binding.step_keys[signature] = step_key
     return step_key
 
@@ -243,6 +244,8 @@ async def browser_autofill_tool(
     status = response.get("status")
     if status != "approval_pending":
         binding.approval_pending_request_id = None
+        signature = f"{kind or 'auto'}:{','.join(sorted(field_refs or ()))}"
+        binding.step_keys.pop(signature, None)
     if status == "filled":
         return _filled_result(response)
     if status == "approval_pending":

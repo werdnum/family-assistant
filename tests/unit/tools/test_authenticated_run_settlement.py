@@ -1,4 +1,4 @@
-"""The order in which an authenticated run stops.
+"""The atomic result of an authenticated run stopping.
 
 A caller waiting on an authenticated run is woken by the delegation row going
 terminal, and everything it needs -- the outcome, the resume handle for a
@@ -150,9 +150,17 @@ def _context(
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "session_read", "persistence", "missing_binding", "cleanup"]
+    "failure",
+    [
+        None,
+        "session_read",
+        "persistence",
+        "missing_binding",
+        "cleanup",
+        "cleanup_loses",
+    ],
 )
-async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
+async def test_the_envelope_is_published_with_the_terminal_run_row(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
     subconversation_id: str,
@@ -180,7 +188,7 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         "session_id": SESSION_ID,
     }
     await db.delegation_runs.set_authenticated_site_state(delegation_id, running)
-    if failure == "cleanup":
+    if failure in {"cleanup", "cleanup_loses"}:
         await db.execute(
             update(delegation_runs_table)
             .where(delegation_runs_table.c.delegation_id == delegation_id)
@@ -197,19 +205,6 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
 
     if failure == "missing_binding":
         release_authenticated_session(subconversation_id)
-    if failure == "persistence":
-
-        async def fail_write(
-            self: DelegationRunsRepository,
-            delegation_id: str,
-            state: AuthenticatedSiteEnvelope,
-        ) -> None:
-            raise OSError("database unavailable")
-
-        monkeypatch.setattr(
-            DelegationRunsRepository, "set_authenticated_site_state", fail_write
-        )
-
     seen_when_terminal: list[AuthenticatedSiteEnvelope | None] = []
     mark_completed = DelegationRunsRepository.mark_completed
 
@@ -220,16 +215,21 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         result_text: str | None,
         result_attachment_ids: list[str],
         completed_at: datetime,
-    ) -> object:
-        run = await self.get_by_delegation_id(delegation_id)
-        seen_when_terminal.append(run["authenticated_site_json"] if run else None)
-        return await mark_completed(
+        authenticated_site_state: AuthenticatedSiteEnvelope | None = None,
+    ) -> DelegationRunDict | None:
+        if failure == "persistence":
+            raise OSError("database unavailable")
+        terminal = await mark_completed(
             self,
             delegation_id=delegation_id,
             result_text=result_text,
             result_attachment_ids=result_attachment_ids,
             completed_at=completed_at,
+            authenticated_site_state=authenticated_site_state,
         )
+        if terminal is not None:
+            seen_when_terminal.append(terminal["authenticated_site_json"])
+        return terminal
 
     monkeypatch.setattr(DelegationRunsRepository, "mark_completed", observe_then_mark)
     mark_failed = DelegationRunsRepository.mark_failed
@@ -241,23 +241,39 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         error: str,
         completed_at: datetime,
         local_failure_kind: DelegationLocalFailureKind | None = None,
+        authenticated_site_state: AuthenticatedSiteEnvelope | None = None,
     ) -> DelegationRunDict | None:
-        run = await self.get_by_delegation_id(delegation_id)
-        seen_when_terminal.append(run["authenticated_site_json"] if run else None)
-        return await mark_failed(
+        if failure == "cleanup_loses":
+            winner = await mark_completed(
+                self,
+                delegation_id=delegation_id,
+                result_text=WORKER_REPLY,
+                result_attachment_ids=[],
+                completed_at=completed_at,
+                authenticated_site_state={**running, "status": "handoff_pending"},
+            )
+            assert winner is not None
+            seen_when_terminal.append(winner["authenticated_site_json"])
+        terminal = await mark_failed(
             self,
             delegation_id=delegation_id,
             error=error,
             completed_at=completed_at,
             local_failure_kind=local_failure_kind,
+            authenticated_site_state=authenticated_site_state,
         )
+        if terminal is not None:
+            seen_when_terminal.append(terminal["authenticated_site_json"])
+        return terminal
 
     monkeypatch.setattr(DelegationRunsRepository, "mark_failed", observe_then_fail)
 
     target = _FakeSiteWorker()
     processing_service = SimpleNamespace(
         service_config=SimpleNamespace(
-            id="cleanup_worker" if failure == "cleanup" else "default_assistant"
+            id="cleanup_worker"
+            if failure in {"cleanup", "cleanup_loses"}
+            else "default_assistant"
         ),
         processing_services_registry={"authenticated_browser_profile": target},
         home_assistant_client=None,
@@ -276,7 +292,7 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
     )
 
     async def execute() -> None:
-        if failure == "cleanup":
+        if failure in {"cleanup", "cleanup_loses"}:
             await worker.handle_delegation_run_cleanup(
                 exec_context, {"running_timeout_seconds": 60.0}
             )
@@ -302,17 +318,29 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         return
     await execute()
 
+    if failure == "cleanup_loses":
+        run = await db.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["authenticated_site_json"] == {
+            **running,
+            "status": "handoff_pending",
+        }
+        binding = authenticated_binding_for(subconversation_id)
+        assert binding is not None
+        assert binding.backend.session_id == SESSION_ID
+        return
+
     assert len(seen_when_terminal) == 1
     settled = seen_when_terminal[0]
     assert settled is not None
     assert settled["status"] == (
         "failed" if failure in {"missing_binding", "cleanup"} else "completed"
     )
-    # The reply is not on the row yet at that point, so the summary proves the
-    # settle read it from the result rather than from the row it precedes.
+    # The reply and its authenticated summary come from the same result.
     assert settled.get("summary") == ("" if failure == "cleanup" else WORKER_REPLY)
     run = await db.delegation_runs.get_by_delegation_id(delegation_id)
     assert run is not None
     assert run["status"] == ("failed" if failure == "cleanup" else "completed")
-    if failure == "cleanup":
+    if failure in {"cleanup", "cleanup_loses"}:
         assert authenticated_binding_for(subconversation_id) is None
