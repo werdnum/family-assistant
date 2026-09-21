@@ -12,7 +12,9 @@ Companion to [runtime-taint-machinery.md](runtime-taint-machinery.md) (the taint
 matrix this design adds one sink to) and
 [executable-definition-taint.md](executable-definition-taint.md), whose principle — judge intent at
 the creation chokepoint and persist the boundary decision, not the taint — this design applies to a
-second kind of stored artifact.
+second kind of stored artifact. Rather than build a parallel mechanism, it generalises the
+definition-record machinery that design introduced into one **stored-artifact admission** mechanism
+that automations and notes share; see "One mechanism for notes and automations".
 
 ## Principle
 
@@ -86,12 +88,12 @@ hold for content that will be in every future prompt unasked.
 
 The shipped cell values follow the existing lattice and the risk-adjudicated design:
 
-| turn's max tier      | `ambient_prompt_write`     |
-| -------------------- | -------------------------- |
-| `trusted_user`       | allow                      |
-| `known_contact`      | audit                      |
-| `recognized_machine` | adjudicate                 |
-| `unknown_external`   | adjudicate (fallback deny) |
+| turn's max tier      | `ambient_prompt_write`        |
+| -------------------- | ----------------------------- |
+| `trusted_user`       | allow                         |
+| `known_contact`      | audit                         |
+| `recognized_machine` | adjudicate                    |
+| `unknown_external`   | adjudicate (fallback confirm) |
 
 `adjudicate` is the non-manual gate: the tool-call reviewer already sees the turn's trusted rows and
 the full write, and decides whether the write is what the user asked for. Two cases fix what it
@@ -106,11 +108,12 @@ decides:
   judge denies it. The reservation continues; only the ambient write is refused.
 
 The judge is bounded only by its own verdict, not by a floor: the cell exists to admit the first
-case. What is `deny` is the **fallback** — the outcome when no judge is configured or it does not
-answer — rather than `confirm`, deliberately: a confirmation button is the manual review this design
-exists to avoid, and a refused ambient write is not a lost write — the same content can be saved as
-an ordinary, ineligible note in the same turn, and the tool result says so. An operator who prefers
-a button to a refusal sets the fallback to `confirm` through `matrix_overrides`.
+case. The **fallback** — the outcome when no judge is configured or it does not answer — is
+`confirm`, the same fallback the other adjudicated cells ship with. It is reached only when the
+non-manual gate is absent, and there a single confirmation is the least friction available: a
+refusal would force the user to redo the write in a clean turn, while a button lets them settle it
+where they stand. A refused or unconfirmed ambient write is not a lost write — the same content can
+still be saved as an ordinary, ineligible note in the same turn.
 
 Which writes cross the gate:
 
@@ -127,20 +130,44 @@ Which writes cross the gate:
   creation in a tainted turn would put the reviewer on the common "save this for me" path for the
   sake of a title string, which is the friction the enforcement rollout cannot afford.
 
-The gate records its disposition on the note the way `stamp_callback_definition` records it on an
-automation: the stored provenance keeps the turn's taint (so an explicit `get_note` still restores
-it, unchanged) and additionally records that the ambient write was admitted. Eligibility is the
-readable form of that record.
+### One mechanism for notes and automations
 
-### Admission cures the taint for ambient use
+Automations already have exactly this shape. An automation definition is stored intent written in
+one turn and used in later turns with no human present; `executable-definition-taint.md` gates its
+creation, stamps the authoring taint and the gate's disposition on a **definition record**, carries
+a pending write id while a shadow verdict is outstanding, and treats an admitted definition as cured
+for its future firings. A note is the same thing with a different future use: instead of firing, it
+is read into later turns. The two artifacts should therefore share one mechanism rather than each
+carrying its own.
 
-An admitted note does not re-taint the turns it is ambient in. This is the executable-definition
-rule: the judgment was made where the intent was visible, and re-raising the tier on every later
-turn would re-ask, with no evidence, a question already answered. The notes context provider
-therefore stops restoring provenance from prompt-included notes altogether — every note it includes
-is eligible, so every one is either clean or admitted. Explicit retrieval keeps today's behaviour:
-`get_note` on an admitted note merges its stored taint into the turn, because the model is now
-acting on the content rather than merely seeing it.
+The definition record generalises into a **stored-artifact admission record** with one schema for
+both kinds: the authoring taint, the gate that examined the write and its disposition, a pending
+write id, and the cure it grants. Automations keep their behaviour unchanged on the generalised
+record; notes gain it. What differs between the two is declared, not coded twice: the sink class the
+write is classified as (`executable_persistence` for a definition, `ambient_prompt_write` for a
+note), what "the content" is (an immutable definition bound by hash; a note re-decided by each full
+write), and what the cure permits (unattended firing with trusted intent; ambient presence and
+explicit reads without re-tainting). **Eligibility is the readable form of a note's admission
+record**, in the same way a definition's trusted-intent rendering is the readable form of its
+record. The same reviewer, the same pending-verdict resolution, the same audit rows and the same
+diagnostics endpoint serve both, so a fix to the gate reaches both artifacts at once.
+
+### Admission cures the taint
+
+An admitted note does not re-taint later turns, whether it arrives ambiently or by an explicit
+`get_note`. This is the executable-definition rule: the judgment was made where the intent was
+visible, and re-raising the tier later would re-ask, with no evidence, a question already answered.
+Taint propagation from stored notes is therefore confined to the notes that carry a genuine risk —
+those no judgment admitted: a note written ineligible, a tainted create with no ambient intent, a
+note whose verdict is still pending. Reading one of those through `get_note` merges its stored
+provenance into the turn exactly as today. Reading an admitted note does not.
+
+The alternative — curing ambient presence but re-tainting on explicit read — was considered and
+rejected as propagation without a matching risk. The content was judged against the user's intent
+once; a later read of it is a read of user-approved context, and every unearned escalation is
+friction that pushes enforcement further out. The notes context provider stops restoring provenance
+altogether, since every note it includes is eligible; `get_note` restores provenance only for notes
+whose record shows no admission.
 
 ### Ambient surfaces show only eligible notes
 
@@ -166,6 +193,11 @@ the rest supply a decision from their own trust:
   a note the gate refused.
 - **Memory apply** writes only from transcript chunks the review already rejected for external
   taint, and stamps the (clean) reviewing turn's provenance; its notes are eligible.
+- **Core-memory bootstrap and index refresh** (`ensure_core_note`, `refresh_core_memory_index`)
+  write the prompt-included core note directly against the table rather than through
+  `add_or_update`. They are deployment-authored structure, not content from any turn, and stamp
+  eligible explicitly as trusted internal writers. The eligibility column has no database default,
+  so a raw write that omits it fails rather than inheriting one.
 - **Call transcripts** (the Asterisk route) are authored by whoever was on the call and are never
   meant as ambient context; they are written ineligible.
 - **Existing rows** get eligibility backfilled from their stored provenance: below
@@ -178,17 +210,24 @@ the rest supply a decision from their own trust:
 **Eligibility follows the verdict; the mode decides only whether the write is refused.** Under
 `taint_policy.mode: observe` the judge still runs (the risk-adjudicated design preserves the outcome
 and downgrades only its effect), so a gated write in observe mode has a real verdict. A write the
-verdict admits produces an eligible note. A write the verdict denies — or that fell to the `deny`
-fallback — still succeeds, because nothing blocks in observe mode, but the note it produces is
-**ineligible**, and the tool result says so. Eligibility is never granted by the mode being lenient,
-so switching the deployment to `enforce` later finds no note that was admitted only because
-enforcement was off; the switch changes which writes are refused, not which notes are ambient.
+verdict admits produces an eligible note. A write the verdict denies — or that no one judged,
+because the cell fell to its `confirm` fallback and observe mode asks nobody — still succeeds,
+because nothing blocks in observe mode, but the note it produces is **ineligible**. Eligibility is
+never granted by the mode being lenient, so switching the deployment to `enforce` later finds no
+note that was admitted only because enforcement was off; the switch changes which writes are refused
+or confirmed, not which notes are ambient.
+
+The tool result reports what is known when the call returns: the verdict in enforce mode, and in
+observe mode the fact that the note is saved and its ambient status pending review. There is no
+later in-band notification of how a pending verdict resolved; the Notes UI and the taint-audit
+endpoint show it. That is an accepted bounded residual of observe mode, not a gap to close with
+lifecycle machinery.
 
 In observe mode the verdict is not known when the write lands: the shadow review runs detached from
 the tool call, so the note is persisted before the judge answers. Executable definitions already
 have this shape and solve it with a pending-verdict record — the write carries a pending write id,
-and the review's resolution attaches the verdict to the record it examined. Notes reuse that
-mechanism rather than adding one: a gated write whose verdict is still pending is stored
+and the review's resolution attaches the verdict to the record it examined. Notes get the same
+behaviour from the shared admission record: a gated write whose verdict is still pending is stored
 **ineligible-pending**, and the verdict's resolution is the one other event that changes a note's
 eligibility, flipping it to eligible on an admitting verdict and leaving it ineligible otherwise. A
 pending note is ineligible on every ambient read in the meantime, so a note is never ambient before
@@ -207,9 +246,14 @@ enforcement would have removed.
 - **Eligibility is not bound to a content hash.** Automations need one because the definition is
   immutable and fires unattended; a note is re-decided by every full write to it, and a partial
   write cannot promote it, so the current eligibility always speaks for the current content.
-- **No cure for explicit reads.** An admitted note's stored taint is still merged by `get_note`.
-  Curing it there would let one adjudicated write launder content into an unlimited number of later
-  turns' egress; the ambient cure is bounded to "present in context", which is what was judged.
+- **Admission cures explicit reads as well as ambient presence.** One adjudicated write can, in
+  principle, carry externally-authored content into later turns' egress without re-tainting them.
+  That is accepted: the content was judged against the user's intent at the write, and re-tainting
+  every later read would be propagation without a matching risk, which is the friction that keeps
+  enforcement off.
+- **No eventual in-band feedback for a pending verdict.** In observe mode the tool result can only
+  say the note is pending review; how it resolved is visible in the Notes UI and the taint-audit
+  endpoint, not in a later message.
 - **Backfill admits existing rows below the high tier.** An existing row carries a tier but no gate
   disposition, so the backfill cannot ask what a judge would have said; rows at `recognized_machine`
   and below are admitted once, and any later write re-decides them under the full rule.
@@ -221,6 +265,10 @@ enforcement would have removed.
 
 ## Work plan
 
+0. **Generalise the admission record.** Lift the definition record into the stored-artifact
+   admission record described above, with automations moved onto it and no change in their
+   behaviour. Verified by the existing executable-definition tests passing unchanged against the
+   generalised record.
 1. **Eligibility storage and backfill.** Add the stored eligibility to notes as a required write
    parameter, backfilled from provenance as above; the three ambient repository reads filter on it,
    and the repository applies the no-promotion-by-partial-write rule against the resolved note.
@@ -230,21 +278,24 @@ enforcement would have removed.
    afresh.
 2. **Write-time decision.** Tool writes decide eligibility from the turn's taint and the gate's
    disposition; web API writes stamp trusted provenance and eligibility; memory apply passes
-   through. Verified by tool tests covering each gated write shape, the ungated tainted create, and
-   the web restore path.
+   through; core-memory bootstrap and index refresh stamp eligible explicitly. Verified by tool
+   tests covering each gated write shape, the ungated tainted create, the web restore path, and a
+   fresh-database memory bootstrap.
 3. **The sink and its cells.** `ambient_prompt_write` in the matrix, defaults and config surface,
    resolved for the gated write shapes (the update-of-a-prompt-included-note shape needs the
    existing row, so it is authorised inside the tool rather than at dispatch, through the same
    `authorize_taint_sink` path the profile-level sink check uses). Verified by policy tests for each
-   tier and mode: an admitting verdict makes the note eligible, a denying verdict and the `deny`
-   fallback leave it ineligible, and an operator override of the fallback to `confirm` holds. In
-   observe mode the write is stored ineligible-pending through the definition-record pending-verdict
-   mechanism and the verdict's resolution flips it; verified by a test that a note is absent from
+   tier and mode: an admitting verdict makes the note eligible, a denying verdict leaves it
+   ineligible, and the `confirm` fallback asks in enforce mode and yields an ineligible note in
+   observe mode. In observe mode the write is stored ineligible-pending through the shared admission
+   record and the verdict's resolution flips it; verified by a test that a note is absent from
    ambient reads until an admitting shadow verdict lands, and stays absent after a denying one.
-4. **Context assembly.** The notes provider stops restoring provenance and reports only a count of
-   ineligible notes. Verified by a functional test that a conversation with a poisoned prompt note
-   starts at `trusted_user` after the note is ineligible, and by re-reading the taint-audit endpoint
-   after representative traffic.
+4. **Context assembly and explicit reads.** The notes provider stops restoring provenance and
+   reports only a count of ineligible notes; `get_note` restores provenance only for notes without
+   an admission. Verified by a functional test that a conversation with a poisoned prompt note
+   starts at `trusted_user` after the note is ineligible, that `get_note` on an admitted note leaves
+   the turn's tier unchanged while on an ineligible note it raises it, and by re-reading the
+   taint-audit endpoint after representative traffic.
 5. **Documentation.** `CONFIGURATION_REFERENCE.md` for the sink and its cells; the notes user guide
    for what happens when a save is refused or a note is not in context; the operational-findings
    document's Issue 3 section marked as superseded by this one.
