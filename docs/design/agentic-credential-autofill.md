@@ -105,9 +105,18 @@ navigates to the login form itself, requests the fill, clicks Sign in itself, in
 - `filled`: the eligible field(s) on the checked page were filled. Metadata reports which field
   kinds (username, password), never values.
 - `approval_pending`: Keychute requires a human decision (no standing grant yet). The session is
-  untouched; the agent retries the same call after approval, or reports the pending approval to the
-  user. Keychute requests are idempotent, grants are durable, and browser-server long-polls the wait
-  endpoint within the tool-call budget before returning this status.
+  untouched; browser-server long-polls the wait endpoint within the tool-call budget before
+  returning this status. If the approval outlasts the run itself, the run does **not** simply end
+  with a closed session — that would orphan the pending request, since #1136's lifecycle closes the
+  session when the delegated run ends. Instead the run parks, exactly the way #1136's
+  `handoff_pending` already parks a session across a human handoff: the high-level tool returns
+  `approval_pending` with a typed resume handle, the session stays parked for a bounded window, and
+  a follow-up invocation after the operator approves consumes the handle, resumes the same session,
+  and retries the same per-step request (same idempotency key — Keychute requests are idempotent and
+  grants durable), with the fill's serialized target re-validation still applying to whatever the
+  page did while parked. If the window lapses, the session closes and a retry is a fresh session and
+  a fresh request, which may need a fresh approval — the cost of a very slow first approval, made
+  moot by the standing grant thereafter, not a defect to engineer around.
 - `refused(reason)`: wrong origin, no eligible field, target invalidated by navigation, policy
   denial, alias not bound to this session, or a clear bad-password outcome previously recorded in
   this session. Structured reason, no page content.
@@ -207,6 +216,17 @@ browser-server accepts the confinement origin set explicitly on credential-enabl
 only from a loaded jar. Every other boundary — read-back protection from creation, profile
 validation, containment — is identical; the agent's first act is simply to log in.
 
+**The stale-jar path is the same jarless path**, and this amends #1136's expired-login lifecycle for
+credential-bound entries. There, a stale probe returns `login_required` and waits for a human
+refresh before any delegated session exists; if that exit still fired for a credential-bound site,
+`browser_autofill` — which lives only inside a session — could never perform the recovery this
+design promises. So: when the configured jar is stale or invalidated and the entry binds a
+credential, `run_authenticated_site_task` creates the session **jarless** (an invalidated jar is
+mechanically unloadable anyway, and stale state is not worth carrying) with the explicit confinement
+above, and the run begins at the login form. `login_required` remains the exit for credential-less
+sites, and for credential-bound sites it returns as `needs_human` when autofill itself fails — bad
+password, unexpected challenge, MFA.
+
 Automatic jar refresh after a successful in-session login is a **deferred follow-up**, added only if
 measured expiry friction justifies it. When it is added, the correctness rules from the previous
 revision remain the important part and are retained by reference: a refresh binds to the exact
@@ -252,9 +272,11 @@ credential-bearing, and the mailbox interaction belongs to the taint machinery's
    jar-loaded one.
 2. **family-assistant:** `credential` on `authenticated_sites` entries; the `browser_autofill` tool
    in the authenticated browser profiles (admitted by the mechanical browser-server-mediated
-   validation); `approval_pending`/`needs_human` surfacing through the #1136 result contract;
-   startup validation that a credential binding names a configured site the acting user is
-   authorized for; user and operator docs.
+   validation); `approval_pending` as a parked, resumable outcome in the #1136 result contract (the
+   `handoff_pending` pattern) plus `needs_human` surfacing; credential-bound stale-jar runs routed
+   into the jarless session instead of the `login_required` exit; startup validation that a
+   credential binding names a configured site the acting user is authorized for; user and operator
+   docs.
 3. **Keychute / kube-config:** register the `browser-server` client (token + values) — no server
    changes.
 4. **Prove it:** a real password-login workflow end to end on a configured site, then add jar
