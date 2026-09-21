@@ -952,7 +952,7 @@ default_profile_settings:
             - "run_authenticated_site_task"
         decision: "confirm"
         priority: 20
-        description: "Acting on a household account through a saved login is confirmed once per task."
+        description: "Starting or resuming a task on a household account requires confirmation."
   # Default list of slash commands that trigger this profile.
   # Can be overridden by individual service_profiles.
   slash_commands: []
@@ -2177,7 +2177,7 @@ service_profiles:
               - "run_authenticated_site_task"
           decision: "confirm"
           priority: 20
-          description: "Acting on a household account through a saved login is confirmed once per task."
+          description: "Starting or resuming a task on a household account requires confirmation."
     slash_commands:
       - "/complex"
   - id: "engineer"

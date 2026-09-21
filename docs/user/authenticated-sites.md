@@ -17,8 +17,8 @@ works through the site, and reports back what it actually changed. You do not ha
 login to use, hand it a password, or paste a URL — it only knows the sites that were set up, and
 only the ones you personally are allowed to use.
 
-The first time you use a newly set-up site, the assistant asks you to confirm before it starts. That
-is one confirmation for the whole task, not one per click.
+The assistant asks you to confirm before starting or resuming a site task. Individual browser clicks
+do not need separate confirmation.
 
 ## What it can do there
 

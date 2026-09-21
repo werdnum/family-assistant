@@ -331,6 +331,10 @@ class BrowserBackendError(RuntimeError):
     """Raised when a backend operation fails (remote HTTP error, JS error, …)."""
 
 
+class BrowserSessionGoneError(BrowserBackendError):
+    """The server expired or forgot the bound browser session."""
+
+
 class HandoffUnavailableError(BrowserBackendError):
     """Raised when a human handoff is requested but no remote backend is active."""
 
@@ -853,6 +857,8 @@ class RemoteBrowserBackend:
             f"{self._base_url}/v1/sessions/{session_id}",
             headers=self._headers(),
         )
+        if self._is_session_gone_response(resp):
+            raise BrowserSessionGoneError("the browser session is gone")
         self._raise_for_status(resp, "read session")
         return cast("JsonDict", resp.json())
 
@@ -1240,6 +1246,8 @@ class RemoteBrowserBackend:
             f"{self._base_url}/v1/sessions/{session_id}/agent-claim",
             headers=self._headers(),
         )
+        if self._is_session_gone_response(resp):
+            raise BrowserSessionGoneError("the browser session is gone")
         self._raise_for_status(resp, "agent-claim")
         self._session_id = session_id
         return cast("JsonDict", resp.json())

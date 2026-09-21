@@ -17,6 +17,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -40,7 +41,10 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools import authenticated_sites as authenticated_sites_module
+from family_assistant.tools import browser_backend as browser_backend_module
 from family_assistant.tools import browser_dom as browser_dom_module
+from family_assistant.tools.authenticated_sites import run_authenticated_site_task_tool
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionSpec,
     RemoteBrowserBackend,
@@ -63,6 +67,7 @@ if TYPE_CHECKING:
     from family_assistant.storage.delegation_runs import AuthenticatedSiteEnvelope
     from family_assistant.storage.tasks import TaskPriority
     from family_assistant.tools.browser_backend import JsonDict
+    from family_assistant.tools.types import ToolExecutionContext
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,6 +92,9 @@ _RUNNING_PREFIX = f"{DISPLAY_NAME}: running."
 @pytest.fixture(autouse=True)
 def _service_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BROWSER_HANDOFF_SERVICE_TOKEN", "test-token")
+    monkeypatch.setattr(authenticated_sites_module, "_active_runs", {})
+    monkeypatch.setattr(authenticated_sites_module, "_conversation_locks", {})
+    monkeypatch.setattr(browser_backend_module, "_authenticated_bindings", {})
 
 
 @pytest.fixture(autouse=True)
@@ -138,6 +146,7 @@ class FakeBrowserServer:
     each fill named.
     """
 
+    session_read_status: int = 200
     jar_invalidated: bool = False
     autofill_replies: list[JsonDict] = field(default_factory=list)
     requests: list[tuple[str, str, JsonDict]] = field(default_factory=list)
@@ -212,6 +221,10 @@ class FakeBrowserServer:
         if path.endswith("/close"):
             return httpx.Response(200, json={})
         if request.method == "GET":
+            if self.session_read_status != 200:
+                return httpx.Response(
+                    self.session_read_status, json={"detail": "unknown session"}
+                )
             return httpx.Response(
                 200, json={"session_id": SESSION_ID, "state": "agent_active"}
             )
@@ -630,7 +643,11 @@ def _observe_binding_before_worker_notification(
     monkeypatch.setattr(TasksRepository, "enqueue", enqueue)
 
 
+@pytest.mark.parametrize(
+    "failure", ["binding", "gone_404", "gone_410", "transient_503"]
+)
 async def test_resume_after_losing_the_binding_fails_closed(
+    failure: str,
     app_config: AppConfig,
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[object, object, object]],
@@ -654,13 +671,74 @@ async def test_resume_after_losing_the_binding_fails_closed(
         resume.delegation_id
     )
     assert run is not None
-    release_authenticated_session(run["subconversation_id"])
+    if failure == "binding":
+        release_authenticated_session(run["subconversation_id"])
+    else:
+        browser_server.session_read_status = int(failure.rsplit("_", 1)[1])
 
     reply = await harness.ask("They approved it, carry on.")
 
-    assert f"{DISPLAY_NAME}: failed." in reply
+    if failure == "transient_503":
+        envelope = await _envelope(db_engine, resume.delegation_id)
+        assert envelope["status"] == "approval_pending"
+        assert authenticated_binding_for(run["subconversation_id"]) is not None
+        return
+    assert "failed" in reply or "session for this task is gone" in reply
     assert browser_server.sessions_created == 1
-    assert browser_server.sessions_closed == 1
+    assert browser_server.sessions_closed == (1 if failure == "binding" else 0)
     assert len(browser_server.autofill_step_keys) == 1
     envelope = await _envelope(db_engine, resume.delegation_id)
     assert envelope["status"] == "failed"
+    assert authenticated_binding_for(run["subconversation_id"]) is None
+    browser_server.session_read_status = 200
+    resume.delegation_id = None
+    await harness.ask("Start a fresh order check.")
+    assert browser_server.sessions_created == 2
+
+
+@pytest.mark.parametrize(
+    "changed", ["user_id", "processing_profile_id", "subconversation_id"]
+)
+async def test_other_callers_cannot_touch_a_parked_run(
+    changed: str,
+    app_config: AppConfig,
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[object, object, object]],
+    browser_server: FakeBrowserServer,
+) -> None:
+    browser_server.autofill_replies = [
+        {"status": "approval_pending", "request_id": "req_1"}
+    ]
+    resume = ResumeHandle()
+    harness = await _harness(
+        app_config=app_config,
+        db_engine=db_engine,
+        task_worker_manager=task_worker_manager,
+        worker_llm=_worker_llm("browser_autofill", {"kind": "password"}),
+        resume=resume,
+        conversation_id="conv-other-caller",
+    )
+    parked = await harness.ask("Please sign in and check my order.")
+    delegation_id = _resume_handle(parked)
+    before = await _envelope(db_engine, delegation_id)
+    requests_before = len(browser_server.requests)
+    context = SimpleNamespace(
+        db_context=Database(engine=db_engine),
+        conversation_id=harness.conversation_id,
+        interface_type=TEST_INTERFACE,
+        user_id=None,
+        user_name=TEST_USER,
+        processing_profile_id=CALLER_PROFILE_ID,
+        subconversation_id=None,
+        processing_service=harness.caller,
+    )
+    setattr(context, changed, "another-caller")
+    result = await run_authenticated_site_task_tool(
+        cast("ToolExecutionContext", context),
+        SITE_ID,
+        OBJECTIVE,
+        resume=delegation_id,
+    )
+    assert "No authenticated site task" in result.get_text()
+    assert len(browser_server.requests) == requests_before
+    assert await _envelope(db_engine, delegation_id) == before

@@ -26,6 +26,7 @@ from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
     BrowserBackendError,
+    BrowserSessionGoneError,
     RemoteBrowserBackend,
     authenticated_binding_for,
     bind_authenticated_session,
@@ -34,6 +35,7 @@ from family_assistant.tools.browser_backend import (
 from family_assistant.tools.services import (
     StartedDelegation,
     await_started_delegation,
+    delegation_belongs_to_caller,
     start_delegation,
 )
 from family_assistant.tools.types import ToolDefinition, ToolResult
@@ -362,8 +364,9 @@ async def _resume(
     run = await exec_context.db_context.delegation_runs.get_by_delegation_id(resume)
     if (
         run is None
-        or run["conversation_id"] != exec_context.conversation_id
-        or run["interface_type"] != exec_context.interface_type
+        or not delegation_belongs_to_caller(
+            run, exec_context, source_service_id=exec_context.processing_profile_id
+        )
         or run["authenticated_site_json"] is None
     ):
         return _error(f"No authenticated site task {resume!r} in this conversation.")
@@ -510,6 +513,8 @@ async def reclaim_lease(
     """
     try:
         state = await binding.backend.session_state()
+    except BrowserSessionGoneError:
+        return _lost_session_result(envelope, "gone")
     except BrowserBackendError as exc:
         logger.warning("Could not read the parked session's state: %s", exc)
         return _error(
@@ -522,6 +527,8 @@ async def reclaim_lease(
             await binding.backend.claim_handback_server_side(
                 str(state.get("session_id") or binding.backend.session_id or "")
             )
+        except BrowserSessionGoneError:
+            return _lost_session_result(envelope, "gone")
         except BrowserBackendError as exc:
             logger.warning("Could not claim the handed-back session: %s", exc)
             return _error(
@@ -540,6 +547,12 @@ async def reclaim_lease(
             ),
             data=cast("dict[str, object]", dict(parked)),
         )
+    return _lost_session_result(envelope, session_state)
+
+
+def _lost_session_result(
+    envelope: AuthenticatedSiteEnvelope, session_state: str
+) -> ToolResult:
     lost: AuthenticatedSiteEnvelope = {
         **envelope,
         "status": "failed",

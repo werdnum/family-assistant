@@ -207,6 +207,22 @@ def _resume_already_in_progress_result(resume_delegation_id: str) -> ToolResult:
     )
 
 
+def delegation_belongs_to_caller(
+    run: DelegationRunDict,
+    exec_context: ToolExecutionContext,
+    *,
+    source_service_id: str | None,
+) -> bool:
+    """Whether the caller owns this delegated history, including its parent task."""
+    return (
+        run["conversation_id"] == exec_context.conversation_id
+        and run["interface_type"] == exec_context.interface_type
+        and run["user_id"] == exec_context.user_id
+        and run["source_profile_id"] == source_service_id
+        and run["source_subconversation_id"] == exec_context.subconversation_id
+    )
+
+
 async def _resolve_resume_subconversation(
     exec_context: ToolExecutionContext,
     *,
@@ -244,12 +260,8 @@ async def _resolve_resume_subconversation(
     prior_run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         resume_delegation_id
     )
-    if prior_run is None or (
-        prior_run["conversation_id"] != exec_context.conversation_id
-        or prior_run["interface_type"] != exec_context.interface_type
-        or prior_run["user_id"] != exec_context.user_id
-        or prior_run["source_profile_id"] != source_service_id
-        or prior_run["source_subconversation_id"] != exec_context.subconversation_id
+    if prior_run is None or not delegation_belongs_to_caller(
+        prior_run, exec_context, source_service_id=source_service_id
     ):
         return None, ToolResult(
             text=(
