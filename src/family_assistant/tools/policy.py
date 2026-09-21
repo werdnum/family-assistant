@@ -281,10 +281,19 @@ class PolicyEngine:
         )
 
     def _conditional_grant(self, descriptor: ToolDescriptor) -> PolicyEvaluation | None:
-        """The highest-priority argument-pinned rule that would grant *descriptor*."""
+        """The highest-priority argument-pinned rule that would grant *descriptor*.
+
+        Only a profile's own policy and the operator's count. The `profile`
+        layer is synthesised rather than authored -- it carries the
+        self-delegation rule every profile gets, pinned to its own id -- and
+        treating that as a grant would advertise `delegate_to_service` in
+        profiles that are meant to hold no tools at all.
+        """
         for resolved_rule in self._policy.rules:
             match = resolved_rule.match
             if not match.argument_equals:
+                continue
+            if resolved_rule.layer == "profile":
                 continue
             if resolved_rule.decision is ToolPolicyDecision.DENY:
                 continue
