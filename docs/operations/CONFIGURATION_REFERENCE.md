@@ -3027,6 +3027,13 @@ deliberate human act. Revoking a jar is meant to be a kill switch, and a standin
 that could undo it would not be one. The separate lever for the credential itself is expiring or
 revoking the Keychute row.
 
+### What the stored secret looks like
+
+A secret stored as a JSON object with `username` and `password` keys is the structured form, and
+`browser_autofill`'s `kind` selects which half is written. A secret stored as a bare string is
+treated as the password and is filled exactly as stored -- no trimming, so a stray newline or space
+is part of the password as far as the site is concerned.
+
 ### Profile validation
 
 Startup recomputes the *effective* surface of whichever profiles a site names and refuses to start
