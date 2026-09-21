@@ -2111,25 +2111,17 @@ class TaskWorker:
         The one place a delegated run's terminal state is known on the side
         that owns the session, so it is the one owner that closes it. It runs
         before the run row is marked terminal, so that whatever reads the
-        terminal row already sees the typed envelope. A failure here must not
-        turn a finished run back into a failed one, so it is logged and left to
-        the lifetime backstop.
+        terminal row already sees the typed envelope. Settlement errors propagate
+        so the task can retry without publishing an inconsistent terminal row.
         """
         # Local import: family_assistant.tools imports this module.
         from family_assistant.tools.authenticated_sites import (  # noqa: PLC0415
             finalize_authenticated_run,
         )
 
-        try:
-            await finalize_authenticated_run(
-                exec_context, delegation_id, failed=failed, result_text=result_text
-            )
-        except Exception:
-            logger.exception(
-                "Failed to settle the authenticated-site session for delegation "
-                "%s; the lifetime backstop will reclaim it.",
-                delegation_id,
-            )
+        await finalize_authenticated_run(
+            exec_context, delegation_id, failed=failed, result_text=result_text
+        )
 
     @staticmethod
     def _terminal_metrics_recorder(

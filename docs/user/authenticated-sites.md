@@ -63,7 +63,8 @@ form is lost — worth knowing if you were mid-way through something.
 
 If you have not handed it back yet, the assistant simply says the task is still waiting; ask again
 once you are done. If you leave it long enough for the browser to be closed or to expire, the task
-ends and has to be started again — it will not quietly open a new browser in its place.
+ends and has to be started again — it will not quietly open a new browser in its place. A task
+waiting for you also ends if the assistant service restarts; ask it to start the task again.
 
 **"The household has to approve releasing this credential"** — the assistant needs to use your
 stored password and the approval has not come through yet. Approve it, then tell the assistant to

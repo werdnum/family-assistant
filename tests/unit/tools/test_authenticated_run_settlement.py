@@ -31,6 +31,7 @@ from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
+    BrowserBackendError,
     RemoteBrowserBackend,
     bind_authenticated_session,
     release_authenticated_session,
@@ -72,9 +73,11 @@ class _FakeSiteWorker:
         return ChatInteractionResult.success(text_reply=WORKER_REPLY)
 
 
-def _backend() -> RemoteBrowserBackend:
+def _backend(*, unavailable: bool = False) -> RemoteBrowserBackend:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
+            if unavailable:
+                return httpx.Response(503, json={"detail": "browser unavailable"})
             return httpx.Response(
                 200, json={"session_id": SESSION_ID, "state": "agent_active"}
             )
@@ -138,10 +141,14 @@ def _context(
     )
 
 
+@pytest.mark.parametrize(
+    "failure", [None, "session_read", "persistence", "missing_binding"]
+)
 async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
     subconversation_id: str,
+    failure: str | None,
 ) -> None:
     """What the terminal row wakes up must already be able to read the outcome."""
     db = Database(engine=db_engine)
@@ -168,9 +175,26 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
     bind_authenticated_session(
         subconversation_id,
         AuthenticatedSessionBinding(
-            site_id="testsite", delegation_id=delegation_id, backend=_backend()
+            site_id="testsite",
+            delegation_id=delegation_id,
+            backend=_backend(unavailable=failure == "session_read"),
         ),
     )
+
+    if failure == "missing_binding":
+        release_authenticated_session(subconversation_id)
+    if failure == "persistence":
+
+        async def fail_write(
+            self: DelegationRunsRepository,
+            delegation_id: str,
+            state: AuthenticatedSiteEnvelope,
+        ) -> None:
+            raise OSError("database unavailable")
+
+        monkeypatch.setattr(
+            DelegationRunsRepository, "set_authenticated_site_state", fail_write
+        )
 
     seen_when_terminal: list[AuthenticatedSiteEnvelope | None] = []
     mark_completed = DelegationRunsRepository.mark_completed
@@ -213,20 +237,34 @@ async def test_the_envelope_is_settled_before_the_run_row_goes_terminal(
         engine=db_engine,
     )
 
-    await worker.handle_delegated_profile_run(
-        exec_context,
-        {
-            "delegation_id": delegation_id,
-            "interface_type": INTERFACE_TYPE,
-            "conversation_id": CONVERSATION_ID,
-            "user_name": "andrew",
-        },
-    )
+    async def execute() -> None:
+        await worker.handle_delegated_profile_run(
+            exec_context,
+            {
+                "delegation_id": delegation_id,
+                "interface_type": INTERFACE_TYPE,
+                "conversation_id": CONVERSATION_ID,
+                "user_name": "andrew",
+            },
+        )
+
+    if failure in {"session_read", "persistence"}:
+        with pytest.raises((BrowserBackendError, OSError)):
+            await execute()
+        run = await db.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "running"
+        assert run["authenticated_site_json"] == running
+        assert not seen_when_terminal
+        return
+    await execute()
 
     assert len(seen_when_terminal) == 1
     settled = seen_when_terminal[0]
     assert settled is not None
-    assert settled["status"] == "completed"
+    assert settled["status"] == (
+        "failed" if failure == "missing_binding" else "completed"
+    )
     # The reply is not on the row yet at that point, so the summary proves the
     # settle read it from the result rather than from the row it precedes.
     assert settled.get("summary") == WORKER_REPLY

@@ -40,7 +40,7 @@ from family_assistant.tools.types import (
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
     from datetime import datetime
 
     from family_assistant.config_models import ToolsConfig
@@ -1046,6 +1046,8 @@ async def _enqueue_delegation(
     resume_delegation_id: str | None,
     subconversation_id: str,
     model_selection: ResolvedModelSelection,
+    prepare_run: Callable[[DatabaseTransaction, str, str], Awaitable[None]]
+    | None = None,
 ) -> _QueuedDelegation | ToolResult:
     """Atomically persist a delegated run and its task, including resume claims.
 
@@ -1093,6 +1095,8 @@ async def _enqueue_delegation(
             # change the models of a run that was already authorized.
             "model_selection_json": model_selection.to_json(),
         })
+        if prepare_run is not None:
+            await prepare_run(txn, delegation_id, subconversation_id)
         await txn.tasks.enqueue(
             task_id=task_id,
             task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
@@ -1503,6 +1507,8 @@ async def start_delegation(
     user_request: str,
     delivery_hint: Literal["auto", "background"] = "auto",
     resume_delegation_id: str | None = None,
+    prepare_run: Callable[[DatabaseTransaction, str, str], Awaitable[None]]
+    | None = None,
 ) -> StartedDelegation | ToolResult:
     """Persist a delegated run without waiting for it.
 
@@ -1562,6 +1568,7 @@ async def start_delegation(
         resume_delegation_id=resume_delegation_id,
         subconversation_id=subconversation_id,
         model_selection=model_selection,
+        prepare_run=prepare_run,
     )
     if isinstance(enqueue_result, ToolResult):
         return enqueue_result

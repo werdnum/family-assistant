@@ -30,7 +30,8 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import DelegationSecurityLevel
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, DatabaseTransaction
+from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     LocalToolsProvider,
@@ -43,6 +44,8 @@ from family_assistant.tools import browser_dom as browser_dom_module
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionSpec,
     RemoteBrowserBackend,
+    authenticated_binding_for,
+    release_authenticated_session,
 )
 from tests.mocks.mock_llm import (
     MatcherArgs,
@@ -52,11 +55,13 @@ from tests.mocks.mock_llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.storage.delegation_runs import AuthenticatedSiteEnvelope
+    from family_assistant.storage.tasks import TaskPriority
     from family_assistant.tools.browser_backend import JsonDict
 
 pytestmark = pytest.mark.asyncio
@@ -568,3 +573,94 @@ async def test_a_rejected_password_needs_a_human_and_closes_the_session(
 
     assert f"{DISPLAY_NAME}: needs_human." in reply
     assert browser_server.sessions_closed == 1
+
+
+@pytest.fixture(autouse=True)
+def _observe_binding_before_worker_notification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = TasksRepository.enqueue
+
+    async def enqueue(
+        repository: TasksRepository,
+        task_id: str,
+        task_type: str,
+        payload: Mapping[str, object] | None = None,
+        scheduled_at: datetime | None = None,
+        max_retries_override: int | None = None,
+        recurrence_rule: str | None = None,
+        original_task_id: str | None = None,
+        only_if_absent: bool = False,
+        *,
+        priority: TaskPriority,
+    ) -> None:
+        # This wrapper forwards the repository's full call surface while observing
+        # the real transaction, including notification work enqueued by the worker.
+        if task_type == "delegated_profile_run":
+            assert payload is not None
+            txn = cast("DatabaseTransaction", repository._db)
+            run = await txn.delegation_runs.get_by_delegation_id(
+                str(payload["delegation_id"])
+            )
+            assert run is not None
+            envelope = run["authenticated_site_json"]
+            assert envelope is not None
+            assert envelope["status"] == "running"
+
+            def verify_binding() -> None:
+                binding = authenticated_binding_for(run["subconversation_id"])
+                assert binding is not None
+                assert binding.delegation_id == run["delegation_id"]
+                assert binding.backend.session_id == envelope.get("session_id")
+
+            txn.on_commit(verify_binding)
+        await original(
+            repository,
+            task_id,
+            task_type,
+            payload,
+            scheduled_at,
+            max_retries_override,
+            recurrence_rule,
+            original_task_id,
+            only_if_absent,
+            priority=priority,
+        )
+
+    monkeypatch.setattr(TasksRepository, "enqueue", enqueue)
+
+
+async def test_resume_after_losing_the_binding_fails_closed(
+    app_config: AppConfig,
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[object, object, object]],
+    browser_server: FakeBrowserServer,
+) -> None:
+    browser_server.autofill_replies = [
+        {"status": "approval_pending", "request_id": "req_1"}
+    ]
+    resume = ResumeHandle()
+    harness = await _harness(
+        app_config=app_config,
+        db_engine=db_engine,
+        task_worker_manager=task_worker_manager,
+        worker_llm=_worker_llm("browser_autofill", {"kind": "password"}),
+        resume=resume,
+        conversation_id="conv-lost-binding",
+    )
+    parked = await harness.ask("Please sign in and check my order.")
+    resume.delegation_id = _resume_handle(parked)
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        resume.delegation_id
+    )
+    assert run is not None
+    release_authenticated_session(run["subconversation_id"])
+
+    reply = await harness.ask("They approved it, carry on.")
+
+    assert f"{DISPLAY_NAME}: failed." in reply
+    assert browser_server.sessions_created == 1
+    assert browser_server.sessions_closed == 1
+    assert len(browser_server.autofill_step_keys) == 1
+    envelope = await _envelope(db_engine, resume.delegation_id)
+    assert envelope["status"] == "failed"

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 from family_assistant.storage.delegation_runs import (
@@ -40,6 +40,7 @@ from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig, AuthenticatedSiteConfig
+    from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.storage.delegation_runs import AuthenticatedSiteTaskStatus
     from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
     from family_assistant.tools.types import ToolExecutionContext
@@ -322,14 +323,10 @@ async def finalize_authenticated_run(
     binding = authenticated_binding_for(run["subconversation_id"])
     status: AuthenticatedSiteTaskStatus
     handoff_url: str | None = None
-    if binding is None:
-        status = "failed" if failed else "completed"
-    elif failed:
+    if binding is None or failed:
         status = "failed"
     else:
-        session_state: object = None
-        with contextlib.suppress(BrowserBackendError, OSError):
-            session_state = await binding.backend.session_state()
+        session_state = await binding.backend.session_state()
         status, handoff_url = _derive_status(binding, session_state)
 
     parked = status in PARKED_AUTHENTICATED_STATUSES
@@ -346,8 +343,9 @@ async def finalize_authenticated_run(
     await exec_context.db_context.delegation_runs.set_authenticated_site_state(
         delegation_id, settled
     )
-    if binding is not None and not parked:
-        await _close_session(binding.backend)
+    if not parked:
+        if binding is not None:
+            await _close_session(binding.backend)
         release_authenticated_session(run["subconversation_id"])
         _active_runs.pop(run["conversation_id"], None)
     logger.info(
@@ -467,22 +465,26 @@ async def _resume_parked(
         )
     binding = authenticated_binding_for(run["subconversation_id"])
     if binding is None:
-        backend = _new_backend(
-            exec_context, config, _spec(site_id, site, jar_id=envelope.get("jar_id"))
-        )
-        backend.adopt_session(str(session_id))
-        binding = AuthenticatedSessionBinding(
-            site_id=site_id,
+        await _discard_parked_session(exec_context, run, envelope, config, site_id)
+        return _envelope_result(
+            site,
+            {
+                **envelope,
+                "status": "failed",
+                "session_id": None,
+                "detail": "The browser binding was lost. Start the task again.",
+            },
             delegation_id=run["delegation_id"],
-            backend=backend,
         )
     verdict = await reclaim_lease(binding, envelope)
     if verdict is not None:
         await _persist_resume_verdict(exec_context, run, verdict)
         return verdict
-    started = await start_delegation(
+    started = await _start_bound_delegation(
         exec_context,
-        target_service_id=site.browser_profile,
+        site=site,
+        binding=binding,
+        envelope={**envelope, "status": "running"},
         user_request=(
             "The step you were waiting on has been completed. Carry on with the "
             "objective you were given."
@@ -491,11 +493,6 @@ async def _resume_parked(
     )
     if isinstance(started, ToolResult):
         return started
-    bind_authenticated_session(started.subconversation_id, binding)
-    _active_runs[exec_context.conversation_id] = started.delegation_id
-    await exec_context.db_context.delegation_runs.set_authenticated_site_state(
-        started.delegation_id, {**envelope, "status": "running"}
-    )
     return await _settled_result(exec_context, site, started)
 
 
@@ -580,7 +577,8 @@ async def run_authenticated_site_task_tool(
             "enabled in this deployment."
         )
     if resume is not None:
-        return await _resume(exec_context, site_id, resume.strip(), config)
+        async with _conversation_lock(exec_context.conversation_id):
+            return await _resume(exec_context, site_id, resume.strip(), config)
 
     site = config.authenticated_sites.get(site_id)
     if site is None:
@@ -647,27 +645,13 @@ async def _start_run(
             delegation_id=None,
         )
 
-    started = await start_delegation(
+    started = await _start_bound_delegation(
         exec_context,
-        target_service_id=site.browser_profile,
-        user_request=_worker_request(site_id, site, objective),
-    )
-    if isinstance(started, ToolResult):
-        await _close_session(backend)
-        return started
-
-    bind_authenticated_session(
-        started.subconversation_id,
-        AuthenticatedSessionBinding(
-            site_id=site_id,
-            delegation_id=started.delegation_id,
-            backend=backend,
+        site=site,
+        binding=AuthenticatedSessionBinding(
+            site_id=site_id, delegation_id="", backend=backend
         ),
-    )
-    _active_runs[exec_context.conversation_id] = started.delegation_id
-    await exec_context.db_context.delegation_runs.set_authenticated_site_state(
-        started.delegation_id,
-        {
+        envelope={
             "site_id": site_id,
             "status": "running",
             "session_id": backend.session_id,
@@ -675,8 +659,46 @@ async def _start_run(
             "acting_user": exec_context.user_name,
             "caller_profile_id": exec_context.processing_profile_id,
         },
+        user_request=_worker_request(site_id, site, objective),
     )
+    if isinstance(started, ToolResult):
+        await _close_session(backend)
+        return started
+
     return await _settled_result(exec_context, site, started)
+
+
+async def _start_bound_delegation(
+    exec_context: ToolExecutionContext,
+    *,
+    site: AuthenticatedSiteConfig,
+    binding: AuthenticatedSessionBinding,
+    envelope: AuthenticatedSiteEnvelope,
+    user_request: str,
+    resume_delegation_id: str | None = None,
+) -> StartedDelegation | ToolResult:
+    async def prepare_run(
+        txn: DatabaseTransaction, delegation_id: str, subconversation_id: str
+    ) -> None:
+        await txn.delegation_runs.set_authenticated_site_state(delegation_id, envelope)
+
+        def publish_binding() -> None:
+            bind_authenticated_session(
+                subconversation_id, replace(binding, delegation_id=delegation_id)
+            )
+            _active_runs[exec_context.conversation_id] = delegation_id
+
+        # Registered before the task's worker notification, and discarded if
+        # the transaction rolls back. The envelope commits with the task.
+        txn.on_commit(publish_binding)
+
+    return await start_delegation(
+        exec_context,
+        target_service_id=site.browser_profile,
+        user_request=user_request,
+        resume_delegation_id=resume_delegation_id,
+        prepare_run=prepare_run,
+    )
 
 
 async def _settled_result(
