@@ -429,6 +429,9 @@ authenticated_sites:
     credential:                    # optional: enables Keychute autofill (autofill section)
       secret_name: "hellofresh-login"
       alias: "hellofresh"          # model-visible name; defaults to the site id
+      login_origins: []            # where the password may be filled; defaults to the entry's
+                                   # first authenticated origin, must be a subset of the
+                                   # confinement set
     authorized_users:
       - "andrew"
     caller_profiles:
@@ -835,12 +838,16 @@ data already; nothing forces the sequence into one atomic deterministic operatio
   denial, alias not bound, or a bad-password outcome already recorded in this session.
 
 Keychute caps releasing-tier grants at one read, so the unit of release is the **fill step**: each
-call creates its own access request (page origins = the configured authenticated origins; context
-passed through from FA: site, objective snippet, acting user, step) and reads that request's
-single-use grant. The per-step idempotency key is reused only across `approval_pending` retries of
-the same step. Under a standing grant a two-step login is two auto-approved or notify-only releases
-seconds apart; the first release per site gets Keychute's approval page. Every release is audited
-with the `secret_version_id` decrypted.
+call creates its own access request (page origins = the credential's `login_origins`; context passed
+through from FA: site, objective snippet, acting user, step) and reads that request's single-use
+grant. `login_origins` is deliberately narrower than the session's confinement set: origins that are
+equivalent for account-operation confinement — an auxiliary origin, a saved SSO allowlist entry —
+are not equivalent for password disclosure, so an origin the session may *navigate* is not thereby
+an origin the fill may *target*. It defaults to the entry's first authenticated origin and must be a
+subset of the confinement set. The per-step idempotency key is reused only across `approval_pending`
+retries of the same step. Under a standing grant a two-step login is two auto-approved or
+notify-only releases seconds apart; the first release per site gets Keychute's approval page. Every
+release is audited with the `secret_version_id` decrypted.
 
 ### Load-bearing boundaries
 
@@ -849,7 +856,9 @@ Enforced in browser-server, the component that owns the page:
 1. **Check the real destination.** The model saying `origin=hellofresh.com` is not evidence: at fill
    time the actual target document's origin is verified against the constraints on the **granted**
    capability (Keychute exposes grant metadata because an approval may narrow the request),
-   including after an approval wait. Main-frame-only fills in V1 — no iframes.
+   including after an approval wait — and that granted set derives from the credential's
+   `login_origins`, not the session's wider confinement set. Main-frame-only fills in V1 — no
+   iframes.
 2. **Bind the fill to the checked page and element.** Resolve, validate, and fill as one serialized
    operation; a navigation or document replacement in between — the site can navigate itself while
    an approval is pending — fails the fill rather than filling whatever is there now.
@@ -876,15 +885,27 @@ non-empty `el.value` into model-facing snapshots, screenshot/raw-extract/`exec` 
 `exec` is default-denied only when `session.jar_id` is set. A credential-enabled session therefore
 enforces, from creation — so no page listener can be installed before the fill:
 
-- form control values redacted from snapshots;
-- screenshots mask form controls (including after a "show password" toggle) or are denied;
+- **credential-bearing controls masked, tracked by element**: every `input[type=password]` is
+  value-redacted in snapshots and masked in screenshots from session creation, and the fill path
+  additionally tracks the exact elements it filled and keeps masking *them* for as long as they
+  exist — surviving a "show password" toggle that flips the control's type to text. Other form
+  values stay visible: an authenticated task must be able to read ordinary selects, quantities, and
+  drafts, and masking every control would break the capability's normal work while buying nothing
+  beyond the accepted residual below — a page that relocates the secret into arbitrary DOM could
+  just as well render it as plain text, which no form-control masking reaches;
+- **no clipboard read-back**: masking observations does not stop the visual profile's raw keyboard
+  from focusing a revealed password control, copying it, and pasting it into a contenteditable or
+  search box whose rendered text the model *can* see. Credential-enabled sessions therefore block
+  clipboard transfer out of protected controls — tracked by element, surviving type flips — and V1
+  may simply deny clipboard access in these sessions wholesale, since household tasks rarely need
+  it;
 - no `exec`, raw-DOM extract, or equivalent escape hatches, jar or no jar;
 - the secret in no tool arguments, results, events, exception text, traces, or logs — the jar
   store's cookie-value discipline extended to the fill path.
 
 Modest, testable claims. The stated residual: once filled, the approved origin's own JavaScript can
-read the field — the same exposure as any password manager; the controls are which sites the
-operator wires up and the destination checks above.
+read the field and place its value anywhere — the same exposure as any password manager; the
+controls are which sites the operator wires up and the destination checks above, not masking.
 
 ### Jars, refresh, and what is deferred
 
