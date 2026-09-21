@@ -130,6 +130,14 @@ Which writes cross the gate:
   creation in a tainted turn would put the reviewer on the common "save this for me" path for the
   sake of a title string, which is the friction the enforcement rollout cannot afford.
 
+**The judge sees what the prompt will see, not what the call carried.** A call's arguments are not
+the ambient material: an attachment id stands for a description and MIME type that may have come
+from an email, and an append stands for the merged body. The gate is therefore evaluated inside the
+tool, after the existing row and the attachment metadata are loaded, against the **resolved
+post-merge ambient material** — the same rendering the repository computes for the no-promotion
+rule, and the same text the context provider will later put in the prompt. The reviewer is handed
+that rendering, so an attacker-controlled filename cannot be admitted without being read.
+
 ### One mechanism for notes and automations
 
 Automations already have exactly this shape. An automation definition is stored intent written in
@@ -292,13 +300,14 @@ enforcement would have removed.
    and a fresh-database memory bootstrap; and by the conformance check rejecting a raw write.
 3. **The sink and its cells.** `ambient_prompt_write` in the matrix, defaults and config surface,
    resolved for the gated write shapes (the update-of-a-prompt-included-note shape needs the
-   existing row, so it is authorised inside the tool rather than at dispatch, through the same
-   `authorize_taint_sink` path the profile-level sink check uses). Verified by policy tests for each
-   tier and mode: an admitting verdict makes the note eligible, a denying verdict leaves it
-   ineligible, and the `confirm` fallback asks in enforce mode and yields an ineligible note in
-   observe mode. In observe mode the write is stored ineligible-pending through the shared admission
-   record and the verdict's resolution flips it; verified by a test that a note is absent from
-   ambient reads until an admitting shadow verdict lands, and stays absent after a denying one.
+   existing row, so every gated shape is authorised inside the tool rather than at dispatch, through
+   the same `authorize_taint_sink` path the profile-level sink check uses, with the resolved
+   post-merge ambient material as the reviewed payload). Verified by policy tests for each tier and
+   mode: an admitting verdict makes the note eligible, a denying verdict leaves it ineligible, and
+   the `confirm` fallback asks in enforce mode and yields an ineligible note in observe mode. In
+   observe mode the write is stored ineligible-pending through the shared admission record and the
+   verdict's resolution flips it; verified by a test that a note is absent from ambient reads until
+   an admitting shadow verdict lands, and stays absent after a denying one.
 4. **Context assembly and explicit reads.** The notes provider stops restoring provenance and
    reports only a count of ineligible notes; `get_note` restores provenance only for notes without
    an admission. Verified by a functional test that a conversation with a poisoned prompt note
