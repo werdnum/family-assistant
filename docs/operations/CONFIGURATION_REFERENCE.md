@@ -3038,14 +3038,15 @@ is part of the password as far as the site is concerned.
 
 Startup recomputes the *effective* surface of whichever profiles a site names and refuses to start
 if it reaches past the authenticated boundary: `browser_exec` or `browser_extract` granted, a
-globally granted tool not withheld via `excluded_global_tools`, ambient household context providers
-not excluded, delegation not pinned to the site's own visual profile, or any tool outside the
-browser-server-mediated set. Rules it cannot check statically — a tag matcher, an MCP-server
-matcher, a glob in a profile policy, or a global grant without tool names — are rejected rather than
-assumed safe. Global name globs are expanded against the tool registry. Pointing a site at the
-shipped `browser_profile` is therefore a configuration error, not a silent widening. The shipped
-`authenticated_browser_profile` and `authenticated_browser_visual_profile` satisfy it; changing them
-is possible but the check has to keep passing.
+globally granted tool not withheld via `excluded_global_tools`, an operator policy that widens the
+admissible tool set, ambient household context providers not excluded, delegation not pinned to the
+site's own visual profile, or any tool outside the browser-server-mediated set. Rules it cannot
+check statically — a tag matcher, an MCP-server matcher, a glob in a profile policy, or a global
+grant without tool names — are rejected rather than assumed safe. Global name globs are expanded
+against the tool registry. Pointing a site at the shipped `browser_profile` is therefore a
+configuration error, not a silent widening. The shipped `authenticated_browser_profile` and
+`authenticated_browser_visual_profile` satisfy it; changing them is possible but the check has to
+keep passing.
 
 ### Granting the tool
 

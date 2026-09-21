@@ -388,3 +388,21 @@ def test_argument_only_global_grant_is_rejected(
     })
     with pytest.raises(ValidationError, match="without explicit names"):
         _validate(data, {"hellofresh": VALID_SITE})
+
+
+@pytest.mark.parametrize("tool", ["get_note", "browser_exec", "delegate_to_service"])
+def test_operator_grants_cannot_widen_authenticated_profiles(
+    shipped_config_data: dict[str, Any], tool: str
+) -> None:
+    data = _with_profile_change(
+        shipped_config_data,
+        "authenticated_browser_profile",
+        {
+            "operator_tools_policy": {
+                "default_decision": "deny",
+                "rules": [{"match": {"names": [tool]}, "decision": "allow"}],
+            }
+        },
+    )
+    with pytest.raises(ValidationError, match="operator_tools_policy"):
+        _validate(data, {"hellofresh": VALID_SITE})

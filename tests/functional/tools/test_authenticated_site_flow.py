@@ -644,7 +644,7 @@ def _observe_binding_before_worker_notification(
 
 
 @pytest.mark.parametrize(
-    "failure", ["binding", "gone_404", "gone_410", "transient_503"]
+    "failure", ["binding", "gone_404", "gone_410", "transient_503", "removed"]
 )
 async def test_resume_after_losing_the_binding_fails_closed(
     failure: str,
@@ -653,6 +653,8 @@ async def test_resume_after_losing_the_binding_fails_closed(
     task_worker_manager: Callable[..., tuple[object, object, object]],
     browser_server: FakeBrowserServer,
 ) -> None:
+    app_config = app_config.model_copy(deep=True)
+    configured_sites = dict(app_config.authenticated_sites)
     browser_server.autofill_replies = [
         {"status": "approval_pending", "request_id": "req_1"}
     ]
@@ -673,6 +675,8 @@ async def test_resume_after_losing_the_binding_fails_closed(
     assert run is not None
     if failure == "binding":
         release_authenticated_session(run["subconversation_id"])
+    elif failure == "removed":
+        app_config.authenticated_sites.clear()
     else:
         browser_server.session_read_status = int(failure.rsplit("_", 1)[1])
 
@@ -683,13 +687,20 @@ async def test_resume_after_losing_the_binding_fails_closed(
         assert envelope["status"] == "approval_pending"
         assert authenticated_binding_for(run["subconversation_id"]) is not None
         return
-    assert "failed" in reply or "session for this task is gone" in reply
+    assert (
+        "failed" in reply
+        or "session for this task is gone" in reply
+        or "parked task has been closed" in reply
+    )
     assert browser_server.sessions_created == 1
-    assert browser_server.sessions_closed == (1 if failure == "binding" else 0)
+    assert browser_server.sessions_closed == (
+        1 if failure in {"binding", "removed"} else 0
+    )
     assert len(browser_server.autofill_step_keys) == 1
     envelope = await _envelope(db_engine, resume.delegation_id)
     assert envelope["status"] == "failed"
     assert authenticated_binding_for(run["subconversation_id"]) is None
+    app_config.authenticated_sites.update(configured_sites)
     browser_server.session_read_status = 200
     resume.delegation_id = None
     await harness.ask("Start a fresh order check.")
@@ -742,3 +753,45 @@ async def test_other_callers_cannot_touch_a_parked_run(
     assert "No authenticated site task" in result.get_text()
     assert len(browser_server.requests) == requests_before
     assert await _envelope(db_engine, delegation_id) == before
+
+
+async def test_caller_prompt_and_discovery_list_only_authorized_sites(
+    app_config: AppConfig, db_engine: AsyncEngine
+) -> None:
+    config = app_config.model_copy(deep=True)
+    config.authenticated_sites["private-owner-service"] = config.authenticated_sites[
+        SITE_ID
+    ].model_copy(
+        update={"authorized_users": ["another-user"], "display_name": "Private account"}
+    )
+    seen: list[str] = []
+
+    def capture(kwargs: MatcherArgs) -> LLMOutput:
+        seen.append(str(kwargs["messages"]))
+        return LLMOutput(content="Ready")
+
+    caller = await _service(
+        profile_id=CALLER_PROFILE_ID,
+        app_config=config,
+        llm=RuleBasedMockLLMClient(rules=[(lambda _: True, capture)]),
+    )
+    await Harness(caller, db_engine, "conv-site-catalog").ask("Which site can you use?")
+    assert SITE_ID in seen[0]
+    assert DISPLAY_NAME in seen[0]
+    assert "private-owner-service" not in seen[0]
+    assert "Private account" not in seen[0]
+    assert not caller.authenticated_site_catalog_addition(
+        user_name="stranger", user_id=None
+    )
+    context = cast(
+        "ToolExecutionContext",
+        SimpleNamespace(
+            processing_service=caller,
+            processing_profile_id=CALLER_PROFILE_ID,
+            user_name=TEST_USER,
+            user_id=None,
+        ),
+    )
+    unknown = await run_authenticated_site_task_tool(context, "unknown-site", OBJECTIVE)
+    assert SITE_ID in unknown.get_text()
+    assert "private-owner-service" not in unknown.get_text()

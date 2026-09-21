@@ -107,8 +107,11 @@ def _authorize(
             f"This assistant profile is not configured to use the "
             f"{site.display_name} login."
         )
-    identities = {exec_context.user_name, exec_context.user_id} - {None}
-    if identities.isdisjoint(site.authorized_users):
+    if not site.authorizes_caller(
+        profile_id=profile_id,
+        user_name=exec_context.user_name,
+        user_id=exec_context.user_id,
+    ):
         logger.warning(
             "User %r is not authorized for authenticated site %r",
             exec_context.user_name,
@@ -135,7 +138,7 @@ def _spec(
 def _new_backend(
     exec_context: ToolExecutionContext,
     config: AppConfig,
-    spec: AuthenticatedSessionSpec,
+    spec: AuthenticatedSessionSpec | None,
 ) -> RemoteBrowserBackend:
     timezone = getattr(exec_context, "timezone", None)
     return RemoteBrowserBackend(
@@ -378,11 +381,15 @@ async def _resume(
         )
     site = config.authenticated_sites.get(site_id)
     if site is None:
-        return _error(f"Site {site_id!r} is no longer configured.")
+        if envelope["status"] in PARKED_AUTHENTICATED_STATUSES:
+            await _discard_parked_session(exec_context, run, envelope, config)
+        return _error(
+            f"Site {site_id!r} is no longer configured. Its parked task has been closed."
+        )
     # Re-resolved and re-enforced: a handle is not a durable grant.
     denied = _authorize(exec_context, site_id, site)
     if denied is not None:
-        await _discard_parked_session(exec_context, run, envelope, config, site_id)
+        await _discard_parked_session(exec_context, run, envelope, config)
         return denied
 
     if envelope["status"] not in PARKED_AUTHENTICATED_STATUSES:
@@ -395,20 +402,15 @@ async def _discard_parked_session(
     run: DelegationRunDict,
     envelope: AuthenticatedSiteEnvelope,
     config: AppConfig,
-    site_id: str,
 ) -> None:
-    """Close a parked session whose authorization has been withdrawn."""
-    session_id = envelope.get("session_id")
-    if not session_id:
-        return
-    site = config.authenticated_sites.get(site_id)
-    if site is None:
-        return
-    backend = _new_backend(
-        exec_context, config, _spec(site_id, site, jar_id=envelope.get("jar_id"))
-    )
-    backend.adopt_session(str(session_id))
-    await _close_session(backend)
+    """Close a recorded session without requiring its site to remain configured."""
+    binding = authenticated_binding_for(run["subconversation_id"])
+    if binding is not None:
+        await _close_session(binding.backend)
+    elif session_id := envelope.get("session_id"):
+        backend = _new_backend(exec_context, config, None)
+        backend.adopt_session(session_id)
+        await _close_session(backend)
     release_authenticated_session(run["subconversation_id"])
     _active_runs.pop(run["conversation_id"], None)
     await exec_context.db_context.delegation_runs.set_authenticated_site_state(
@@ -463,7 +465,7 @@ async def _resume_parked(
         )
     binding = authenticated_binding_for(run["subconversation_id"])
     if binding is None:
-        await _discard_parked_session(exec_context, run, envelope, config, site_id)
+        await _discard_parked_session(exec_context, run, envelope, config)
         return _envelope_result(
             site,
             {
@@ -577,7 +579,7 @@ async def run_authenticated_site_task_tool(
 ) -> ToolResult:
     """Run one task on a configured authenticated website."""
     config = _app_config(exec_context)
-    if config is None or not config.authenticated_sites:
+    if config is None:
         return _error("No authenticated websites are configured.")
     if not config.browser_handoff_config.enabled:
         return _error(
@@ -588,9 +590,24 @@ async def run_authenticated_site_task_tool(
         async with _conversation_lock(exec_context.conversation_id):
             return await _resume(exec_context, site_id, resume.strip(), config)
 
+    if not config.authenticated_sites:
+        return _error("No authenticated websites are configured.")
     site = config.authenticated_sites.get(site_id)
     if site is None:
-        available = ", ".join(sorted(config.authenticated_sites)) or "(none)"
+        available = (
+            ", ".join(
+                sorted(
+                    configured_id
+                    for configured_id, configured_site in config.authenticated_sites.items()
+                    if configured_site.authorizes_caller(
+                        profile_id=exec_context.processing_profile_id,
+                        user_name=exec_context.user_name,
+                        user_id=exec_context.user_id,
+                    )
+                )
+            )
+            or "(none)"
+        )
         return _error(f"Unknown site {site_id!r}. Configured sites: {available}.")
     denied = _authorize(exec_context, site_id, site)
     if denied is not None:

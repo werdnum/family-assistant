@@ -1419,6 +1419,13 @@ class AuthenticatedSiteConfig(BaseModel):
         default_factory=AuthenticatedSiteMitigations
     )
 
+    def authorizes_caller(
+        self, *, profile_id: str | None, user_name: str | None, user_id: str | None
+    ) -> bool:
+        return profile_id in self.caller_profiles and not (
+            {user_name, user_id} - {None}
+        ).isdisjoint(self.authorized_users)
+
     @property
     def effective_origins(self) -> frozenset[str]:
         """The complete origin set browser-server confines the session to."""
@@ -2471,6 +2478,7 @@ class AppConfig(BaseSettings):
                     raise ValueError(msg)
                 violations = surface_violations(
                     tools_policy=profile.tools_policy,
+                    operator_tools_policy=profile.operator_tools_policy,
                     excluded_global_tools=frozenset(profile.excluded_global_tools),
                     excluded_context_providers=frozenset(
                         profile.processing_config.excluded_context_providers

@@ -163,6 +163,7 @@ def _delegation_rule_problems(
 def surface_violations(
     *,
     tools_policy: ToolPolicyConfig | None,
+    operator_tools_policy: ToolPolicyConfig | None = None,
     excluded_global_tools: frozenset[str],
     excluded_context_providers: frozenset[str],
     include_aggregated_context: bool,
@@ -194,6 +195,18 @@ def surface_violations(
             where="tools_policy",
         )
     )
+
+    if operator_tools_policy is not None:
+        if operator_tools_policy.default_decision is not ToolPolicyDecision.DENY:
+            problems.append("operator_tools_policy must set default_decision: deny")
+        problems.extend(
+            _granting_rule_problems(
+                operator_tools_policy,
+                allowed=admissible,
+                pinned_delegation_target=pinned_delegation_target,
+                where="operator_tools_policy",
+            )
+        )
 
     missing_exclusions = sorted(globally_granted_tools - excluded_global_tools)
     if missing_exclusions:
