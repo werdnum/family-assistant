@@ -614,6 +614,23 @@ class _QueuedDelegation:
     delegation_id: str
     target_service_id: str
     wait_seconds: float
+    subconversation_id: str
+
+
+@dataclass(frozen=True)
+class StartedDelegation:
+    """A delegated run that exists durably but has not been awaited yet.
+
+    The seam trusted orchestration needs: a caller that must do something with
+    the run *between* persisting it and waiting on it -- the authenticated-site
+    tool binds its browser session to the run's subconversation there -- cannot
+    use `delegate_to_service_tool`, which does both in one call.
+    """
+
+    delegation_id: str
+    target_service_id: str
+    subconversation_id: str
+    wait_seconds: float
 
 
 def _resolve_delegation_target(
@@ -1065,6 +1082,7 @@ async def _enqueue_delegation(
         delegation_id=delegation_id,
         target_service_id=target_service_id,
         wait_seconds=wait_seconds,
+        subconversation_id=subconversation_id,
     )
 
 
@@ -1419,6 +1437,98 @@ async def delegate_to_service_tool(
         return enqueue_result
 
     return await _await_or_handoff_delegation(exec_context, enqueue_result)
+
+
+async def start_delegation(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    user_request: str,
+    delivery_hint: Literal["auto", "background"] = "auto",
+    resume_delegation_id: str | None = None,
+) -> StartedDelegation | ToolResult:
+    """Persist a delegated run without waiting for it.
+
+    For trusted orchestration only: there is no confirmation gate and no
+    attachment handling here, because the one caller composes the request text
+    itself from configuration. Returns a :class:`ToolResult` describing the
+    refusal when the run cannot be created.
+    """
+    target_service, source_service_id, target_error = _resolve_delegation_target(
+        exec_context,
+        target_service_id,
+    )
+    if target_error is not None:
+        return target_error
+    target_service = cast("DelegatableService", target_service)
+    source_service_id = cast("str", source_service_id)
+
+    model_selection = resolve_model_selection(
+        target_service.service_config.tier_eligibility,
+        None,
+        profile_id=target_service.service_config.id,
+    )
+
+    (
+        resume_delegation_id,
+        resumed_subconversation_id,
+        resume_error,
+    ) = await _resolve_requested_subconversation(
+        exec_context,
+        resume_delegation_id=resume_delegation_id,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+    )
+    if resume_error is not None:
+        return resume_error
+
+    content_parts: list[ContentPartDict] = [text_content(user_request)]
+    subconversation_id = resumed_subconversation_id or str(uuid.uuid4())
+    model_selection = await target_service.resolve_model_selection_for_run(
+        model_selection,
+        db_context=exec_context.db_context,
+        interface_type=exec_context.interface_type,
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=subconversation_id,
+        trigger_content_parts=content_parts,
+        acting_user_id=exec_context.user_id,
+    )
+
+    enqueue_result = await _enqueue_delegation(
+        exec_context,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+        user_request=user_request,
+        content_parts=content_parts,
+        handoff_after_seconds=None,
+        delivery_hint=delivery_hint,
+        resume_delegation_id=resume_delegation_id,
+        subconversation_id=subconversation_id,
+        model_selection=model_selection,
+    )
+    if isinstance(enqueue_result, ToolResult):
+        return enqueue_result
+    return StartedDelegation(
+        delegation_id=enqueue_result.delegation_id,
+        target_service_id=enqueue_result.target_service_id,
+        subconversation_id=enqueue_result.subconversation_id,
+        wait_seconds=enqueue_result.wait_seconds,
+    )
+
+
+async def await_started_delegation(
+    exec_context: ToolExecutionContext, started: StartedDelegation
+) -> ToolResult:
+    """Wait briefly for a started run, or hand its delivery to the worker."""
+    return await _await_or_handoff_delegation(
+        exec_context,
+        _QueuedDelegation(
+            delegation_id=started.delegation_id,
+            target_service_id=started.target_service_id,
+            wait_seconds=started.wait_seconds,
+            subconversation_id=started.subconversation_id,
+        ),
+    )
 
 
 async def get_delegation_status_tool(

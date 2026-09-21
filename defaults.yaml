@@ -889,6 +889,11 @@ default_profile_settings:
             - "drive_search"
             - "drive_get_file"
             - "drive_write_file"
+            # Acting on a saved login is a standing operator grant, but a
+            # newly configured site starts behind the confirmation rule
+            # below until the operator relaxes it: one prompt per task,
+            # not per action, so it does not train rubber-stamping.
+            - "run_authenticated_site_task"
         decision: "allow"
         priority: 10
       - match:
@@ -942,6 +947,12 @@ default_profile_settings:
             - "modify_calendar_event"
         decision: "confirm"
         priority: 20
+      - match:
+          names:
+            - "run_authenticated_site_task"
+        decision: "confirm"
+        priority: 20
+        description: "Acting on a household account through a saved login is confirmed once per task."
   # Default list of slash commands that trigger this profile.
   # Can be overridden by individual service_profiles.
   slash_commands: []
@@ -2104,6 +2115,11 @@ service_profiles:
               - "drive_search"
               - "drive_get_file"
               - "drive_write_file"
+              # Acting on a saved login is a standing operator grant, but a
+              # newly configured site starts behind the confirmation rule
+              # below until the operator relaxes it: one prompt per task,
+              # not per action, so it does not train rubber-stamping.
+              - "run_authenticated_site_task"
           decision: "allow"
           priority: 10
         - match:
@@ -2157,6 +2173,12 @@ service_profiles:
               - "modify_calendar_event"
           decision: "confirm"
           priority: 20
+        - match:
+            names:
+              - "run_authenticated_site_task"
+          decision: "confirm"
+          priority: 20
+          description: "Acting on a household account through a saved login is confirmed once per task."
     slash_commands:
       - "/complex"
   - id: "engineer"

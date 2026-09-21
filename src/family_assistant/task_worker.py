@@ -2082,9 +2082,38 @@ class TaskWorker:
                 delegation_id=delegation_id,
                 error=error,
             )
+            await self._settle_authenticated_run(
+                exec_context, delegation_id, failed=True
+            )
             return
 
         await self._finalize_delegation_run(exec_context, delegation_id, result)
+        await self._settle_authenticated_run(exec_context, delegation_id, failed=False)
+
+    @staticmethod
+    async def _settle_authenticated_run(
+        exec_context: ToolExecutionContext, delegation_id: str, *, failed: bool
+    ) -> None:
+        """Close or park an authenticated-site run's browser session.
+
+        The one place a delegated run's terminal state is known on the side
+        that owns the session, so it is the one owner that closes it. A failure
+        here must not turn a finished run back into a failed one, so it is
+        logged and left to the lifetime backstop.
+        """
+        # Local import: family_assistant.tools imports this module.
+        from family_assistant.tools.authenticated_sites import (  # noqa: PLC0415
+            finalize_authenticated_run,
+        )
+
+        try:
+            await finalize_authenticated_run(exec_context, delegation_id, failed=failed)
+        except Exception:
+            logger.exception(
+                "Failed to settle the authenticated-site session for delegation "
+                "%s; the lifetime backstop will reclaim it.",
+                delegation_id,
+            )
 
     @staticmethod
     def _terminal_metrics_recorder(

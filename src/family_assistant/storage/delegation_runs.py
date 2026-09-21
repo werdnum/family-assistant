@@ -115,6 +115,9 @@ class AuthenticatedSiteEnvelope(TypedDict):
     # resume rebinds the same session instead of creating a second one, and
     # cleared when the session is closed.
     session_id: NotRequired[str | None]
+    # The jar the session was created from, so a resume rebuilds the same pin
+    # rather than re-routing against a jar whose status has since changed.
+    jar_id: NotRequired[str | None]
     summary: NotRequired[str]
     detail: NotRequired[str]
     handoff_url: NotRequired[str | None]
