@@ -1162,7 +1162,7 @@ wheels = [
 [[package]]
 name = "browser-handoff-service"
 version = "0.1.0"
-source = { git = "https://github.com/werdnum/browser-server.git?rev=ac859aa98732d9628a26b79523163da2ab6a75a8#ac859aa98732d9628a26b79523163da2ab6a75a8" }
+source = { git = "https://github.com/werdnum/browser-server.git?rev=00fecf772206c9114d13b5b06653b5bb001725ea#00fecf772206c9114d13b5b06653b5bb001725ea" }
 dependencies = [
     { name = "cryptography", version = "44.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
     { name = "cryptography", version = "45.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
@@ -1887,7 +1887,7 @@ requires-dist = [
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "basedpyright", marker = "extra == 'dev'" },
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
-    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git?rev=ac859aa98732d9628a26b79523163da2ab6a75a8" },
+    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git?rev=00fecf772206c9114d13b5b06653b5bb001725ea" },
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
     { name = "cryptography", specifier = ">=44.0.1" },
