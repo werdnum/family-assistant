@@ -180,6 +180,7 @@ from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
 from family_assistant.web.auth import AUTH_ENABLED
+from family_assistant.web.mcp_adapter.config import require_authentication_for_adapter
 from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
 from .telegram.service import TelegramService
@@ -741,6 +742,7 @@ class Assistant:
         logger.info("Created FastAPI app instance")
 
         # Store config in FastAPI app state for access by routes
+        require_authentication_for_adapter(self.config)
         self.fastapi_app.state.config = self.config
         user_identity_resolver = UserIdentityResolver(self.config)
         self.fastapi_app.state.user_identity_resolver = user_identity_resolver

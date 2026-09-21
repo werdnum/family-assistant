@@ -15,6 +15,8 @@ interface provides easy access to chat, notes, documents, and more*
 
 - **Multiple Interfaces**: Interact with the assistant via Telegram, a responsive web UI, or by
   forwarding emails.
+- **MCP Server**: Connect Claude, Claude Code, or any MCP client and let it ask the assistant
+  questions on your behalf, with OAuth sign-in for claude.ai custom connectors.
 - **LLM-Powered**: Leverages the power of Large Language Models for natural language understanding
   and generation. You can configure different models for different tasks.
 - **Task Automation**: Automate repetitive tasks with a powerful scheduling and callback system.
@@ -220,6 +222,8 @@ The project uses Alembic for database migrations.
 - **[Quick Start Guide](docs/user/QUICK_START.md)** - Get started in 5 minutes
 - **[User Guide](docs/user/USER_GUIDE.md)** - Index of the per-topic user guides
 - **[Interfaces](docs/user/interfaces.md)** - Telegram, web, and iOS
+- **[Connecting Claude](docs/user/connecting-claude.md)** - Use the assistant from Claude, Claude
+  Code, or the Claude API
 - **[Slash Commands](docs/user/slash-commands.md)** - Specialist modes and when to use them
 - **[Scheduling](docs/user/scheduling.md)** - Reminders and scheduled tasks
 - **[Scripting](docs/user/scripting.md)** - Automation with scripts

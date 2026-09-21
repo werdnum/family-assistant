@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -36,6 +36,8 @@ from family_assistant.web.cancel_on_disconnect import (
     CancelOnClientDisconnectMiddleware,
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.mcp_adapter import MCPAdapter, install_mcp_adapter
+from family_assistant.web.mcp_adapter.tools import MCP_INTERFACE_TYPE
 from family_assistant.web.routers.a2a_api import a2a_wellknown_router
 from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_documentation import (
@@ -192,6 +194,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not hasattr(app.state, "chat_interfaces"):
             app.state.chat_interfaces = {}
         app.state.chat_interfaces["web"] = app.state.web_chat_interface
+        # The MCP adapter's conversations live in their own history partition.
+        # Registering an interface for it gives deferred work (approved
+        # confirmations, reminders) a delivery path into that partition.
+        app.state.chat_interfaces[MCP_INTERFACE_TYPE] = WebChatInterface(
+            app.state.database_engine,
+            notifier=notifier,
+            stream_hub=getattr(app.state, "conversation_stream_hub", None),
+            identity_resolver=identity_resolver,
+            interface_type=MCP_INTERFACE_TYPE,
+        )
         logger.info("WebChatInterface initialized with database engine")
     else:
         # For development or when database is not yet initialized
@@ -202,7 +214,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.web_chat_interface = None
 
-    yield
+    # The MCP endpoint's session manager only serves requests while its run()
+    # context is open; Starlette does not run a mounted handler's lifespan.
+    mcp_adapter: MCPAdapter | None = getattr(app.state, "mcp_adapter", None)
+    async with AsyncExitStack() as stack:
+        if mcp_adapter is not None:
+            await stack.enter_async_context(mcp_adapter.run())
+        yield
 
     # Shutdown
     logger.info("Application shutting down...")
@@ -339,6 +357,9 @@ def create_app() -> FastAPI:
         prefix="/api/me/tokens",  # Suggesting a "me" scope for user-specific tokens
         tags=["API Token Management"],
     )
+
+    # Family Assistant as an MCP server (/api/mcp plus the OAuth endpoints).
+    install_mcp_adapter(new_app)
 
     return new_app
 

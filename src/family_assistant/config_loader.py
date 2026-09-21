@@ -144,6 +144,8 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("MQTT_BROKER_PASSWORD", "mqtt_config.password"),
     # Universal Commerce Protocol (UCP)
     EnvVarMapping("UCP_ENABLED", "ucp_config.enabled", bool),
+    EnvVarMapping("MCP_ADAPTER_ENABLED", "mcp_adapter.enabled", bool),
+    EnvVarMapping("MCP_ADAPTER_PROFILE_ID", "mcp_adapter.profile_id"),
     EnvVarMapping("UCP_PROFILE_URL", "ucp_config.profile_url"),
     EnvVarMapping("UCP_SIGNING_KEY_ID", "ucp_config.signing_key_id"),
     EnvVarMapping("UCP_SIGNING_PRIVATE_KEY", "ucp_config.signing_private_key"),

@@ -301,6 +301,11 @@ still running — one you started on another device, say — streams it live fro
 If your operator has configured it, you can email the assistant or forward mail to it. See
 [email.md](email.md).
 
+## Claude and other MCP clients
+
+Claude on the web, Claude Code and programs on the Claude API can connect to the assistant and ask
+it questions on your behalf. See [connecting-claude.md](connecting-claude.md).
+
 ## Delegation to specialist modes
 
 For work better handled by a specialist — browsing, research, visualisation, complex planning — the

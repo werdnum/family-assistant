@@ -15,6 +15,7 @@ just the part you need.
 | [interfaces.md](interfaces.md)                   | Know what Telegram, the web app, and the iOS app each offer     |
 | [slash-commands.md](slash-commands.md)           | Look up `/browse`, `/research`, `/engineer` and the other modes |
 | [intelligence-levels.md](intelligence-levels.md) | Ask for more thinking on a request that deserves it             |
+| [connecting-claude.md](connecting-claude.md)     | Let Claude, Claude Code, or the Claude API ask your assistant   |
 
 ## Everyday features
 

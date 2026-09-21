@@ -1,0 +1,122 @@
+"""The mounted MCP endpoint: transport, enablement gate and lifecycle."""
+
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from mcp.server.fastmcp import FastMCP
+from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from family_assistant.web.auth import MCP_ENDPOINT_PATH
+from family_assistant.web.mcp_adapter.config import adapter_config
+from family_assistant.web.mcp_adapter.oauth import install_oauth_routes
+from family_assistant.web.mcp_adapter.tools import register_tools
+
+if TYPE_CHECKING:
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+logger = logging.getLogger(__name__)
+
+SERVER_NAME = "Family Assistant"
+SERVER_INSTRUCTIONS = (
+    "Family Assistant is a household assistant with access to the family's notes, "
+    "calendar, tasks, documents and smart home. Ask it questions in natural language "
+    "with ask_family_assistant; pass back the conversation_id it returns to continue "
+    "the same conversation."
+)
+
+
+class _EnabledGate:
+    """404 the endpoint while ``mcp_adapter.enabled`` is off."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not adapter_config(scope["app"]).enabled:
+            response = JSONResponse(
+                status_code=404, content={"detail": "MCP adapter is not enabled."}
+            )
+            await response(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
+class MCPAdapter:
+    """The MCP server and the ASGI handler that serves it.
+
+    The handler is the SDK's raw ASGI app rather than the Starlette app it can
+    wrap it in: a Starlette sub-app rebinds ``scope["app"]`` to itself, and the
+    tool needs the outer application's ``state`` (processing services, engine,
+    config) exactly as a router does.
+
+    The SDK's session manager can be run once per instance, while an app's
+    lifespan may be entered many times (every ``TestClient`` context, for one),
+    so each ``run()`` builds a fresh server and the handler dispatches to the one
+    currently running.
+    """
+
+    def __init__(self) -> None:
+        self._session_manager: StreamableHTTPSessionManager | None = None
+        self.asgi_app: ASGIApp = _EnabledGate(self._dispatch)
+
+    async def _dispatch(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self._session_manager is None:
+            response = JSONResponse(
+                status_code=503,
+                content={"detail": "MCP adapter is not running."},
+            )
+            await response(scope, receive, send)
+            return
+        await self._session_manager.handle_request(scope, receive, send)
+
+    @asynccontextmanager
+    async def run(self) -> AsyncIterator[None]:
+        """Serve requests for the duration of the context; enter it for the app's lifespan."""
+        if self._session_manager is not None:
+            raise RuntimeError("MCPAdapter.run() is already active.")
+        mcp = FastMCP(
+            SERVER_NAME,
+            instructions=SERVER_INSTRUCTIONS,
+            stateless_http=True,
+            json_response=True,
+        )
+        register_tools(mcp)
+        # Builds the session manager; the Starlette app it returns is unused.
+        mcp.streamable_http_app()
+        self._session_manager = mcp.session_manager
+        try:
+            async with self._session_manager.run():
+                yield
+        finally:
+            self._session_manager = None
+
+
+def install_mcp_adapter(app: FastAPI) -> MCPAdapter:
+    """Mount the MCP endpoint and OAuth routes on ``app``.
+
+    Idempotent per app: a second call returns the adapter already installed.
+    """
+    existing = getattr(app.state, "mcp_adapter", None)
+    if isinstance(existing, MCPAdapter):
+        return existing
+    adapter = MCPAdapter()
+    # An exact route rather than a mount: a Starlette mount at ``/api/mcp`` only
+    # matches paths beneath it, and the bare endpoint is what MCP clients call.
+    app.router.routes.append(
+        Route(
+            MCP_ENDPOINT_PATH,
+            adapter.asgi_app,
+            methods=["GET", "POST", "DELETE"],
+            name="mcp_adapter",
+            include_in_schema=False,
+        )
+    )
+    install_oauth_routes(app)
+    app.state.mcp_adapter = adapter
+    logger.debug("MCP adapter mounted at %s", MCP_ENDPOINT_PATH)
+    return adapter

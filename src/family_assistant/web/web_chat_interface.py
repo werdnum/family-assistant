@@ -43,12 +43,18 @@ class WebChatInterface(ChatInterface):
         notifier: "Notifier | None" = None,
         stream_hub: "ConversationStreamHub | None" = None,
         identity_resolver: "UserIdentityResolver | None" = None,
+        interface_type: str = "web",
     ) -> None:
         """
         Initialize the WebChatInterface.
 
         Args:
             database_engine: SQLAlchemy async engine for database operations
+            interface_type: History partition messages are saved to. ``web`` for
+                the web UI; the MCP adapter registers a second instance under
+                ``mcp`` so results delivered after a turn (an approved
+                confirmation's outcome, say) land in the conversation the MCP
+                client will read on its next call.
             notifier: Optional notification channel (Web Push, iOS, or a dispatcher fanning out to
                 both) used to notify the conversation owner of new assistant replies.
             stream_hub: Optional ConversationStreamHub. When set, a ``message``
@@ -63,6 +69,7 @@ class WebChatInterface(ChatInterface):
         self.notifier = notifier
         self.stream_hub = stream_hub
         self.identity_resolver = identity_resolver
+        self.interface_type = interface_type
 
     async def _save_message_and_notify(
         self,
@@ -98,7 +105,7 @@ class WebChatInterface(ChatInterface):
                     else TurnTaintState.empty().to_metadata()
                 ),
             ),
-            interface_type="web",
+            interface_type=self.interface_type,
             conversation_id=conversation_id,
             timestamp=clock.now(),
             attachments=attachments,
@@ -109,7 +116,7 @@ class WebChatInterface(ChatInterface):
                 await notify_conversation(
                     self.notifier,
                     db_context,
-                    interface_type="web",
+                    interface_type=self.interface_type,
                     conversation_id=conversation_id,
                     title="New message",
                     body=text[:100],
