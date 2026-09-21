@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed.
+Accepted — implemented for M1–M3 and the autofill section.
 
-If accepted, this design supersedes the **Family Assistant policy and product surface** in
+This design supersedes the **Family Assistant policy and product surface** in
 [browser-cookie-jars.md](browser-cookie-jars.md) and the implementation direction in
 [PR #1018](https://github.com/werdnum/family-assistant/pull/1018). It does not replace
 browser-server's cookie-jar mechanism. It also now contains the **Keychute credential autofill**
@@ -1274,6 +1274,41 @@ The following are deliberately **not** security properties of a general browser 
 - Browser automation may break when a site changes. Failure must be visible and must not claim
   completion without evidence.
 - Some sites will block automated or cloud browsers and remain human-operated.
+
+## Deliberate simplifications
+
+What the implementation left out on purpose, so a reviewer does not have to rediscover each one:
+
+- **The session lifetime backstop is browser-server's, not Family Assistant's.** A run whose worker
+  dies without settling leaves a session that FA no longer tracks; it is reclaimed by the service's
+  own idle and maximum-lifetime limits rather than by a sweep on this side. A sweep here would be a
+  second, weaker copy of a reaper that already exists.
+- **The run-scoped session binding lives in process.** It is keyed by the delegated run's
+  subconversation and resolved one parent link deep, which is exactly the two hops an authenticated
+  run has. A restart loses the binding; the session is then reclaimed by the backstop above and the
+  run fails closed rather than picking up a session it can no longer account for. Making the binding
+  survive a restart would mean trusting a session id across a process the operator may have
+  redeployed.
+- **`login_required` is surfaced without any jar inventory.** The model is told the saved login
+  needs attention and nothing more -- no jar id, no list, no freshness detail. Refreshing one
+  remains a human operation in browser-server's own UI, as M3 scopes it.
+- **One authenticated run per conversation.** A second concurrent invocation is refused rather than
+  queued. Queuing would mean holding a browser session open for a task nobody has started yet.
+- **`postcondition_check` is a configuration stub.** A site may name a check; nothing runs it yet.
+  It is recorded so the first real check does not need a configuration change, and it makes no
+  promise in the meantime.
+- **The action-review judge, jar refresh, TOTP and SSO are not built**, as the design defers them.
+  `mitigations.action_review` accepts `observe` but changes nothing today.
+- **The outcome is derived, not declared.** There is no structured status the worker returns. The
+  run's status is read off the autofill latches and the session's own handover state, because a
+  model that forgets to mention an outstanding approval must not be able to turn a parked run into a
+  completed one. The cost is that outcomes the orchestration cannot observe -- `blocked_by_scope`,
+  `site_changed`, `review_blocked` -- are defined in the contract but are not yet distinguished from
+  `completed` or `failed` at runtime.
+- **`start_delegation` duplicates part of `delegate_to_service`'s setup** rather than the tool being
+  refactored onto the new seam. The tool's confirmation gate runs between steps the seam merges, so
+  unifying them would move a confirmation prompt relative to target resolution; that is a change to
+  existing behaviour this work did not need to make.
 
 ## Review questions
 

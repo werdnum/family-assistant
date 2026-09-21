@@ -2958,6 +2958,97 @@ service_profiles:
 
 ______________________________________________________________________
 
+## Authenticated Sites (`authenticated_sites`)
+
+Sites the assistant may act on through a saved login. Empty by default: a deployment that configures
+none cannot run an authenticated browser task at all. Requires `browser_handoff_config.enabled`. The
+design is [authenticated-site-capabilities.md](../design/authenticated-site-capabilities.md); the
+user-facing half is [authenticated-sites.md](../user/authenticated-sites.md).
+
+```yaml
+authenticated_sites:
+  hellofresh:
+    display_name: "HelloFresh"
+    jar_id: "jar_0123456789abcdef0123456789abcdef"
+    start_url: "https://www.hellofresh.com.au/menus"
+    authenticated_origins:
+      - "https://www.hellofresh.com.au"
+    navigation_allowlist: []
+    credential_alias: "hellofresh"
+    authorized_users:
+      - "andrew"
+    caller_profiles:
+      - "default_assistant"
+    browser_profile: "authenticated_browser_profile"
+    visual_profile: "authenticated_browser_visual_profile"
+    damage_envelope: >-
+      The model may change ordinary meal selections and reversible preferences. It must not be
+      treated as guaranteed unable to add extras, change plan settings, or create charges.
+    mitigations:
+      native_computer_use_safety: true
+      action_review: "observe"
+```
+
+| Field                                | Meaning                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `display_name`                       | What the assistant calls the site when it talks to the user.                               |
+| `jar_id`                             | A saved browser-server cookie jar. Optional when `credential_alias` is set.                |
+| `start_url`                          | Where a run begins. Must be on a declared origin.                                          |
+| `authenticated_origins`              | Exact `https://host[:port]` origins, no paths.                                             |
+| `navigation_allowlist`               | Further origins the session may navigate to (an SSO host, say).                            |
+| `credential_alias`                   | The Keychute secret name this site's runs may ask for. Routing, not authority — see below. |
+| `authorized_users`                   | The household identities allowed to act on the bound account.                              |
+| `caller_profiles`                    | Processing profiles that may invoke `run_authenticated_site_task`.                         |
+| `browser_profile` / `visual_profile` | The two profiles that execute the task.                                                    |
+| `damage_envelope`                    | Operator documentation of the same-site authority being accepted. Not enforced.            |
+| `mitigations`                        | Best-effort review settings. `postcondition_check` names a check that is not yet run.      |
+
+At least one of `jar_id` and `credential_alias` must be set: a site with neither has no way to
+acquire a login.
+
+### `credential_alias` is routing, not release authority
+
+Setting an alias does **not** authorize anything. It does two things: it tells the tool that an
+absent or lapsed jar should lead to a jarless session and a login attempt rather than
+`login_required`, and it pins the single secret name this site's sessions may request. Whether that
+secret is released, for which page origins, and with what approval outcome lives entirely in the
+**Keychute policy row** for it, which is where the operator draws that line and can change it
+without an FA redeploy. A site whose alias has no policy row simply gets `approval_pending` on first
+use.
+
+The pin is load-bearing even though it authorizes nothing. Two household accounts on one origin are
+two site ids with two secrets and two rows for the *same* origin, and Keychute cannot tell them
+apart; without the pin a page-influenced model in a run authorized for one account could name the
+other's alias. `browser_autofill` therefore takes no alias argument.
+
+A jar that a human **revoked** (invalidated or deleted) disables autofill for that site as well: the
+run returns `login_required` regardless of the alias, and the capability re-enables only by a
+deliberate human act. Revoking a jar is meant to be a kill switch, and a standing credential grant
+that could undo it would not be one. The separate lever for the credential itself is expiring or
+revoking the Keychute row.
+
+### Profile validation
+
+Startup recomputes the *effective* surface of whichever profiles a site names and refuses to start
+if it reaches past the authenticated boundary: `browser_exec` or `browser_extract` granted, a
+globally granted tool not withheld via `excluded_global_tools`, ambient household context providers
+not excluded, delegation not pinned to the site's own visual profile, or any tool outside the
+browser-server-mediated set. Rules it cannot check statically — a tag matcher, an MCP-server
+matcher, a glob — are rejected rather than assumed safe. Pointing a site at the shipped
+`browser_profile` is therefore a configuration error, not a silent widening. The shipped
+`authenticated_browser_profile` and `authenticated_browser_visual_profile` satisfy it; changing them
+is possible but the check has to keep passing.
+
+### Granting the tool
+
+`run_authenticated_site_task` ships granted to `default_assistant` and `complex_tasks`, behind a
+`confirm` rule — one confirmation per task, not per action. Relaxing that to `allow` is reasonable
+once a site has been watched working; it is a per-deployment call. The browser profiles themselves
+never receive it, so page content cannot open a second authenticated session from inside a run.
+
+`browser_handoff_config.handoff_capable_profiles` must include both authenticated profiles for the
+remote browser to be used for them; the shipped default does.
+
 ## MCP Adapter (Family Assistant as an MCP server)
 
 `mcp_adapter` exposes the assistant to external MCP clients — a claude.ai custom connector, Claude

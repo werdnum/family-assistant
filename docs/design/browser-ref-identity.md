@@ -113,13 +113,13 @@ the local backend does the same in its own evaluate step.
 
 The walker copies an element's `value` into its node, which is how a snapshot shows a filled-in
 form. For a protected control -- every `input[type=password]`, plus any element a credential
-autofill has touched -- it does not: the node carries `value_masked: true` and `has_value:
-true`/`false` instead, so the agent can tell an empty login form from a filled one without the
-value reaching it. Protection is tracked by element, stamped as `data-fa-protected` alongside the
-ref, so a page that later changes the input's type -- a "show password" toggle -- does not turn the
-node back into readable text. The stamp is part of the shared walker, so it holds identically on
-both backends, and it is orthogonal to ref identity: `value` has never been part of what makes a
-ref name its node, so masking one changes nothing about staleness.
+autofill has touched -- it does not: the node carries `value_masked: true` and
+`has_value: true`/`false` instead, so the agent can tell an empty login form from a filled one
+without the value reaching it. Protection is tracked by element, stamped as `data-fa-protected`
+alongside the ref, so a page that later changes the input's type -- a "show password" toggle -- does
+not turn the node back into readable text. The stamp is part of the shared walker, so it holds
+identically on both backends, and it is orthogonal to ref identity: `value` has never been part of
+what makes a ref name its node, so masking one changes nothing about staleness.
 
 ### Browser operations run in order, and a batch hands back one set of refs
 
