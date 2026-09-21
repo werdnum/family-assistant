@@ -254,12 +254,53 @@ class PolicyEngine:
         *,
         can_confirm: bool,
     ) -> PolicyEvaluation:
-        """Return the policy result for tool advertisement."""
-        return self._apply_confirmation_capability(
+        """Return the policy result for tool advertisement.
+
+        An ``argument_equals`` matcher never matches without arguments, so a
+        tool whose only grant is argument-pinned would evaluate to the default
+        deny and never be advertised -- leaving the model unable to make the one
+        call the pin exists to permit. Advertisement therefore asks a weaker
+        question than execution: is this tool allowed for *some* argument shape?
+        The re-check runs only when the argument-free evaluation denies, and
+        only over granting rules, so it can un-hide a conditionally granted tool
+        and never hide one that was already advertised. Execution is unaffected
+        and still enforces the pin.
+        """
+        evaluation = self._apply_confirmation_capability(
             self.evaluate(descriptor, arguments=None),
             can_confirm=can_confirm,
             context="advertisement",
         )
+        if evaluation.decision is not ToolPolicyDecision.DENY:
+            return evaluation
+        conditional = self._conditional_grant(descriptor)
+        if conditional is None:
+            return evaluation
+        return self._apply_confirmation_capability(
+            conditional, can_confirm=can_confirm, context="advertisement"
+        )
+
+    def _conditional_grant(self, descriptor: ToolDescriptor) -> PolicyEvaluation | None:
+        """The highest-priority argument-pinned rule that would grant *descriptor*."""
+        for resolved_rule in self._policy.rules:
+            match = resolved_rule.match
+            if not match.argument_equals:
+                continue
+            if resolved_rule.decision is ToolPolicyDecision.DENY:
+                continue
+            if not match.model_copy(update={"argument_equals": None}).matches(
+                descriptor
+            ):
+                continue
+            return PolicyEvaluation(
+                decision=resolved_rule.decision,
+                reason=(
+                    f"{resolved_rule.description or 'matched ' + resolved_rule.layer}"
+                    " (granted for specific arguments)"
+                ),
+                matched_rule=resolved_rule,
+            )
+        return None
 
     def evaluate_for_execution(
         self,

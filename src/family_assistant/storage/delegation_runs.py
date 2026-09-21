@@ -1,6 +1,6 @@
 """Storage table for asynchronous profile delegation runs."""
 
-from typing import Literal
+from typing import Literal, NotRequired, TypedDict
 
 from sqlalchemy import JSON, Column, DateTime, Index, Integer, String, Table, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -74,6 +74,57 @@ The stage is what bounds the work: it is committed when entered, before the
 send it describes, so a retry resumes at the send that has not yet succeeded
 rather than repeating one already known to fail.
 """
+
+AuthenticatedSiteTaskStatus = Literal[
+    "running",
+    "completed",
+    "login_required",
+    "blocked_by_scope",
+    "review_blocked",
+    "handoff_pending",
+    "approval_pending",
+    "needs_human",
+    "site_changed",
+    "failed",
+]
+"""The actionable outcomes ``run_authenticated_site_task`` reports.
+
+``handoff_pending`` and ``approval_pending`` are the two *parked* outcomes: the
+run is terminal but its browser session stays alive, confined and fail-closed,
+until the resume handle is consumed or the lifetime backstop reclaims it.
+"""
+
+PARKED_AUTHENTICATED_STATUSES: frozenset[AuthenticatedSiteTaskStatus] = frozenset({
+    "handoff_pending",
+    "approval_pending",
+})
+
+
+class AuthenticatedSiteEnvelope(TypedDict):
+    """The authenticated-site state carried on a delegation run row.
+
+    One column holds both halves because they have one lifetime: the session
+    binding is what a resume rebinds, and the typed result is what a completed
+    run hands back. Nothing secret goes in here -- no jar contents, no
+    credential, no handback token.
+    """
+
+    site_id: str
+    status: AuthenticatedSiteTaskStatus
+    # The browser-server session this run owns. Retained on a parked run so a
+    # resume rebinds the same session instead of creating a second one, and
+    # cleared when the session is closed.
+    session_id: NotRequired[str | None]
+    summary: NotRequired[str]
+    detail: NotRequired[str]
+    handoff_url: NotRequired[str | None]
+    final_url: NotRequired[str | None]
+    warnings: NotRequired[list[str]]
+    # Which acting user and caller profile the run was authorized for, so a
+    # resume can be re-authorized rather than trusted.
+    acting_user: NotRequired[str | None]
+    caller_profile_id: NotRequired[str | None]
+
 
 delegation_runs_table = Table(
     "delegation_runs",
@@ -159,6 +210,17 @@ delegation_runs_table = Table(
     # When a locally failed run was recovered from a late provider success.
     # Also the exactly-once guard: recovery is conditioned on it being NULL.
     Column("late_recovered_at", DateTime(timezone=True), nullable=True),
+    # The typed AuthenticatedSiteTaskResult for a run started by
+    # run_authenticated_site_task, plus the session binding it parks. Persisted
+    # here because the background completion machinery carries only text and
+    # attachments and its notification is advisory: the caller retrieves the
+    # typed result by presenting the run's opaque handle, never by parsing
+    # notification prose. Null for every other delegation.
+    Column(
+        "authenticated_site_json",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    ),
     Column(
         "created_at",
         DateTime(timezone=True),
