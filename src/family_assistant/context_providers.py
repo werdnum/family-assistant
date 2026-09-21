@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from zoneinfo import ZoneInfo
@@ -9,13 +9,25 @@ import httpx
 from family_assistant import (
     calendar_integration,  # For calendar functions
 )
+from family_assistant.google_calendar import (
+    google_event_to_calendar_event,
+    is_user_vetted_event,
+)
 from family_assistant.security.taint import (
-    SourceTrustTier,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    is_externally_authored,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.services.api_backend import ApiBackendError
+from family_assistant.services.google_api import GoogleApiError
+from family_assistant.services.oauth_credentials import (
+    OAuthCredentialError,
+    OAuthNoActingUserError,
+    OAuthNotConnectedError,
+    OAuthScopeNotGrantedError,
+)
+from family_assistant.storage.database import Database
 
 # Define a type alias for prompts if not already a dedicated class
 PromptsType = dict[str, str]
@@ -26,8 +38,19 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     import homeassistant_api
 
+    from family_assistant.google_calendar import (
+        GoogleCalendarClient,
+        GoogleCalendarFactory,
+    )
     from family_assistant.skills.registry import NoteRegistry
-    from family_assistant.tools.types import CalendarConfig
+    from family_assistant.storage.repositories.notes import NoteReadPolicy
+    from family_assistant.tools.types import CalendarConfig, CalendarEvent
+
+# Matches the window fetch_upcoming_events reads from CalDAV and iCal.
+_GOOGLE_CONTEXT_WINDOW_DAYS = 16
+# Event titles are short in practice; the cap keeps one oversized title from
+# crowding the rest of the per-turn context.
+_GOOGLE_CONTEXT_SUMMARY_LIMIT = 200
 
 # Attempt to import homeassistant_api and its specific exception
 try:
@@ -55,11 +78,16 @@ class ContextProvider(Protocol):
         """A unique, human-readable name for this context provider (e.g., 'calendar', 'notes')."""
         ...
 
-    async def get_context_fragments(self) -> list[str]:
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         """
         Asynchronously retrieves and formats context fragments relevant to this provider.
+
+        ``acting_user_id`` is the user the turn acts for (None when there is
+        none). Providers of deployment-wide data ignore it; a provider of
+        per-user data must show only that user's own.
         Each string in the list represents a distinct piece of formatted information
-        ready to be included in a larger context block (e.g., the system prompt).
+        ready to be included in a larger context block (e.g., the per-turn
+        ``<turn_context>`` block).
 
         Returns:
             A list of strings, where each string is a formatted context fragment.
@@ -83,34 +111,60 @@ class NotesContextProvider(ContextProvider):
 
     def __init__(
         self,
-        get_db_context_func: Callable[[], Awaitable[DatabaseContext]],
+        get_db_context_func: Callable[[], Database],
         prompts: PromptsType,
+        read_policy: "NoteReadPolicy",
         attachment_registry: Any = None,  # noqa: ANN401 # AttachmentRegistry | None
-        visibility_grants: set[str] | None = None,
         note_registry: "NoteRegistry | None" = None,
     ) -> None:
         """
         Initializes the NotesContextProvider.
 
         Args:
-            get_db_context_func: An async function that returns a DatabaseContext.
+            get_db_context_func: A function that returns a Database handle.
             prompts: A dictionary containing prompt templates for formatting.
             attachment_registry: Optional attachment registry for fetching attachment metadata.
-            visibility_grants: If set, only notes whose labels are a subset are included.
+            read_policy: The profile's note read confinement. Every note and
+                skill this provider surfaces is resolved through it.
             note_registry: Optional registry of file-based skills.
         """
         self._get_db_context_func = get_db_context_func
         self._prompts = prompts
         self._attachment_registry = attachment_registry
-        self._visibility_grants = visibility_grants
+        self._read_policy = read_policy
         self._note_registry = note_registry
 
     @property
     def name(self) -> str:
         return "notes"
 
+    async def _format_attachment(
+        self, db_context: Database, attachment_id: str, attachment_format: str
+    ) -> str:
+        registry = self._attachment_registry
+        if registry is None:
+            return ""
+
+        # Note attachments are ownerless, and this provider runs with no
+        # acting-user context, so ``None`` (ownerless-only) is correct:
+        # owner-scoped attachments never surface in note context lines.
+        metadata = await registry.get_attachment(
+            db_context, attachment_id, acting_user_id=None
+        )
+        if not metadata:
+            logger.warning(
+                f"[{self.name}] Attachment {attachment_id} not found in registry"
+            )
+            return ""
+
+        return attachment_format.format(
+            id=attachment_id,
+            filename=metadata.description or "attachment",
+            mime_type=metadata.mime_type,
+        )
+
     async def _format_attachments(
-        self, db_context: DatabaseContext, attachment_ids: list[str]
+        self, db_context: Database, attachment_ids: list[str]
     ) -> str:
         """
         Formats attachment metadata for display in the prompt.
@@ -132,160 +186,144 @@ class NotesContextProvider(ContextProvider):
 
         for attachment_id in attachment_ids:
             try:
-                # Note attachments are ownerless, and this provider runs with no
-                # acting-user context, so ``None`` (ownerless-only) is correct:
-                # owner-scoped attachments never surface in note context lines.
-                metadata = await self._attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=None
+                attachment_line = await self._format_attachment(
+                    db_context, attachment_id, attachment_format
                 )
-                if metadata:
-                    # Extract filename from description or use a default
-                    filename = metadata.description or "attachment"
-                    attachment_line = attachment_format.format(
-                        id=attachment_id,
-                        filename=filename,
-                        mime_type=metadata.mime_type,
-                    )
-                    attachment_lines.append(attachment_line)
-                else:
-                    logger.warning(
-                        f"[{self.name}] Attachment {attachment_id} not found in registry"
-                    )
             except Exception as e:
                 logger.warning(
                     f"[{self.name}] Failed to fetch attachment metadata for {attachment_id}: {e}"
                 )
+            else:
+                if attachment_line:
+                    attachment_lines.append(attachment_line)
 
         return "\n".join(attachment_lines)
 
-    async def get_context_fragments(self) -> list[str]:
+    async def _build_context_fragments(self) -> list[str]:
         fragments: list[str] = []
+        db_context = self._get_db_context_func()
+        # Use targeted queries - skills are identified at write time via is_skill column
+        prompt_notes = await db_context.notes.get_prompt_notes(
+            read_policy=self._read_policy
+        )
+        db_skills = await db_context.notes.get_skills(read_policy=self._read_policy)
+        excluded_titles = await db_context.notes.get_excluded_notes_titles(
+            read_policy=self._read_policy
+        )
+
+        # 1. Regular notes section
+        if prompt_notes:
+            notes_list_str = ""
+            note_item_format = self._prompts.get(
+                "note_item_format",
+                "- {title}: {content}",  # Default format
+            )
+            for note in prompt_notes:
+                note_text = note_item_format.format(
+                    title=note.title, content=note.content
+                )
+                notes_list_str += note_text + "\n"
+
+                # Add attachment references if present
+                attachment_ids = note.attachment_ids
+                if attachment_ids:
+                    attachment_text = await self._format_attachments(
+                        db_context, attachment_ids
+                    )
+                    if attachment_text:
+                        notes_list_str += attachment_text + "\n"
+
+            notes_context_header_template = self._prompts.get(
+                "notes_context_header", "Relevant notes:\n{notes_list}"
+            )
+            formatted_notes_context = notes_context_header_template.format(
+                notes_list=notes_list_str.strip()
+            ).strip()
+            if formatted_notes_context:
+                fragments.append(formatted_notes_context)
+        else:
+            no_notes_message = self._prompts.get("no_notes")
+            if no_notes_message:
+                fragments.append(no_notes_message)
+
+        # 2. Skill catalog (DB skills + file-based skills)
+        file_skills = (
+            self._note_registry.get_skill_catalog(self._read_policy)
+            if self._note_registry
+            else []
+        )
+        if db_skills or file_skills:
+            catalog_lines = [
+                "## Available Skills",
+                "Use the `get_note` tool to load a skill's full instructions.",
+            ]
+            for skill in db_skills:
+                catalog_lines.append(
+                    f"- **{skill.skill_name}**: {skill.skill_description}"
+                )
+            for skill in file_skills:
+                catalog_lines.append(f"- **{skill.name}**: {skill.description}")
+            fragments.append("\n".join(catalog_lines))
+
+        # 3. Excluded regular notes
+        if excluded_titles:
+            excluded_notes_format = self._prompts.get(
+                "excluded_notes_format",
+                "Other available notes (not included above): {excluded_titles}",
+            )
+            excluded_titles_str = ", ".join(f'"{title}"' for title in excluded_titles)
+            formatted_excluded_notes = excluded_notes_format.format(
+                excluded_titles=excluded_titles_str
+            ).strip()
+            if formatted_excluded_notes:
+                fragments.append(formatted_excluded_notes)
+
+        logger.debug(
+            "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
+            self.name,
+            len(prompt_notes),
+            len(db_skills),
+            len(file_skills),
+            len(fragments),
+        )
+        return fragments
+
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         try:
-            async with (
-                await self._get_db_context_func() as db_context
-            ):  # Get context per call
-                # Use targeted queries - skills are identified at write time via is_skill column
-                prompt_notes = await db_context.notes.get_prompt_notes(
-                    visibility_grants=self._visibility_grants
-                )
-                db_skills = await db_context.notes.get_skills(
-                    visibility_grants=self._visibility_grants
-                )
-                excluded_titles = await db_context.notes.get_excluded_notes_titles(
-                    visibility_grants=self._visibility_grants
-                )
-
-                # 1. Regular notes section
-                if prompt_notes:
-                    notes_list_str = ""
-                    note_item_format = self._prompts.get(
-                        "note_item_format",
-                        "- {title}: {content}",  # Default format
-                    )
-                    for note in prompt_notes:
-                        note_text = note_item_format.format(
-                            title=note.title, content=note.content
-                        )
-                        notes_list_str += note_text + "\n"
-
-                        # Add attachment references if present
-                        attachment_ids = note.attachment_ids
-                        if attachment_ids:
-                            attachment_text = await self._format_attachments(
-                                db_context, attachment_ids
-                            )
-                            if attachment_text:
-                                notes_list_str += attachment_text + "\n"
-
-                    notes_context_header_template = self._prompts.get(
-                        "notes_context_header", "Relevant notes:\n{notes_list}"
-                    )
-                    formatted_notes_context = notes_context_header_template.format(
-                        notes_list=notes_list_str.strip()
-                    ).strip()
-                    if formatted_notes_context:
-                        fragments.append(formatted_notes_context)
-                else:
-                    no_notes_message = self._prompts.get("no_notes")
-                    if no_notes_message:
-                        fragments.append(no_notes_message)
-
-                # 2. Skill catalog (DB skills + file-based skills)
-                file_skills = (
-                    self._note_registry.get_skill_catalog(self._visibility_grants)
-                    if self._note_registry
-                    else []
-                )
-                if db_skills or file_skills:
-                    catalog_lines = [
-                        "## Available Skills",
-                        "Use the `get_note` tool to load a skill's full instructions.",
-                    ]
-                    for skill in db_skills:
-                        catalog_lines.append(
-                            f"- **{skill.skill_name}**: {skill.skill_description}"
-                        )
-                    for skill in file_skills:
-                        catalog_lines.append(f"- **{skill.name}**: {skill.description}")
-                    fragments.append("\n".join(catalog_lines))
-
-                # 3. Excluded regular notes
-                if excluded_titles:
-                    excluded_notes_format = self._prompts.get(
-                        "excluded_notes_format",
-                        "Other available notes (not included above): {excluded_titles}",
-                    )
-                    excluded_titles_str = ", ".join(
-                        f'"{title}"' for title in excluded_titles
-                    )
-                    formatted_excluded_notes = excluded_notes_format.format(
-                        excluded_titles=excluded_titles_str
-                    ).strip()
-                    if formatted_excluded_notes:
-                        fragments.append(formatted_excluded_notes)
-
-                logger.debug(
-                    "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
-                    self.name,
-                    len(prompt_notes),
-                    len(db_skills),
-                    len(file_skills),
-                    len(fragments),
-                )
+            return await self._build_context_fragments()
         except Exception as e:
             logger.exception(f"[{self.name}] Failed to get notes context: {e}")
             return []
-        return fragments
 
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
-        """Return provenance taint for notes auto-included in the system prompt."""
+        """Return provenance taint for notes auto-included in the per-turn context."""
         sources: list[TaintSource] = []
-        async with await self._get_db_context_func() as db_context:
-            prompt_notes = await db_context.notes.get_prompt_notes(
-                visibility_grants=self._visibility_grants
+        db_context = self._get_db_context_func()
+        prompt_notes = await db_context.notes.get_prompt_notes(
+            read_policy=self._read_policy
+        )
+        for note in prompt_notes:
+            provenance_metadata = note.provenance_metadata
+            if not isinstance(provenance_metadata, dict):
+                continue
+            state = TurnTaintState.from_metadata(
+                provenance_metadata.get("taint_metadata")
             )
-            for note in prompt_notes:
-                provenance_metadata = note.provenance_metadata
-                if not isinstance(provenance_metadata, dict):
-                    continue
-                state = TurnTaintState.from_metadata(
-                    provenance_metadata.get("taint_metadata")
+            if not is_externally_authored(state.max_tier):
+                continue
+            sources.extend(state.sources)
+            sources.append(
+                TaintSource(
+                    source_type=TaintSourceType.NOTE,
+                    source_id=note.title,
+                    tier=state.max_tier,
+                    labels=frozenset(note.visibility_labels),
+                    reason=(
+                        f"Prompt-included note '{note.title}' carries "
+                        "stored provenance taint."
+                    ),
                 )
-                if state.max_tier <= SourceTrustTier.TRUSTED_USER:
-                    continue
-                sources.extend(state.sources)
-                sources.append(
-                    TaintSource(
-                        source_type=TaintSourceType.NOTE,
-                        source_id=note.title,
-                        tier=state.max_tier,
-                        labels=frozenset(note.visibility_labels),
-                        reason=(
-                            f"Prompt-included note '{note.title}' carries "
-                            "stored provenance taint."
-                        ),
-                    )
-                )
+            )
         return tuple(sources)
 
 
@@ -346,7 +384,26 @@ class HomeAssistantContextProvider(ContextProvider):
     def name(self) -> str:
         return "home_assistant"
 
-    async def get_context_fragments(self) -> list[str]:
+    def _format_rendered_template(self, rendered_template: str | None) -> list[str]:
+        if rendered_template and rendered_template.strip():
+            header = self._prompts.get("home_assistant_context_header", "").strip()
+            full_context = (
+                f"{header}\n{rendered_template.strip()}"
+                if header
+                else rendered_template.strip()
+            )
+            logger.debug(
+                f"[{self.name}] Successfully rendered Home Assistant template."
+            )
+            return [full_context.strip()]
+
+        logger.info(
+            f"[{self.name}] Rendered Home Assistant template was empty or whitespace only."
+        )
+        empty_message = self._prompts.get("home_assistant_template_empty", "").strip()
+        return [empty_message] if empty_message else []
+
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         """
         Asynchronously retrieves and formats context by rendering a template
         via the Home Assistant API.
@@ -369,29 +426,7 @@ class HomeAssistantContextProvider(ContextProvider):
             rendered_template = await self._ha_client.async_get_rendered_template(
                 template=self._context_template
             )
-
-            if rendered_template and rendered_template.strip():
-                header = self._prompts.get("home_assistant_context_header", "").strip()
-                # Only add header if it's not empty
-                full_context = (
-                    f"{header}\n{rendered_template.strip()}"
-                    if header
-                    else rendered_template.strip()
-                )
-                fragments.append(full_context.strip())
-                logger.debug(
-                    f"[{self.name}] Successfully rendered Home Assistant template."
-                )
-            else:
-                logger.info(
-                    f"[{self.name}] Rendered Home Assistant template was empty or whitespace only."
-                )
-                empty_message = self._prompts.get(
-                    "home_assistant_template_empty", ""
-                ).strip()
-                if empty_message:
-                    fragments.append(empty_message)
-
+            fragments.extend(self._format_rendered_template(rendered_template))
         except HomeassistantAPIError as ha_api_err:  # Specific error for HA API issues
             logger.exception(f"[{self.name}] Home Assistant API error: {ha_api_err}")
             error_message = self._prompts.get(
@@ -490,29 +525,31 @@ class WeatherContextProvider(ContextProvider):
             response = await self._httpx_client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-
-            # Basic validation
-            if not isinstance(data, dict) or "location" not in data:
-                logger.error(
-                    f"[{self.name}] Invalid data structure received from WillyWeather API: {data}"
-                )
-                return None
-
-            self._weather_data_cache = data
-            self._cache_expiry_time = now_utc + self._CACHE_DURATION
-            logger.debug(f"[{self.name}] Weather data fetched and cached.")
-            return data
         except httpx.HTTPStatusError as e:
             logger.exception(
                 f"[{self.name}] HTTP error fetching weather data: {e.response.status_code} - {e.response.text}"
             )
+            return None
         except httpx.RequestError as e:
             logger.exception(f"[{self.name}] Request error fetching weather data: {e}")
+            return None
         except Exception as e:
             logger.exception(
                 f"[{self.name}] Unexpected error fetching or parsing weather data: {e}"
             )
-        return None
+            return None
+
+        # Basic validation
+        if not isinstance(data, dict) or "location" not in data:
+            logger.error(
+                f"[{self.name}] Invalid data structure received from WillyWeather API: {data}"
+            )
+            return None
+
+        self._weather_data_cache = data
+        self._cache_expiry_time = now_utc + self._CACHE_DURATION
+        logger.debug(f"[{self.name}] Weather data fetched and cached.")
+        return data
 
     def _parse_api_datetime(
         self, dt_str: str | None, api_tz_str: str
@@ -826,7 +863,7 @@ class WeatherContextProvider(ContextProvider):
             fragments.append(day_summary)
         return fragments
 
-    async def get_context_fragments(self) -> list[str]:
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         """Asynchronously retrieves and formats weather context fragments."""
         fragments: list[str] = []
         weather_data = await self._fetch_and_cache_weather_data()
@@ -849,25 +886,22 @@ class WeatherContextProvider(ContextProvider):
         ).format(location_name=location_name)
         fragments.append(header)
 
-        try:
-            # Detailed forecast for today
-            today_details = self._format_todays_detailed_forecast(
+        def format_forecast_fragments() -> list[str]:
+            forecast_fragments = self._format_todays_detailed_forecast(
                 weather_data, today_date_obj, api_tz_str
             )
-            fragments.extend(today_details)
-
-            # Outlook for the rest of the week
             outlook_header = self._prompts.get(
                 "weather_outlook_header", "\nOutlook for the week:"
             )
             if outlook_header:
-                fragments.append(outlook_header)
-
-            weekly_outlook = self._format_weekly_outlook(
-                weather_data, today_date_obj, api_tz_str
+                forecast_fragments.append(outlook_header)
+            forecast_fragments.extend(
+                self._format_weekly_outlook(weather_data, today_date_obj, api_tz_str)
             )
-            fragments.extend(weekly_outlook)
+            return forecast_fragments
 
+        try:
+            forecast_fragments = format_forecast_fragments()
         except Exception as e:
             logger.exception(f"[{self.name}] Error formatting weather data: {e}")
             # Fallback to a simpler message if formatting fails
@@ -879,6 +913,8 @@ class WeatherContextProvider(ContextProvider):
                 fragments = [header, no_data_msg] if header else [no_data_msg]
             else:
                 fragments = [header] if header else []
+        else:
+            fragments.extend(forecast_fragments)
 
         logger.debug(
             f"[{self.name}] Formatted weather data into {len(fragments)} fragment(s)."
@@ -890,7 +926,13 @@ class WeatherContextProvider(ContextProvider):
 
 
 class CalendarContextProvider(ContextProvider):
-    """Provides context from calendar events."""
+    """Provides context from calendar events.
+
+    Configured CalDAV calendars and iCal feeds are shown to every turn. When the
+    deployment offers Google Calendar, the acting user's *primary* Google
+    calendar is added for that user's turns only; their other Google calendars
+    stay reachable through the calendar tools rather than filling every prompt.
+    """
 
     def __init__(
         self,
@@ -898,6 +940,7 @@ class CalendarContextProvider(ContextProvider):
         timezone: ZoneInfo,
         prompts: PromptsType,
         clock: calendar_integration.Clock | None = None,
+        google_calendar_for_user: "GoogleCalendarFactory | None" = None,
     ) -> None:
         """
         Initializes the CalendarContextProvider.
@@ -907,62 +950,152 @@ class CalendarContextProvider(ContextProvider):
             timezone: The local timezone for display.
             prompts: A dictionary containing prompt templates for formatting.
             clock: A clock object for managing time.
+            google_calendar_for_user: Builds a Google Calendar client for a
+                turn's acting user; None when the deployment does not offer
+                Google Calendar.
         """
         self._calendar_config = calendar_config
         self._timezone = timezone
         self._prompts = prompts
         self._clock = clock or calendar_integration.SystemClock()
+        self._google_calendar_for_user = google_calendar_for_user
 
     @property
     def name(self) -> str:
         return "calendar"
 
-    async def get_context_fragments(self) -> list[str]:
-        fragments: list[str] = []
-        if not self._calendar_config or not (
-            self._calendar_config.get("caldav") or self._calendar_config.get("ical")
-        ):
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
+        has_configured_sources = bool(
+            self._calendar_config
+            and (
+                self._calendar_config.get("caldav") or self._calendar_config.get("ical")
+            )
+        )
+        google_client = (
+            self._google_calendar_for_user(acting_user_id)
+            if self._google_calendar_for_user is not None and acting_user_id
+            else None
+        )
+        if not has_configured_sources and google_client is None:
             logger.info(
                 f"[{self.name}] Calendar integration not configured or no sources defined."
             )
             return []  # Return empty list as per protocol
 
         try:
-            upcoming_events = await calendar_integration.fetch_upcoming_events(
-                calendar_config=cast("CalendarConfig", self._calendar_config),
-                timezone=self._timezone,
+            upcoming_events, google_note = await self._gather_upcoming_events(
+                has_configured_sources, google_client
             )
-            # format_events_for_prompt itself uses prompts for individual event lines
-            # and messages for no events.
-            today_events_str, future_events_str = (
-                calendar_integration.format_events_for_prompt(
-                    events=upcoming_events,
-                    prompts=self._prompts,  # Pass the prompts dict here
-                    timezone=self._timezone,
-                    clock=self._clock,
-                )
-            )
-            calendar_header_template = self._prompts.get(
-                "calendar_context_header",
-                "Upcoming Events (Today & Tomorrow):\n{today_tomorrow_events}\n\nUpcoming Events (Next 2 Weeks, max 10 shown):\n{next_two_weeks_events}",
-            )
-            formatted_calendar_context = calendar_header_template.format(
-                today_tomorrow_events=today_events_str,
-                next_two_weeks_events=future_events_str,
-            ).strip()
-
-            if formatted_calendar_context:  # Ensure not adding empty string
-                fragments.append(formatted_calendar_context)
-            logger.debug(
-                f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
-            )
+            formatted_calendar_context = self._format_calendar_context(upcoming_events)
         except Exception as e:
             logger.exception(
                 f"[{self.name}] Failed to fetch or format calendar events: {e}"
             )
             # As per protocol, return empty list on error, error is logged.
             return []
+
+        fragments: list[str] = []
+        if formatted_calendar_context:  # Ensure not adding empty string
+            if google_note:
+                formatted_calendar_context = (
+                    f"{formatted_calendar_context}\n\n{google_note}"
+                )
+            fragments.append(formatted_calendar_context)
+        logger.debug(
+            f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
+        )
         return fragments
+
+    async def _gather_upcoming_events(
+        self,
+        has_configured_sources: bool,
+        google_client: "GoogleCalendarClient | None",
+    ) -> "tuple[list[CalendarEvent], str | None]":
+        """Configured and Google events in start order, plus any Google note."""
+        upcoming_events: list[CalendarEvent] = []
+        if has_configured_sources:
+            upcoming_events = await calendar_integration.fetch_upcoming_events(
+                calendar_config=cast("CalendarConfig", self._calendar_config),
+                timezone=self._timezone,
+            )
+        if google_client is None:
+            return upcoming_events, None
+        google_events, google_note = await self._fetch_google_primary_events(
+            google_client
+        )
+        merged = sorted(
+            [*upcoming_events, *google_events],
+            key=lambda event: calendar_integration.event_sort_key(
+                event, self._timezone
+            ),
+        )
+        return merged, google_note
+
+    def _format_calendar_context(self, events: "list[CalendarEvent]") -> str:
+        # format_events_for_prompt itself uses prompts for individual event lines
+        # and messages for no events.
+        today_events_str, future_events_str = (
+            calendar_integration.format_events_for_prompt(
+                events=events,
+                prompts=self._prompts,
+                timezone=self._timezone,
+                clock=self._clock,
+            )
+        )
+        calendar_header_template = self._prompts.get(
+            "calendar_context_header",
+            "Upcoming Events (Today & Tomorrow):\n{today_tomorrow_events}\n\nUpcoming Events (Next 2 Weeks, max 10 shown):\n{next_two_weeks_events}",
+        )
+        return calendar_header_template.format(
+            today_tomorrow_events=today_events_str,
+            next_two_weeks_events=future_events_str,
+        ).strip()
+
+    async def _fetch_google_primary_events(
+        self, client: "GoogleCalendarClient"
+    ) -> "tuple[list[CalendarEvent], str | None]":
+        """The user's own upcoming events on their primary Google calendar.
+
+        Only events the user created, organises or accepted are included (see
+        :func:`is_user_vetted_event`): an unanswered invitation is authored by
+        whoever sent it, and this context reaches every turn untainted.
+
+        A user who has not connected Google, or who declined calendar access,
+        simply gets no Google events. Any other failure is reported in the
+        context so the assistant does not present an incomplete calendar as the
+        whole picture.
+        """
+        today = self._clock.now().astimezone(self._timezone).date()
+        time_min = datetime.combine(today, datetime.min.time(), tzinfo=self._timezone)
+        time_max = time_min + timedelta(days=_GOOGLE_CONTEXT_WINDOW_DAYS)
+        source = client.primary_source()
+        try:
+            items = await client.list_events("primary", time_min, time_max)
+        except (
+            OAuthNoActingUserError,
+            OAuthNotConnectedError,
+            OAuthScopeNotGrantedError,
+        ):
+            return [], None
+        except (OAuthCredentialError, GoogleApiError, ApiBackendError) as exc:
+            logger.warning(
+                "[%s] Could not load Google Calendar events: %s", self.name, exc
+            )
+            return [], f"Note: Google Calendar events could not be loaded: {exc}"
+
+        events: list[CalendarEvent] = []
+        for item in items:
+            if not is_user_vetted_event(item):
+                continue
+            event = google_event_to_calendar_event(item, source, self._timezone)
+            if event is None:
+                continue
+            if len(event["summary"]) > _GOOGLE_CONTEXT_SUMMARY_LIMIT:
+                event["summary"] = (
+                    event["summary"][:_GOOGLE_CONTEXT_SUMMARY_LIMIT] + "…"
+                )
+            events.append(event)
+        return events, None
 
 
 # Future providers like WeatherContextProvider, EmailSummaryProvider etc. would go here.
@@ -990,7 +1123,27 @@ class KnownUsersContextProvider(ContextProvider):
     def name(self) -> str:
         return "known_users"
 
-    async def get_context_fragments(self) -> list[str]:
+    def _format_known_users(self) -> list[str]:
+        user_item_format = self._prompts.get(
+            "known_user_item_format", "- {name} (Chat ID: {chat_id})"
+        )
+        user_list_str = "".join(
+            user_item_format.format(name=name, chat_id=chat_id) + "\n"
+            for chat_id, name in self._chat_id_to_name_map.items()
+        )
+        if not user_list_str:
+            return []
+
+        users_header_template = self._prompts.get(
+            "known_users_header",
+            "Known users you can interact with:\n{user_list}",
+        )
+        formatted_users_context = users_header_template.format(
+            user_list=user_list_str.strip()
+        ).strip()
+        return [formatted_users_context] if formatted_users_context else []
+
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         fragments: list[str] = []
         if not self._chat_id_to_name_map:
             no_users_message = self._prompts.get("no_known_users")
@@ -1000,30 +1153,22 @@ class KnownUsersContextProvider(ContextProvider):
             return fragments
 
         try:
-            user_list_str = ""
-            user_item_format = self._prompts.get(
-                "known_user_item_format", "- {name} (Chat ID: {chat_id})"
-            )
-            for chat_id, name in self._chat_id_to_name_map.items():
-                user_list_str += (
-                    user_item_format.format(name=name, chat_id=chat_id) + "\n"
-                )
-
-            if user_list_str:
-                users_header_template = self._prompts.get(
-                    "known_users_header",
-                    "Known users you can interact with:\n{user_list}",
-                )
-                formatted_users_context = users_header_template.format(
-                    user_list=user_list_str.strip()
-                ).strip()
-                if formatted_users_context:
-                    fragments.append(formatted_users_context)
-
-            logger.debug(
-                f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
-            )
+            fragments = self._format_known_users()
         except Exception as e:
             logger.exception(f"[{self.name}] Failed to get known users context: {e}")
             return []
+        logger.debug(
+            f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
+        )
         return fragments
+
+    async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
+        """Return no taint: the known-users map is deployment-authored config.
+
+        Names and chat ids come from the operator's ``users`` configuration,
+        never from a message, so this fragment introduces no external content.
+        Declared explicitly rather than omitted so the provider satisfies
+        :class:`TaintedContextProvider` and a profile that admits only
+        provenance-declaring providers can admit it.
+        """
+        return ()

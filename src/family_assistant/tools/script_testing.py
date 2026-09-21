@@ -428,6 +428,7 @@ async def test_script_with_simulated_tools_tool(
         script_exec_context,
         script=script,
         globals=globals,
+        _allow_external_script_apis=False,
     )
 
     transcript = testing_provider.get_transcript()
@@ -476,6 +477,7 @@ SCRIPT_TESTING_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "- Simulated tools use the scenario description, the real tool schema, prior calls in this run, and "
                 "historical examples from the same conversation or user when available.\n"
                 "- Action tools are logged and simulated; they do not execute.\n"
+                "- Direct brokered HTTP APIs are unavailable in the simulation harness.\n"
                 "- No attachments are synthesized in v1."
             ),
             "parameters": {

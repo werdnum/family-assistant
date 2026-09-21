@@ -41,28 +41,44 @@ final class GeminiLiveClient {
     private var socket: GeminiLiveSocket?
     private var receiveTask: Task<Void, Never>?
     private var isClosed = false
+    private let diagnostics: VoiceConnectionDiagnostics?
 
     init(
         host: String = GeminiLiveClient.defaultHost,
-        socketFactory: @escaping SocketFactory = { URLSessionGeminiLiveSocket(url: $0) }
+        diagnostics: VoiceConnectionDiagnostics? = nil,
+        socketFactory: SocketFactory? = nil
     ) {
+        self.diagnostics = diagnostics
         self.host = host
-        self.socketFactory = socketFactory
+        // watchOS included: low-level Network framework connections are denied by
+        // policy on the watch unless the app qualifies for the streaming-audio
+        // exception, and they are never carried over the companion iPhone link.
+        // URLSession is the transport watchOS proxies and permits.
+        self.socketFactory = socketFactory ?? { url in
+            URLSessionGeminiLiveSocket(url: url, diagnostics: diagnostics)
+        }
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
     }
 
     /// Open the socket and send the setup frame. Begins receiving on success.
-    func connect(token: EphemeralToken) async throws {
+    func connect(token: EphemeralToken, activityDetection: VoiceActivityDetectionConfig) async throws {
         guard socket == nil, !isClosed else { return }
         let url = try Self.endpointURL(token: token.token, host: host)
+        let setup = try GeminiLiveCodec.setupMessage(for: token, activityDetection: activityDetection)
+        diagnostics?.record("socket_start", fields: ["api_version": Self.apiVersion, "setup_bytes": String(setup.utf8.count)])
         let socket = socketFactory(url)
+        self.socket = socket
         do {
-            try await socket.send(GeminiLiveCodec.setupMessage(for: token))
+            try await socket.send(setup)
         } catch {
             socket.close()
             throw error
         }
-        self.socket = socket
+        guard !isClosed else {
+            socket.close()
+            return
+        }
+        diagnostics?.record("setup_sent")
         receiveTask = Task { [weak self] in
             await self?.runReceiveLoop(socket: socket)
         }
@@ -98,9 +114,10 @@ final class GeminiLiveClient {
     }
 
     private func runReceiveLoop(socket: GeminiLiveSocket) async {
+        defer { socket.close() }
         do {
             while !Task.isCancelled {
-                let data = try await socket.receive()
+                guard let data = try await socket.receive() else { break }
                 // A frame that fails to decode is a protocol violation, not noise:
                 // let it throw so the session ends with lastError set rather than
                 // hanging while the UI waits for events that will never arrive.

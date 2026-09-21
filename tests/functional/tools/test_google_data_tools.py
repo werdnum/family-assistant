@@ -34,7 +34,7 @@ from family_assistant.services.oauth_credentials import (
     OAuthNotConnectedError,
     OAuthScopeNotGrantedError,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.attachment_utils import fetch_attachment_object
 from family_assistant.tools.google_data import (
@@ -137,10 +137,21 @@ class FakeCredentialResolver:
     evicted: list[str] = field(default_factory=list)
     operation_locks: dict[tuple[str, str], asyncio.Lock] = field(default_factory=dict)
 
+    @property
+    def configured_scopes(self) -> frozenset[str]:
+        return frozenset(scope.value for scope in GoogleScope)
+
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: GoogleScope
     ) -> str:
-        user_id = exec_context.user_id
+        return await self.access_token_for_user(
+            exec_context.db_context, exec_context.user_id, scope
+        )
+
+    async def access_token_for_user(
+        self, db: Database, user_id: str | None, scope: GoogleScope
+    ) -> str:
+        del db
         if user_id is None:
             raise OAuthNoActingUserError("Google")
         if user_id in self.raise_for_user:
@@ -210,7 +221,7 @@ class ConcurrentDriveApiBackend(FakeApiBackend):
 
 
 def _make_context(
-    db: DatabaseContext,
+    db: Database,
     *,
     user_id: str | None,
     resolver: FakeCredentialResolver | None,
@@ -244,9 +255,7 @@ def _registry(db_engine: AsyncEngine) -> AttachmentRegistry:
     )
 
 
-async def _store_google_connection(
-    db: DatabaseContext, user_id: str = "user-a"
-) -> None:
+async def _store_google_connection(db: Database, user_id: str = "user-a") -> None:
     """Store the connected-account email needed for RFC-compliant draft headers."""
     await db.oauth_connections.upsert_connection(
         user_id=user_id,
@@ -266,9 +275,9 @@ async def _store_google_connection(
 async def test_missing_backend_or_resolver_is_actionable_error(
     db_engine: AsyncEngine,
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(db, user_id="user-a", resolver=None, backend=None)
-        result = await gmail_search_tool(context, query="hello")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=None, backend=None)
+    result = await gmail_search_tool(context, query="hello")
     text = result.get_text()
     assert "not configured" in text.lower()
 
@@ -279,11 +288,9 @@ async def test_not_connected_message_surfaces(db_engine: AsyncEngine) -> None:
         raise_for_user={"user-a": OAuthNotConnectedError("Google")}
     )
     backend = FakeApiBackend()
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_search_tool(context, query="hello")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_search_tool(context, query="hello")
     assert "connect from settings" in result.get_text().lower()
 
 
@@ -291,9 +298,9 @@ async def test_not_connected_message_surfaces(db_engine: AsyncEngine) -> None:
 async def test_no_acting_user_fails_closed(db_engine: AsyncEngine) -> None:
     resolver = FakeCredentialResolver()
     backend = FakeApiBackend()
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(db, user_id=None, resolver=resolver, backend=backend)
-        result = await gmail_search_tool(context, query="hello")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id=None, resolver=resolver, backend=backend)
+    result = await gmail_search_tool(context, query="hello")
     assert "acting user" in result.get_text().lower()
 
 
@@ -312,12 +319,10 @@ async def test_transport_error_names_the_provider(db_engine: AsyncEngine) -> Non
             "failed"
         )
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        with pytest.raises(ApiBackendError, match=r"^Google API request to "):
-            await gmail_search_tool(context, query="hello")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    with pytest.raises(ApiBackendError, match=r"^Google API request to "):
+        await gmail_search_tool(context, query="hello")
 
 
 # --------------------------------------------------------------------------- #
@@ -355,11 +360,9 @@ async def test_gmail_search_marks_paged_results_partial(
     routes[("GET", "/users/me/messages")] = listing
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     backend = FakeApiBackend(routes={"token-a": routes})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_search_tool(context, query="hello")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_search_tool(context, query="hello")
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["more_results_available"] is True
@@ -378,15 +381,11 @@ async def test_two_user_isolation_gmail_search(db_engine: AsyncEngine) -> None:
             "token-b": _gmail_search_routes("msg-b", "Mailbox B only"),
         }
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        context_a = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        context_b = _make_context(
-            db, user_id="user-b", resolver=resolver, backend=backend
-        )
-        result_a = await gmail_search_tool(context_a, query="anything")
-        result_b = await gmail_search_tool(context_b, query="anything")
+    db = Database(engine=db_engine)
+    context_a = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    context_b = _make_context(db, user_id="user-b", resolver=resolver, backend=backend)
+    result_a = await gmail_search_tool(context_a, query="anything")
+    result_b = await gmail_search_tool(context_b, query="anything")
 
     data_a = result_a.get_data()
     data_b = result_b.get_data()
@@ -408,11 +407,9 @@ async def test_401_then_200_retries_once_and_evicts(db_engine: AsyncEngine) -> N
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     listing = json.dumps({"messages": []}).encode("utf-8")
     backend = FakeApiBackend(scripted=[(401, b"{}"), (200, listing)])
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_search_tool(context, query="anything")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_search_tool(context, query="anything")
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -425,11 +422,9 @@ async def test_401_then_200_retries_once_and_evicts(db_engine: AsyncEngine) -> N
 async def test_401_then_401_is_error(db_engine: AsyncEngine) -> None:
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     backend = FakeApiBackend(scripted=[(401, b"{}"), (401, b"{}")])
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_search_tool(context, query="anything")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_search_tool(context, query="anything")
 
     assert "Error" in result.get_text()
     assert "401" in result.get_text()
@@ -464,6 +459,7 @@ async def test_gmail_get_message_prefers_plain_and_lists_attachments(
                     "body": {"data": _b64url("<p>ignored html</p>")},
                 },
                 {
+                    "partId": "2",
                     "mimeType": "application/pdf",
                     "filename": "form.pdf",
                     "body": {"attachmentId": "att-1", "size": 1234},
@@ -473,20 +469,21 @@ async def test_gmail_get_message_prefers_plain_and_lists_attachments(
     }
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     backend = FakeApiBackend(routes={"token-a": {("GET", "/messages/msg-1"): payload}})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_get_message_tool(context, message_id="msg-1")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_get_message_tool(context, message_id="msg-1")
 
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["body"] == "The plain text body wins."
     assert len(data["attachments"]) == 1
     assert data["attachments"][0]["attachment_id"] == "att-1"
+    assert data["attachments"][0]["part_id"] == "2"
     assert data["attachments"][0]["filename"] == "form.pdf"
-    # The LLM sees get_text(), so the attachment id must be rendered there.
+    # The LLM sees get_text(), so the ids it needs for gmail_get_attachment must
+    # be rendered there.
     assert "att-1" in result.get_text()
+    assert "part_id: 2" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -505,11 +502,9 @@ async def test_gmail_get_message_html_fallback_and_truncation(
     }
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     backend = FakeApiBackend(routes={"token-a": {("GET", "/messages/msg-2"): payload}})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_get_message_tool(context, message_id="msg-2")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_get_message_tool(context, message_id="msg-2")
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -553,40 +548,38 @@ async def test_gmail_get_attachment_registers_with_owner(
         }
     )
     registry = _registry(db_engine)
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        result = await gmail_get_attachment_tool(
-            context, message_id="msg-1", attachment_id="att-1", filename="form.pdf"
-        )
-        data = result.get_data()
-        assert isinstance(data, dict)
-        attachment_id = data["attachment_id"]
-        assert result.attachments is not None
-        assert result.attachments[0].attachment_id == attachment_id
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-1", filename="form.pdf"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    attachment_id = data["attachment_id"]
+    assert result.attachments is not None
+    assert result.attachments[0].attachment_id == attachment_id
 
-        owned = await registry.get_attachment_content(
-            db, attachment_id, acting_user_id="user-a"
+    owned = await registry.get_attachment_content(
+        db, attachment_id, acting_user_id="user-a"
+    )
+    assert owned == content
+    # Another actor (or no actor) cannot read the owned attachment.
+    assert (
+        await registry.get_attachment_content(
+            db, attachment_id, acting_user_id="user-b"
         )
-        assert owned == content
-        # Another actor (or no actor) cannot read the owned attachment.
-        assert (
-            await registry.get_attachment_content(
-                db, attachment_id, acting_user_id="user-b"
-            )
-            is None
-        )
-        assert (
-            await registry.get_attachment_content(
-                db, attachment_id, acting_user_id=None
-            )
-            is None
-        )
+        is None
+    )
+    assert (
+        await registry.get_attachment_content(db, attachment_id, acting_user_id=None)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -620,25 +613,264 @@ async def test_gmail_get_attachment_without_filename_uses_part_metadata(
         }
     )
     registry = _registry(db_engine)
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        result = await gmail_get_attachment_tool(
-            context, message_id="msg-1", attachment_id="att-1"
-        )
-        data = result.get_data()
-        assert isinstance(data, dict), f"expected attachment reference, got {data}"
-        stored = await registry.get_attachment(
-            db, data["attachment_id"], acting_user_id="user-a"
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-1"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
     assert stored is not None
     assert stored.mime_type == "application/pdf"
     assert stored.description == "Gmail attachment invite.pdf"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_part_id_survives_rotated_attachment_id(
+    db_engine: AsyncEngine,
+) -> None:
+    """A rotated attachmentId must not cost us the part's real MIME type.
+
+    Gmail returns a fresh attachmentId token on each messages.get for the same
+    message, so the id the caller downloaded with matches nothing when the tool
+    re-reads the parts. The stable partId does.
+    """
+    content = b"%PDF-1.4\nQBE CTP certificate\n"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "partId": "1",
+                    "mimeType": "application/pdf",
+                    "filename": "certificate.pdf",
+                    "body": {"attachmentId": "att-rotated", "size": len(content)},
+                }
+            ],
+        },
+    }
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-original"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-original", part_id="1"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+    assert stored.description == "Gmail attachment certificate.pdf"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_id_wins_over_a_mismatched_part_id(
+    db_engine: AsyncEngine,
+) -> None:
+    """A wrong part_id must not override a still-resolvable attachment id.
+
+    Part ids are positional, so a model that mixed two attachments up names a
+    real but wrong part rather than missing — which would store one file's bytes
+    under the other's name and type.
+    """
+    content = b"%PDF-1.4\ninvoice\n"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "partId": "1",
+                    "mimeType": "image/jpeg",
+                    "filename": "photo.jpg",
+                    "body": {"attachmentId": "att-photo", "size": 10},
+                },
+                {
+                    "partId": "2",
+                    "mimeType": "application/pdf",
+                    "filename": "invoice.pdf",
+                    "body": {"attachmentId": "att-invoice", "size": len(content)},
+                },
+            ],
+        },
+    }
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-invoice"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-invoice", part_id="1"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+    assert stored.description == "Gmail attachment invoice.pdf"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_sniffs_past_declared_octet_stream(
+    db_engine: AsyncEngine,
+) -> None:
+    """A part declared application/octet-stream is not the last word.
+
+    Gmail echoes the sender's Content-Type and many mailers declare every
+    attachment generically, which the registry allowlist rejects.
+    """
+    content = b"%PDF-1.4\nQBE CTP certificate\n"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "partId": "1",
+                    "mimeType": "application/octet-stream",
+                    "filename": "certificate.pdf",
+                    "body": {"attachmentId": "att-1", "size": len(content)},
+                }
+            ],
+        },
+    }
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-1"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-1", part_id="1"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_sniffs_type_when_part_is_unmatchable(
+    db_engine: AsyncEngine,
+) -> None:
+    """With no part match at all, the bytes decide the type, not octet-stream."""
+    content = b"%PDF-1.4\nQBE CTP certificate\n"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "partId": "1",
+                    "mimeType": "application/pdf",
+                    "filename": "certificate.pdf",
+                    "body": {"attachmentId": "att-rotated", "size": len(content)},
+                }
+            ],
+        },
+    }
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-original"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-original"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    stored_path = await registry.resolve_attachment_path(
+        data["attachment_id"], db, acting_user_id="user-a"
+    )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+    assert stored_path is not None
+    assert stored_path.suffix == ".pdf"
 
 
 @pytest.mark.asyncio
@@ -681,28 +913,28 @@ async def test_gmail_get_attachment_filename_cannot_reclassify_content(
         }
     )
     registry = _registry(db_engine)
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        result = await gmail_get_attachment_tool(
-            context,
-            message_id="msg-1",
-            attachment_id="att-1",
-            filename="invoice.txt",
-        )
-        data = result.get_data()
-        assert isinstance(data, dict), f"expected attachment reference, got {data}"
-        stored = await registry.get_attachment(
-            db, data["attachment_id"], acting_user_id="user-a"
-        )
-        stored_path = await registry.resolve_attachment_path(
-            data["attachment_id"], db, acting_user_id="user-a"
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context,
+        message_id="msg-1",
+        attachment_id="att-1",
+        filename="invoice.txt",
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    stored_path = await registry.resolve_attachment_path(
+        data["attachment_id"], db, acting_user_id="user-a"
+    )
     assert stored is not None
     assert stored.mime_type == "application/pdf"
     assert stored.description == "Gmail attachment invoice.txt"
@@ -746,11 +978,9 @@ async def test_drive_search_falls_back_to_metadata_scope(
             }
         }
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_search_tool(context, query="name contains 'tax'")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_search_tool(context, query="name contains 'tax'")
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -778,11 +1008,9 @@ async def test_drive_get_file_exports_google_doc(db_engine: AsyncEngine) -> None
             }
         }
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_get_file_tool(context, file_id="doc-1")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_get_file_tool(context, file_id="doc-1")
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -809,11 +1037,9 @@ async def test_drive_get_file_inlines_small_text(db_engine: AsyncEngine) -> None
             (200, b"hello inline text"),
         ]
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_get_file_tool(context, file_id="txt-1")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_get_file_tool(context, file_id="txt-1")
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -841,28 +1067,26 @@ async def test_drive_get_file_large_binary_goes_to_attachment(
         ]
     )
     registry = _registry(db_engine)
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        result = await drive_get_file_tool(context, file_id="bin-1")
-        data = result.get_data()
-        assert isinstance(data, dict)
-        attachment_id = data["attachment_id"]
-        owned = await registry.get_attachment_content(
-            db, attachment_id, acting_user_id="user-a"
-        )
-        assert owned == binary
-        assert (
-            await registry.get_attachment_content(
-                db, attachment_id, acting_user_id=None
-            )
-            is None
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await drive_get_file_tool(context, file_id="bin-1")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    attachment_id = data["attachment_id"]
+    owned = await registry.get_attachment_content(
+        db, attachment_id, acting_user_id="user-a"
+    )
+    assert owned == binary
+    assert (
+        await registry.get_attachment_content(db, attachment_id, acting_user_id=None)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -883,11 +1107,9 @@ async def test_drive_get_file_oversized_metadata_errors_without_media_request(
             }
         }
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_get_file_tool(context, file_id="huge-1")
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_get_file_tool(context, file_id="huge-1")
 
     text = result.get_text()
     assert "exceeds" in text.lower()
@@ -911,35 +1133,33 @@ async def test_gmail_create_draft_uses_only_drafts_create_and_owned_attachment(
         scripted=[(200, b'{"id":"draft-1","message":{"id":"draft-message-1"}}')]
     )
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        await _store_google_connection(db)
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"draft attachment",
-            filename="details.txt",
-            content_type="text/plain",
-            tool_name="test",
-            owner_user_id="user-a",
-            db_context=db,
-        )
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        attachment_object = await fetch_attachment_object(
-            attachment.attachment_id, context
-        )
-        assert attachment_object is not None
-        result = await gmail_create_draft_tool(
-            context,
-            to=["recipient@example.com"],
-            cc=["copy@example.com"],
-            subject="Draft subject",
-            body="Draft body",
-            attachment_ids=[attachment_object],
-        )
+    db = Database(engine=db_engine)
+    await _store_google_connection(db)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"draft attachment",
+        filename="details.txt",
+        content_type="text/plain",
+        tool_name="test",
+        owner_user_id="user-a",
+        db_context=db,
+    )
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    attachment_object = await fetch_attachment_object(attachment.attachment_id, context)
+    assert attachment_object is not None
+    result = await gmail_create_draft_tool(
+        context,
+        to=["recipient@example.com"],
+        cc=["copy@example.com"],
+        subject="Draft subject",
+        body="Draft body",
+        attachment_ids=[attachment_object],
+    )
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -975,17 +1195,15 @@ async def test_gmail_create_draft_rejects_invalid_address_before_google_request(
 ) -> None:
     backend = FakeApiBackend()
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        await _store_google_connection(db)
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await gmail_create_draft_tool(
-            context,
-            to=[invalid_address],
-            subject="Nope",
-            body="Nope",
-        )
+    db = Database(engine=db_engine)
+    await _store_google_connection(db)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await gmail_create_draft_tool(
+        context,
+        to=[invalid_address],
+        subject="Nope",
+        body="Nope",
+    )
 
     assert "invalid to email address" in result.get_text().lower()
     assert backend.requests == []
@@ -998,30 +1216,30 @@ async def test_gmail_create_draft_rejects_another_users_attachment(
     registry = _registry(db_engine)
     backend = FakeApiBackend()
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        await _store_google_connection(db)
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"private to user b",
-            filename="private.txt",
-            content_type="text/plain",
-            tool_name="test",
-            owner_user_id="user-b",
-            db_context=db,
-        )
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        result = await gmail_create_draft_tool(
-            context,
-            to=["recipient@example.com"],
-            subject="No leak",
-            body="No leak",
-            attachment_ids=[attachment.attachment_id],
-        )
+    db = Database(engine=db_engine)
+    await _store_google_connection(db)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"private to user b",
+        filename="private.txt",
+        content_type="text/plain",
+        tool_name="test",
+        owner_user_id="user-b",
+        db_context=db,
+    )
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_create_draft_tool(
+        context,
+        to=["recipient@example.com"],
+        subject="No leak",
+        body="No leak",
+        attachment_ids=[attachment.attachment_id],
+    )
 
     assert "not found for the requesting user" in result.get_text().lower()
     assert backend.requests == []
@@ -1034,30 +1252,30 @@ async def test_gmail_create_draft_rejects_attachment_filename_with_newline(
     registry = _registry(db_engine)
     backend = FakeApiBackend()
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        await _store_google_connection(db)
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"draft attachment",
-            filename="unsafe\nname.txt",
-            content_type="text/plain",
-            tool_name="test",
-            owner_user_id="user-a",
-            db_context=db,
-        )
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        result = await gmail_create_draft_tool(
-            context,
-            to=["recipient@example.com"],
-            subject="No invalid MIME headers",
-            body="No invalid MIME headers",
-            attachment_ids=[attachment.attachment_id],
-        )
+    db = Database(engine=db_engine)
+    await _store_google_connection(db)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"draft attachment",
+        filename="unsafe\nname.txt",
+        content_type="text/plain",
+        tool_name="test",
+        owner_user_id="user-a",
+        db_context=db,
+    )
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_create_draft_tool(
+        context,
+        to=["recipient@example.com"],
+        subject="No invalid MIME headers",
+        body="No invalid MIME headers",
+        attachment_ids=[attachment.attachment_id],
+    )
 
     assert "invalid filename" in result.get_text().lower()
     assert backend.requests == []
@@ -1081,13 +1299,9 @@ async def test_drive_write_creates_app_folder_and_native_google_doc(
         ]
     )
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_write_file_tool(
-            context, name="Plan", content="Family plan"
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_write_file_tool(context, name="Plan", content="Family plan")
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -1127,19 +1341,17 @@ async def test_parallel_drive_writes_create_only_one_app_folder(
         }
     )
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        first_write = asyncio.create_task(
-            drive_write_file_tool(context, name="First", content="one")
-        )
-        await backend.first_folder_search_started.wait()
-        second_write = asyncio.create_task(
-            drive_write_file_tool(context, name="Second", content="two")
-        )
-        backend.release_first_folder_search.set()
-        first_result, second_result = await asyncio.gather(first_write, second_write)
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    first_write = asyncio.create_task(
+        drive_write_file_tool(context, name="First", content="one")
+    )
+    await backend.first_folder_search_started.wait()
+    second_write = asyncio.create_task(
+        drive_write_file_tool(context, name="Second", content="two")
+    )
+    backend.release_first_folder_search.set()
+    first_result, second_result = await asyncio.gather(first_write, second_write)
 
     assert first_result.get_data() is not None
     assert second_result.get_data() is not None
@@ -1173,27 +1385,25 @@ async def test_drive_write_uploads_owned_attachment_and_preserves_filename(
         ]
     )
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"%PDF-owned-content",
-            filename="report.pdf",
-            content_type="application/pdf",
-            tool_name="test",
-            owner_user_id="user-a",
-            db_context=db,
-        )
-        context = _make_context(
-            db,
-            user_id="user-a",
-            resolver=resolver,
-            backend=backend,
-            attachment_registry=registry,
-        )
-        attachment_object = await fetch_attachment_object(
-            attachment.attachment_id, context
-        )
-        assert attachment_object is not None
-        result = await drive_write_file_tool(context, attachment_id=attachment_object)
+    db = Database(engine=db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"%PDF-owned-content",
+        filename="report.pdf",
+        content_type="application/pdf",
+        tool_name="test",
+        owner_user_id="user-a",
+        db_context=db,
+    )
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    attachment_object = await fetch_attachment_object(attachment.attachment_id, context)
+    assert attachment_object is not None
+    result = await drive_write_file_tool(context, attachment_id=attachment_object)
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -1220,13 +1430,9 @@ async def test_drive_write_refuses_existing_file_without_overwrite(
         ]
     )
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_write_file_tool(
-            context, name="Plan", content="Replacement"
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_write_file_tool(context, name="Plan", content="Replacement")
 
     assert "overwrite=true" in result.get_text()
     assert [request[0] for request in backend.requests] == ["GET", "GET"]
@@ -1252,16 +1458,14 @@ async def test_drive_write_overwrites_only_discovered_same_type_file(
         ]
     )
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_write_file_tool(
-            context,
-            name="Plan",
-            content="Replacement",
-            overwrite=True,
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_write_file_tool(
+        context,
+        name="Plan",
+        content="Replacement",
+        overwrite=True,
+    )
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -1280,15 +1484,13 @@ async def test_drive_write_rejects_content_over_multipart_limit(
 ) -> None:
     backend = FakeApiBackend()
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
-    async with DatabaseContext(engine=db_engine) as db:
-        context = _make_context(
-            db, user_id="user-a", resolver=resolver, backend=backend
-        )
-        result = await drive_write_file_tool(
-            context,
-            name="Too large",
-            content="x" * (5 * 1024 * 1024 + 1),
-        )
+    db = Database(engine=db_engine)
+    context = _make_context(db, user_id="user-a", resolver=resolver, backend=backend)
+    result = await drive_write_file_tool(
+        context,
+        name="Too large",
+        content="x" * (5 * 1024 * 1024 + 1),
+    )
 
     assert "limited to 5242880 bytes" in result.get_text()
     assert backend.requests == []

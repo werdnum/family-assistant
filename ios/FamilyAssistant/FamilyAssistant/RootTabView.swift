@@ -12,15 +12,19 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $appRouter.selectedTab) {
-            ChatRootView(
-                authManager: authManager,
-                route: appRouter.chatSelection
-            )
+            chatTab
             .tabItem { Label("Chat", systemImage: "message") }
             .tag(AppTab.chat)
 
             NavigationStack {
-                VoiceView(onClose: { appRouter.selectedTab = .chat })
+                // A voice call runs under the profile the user last chose, the same
+                // one a new chat starts in. Left unset it would silently run the
+                // default profile whatever the picker says, and the saved transcript
+                // would then be filed under a profile that never held the call.
+                VoiceView(
+                    profileID: { PreferredProfile.id },
+                    onClose: { appRouter.selectedTab = .chat }
+                )
             }
             .tabItem { Label("Voice", systemImage: "mic") }
             .tag(AppTab.voice)
@@ -39,6 +43,24 @@ struct RootTabView: View {
             MoreTabView(appRouter: appRouter, baseURL: baseURL, onLogout: onLogout)
                 .tabItem { Label("More", systemImage: "ellipsis") }
                 .tag(AppTab.more)
+        }
+    }
+
+    @ViewBuilder
+    private var chatTab: some View {
+        if let sharedRoute = appRouter.sharedConversationRoute {
+            NavigationStack {
+                SharedConversationView(
+                    authManager: authManager,
+                    token: sharedRoute.token,
+                    onClose: appRouter.closeSharedConversation
+                )
+            }
+        } else {
+            ChatRootView(
+                authManager: authManager,
+                route: appRouter.chatSelection
+            )
         }
     }
 }

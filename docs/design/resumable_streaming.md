@@ -103,6 +103,38 @@ that invariant:
   attaches to the user's own new conversation before any message is sent. `conversation_id`s are
   unguessable UUIDs, so this is not a meaningful way to wait on someone else's future conversation.
 
+### One turn at a time, on every turn-producing endpoint
+
+A conversation runs one turn at a time. Two LLM loops over one history interleave their writes, and
+the newcomer rebuilds history mid-flight: it sees the running turn's unanswered tool call and fills
+it with the "abandoned" placeholder while the real result is still coming.
+
+The reservation lives in the hub, not in the endpoint: `start_turn(reject_if_running=True)` refuses
+registration under the same lock that performs it, so two concurrent kickoffs cannot both find the
+conversation idle. Every endpoint that drives a turn takes it, which is what makes the invariant
+hold across surfaces rather than within one of them:
+
+- `POST /turns` reserves before launching its producer task; the producer's terminal `end_turn`
+  (with the hub's done-callback as the safety net) releases it. Its record outlives the turn — the
+  buffer replay, the ack and the push-suppression window all read it — and is aged out by
+  `_prune_completed_turns`.
+- `POST /send_message` reserves for the duration of `handle_chat_interaction` and ends the turn with
+  a terminal status in a `finally`, so an exception, a 500, or a client hanging up mid-turn releases
+  the conversation rather than wedging it at `running` (neither pruning nor eviction touches a
+  running turn). It then **discards** the record: a non-streaming turn has no task, no deltas to
+  replay and no ack to wait for, and keeping the record would burn its `turn_id` for a retry of a
+  turn that failed without persisting a reply.
+
+Rivals in either direction get the same 409 naming the running turn. A streaming turn is steerable,
+so its rival can hand its prompt to the running turn instead; a `/send_message` turn is not — it
+publishes no stream to carry the steer echo — so a client refused by one waits and resends. That is
+tolerable because such a turn is short-lived and holds the reservation only while the request is in
+flight; making it steerable would mean giving a headless caller an event stream it never reads.
+
+`/send_message`'s idempotency is unaffected: it is settled from the persisted reply, not the hub
+record, so a retry that already produced a reply returns it (`already_complete: true`) without
+reaching the reservation at all.
+
 ## Deployment constraints (load-bearing)
 
 This is a **single-process** FastAPI deployment serving 1–2 users. The hub is **in-memory only**:

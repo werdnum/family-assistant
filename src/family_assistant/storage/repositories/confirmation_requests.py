@@ -100,7 +100,7 @@ class ConfirmationRequestsRepository(BaseRepository):
             .returning(confirmation_requests_table)
         )
         result = await self._execute_with_logging("create_confirmation_request", stmt)
-        return self._row_to_typed(dict(result.mappings().one()))
+        return self._row_to_typed(dict(result.one()))
 
     async def get(self, request_id: str) -> ConfirmationRequestRow | None:
         """Get a confirmation request by id."""
@@ -153,7 +153,7 @@ class ConfirmationRequestsRepository(BaseRepository):
             .returning(confirmation_requests_table)
         )
         result = await self._execute_with_logging("approve_confirmation_request", stmt)
-        row = result.mappings().one_or_none()
+        row = result.one_or_none()
         return self._row_to_typed(dict(row)) if row is not None else None
 
     async def reject_pending(
@@ -182,7 +182,7 @@ class ConfirmationRequestsRepository(BaseRepository):
             .returning(confirmation_requests_table)
         )
         result = await self._execute_with_logging("reject_confirmation_request", stmt)
-        row = result.mappings().one_or_none()
+        row = result.one_or_none()
         return self._row_to_typed(dict(row)) if row is not None else None
 
     async def mark_expired(self, *, now: datetime) -> int:

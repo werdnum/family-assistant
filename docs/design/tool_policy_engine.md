@@ -782,7 +782,7 @@ processing_config:
 
 **Source restrictions**: `allowed_delegation_sources` prevents unintended delegation chains. For
 example, the `telephone` profile (which handles untrusted voice input) should not be able to
-delegate to the `automation_creation` profile (which can create arbitrary automations).
+delegate to the `ops_automation` profile (which stands up unattended automations).
 
 ## 8. Configuration Model Changes
 

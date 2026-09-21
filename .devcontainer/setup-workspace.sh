@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Shared helpers; installed next to this script in the image, and alongside it
+# in the repo checkout.
+# shellcheck disable=SC1091
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/wrapper-common.sh"
+
 # Ensure uv is in PATH and include user paths and PostgreSQL binaries
 export PATH="/workspace/main/.venv/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
@@ -67,9 +72,13 @@ if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --targ
     HOME_IS_MOUNTED=true
 fi
 
-# Install npm tools individually if missing (e.g., when home is mounted from an older image).
-# We check each binary in /home/claude/.npm-global/bin directly: relying on `which claude`
-# would falsely succeed because the wrapper symlink in /usr/local/bin always exists.
+# Everything the Dockerfile installs under /home/claude is hidden when the home
+# directory is a mounted volume from an older image, so reinstall whatever is
+# missing. Keep this list in step with the Dockerfile: a tool the image gains
+# but this block does not is simply absent on every existing container, which
+# is how deno and agy went missing.
+# We check each binary directly rather than with `which`: the wrapper symlinks
+# in /usr/local/bin always exist and would falsely report success.
 if [ "$HOME_IS_MOUNTED" = "true" ]; then
     NPM_BIN_DIR=/home/claude/.npm-global/bin
     mkdir -p "$NPM_BIN_DIR"
@@ -86,28 +95,67 @@ if [ "$HOME_IS_MOUNTED" = "true" ]; then
         fi
     }
 
-    install_npm_tool claude "@anthropic-ai/claude-code"
-    install_npm_tool gemini "@google/gemini-cli@nightly"
-    install_npm_tool codex "@openai/codex"
-    install_npm_tool playwright playwright
+    # Claude Code is exempt from the npm-prefix check above: it self-updates
+    # into ~/.local/share/claude and removes its own npm package, so an absent
+    # npm-global binary means "migrated", not "missing".
+    if ! wrapper_common_claude_bin >/dev/null; then
+        echo "Installing @anthropic-ai/claude-code..."
+        npm install -g "@anthropic-ai/claude-code"
+        installed_any=true
+    fi
+
+    # Unpinned on purpose, like the image: agents track latest. This only runs
+    # when the binary is absent, so it never downgrades a newer one already in
+    # the mounted home.
+    install_npm_tool codex "@openai/codex@latest"
+
+    if [ ! -x /home/claude/.deno/bin/deno ]; then
+        echo "Installing deno..."
+        curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
+        installed_any=true
+    fi
+
+    if [ ! -x /home/claude/.local/bin/agy ]; then
+        echo "Installing the Antigravity CLI..."
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        installed_any=true
+    fi
+
+    # Playwright browsers live in the mounted cache, so a home volume from an
+    # older image can be missing the revision /venv's playwright expects. The
+    # image installs them with that same interpreter.
+    if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ] && [ -x /venv/bin/python ] &&
+        ! compgen -G "$PLAYWRIGHT_BROWSERS_PATH/chromium-*" >/dev/null; then
+        echo "Installing Playwright browsers..."
+        /venv/bin/python -m playwright install chromium
+        installed_any=true
+    fi
+
+    # These are checked rather than reinstalled blindly: uv tool install is
+    # idempotent but still resolves over the network, and this runs on every
+    # container start.
+    export PATH="/home/claude/.local/bin:$PATH"
+    if [ ! -x /home/claude/.local/bin/llm ]; then
+        echo "Installing llm..."
+        uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+        installed_any=true
+    fi
+    if [ ! -x /home/claude/.local/bin/poe ]; then
+        echo "Installing poethepoet..."
+        uv tool install poethepoet
+        installed_any=true
+    fi
 
     if [ "$installed_any" = "true" ]; then
-        # Install Playwright browsers
-        if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-            npx playwright install chromium
-        fi
-
-        # Install LLM tools using uv (idempotent: uv tool install is a no-op if already present)
-        export PATH="/home/claude/.local/bin:$PATH"
-        uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
         # Ensure proper ownership of installed tools (avoid recursive chown on large dirs)
         # Only chown the bin directory and key files, not the entire node_modules
         chown claude:claude /home/claude/.npm-global
         chown -R claude:claude /home/claude/.npm-global/bin
         [ -d "/home/claude/.local" ] && chown -R claude:claude /home/claude/.local
+        [ -d "/home/claude/.deno" ] && chown -R claude:claude /home/claude/.deno
 
-        echo "npm tools installation complete"
+        echo "Tool installation complete"
     fi
 fi
 
@@ -389,7 +437,10 @@ UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
 NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
 # Configure MCP servers with full paths (bypass wrapper to avoid git pull)
-CLAUDE_BIN="/home/claude/.npm-global/bin/claude"
+if ! CLAUDE_BIN=$(wrapper_common_claude_bin); then
+    echo "ERROR: no Claude Code binary found; cannot configure MCP servers" >&2
+    exit 1
+fi
 # Remove existing servers if any exist
 # Filter out status messages like "Checking MCP server health..." by only matching lines
 # that look like server entries (start with alphanumeric, no spaces before colon)
@@ -400,8 +451,6 @@ if [ -n "$MCP_SERVERS" ]; then
     done
 fi
 $CLAUDE_BIN mcp add --scope user context7 $(which npx) -- -y -q @upstash/context7-mcp
-$CLAUDE_BIN mcp add --scope user scraper /workspace-bin/scrape_mcp
-$CLAUDE_BIN mcp add --scope user serena -- sh -c "$(which uvx) -q --from git+https://github.com/oraios/serena serena-mcp-server --context ide-assistant --project $WORKTREE_DIR"
 $CLAUDE_BIN mcp add --scope user playwright $(which npx) -- -y -q @playwright/mcp@latest --no-sandbox --allowed-origins "localhost:8000;localhost:5173;localhost:8001;unpkg.com;cdn.jsdelivr.net;cdnjs.cloudflare.com;cdn.simplecss.org;devcontainer-backend-1" --headless --isolated --browser chromium
 # $CLAUDE_BIN mcp add --scope user github -t http https://api.githubcopilot.com/mcp/ -H "Authorization: Bearer $GITHUB_TOKEN"
 

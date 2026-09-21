@@ -16,7 +16,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.processing.llm_loop import (
     _extract_activations_from_result,  # noqa: PLC2701 - note: reach into private helper to unit-test its trust gate directly; public re-export is not warranted
 )
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
     ToolImplementation,
@@ -26,7 +26,7 @@ from family_assistant.tools.metadata import (
 )
 from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolResult
-from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module - note: pylint cannot resolve the implicit `tests` namespace package
+from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
 )
@@ -135,16 +135,16 @@ async def test_llm_loop_requests_confirmation_aware_tool_advertisement(
 
         callback_fn = _callback
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="conversation-1",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-            request_confirmation_callback=cast("Any", callback_fn),
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="conversation-1",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        request_confirmation_callback=cast("Any", callback_fn),
+    )
 
     assert result.status.value == "success"
     assert tools_provider.calls == [has_confirmation_callback]
@@ -254,23 +254,23 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
         on_demand_view=on_demand_view,
     )
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="conversation-activate",
-            trigger_content_parts=[{"type": "text", "text": "Please activate lazy_b"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="web",
-            conversation_id="conversation-activate",
-            limit=10,
-            max_age=timedelta(hours=1),
-            processing_profile_id="llm-loop-activate-tools",
-            current_time=service.clock.now(),
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="conversation-activate",
+        trigger_content_parts=[{"type": "text", "text": "Please activate lazy_b"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id="conversation-activate",
+        limit=10,
+        max_age=timedelta(hours=1),
+        processing_profile_id="llm-loop-activate-tools",
+        current_time=service.clock.now(),
+    )
 
     assert result.status.value == "success"
     # Two LLM turns: the first issues activate_tools, the second is the final reply.
@@ -281,7 +281,9 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
         if isinstance(message, ToolMessage) and message.name == "activate_tools"
     )
     assert activate_message.taint_metadata is not None
-    assert activate_message.taint_metadata.get("max_tier") == "trusted_user"
+    # Machine-composed row in a clean turn: the trusted pole, but not the
+    # human's own words.
+    assert activate_message.taint_metadata.get("max_tier") == "trusted_internal"
 
     # The second LLM call must see lazy_b as an activated regular tool, not just
     # the activate_tools meta-tool, proving activation actually took effect.
@@ -366,15 +368,15 @@ async def test_llm_loop_auto_activates_tools_from_get_note_result(
         on_demand_view=on_demand_view,
     )
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="conversation-auto-activate",
-            trigger_content_parts=[{"type": "text", "text": "Load the skill"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="conversation-auto-activate",
+        trigger_content_parts=[{"type": "text", "text": "Load the skill"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert result.status.value == "success"
     assert state["calls"] == 2
@@ -453,15 +455,15 @@ async def test_llm_loop_ignores_activate_tools_key_from_non_get_note_tools(
         on_demand_view=on_demand_view,
     )
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="conversation-untrusted-activate",
-            trigger_content_parts=[{"type": "text", "text": "Run the untrusted tool"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="conversation-untrusted-activate",
+        trigger_content_parts=[{"type": "text", "text": "Run the untrusted tool"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert result.status.value == "success"
     assert state["calls"] == 2

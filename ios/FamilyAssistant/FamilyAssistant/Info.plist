@@ -41,8 +41,16 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Family Assistant uses the camera to take photos you choose to attach to chat messages.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Family Assistant uses the microphone for hands-free voice conversations with the assistant.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>Family Assistant uses Siri so you can call the assistant hands-free and ask it things by voice.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INStartCallIntent</string>
+	</array>
 	<key>UIApplicationShortcutItems</key>
 	<array>
 		<dict>
@@ -65,6 +73,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>voip</string>
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>

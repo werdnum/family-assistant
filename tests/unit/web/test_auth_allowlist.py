@@ -41,13 +41,19 @@ async def test_handle_auth_callback_no_allowlist(
 
         mock_oauth.oidc_provider.authorize_access_token = mock_authorize
 
-        mock_request.session = {"redirect_after_login": "/"}
+        mock_request.session = {
+            "redirect_after_login": "/",
+            "api_token_id": 17,
+            "session_jwt_exp": 1,
+        }
 
         response = await auth_service.handle_auth_callback(mock_request)
 
         # Starlette's RedirectResponse defaults to 307
         assert response.status_code in {302, 307}
         assert mock_request.session["user"] == user_info
+        assert "api_token_id" not in mock_request.session
+        assert "session_jwt_exp" not in mock_request.session
 
 
 @pytest.mark.asyncio
@@ -118,3 +124,19 @@ async def test_handle_auth_callback_with_allowlist_no_email(
 
         assert excinfo.value.status_code == status.HTTP_403_FORBIDDEN
         assert "No email provided" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_token_session_binding(
+    auth_service: AuthService, mock_request: MagicMock
+) -> None:
+    mock_request.session = {
+        "user": {"sub": "app-user", "source": "app_token_session"},
+        "api_token_id": 17,
+        "session_jwt_exp": 1,
+    }
+
+    response = await auth_service.handle_logout(mock_request)
+
+    assert response.status_code in {302, 307}
+    assert mock_request.session == {}

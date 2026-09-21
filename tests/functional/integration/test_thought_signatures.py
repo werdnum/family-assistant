@@ -31,7 +31,7 @@ from family_assistant.llm.google_types import (
 )
 from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 T = TypeVar("T", bound=BaseModel)
@@ -301,45 +301,41 @@ async def test_thought_signatures_persist_and_roundtrip(
     )
 
     # Act: Process first message
-    async with get_db_context(db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test_conv_123",
-            trigger_content_parts=[{"type": "text", "text": "Use test tool"}],
-            trigger_interface_message_id="msg_1",
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="test_conv_123",
+        trigger_content_parts=[{"type": "text", "text": "Use test tool"}],
+        trigger_interface_message_id="msg_1",
+        user_name="Test User",
+    )
 
-        # Assert: Verify thought signature was stored in database
-        assert result.assistant_message_internal_id is not None
+    # Assert: Verify thought signature was stored in database
+    assert result.assistant_message_internal_id is not None
 
-        # Retrieve the stored message from database
-        stored_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="test_conv_123",
-            limit=10,
-        )
+    # Retrieve the stored message from database
+    stored_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="test_conv_123",
+        limit=10,
+    )
 
-        # Find the assistant message with tool calls
-        assistant_msg = next(
-            (
-                msg
-                for msg in stored_messages
-                if msg.role == "assistant" and msg.tool_calls
-            ),
-            None,
-        )
-        assert assistant_msg is not None
-        assert assistant_msg.provider_metadata is not None
-        # provider_metadata is now a GeminiProviderMetadata object, not a dict
-        assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
-        assert assistant_msg.provider_metadata.thought_signature is not None
+    # Find the assistant message with tool calls
+    assistant_msg = next(
+        (msg for msg in stored_messages if msg.role == "assistant" and msg.tool_calls),
+        None,
+    )
+    assert assistant_msg is not None
+    assert assistant_msg.provider_metadata is not None
+    # provider_metadata is now a GeminiProviderMetadata object, not a dict
+    assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
+    assert assistant_msg.provider_metadata.thought_signature is not None
 
-        # Verify signature content
-        thought_sig = assistant_msg.provider_metadata.thought_signature
-        # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
-        assert thought_sig.to_google_format() == b"mock_thought_123"
+    # Verify signature content
+    thought_sig = assistant_msg.provider_metadata.thought_signature
+    # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
+    assert thought_sig.to_google_format() == b"mock_thought_123"
 
     # Assert: Verify thought signature round-trip happened (2 LLM calls made)
     # The first call returns a message with tool calls and provider_metadata
@@ -380,38 +376,38 @@ async def test_thought_signatures_without_tool_calls(
     )
 
     # Act: Process message
-    async with get_db_context(db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test_conv_456",
-            trigger_content_parts=[{"type": "text", "text": "Simple question"}],
-            trigger_interface_message_id="msg_2",
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="test_conv_456",
+        trigger_content_parts=[{"type": "text", "text": "Simple question"}],
+        trigger_interface_message_id="msg_2",
+        user_name="Test User",
+    )
 
-        # Assert: Verify thought signature was stored even without tool calls
-        assert result.assistant_message_internal_id is not None
+    # Assert: Verify thought signature was stored even without tool calls
+    assert result.assistant_message_internal_id is not None
 
-        # Retrieve the stored message
-        stored_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="test_conv_456",
-            limit=10,
-        )
+    # Retrieve the stored message
+    stored_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="test_conv_456",
+        limit=10,
+    )
 
-        # Find the assistant message
-        assistant_msg = next(
-            (msg for msg in stored_messages if msg.role == "assistant"),
-            None,
-        )
-        assert assistant_msg is not None
-        assert assistant_msg.provider_metadata is not None
-        # provider_metadata is now a GeminiProviderMetadata object, not a dict
-        assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
-        assert assistant_msg.provider_metadata.thought_signature is not None
+    # Find the assistant message
+    assistant_msg = next(
+        (msg for msg in stored_messages if msg.role == "assistant"),
+        None,
+    )
+    assert assistant_msg is not None
+    assert assistant_msg.provider_metadata is not None
+    # provider_metadata is now a GeminiProviderMetadata object, not a dict
+    assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
+    assert assistant_msg.provider_metadata.thought_signature is not None
 
-        # Verify signature content
-        thought_sig = assistant_msg.provider_metadata.thought_signature
-        # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
-        assert thought_sig.to_google_format() == b"mock_thought_456"
+    # Verify signature content
+    thought_sig = assistant_msg.provider_metadata.thought_signature
+    # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
+    assert thought_sig.to_google_format() == b"mock_thought_456"

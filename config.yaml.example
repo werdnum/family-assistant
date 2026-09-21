@@ -61,17 +61,23 @@
 #     timezone: "America/New_York"
 
 # --- LLM Model ---
-# Override the default LLM model
-# Or use the LLM_MODEL environment variable
+# Which models run is configured as named tiers, which profiles select by name.
+# Redefining a shipped tier here changes the models for every profile on it.
+# model_tiers:
+#   standard:
+#     label: "Standard"
+#     chain:
+#       - provider: "google"
+#         model: "gemini-2.5-pro"
+#       - provider: "openai"
+#         model: "gpt-4o"
+#
+# Point a profile at a different tier, or at a model of its own. A profile
+# names either a tier or an inline model (provider/llm_model/retry_config),
+# never both; whichever it names displaces the other kind it would inherit.
 # default_profile_settings:
 #   processing_config:
-#     retry_config:
-#       primary:
-#         provider: "google"
-#         model: "gemini-2.5-pro"
-#       fallback:
-#         provider: "openai"
-#         model: "gpt-4o"
+#     model_tier: "standard"
 
 # --- Calendar Configuration ---
 # Configure CalDAV or iCal calendar integration
@@ -98,6 +104,49 @@
 #             - modify_calendar_event
 #         decision: "confirm"
 #         priority: 90
+
+# --- Conversation Memory ---
+# The household memory notes, and the background curator that keeps them. On
+# out of the box for the two profiles a person talks to -- default_assistant
+# and complex_tasks -- which read memory and feed their conversations to the
+# curator. The first startup with contribution on records the moment, and only
+# conversation from then on is reviewed, so an existing deployment's history is
+# left alone.
+#
+# To opt OUT, override the profiles below. memory_contribute: false keeps the
+# memory a profile already has without adding to it; setting both to false takes
+# it out of memory entirely. Contributing without reading is a startup error.
+# service_profiles:
+#   - id: "default_assistant"
+#     processing_config:
+#       memory_read: true
+#       memory_contribute: false
+#   - id: "complex_tasks"
+#     processing_config:
+#       memory_read: true
+#       memory_contribute: false
+#
+# To turn the whole mechanism off for every profile at once, without touching
+# any profile, set memory_config.enabled: false below.
+#
+# The store's bounds and the review cadence are deployment-wide. The values
+# below are the shipped defaults; override only what you need.
+# memory_config:
+#   enabled: true
+#   core_note_max_chars: 6000
+#   topic_note_max_chars: 12000
+#   review_input_max_chars: 24000
+#   max_edits_per_review: 12
+#   core_note_title: "Household Memory"
+#   sweep_interval_minutes: 5
+#   idle_window_minutes:
+#     web: 30
+#     telegram: 90
+#   max_deferral_hours: 24
+#   contributing_interfaces: ["telegram", "web"]
+#
+# See docs/operations/CONFIGURATION_REFERENCE.md, "Conversation Memory", for
+# every field and what it bounds.
 
 # --- Service Profiles ---
 # Profiles defined here are merged with defaults.yaml by ID:
@@ -145,3 +194,24 @@
 #       transport: "streamable_http"
 #       url: "${MCP_HTTP_ORIGIN}/mcp"
 #       token: "$MY_MCP_TOKEN"
+#
+# --- Omnigent delegation (optional) ---
+# Delegate self-contained tasks to Omnigent agents (Claude Code, ...) running
+# on an Omnigent server — including per-session Kubernetes sandboxes. Consumed
+# as an A2A service profile: the omnigent-bridge service (kube-config
+# containers/omnigent-bridge) fronts the Omnigent server. See
+# docs/design/omnigent-delegation.md for the full design. Delegation is gated
+# per-profile by the delegate_to_service tools_policy tag, so restricted
+# profiles keep their existing deny rules.
+# Add under the existing service_profiles list:
+#   - id: "omnigent"
+#     description: "Delegates self-contained tasks to Omnigent agents..."
+#     remote_a2a:
+#       # The discovered agent may advertise A2A protocol v1 or legacy v0.3.
+#       agent_url: "http://omnigent-bridge.omnigent.svc.cluster.local"
+#       auth:
+#         type: "bearer"
+#         token_env: "OMNIGENT_BRIDGE_TOKEN"   # set in the Deployment env
+#       timeout_seconds: 60
+#       poll_interval_seconds: 15
+#       max_async_seconds: 14400               # long coding turns

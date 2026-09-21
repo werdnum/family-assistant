@@ -8,7 +8,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.security.taint import TurnTaintState
+from family_assistant.storage.database import Database
 from family_assistant.storage.models import Automation
 from family_assistant.storage.types import (
     ListenerExecutionStatsDict,
@@ -165,9 +166,117 @@ def _format_automation_response(automation: Automation) -> AutomationResponse:
     )
 
 
+async def _update_automation_record(
+    automation_type: str,
+    automation_id: int,
+    request: UpdateEventAutomationRequest | UpdateScheduleAutomationRequest,
+    existing: Automation,
+    db: Database,
+    processing_service: ProcessingService,
+    current_user: dict,
+) -> None:
+    if automation_type == "event":
+        if not isinstance(request, UpdateEventAutomationRequest):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid request body for event automation update",
+            )
+
+        success = await db.events.update_event_listener(
+            listener_id=automation_id,
+            conversation_id=existing.conversation_id,
+            name=cast(
+                "str",
+                request.name if request.name is not _UNSET else existing.name,
+            ),
+            description=cast(
+                "str | None",
+                request.description
+                if request.description is not _UNSET
+                else existing.description,
+            ),
+            match_conditions=cast(
+                "dict[str, Any]",
+                request.match_conditions
+                if request.match_conditions is not _UNSET
+                else existing.match_conditions,
+            ),
+            action_config=cast(
+                "ActionConfig | None",
+                request.action_config
+                if request.action_config is not _UNSET
+                else existing.action_config,
+            ),
+            one_time=cast(
+                "bool",
+                request.one_time
+                if request.one_time is not _UNSET
+                else existing.one_time,
+            ),
+            enabled=cast(
+                "bool",
+                request.enabled if request.enabled is not _UNSET else existing.enabled,
+            ),
+            condition_script=cast(
+                "str | None",
+                request.condition_script
+                if request.condition_script is not _UNSET
+                else existing.condition_script,
+            ),
+            processing_profile_id=(
+                processing_service.service_config.id
+                if request.action_config is not _UNSET
+                else None
+            ),
+            created_by_user_id=(
+                str(current_user["user_identifier"])
+                if request.action_config is not _UNSET
+                else None
+            ),
+            # Edited through the authenticated web UI: human-direct, and the
+            # repository hashes the complete post-mutation definition.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_human_direct=True,
+        )
+    else:
+        if not isinstance(request, UpdateScheduleAutomationRequest):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid request body for schedule automation update",
+            )
+
+        success = await db.schedule_automations.update(
+            automation_id=automation_id,
+            conversation_id=existing.conversation_id,
+            name=request.name,
+            description=request.description,
+            recurrence_rule=request.recurrence_rule,
+            action_config=request.action_config,
+            enabled=request.enabled,
+            timezone=processing_service.service_config.timezone,
+            processing_profile_id=(
+                processing_service.service_config.id
+                if request.action_config is not _UNSET
+                else _UNSET
+            ),
+            created_by_user_id=(
+                str(current_user["user_identifier"])
+                if request.action_config is not _UNSET
+                else _UNSET
+            ),
+            # Edited through the authenticated web UI: human-direct, and the
+            # repository hashes the complete post-mutation definition.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_human_direct=True,
+        )
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update automation")
+
+
 @automations_api_router.get("")
 async def list_automations(
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     conversation_id: Annotated[
         str | None,
         Query(
@@ -218,7 +327,7 @@ async def list_automations(
 async def get_automation(
     automation_type: str,
     automation_id: int,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     conversation_id: Annotated[
         str | None, Query(description="Conversation ID for permission check")
     ] = None,
@@ -246,7 +355,7 @@ async def get_automation(
 @automations_api_router.post("/event")
 async def create_event_automation(
     request: CreateEventAutomationRequest,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
@@ -276,7 +385,10 @@ async def create_event_automation(
         # tools, the same profile this automation is stamped with and will
         # execute under.
         validation_error = await validate_action_scripts_with_provider(
-            db, processing_service.tools_provider, request.action_config or {}
+            db,
+            processing_service.tools_provider,
+            request.action_config or {},
+            keychute_config=processing_service.app_config.keychute_config,
         )
         if validation_error:
             raise HTTPException(status_code=400, detail=validation_error)
@@ -304,6 +416,11 @@ async def create_event_automation(
             enabled=request.enabled,
             processing_profile_id=processing_service.service_config.id,
             created_by_user_id=str(current_user["user_identifier"]),
+            # Written through the authenticated web UI with no model in the
+            # loop, so the definition is human-direct by construction and needs
+            # no gate: the zero-friction path, as for notes.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_human_direct=True,
         )
 
         # Fetch the created automation
@@ -334,7 +451,7 @@ async def create_event_automation(
 @automations_api_router.post("/schedule")
 async def create_schedule_automation(
     request: CreateScheduleAutomationRequest,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
@@ -356,7 +473,10 @@ async def create_schedule_automation(
         # tools, the same profile this automation is stamped with and will
         # execute under.
         validation_error = await validate_action_scripts_with_provider(
-            db, processing_service.tools_provider, request.action_config or {}
+            db,
+            processing_service.tools_provider,
+            request.action_config or {},
+            keychute_config=processing_service.app_config.keychute_config,
         )
         if validation_error:
             raise HTTPException(status_code=400, detail=validation_error)
@@ -382,6 +502,11 @@ async def create_schedule_automation(
             timezone=processing_service.service_config.timezone,
             processing_profile_id=processing_service.service_config.id,
             created_by_user_id=str(current_user["user_identifier"]),
+            # Written through the authenticated web UI with no model in the
+            # loop, so the definition is human-direct by construction and needs
+            # no gate: the zero-friction path, as for notes.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_human_direct=True,
         )
 
         # Fetch the created automation
@@ -415,7 +540,7 @@ async def update_automation(
     automation_id: int,
     # ast-grep-ignore: no-dict-any - PATCH body is a partial update with arbitrary subset of fields
     request_body: Annotated[dict[str, Any], Body(...)],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
@@ -464,7 +589,10 @@ async def update_automation(
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
         validation_error = await validate_action_scripts_with_provider(
-            db, processing_service.tools_provider, new_action_config
+            db,
+            processing_service.tools_provider,
+            new_action_config,
+            keychute_config=processing_service.app_config.keychute_config,
         )
         if validation_error:
             raise HTTPException(status_code=400, detail=validation_error)
@@ -485,104 +613,15 @@ async def update_automation(
             raise HTTPException(status_code=400, detail=error_msg)
 
     try:
-        if automation_type == "event":
-            # Update event automation
-            if not isinstance(request, UpdateEventAutomationRequest):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid request body for event automation update",
-                )
-
-            success = await db.events.update_event_listener(
-                listener_id=automation_id,
-                conversation_id=existing.conversation_id,
-                name=cast(
-                    "str",
-                    request.name if request.name is not _UNSET else existing.name,
-                ),
-                description=cast(
-                    "str | None",
-                    request.description
-                    if request.description is not _UNSET
-                    else existing.description,
-                ),
-                match_conditions=cast(
-                    "dict[str, Any]",
-                    request.match_conditions
-                    if request.match_conditions is not _UNSET
-                    else existing.match_conditions,
-                ),
-                action_config=cast(
-                    "ActionConfig | None",
-                    request.action_config
-                    if request.action_config is not _UNSET
-                    else existing.action_config,
-                ),
-                one_time=cast(
-                    "bool",
-                    request.one_time
-                    if request.one_time is not _UNSET
-                    else existing.one_time,
-                ),
-                enabled=cast(
-                    "bool",
-                    request.enabled
-                    if request.enabled is not _UNSET
-                    else existing.enabled,
-                ),
-                condition_script=cast(
-                    "str | None",
-                    request.condition_script
-                    if request.condition_script is not _UNSET
-                    else existing.condition_script,
-                ),
-                # Re-stamp creator provenance when the script/action changes so
-                # the updated script executes under the updater's profile.
-                processing_profile_id=(
-                    processing_service.service_config.id
-                    if request.action_config is not _UNSET
-                    else None
-                ),
-                created_by_user_id=(
-                    str(current_user["user_identifier"])
-                    if request.action_config is not _UNSET
-                    else None
-                ),
-            )
-        else:  # schedule
-            # Update schedule automation
-            if not isinstance(request, UpdateScheduleAutomationRequest):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid request body for schedule automation update",
-                )
-
-            success = await db.schedule_automations.update(
-                automation_id=automation_id,
-                conversation_id=existing.conversation_id,
-                name=request.name,  # Pass _UNSET through for proper sentinel handling
-                description=request.description,
-                recurrence_rule=request.recurrence_rule,
-                action_config=request.action_config,
-                enabled=request.enabled,
-                timezone=processing_service.service_config.timezone,
-                # Re-stamp creator provenance when the script/action changes so
-                # the updated script executes under the updater's profile.
-                processing_profile_id=(
-                    processing_service.service_config.id
-                    if request.action_config is not _UNSET
-                    else _UNSET
-                ),
-                created_by_user_id=(
-                    str(current_user["user_identifier"])
-                    if request.action_config is not _UNSET
-                    else _UNSET
-                ),
-            )
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to update automation")
-
+        await _update_automation_record(
+            automation_type,
+            automation_id,
+            request,
+            existing,
+            db,
+            processing_service,
+            current_user,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -612,7 +651,7 @@ async def update_automation_enabled(
     conversation_id: Annotated[
         str, Query(description="Conversation ID for permission check")
     ],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
 ) -> AutomationResponse:
     """Enable or disable an automation."""
@@ -651,7 +690,7 @@ async def update_automation_enabled(
 async def delete_automation(
     automation_type: str,
     automation_id: int,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Delete an automation."""
     # Validate automation_type
@@ -689,7 +728,7 @@ async def get_automation_stats(
     conversation_id: Annotated[
         str, Query(description="Conversation ID for permission check")
     ],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict:
     """Get execution statistics for an automation."""
     # Validate automation_type

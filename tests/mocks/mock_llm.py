@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
@@ -26,7 +27,15 @@ from family_assistant.llm import (
     UserMessageContentPart,
     UserMessageDict,
 )
-from family_assistant.llm.messages import UserMessage, message_to_json_dict
+from family_assistant.llm.call_context import current_model_selection
+from family_assistant.llm.messages import (
+    MessageReasoningInfo,
+    UserMessage,
+    is_turn_scaffolding,
+    message_to_json_dict,
+)
+from family_assistant.llm.model_selection import stamp_model_selection
+from family_assistant.storage.database import in_transaction
 from family_assistant.tools.types import ToolDefinition
 
 T = TypeVar("T", bound=BaseModel)
@@ -118,6 +127,12 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
     # ast-grep-ignore: no-dict-any - LLM kwargs contain mixed provider-specific fields
     def _record_call(self, method_name: str, actual_kwargs: dict[str, Any]) -> None:
         """Helper to store call data."""
+        # No transaction may span an LLM call: it would hold a connection (and,
+        # on SQLite, the engine lock) for the length of a model round trip.
+        # Asserting it here makes the architectural rule a failing test.
+        assert not in_transaction(), (
+            f"LLM call '{method_name}' was made with a database transaction open"
+        )
         call_data = {
             "method_name": method_name,
             "kwargs": actual_kwargs,
@@ -131,6 +146,48 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
     def get_calls(self) -> list[dict[str, Any]]:
         """Returns a list of recorded calls."""
         return self._calls
+
+    def _evaluate_response_rule(
+        self,
+        index: int,
+        matcher: MatcherFunction,
+        response_generator: ResponseGenerator,
+        actual_kwargs: MatcherArgs,
+    ) -> LLMOutput | None:
+        if not matcher(actual_kwargs):
+            return None
+
+        if callable(response_generator):
+            logger.debug(
+                f"Rule {index + 1} matched. Response generator is callable ({type(response_generator).__name__}). Calling it."
+            )
+            actual_response_output = response_generator(actual_kwargs)
+        else:
+            actual_response_output = response_generator
+
+        logger.debug(
+            f"Rule {index + 1} matched. Actual response output type: {type(actual_response_output)}"
+        )
+        log_message_action = (
+            "Returning generated response from callable."
+            if callable(response_generator)
+            else "Returning predefined response object."
+        )
+        logger.info(
+            f"Rule {index + 1} matched for 'generate_response'. {log_message_action}"
+        )
+        tool_names = (
+            [tc.function.name for tc in actual_response_output.tool_calls]
+            if actual_response_output.tool_calls
+            else []
+        )
+        content_preview = (actual_response_output.content or "")[:50]
+        logger.info(
+            f" -> Mock LLM returning: content='{content_preview}...', "
+            f"tool_calls={len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}, "
+            f"tool_names={tool_names}"
+        )
+        return actual_response_output
 
     async def generate_response(
         self,
@@ -163,45 +220,11 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         # The matcher directly receives the kwargs for generate_response.
         for i, (matcher, response_generator) in enumerate(self.rules):
             try:
-                # Matcher function now only expects actual_kwargs
-                if matcher(actual_kwargs):
-                    actual_response_output: LLMOutput
-                    if callable(response_generator):
-                        logger.debug(
-                            f"Rule {i + 1} matched. Response generator is callable ({type(response_generator).__name__}). Calling it."
-                        )
-                        # If the response_generator is a callable, call it to get the LLMOutput
-                        actual_response_output = response_generator(actual_kwargs)
-                    else:
-                        # If it's not callable, assume it's already an LLMOutput instance
-                        actual_response_output = response_generator
-
-                    # Log type of actual_response_output before accessing attributes
-                    logger.debug(
-                        f"Rule {i + 1} matched. Actual response output type: {type(actual_response_output)}"
-                    )
-
-                    # Corrected logging to reflect that the response is now generated/retrieved
-                    log_message_action = (
-                        "Returning generated response from callable."
-                        if callable(response_generator)
-                        else "Returning predefined response object."
-                    )
-                    logger.info(
-                        f"Rule {i + 1} matched for 'generate_response'. {log_message_action}"
-                    )
-                    tool_names = (
-                        [tc.function.name for tc in actual_response_output.tool_calls]
-                        if actual_response_output.tool_calls
-                        else []
-                    )
-                    content_preview = (actual_response_output.content or "")[:50]
-                    logger.info(
-                        f" -> Mock LLM returning: content='{content_preview}...', "
-                        f"tool_calls={len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}, "
-                        f"tool_names={tool_names}"
-                    )
-                    return actual_response_output
+                actual_response_output = self._evaluate_response_rule(
+                    i, matcher, response_generator, actual_kwargs
+                )
+                if actual_response_output is not None:
+                    return self._with_run_metadata(actual_response_output)
             except Exception as e:
                 # Clarify if error was in matcher or response processing if possible,
                 # but the logged traceback gives the most direct signal.
@@ -225,7 +248,25 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         logger.warning(
             f"Messages received:\n{json.dumps(sanitized_messages, indent=2)}"
         )
-        return self.default_response
+        return self._with_run_metadata(self.default_response)
+
+    @staticmethod
+    def _with_run_metadata(output: LLMOutput) -> LLMOutput:
+        """Stamp the run's model tier onto the usage, as a real provider does.
+
+        Every real client routes its result through
+        ``LLMCallTelemetry.finalize_usage``, which stamps the turn's resolved
+        selection with the same helper this uses. A fake that skipped it would
+        make every tier assertion above the LLM layer untestable, and would
+        quietly disagree with production about what a reply carries.
+        """
+        selection = current_model_selection()
+        if selection is None:
+            return output
+        reasoning: MessageReasoningInfo = dict(output.reasoning_info or {})  # type: ignore[assignment] - a TypedDict copy is still that TypedDict
+        return replace(
+            output, reasoning_info=stamp_model_selection(reasoning, selection)
+        )
 
     def generate_response_stream(
         self,
@@ -262,6 +303,8 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             done_metadata: StreamEventMetadata = {}
             if response.reasoning_info:
                 done_metadata["reasoning_info"] = response.reasoning_info
+            if response.resolved_model:
+                done_metadata["resolved_model"] = response.resolved_model
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         return _stream()
@@ -347,6 +390,43 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
 
         return {"role": "user", "content": user_message_content}
 
+    def _evaluate_structured_rule(
+        self,
+        index: int,
+        matcher: MatcherFunction,
+        response_generator: StructuredResponseGenerator,
+        actual_kwargs: StructuredMatcherArgs,
+        response_model: type[T],
+    ) -> T | None:
+        if not matcher(actual_kwargs):
+            return None
+
+        if isinstance(response_generator, BaseModel):
+            actual_response = response_generator
+        else:
+            logger.debug(
+                f"Structured rule {index + 1} matched. Response generator is callable. Calling it."
+            )
+            actual_response = response_generator(actual_kwargs)
+
+        logger.info(
+            f"Structured rule {index + 1} matched for 'generate_structured'. "
+            f"Returning {type(actual_response).__name__}."
+        )
+        if not isinstance(actual_response, response_model):
+            raise StructuredOutputError(
+                message=(
+                    f"Mock returned {type(actual_response).__name__} but "
+                    f"expected {response_model.__name__}"
+                ),
+                provider="mock",
+                model=self.model,
+                raw_response=str(actual_response),
+                validation_error=None,
+            )
+
+        return actual_response
+
     async def generate_structured(
         self,
         messages: Sequence[LLMMessage],
@@ -373,39 +453,15 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
 
         for i, (matcher, response_generator) in enumerate(self.structured_rules):
             try:
-                if matcher(actual_kwargs):
-                    actual_response: BaseModel
-                    # Check if it's a static BaseModel instance or a callable
-                    if isinstance(response_generator, BaseModel):
-                        actual_response = response_generator
-                    else:
-                        # It's a callable that returns a BaseModel
-                        logger.debug(
-                            f"Structured rule {i + 1} matched. Response generator is callable. Calling it."
-                        )
-                        actual_response = response_generator(actual_kwargs)
-
-                    logger.info(
-                        f"Structured rule {i + 1} matched for 'generate_structured'. "
-                        f"Returning {type(actual_response).__name__}."
-                    )
-
-                    # Validate that the response matches the expected model type
-                    if not isinstance(actual_response, response_model):
-                        raise StructuredOutputError(
-                            message=(
-                                f"Mock returned {type(actual_response).__name__} but "
-                                f"expected {response_model.__name__}"
-                            ),
-                            provider="mock",
-                            model=self.model,
-                            raw_response=str(actual_response),
-                            validation_error=None,
-                        )
-
-                    # Type is validated by isinstance check above
-                    return actual_response  # type: ignore[return-value] # validated by isinstance
-
+                actual_response = self._evaluate_structured_rule(
+                    i,
+                    matcher,
+                    response_generator,
+                    actual_kwargs,
+                    response_model,
+                )
+                if actual_response is not None:
+                    return actual_response
             except StructuredOutputError:
                 raise
             except Exception as e:
@@ -511,15 +567,31 @@ def extract_text_from_content(content: str | list | None) -> str:
 
 # --- Helper function to extract text from messages ---
 # (Useful for writing matchers)
+def last_real_message(messages: list[LLMMessage]) -> LLMMessage | None:
+    """The newest message that is not turn scaffolding, or None.
+
+    Tests that want "the message the turn is about" need this rather than
+    ``messages[-1]``: the prompt ends with the ``<turn_context>`` block, and on a
+    final iteration with the loop's instruction after that.
+    """
+    return next(
+        (msg for msg in reversed(messages) if not is_turn_scaffolding(msg)), None
+    )
+
+
 def get_last_message_text(messages: list[LLMMessage]) -> str:
-    """Extracts and concatenates text from the last message in a list."""
-    if not messages:
+    """Extracts and concatenates text from the last message in a list.
+
+    Turn scaffolding is skipped, so matchers keyed on "what was just asked" see
+    the request rather than the trailing ``<turn_context>`` block or the
+    final-iteration instruction. This mirrors the real loop, which skips the
+    same messages when it looks back for the user's query.
+    """
+    last_message = last_real_message(messages)
+    if last_message is None:
         return ""
 
-    last_message = messages[-1]
-    last_message_content = get_message_content(last_message)
-
-    return extract_text_from_content(last_message_content)
+    return extract_text_from_content(get_message_content(last_message))
 
 
 def get_system_prompt(messages: list[LLMMessage]) -> str | None:
@@ -547,4 +619,5 @@ __all__ = [
     "get_message_content",
     "get_message_role",
     "get_system_prompt",
+    "last_real_message",
 ]

@@ -203,67 +203,281 @@ This enables debug logging for LLM API calls to OpenAI, Anthropic, Google, and o
 
 ______________________________________________________________________
 
-## Metrics (Recommendations)
+## Metrics
 
-Family Assistant does not currently expose a `/metrics` endpoint, but the following metrics are
-recommended for comprehensive monitoring.
+Family Assistant exports Prometheus metrics on a port of its own — **9090** by default, not the
+application port. The application port is typically published by an Ingress in its entirety, and
+token spend, model line-up and error rates are not public information; a separate port keeps the
+exporter reachable from inside the cluster and nowhere else.
 
-### Key Metrics to Track
-
-| Metric                     | Type      | Description                      |
-| -------------------------- | --------- | -------------------------------- |
-| `http_requests_total`      | Counter   | Total HTTP requests by path/code |
-| `http_request_duration_ms` | Histogram | Request latency distribution     |
-| `llm_requests_total`       | Counter   | LLM API calls by model/status    |
-| `llm_request_duration_ms`  | Histogram | LLM response time                |
-| `llm_tokens_total`         | Counter   | Token usage by model             |
-| `telegram_messages_total`  | Counter   | Telegram messages processed      |
-| `tool_calls_total`         | Counter   | Tool invocations by name/status  |
-| `db_query_duration_ms`     | Histogram | Database query latency           |
-| `active_conversations`     | Gauge     | Currently active conversations   |
-| `background_tasks_queued`  | Gauge     | Pending background tasks         |
-
-### Example Prometheus Configuration
-
-If implementing Prometheus metrics, add middleware using `starlette-exporter` or
-`prometheus-fastapi-instrumentator`:
-
-```python
-# Example integration (not currently implemented)
-from prometheus_fastapi_instrumentator import Instrumentator
-
-Instrumentator().instrument(app).expose(app)
+```
+curl http://localhost:9090/metrics    # from inside the container or pod
 ```
 
-Then configure Prometheus scraping:
+The exporter is **off by default and binds loopback when enabled**, because the endpoint has no
+authentication of its own and carries data that is not public. Turn it on with
+`METRICS_ENABLED=true`, and set `METRICS_BIND_HOST=0.0.0.0` when the scraper is not on the same host
+— a Kubernetes pod scrape reaching the pod IP, for instance. Getting that wrong breaks scraping,
+which is visible; the opposite default would publish the data, which is not. `METRICS_PORT` moves
+the port. The rationale and the chokepoints the numbers come from are in
+[docs/design/prometheus-metrics.md](../design/prometheus-metrics.md).
 
-```yaml
-scrape_configs:
-  - job_name: "family-assistant"
-    static_configs:
-      - targets: ["family-assistant:8000"]
-    metrics_path: /metrics
-    scrape_interval: 15s
+Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
+exported alongside the application ones.
+
+**What is counted.** Chat (streamed or not), structured output (tool-call review), embeddings, image
+generation, video generation, and managed-agent runs — plus every tool execution, including one run
+later from an approved durable confirmation. Successful, failed, cancelled and abandoned calls each
+record exactly one outcome.
+
+**What is not.** The Gemini Live audio session behind the Asterisk phone integration is billable and
+is not counted here. It is a bidirectional session rather than a request, so it does not fit the
+call-and-usage shape the rest of these metrics share, and its `usage_metadata` arrives per server
+message with semantics this deployment has not confirmed — a wrong token total would be worse than a
+missing one. Phone-call spend has to be read from the provider's own billing until that is settled.
+
+Not every provider reports tokens. Google's embedding API reports only billable characters, and the
+image models that bill per image report no usage block. Those emit no token buckets, and
+`family_assistant_llm_calls_total` is the meter for them.
+
+### LLM
+
+Every LLM metric carries the same five labels:
+
+| Label            | Meaning                                                                  |
+| ---------------- | ------------------------------------------------------------------------ |
+| `profile`        | The processing profile whose turn made the call; `none` outside a turn   |
+| `provider`       | `anthropic`, `openai`, `google`, …                                       |
+| `model`          | The model as configured                                                  |
+| `resolved_model` | The model the provider reports serving (an alias resolves to a snapshot) |
+| `operation`      | `chat`, `structured`, `embedding`, `image`, or the managed agent's name  |
+
+| Metric                                              | Type      | Extra labels            |
+| --------------------------------------------------- | --------- | ----------------------- |
+| `family_assistant_llm_tokens_total`                 | Counter   | `kind`                  |
+| `family_assistant_llm_calls_total`                  | Counter   | `outcome`, `error_type` |
+| `family_assistant_llm_call_duration_seconds`        | Histogram | `outcome`               |
+| `family_assistant_llm_time_to_first_output_seconds` | Histogram | —                       |
+
+`kind` splits tokens into **disjoint** buckets, normalised so that they mean the same thing on every
+provider — providers disagree about whether their own cache and reasoning counts are separate
+buckets or subsets, and that correction is applied before export rather than in every query:
+
+| `kind`           | Meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `input_uncached` | Prompt tokens neither read from nor written to the prompt cache         |
+| `input_image`    | Uncached prompt tokens that were image rather than text, where reported |
+| `cache_read`     | Prompt tokens served from the prompt cache                              |
+| `cache_write`    | Prompt tokens written into the prompt cache                             |
+| `output`         | Generated tokens, excluding reasoning                                   |
+| `output_image`   | Generated tokens that were image rather than text, where reported       |
+| `reasoning`      | Reasoning / thinking tokens                                             |
+| `tool_use`       | Tokens the provider spent running its own server-side tools             |
+
+A bucket a provider does not report is absent rather than zero, so no `cache_read` series means
+"this provider or model does not report caching", not "nothing was cached".
+
+Where a provider reports both caching and a modality split, cached image tokens belong to
+`cache_read` alone — `input_image` carries only the uncached remainder, so the prompt tiers still
+sum to the prompt. Those tokens are therefore priced as cached rather than as cached *image* tokens;
+no provider here prices the two apart today.
+
+The buckets are **billing tiers**, which is what makes cost a single join against a price table on
+`(model, kind)`. A price table that omits `tool_use`, `input_image` or `output_image` will silently
+drop that spend from the join, so give every bucket a price — including the ones a given model never
+emits.
+
+`family_assistant_llm_time_to_first_output_seconds` is only observed for streamed calls, where it is
+the latency the user actually feels.
+
+### Tools and turns
+
+| Metric                                   | Type      | Labels                       |
+| ---------------------------------------- | --------- | ---------------------------- |
+| `family_assistant_tool_calls_total`      | Counter   | `profile`, `tool`, `outcome` |
+| `family_assistant_tool_duration_seconds` | Histogram | `profile`, `tool`            |
+| `family_assistant_turns_total`           | Counter   | `profile`, `outcome`         |
+| `family_assistant_turn_duration_seconds` | Histogram | `profile`, `outcome`         |
+| `family_assistant_turns_in_progress`     | Gauge     | `profile`                    |
+
+Tool `outcome` is how the *execution* ended: `returned`, `denied` (refused by tool policy),
+`not_found`, `cancelled`, or `error`. `returned` is deliberately not called "success" — a tool
+reports an expected failure by returning a result, and that result carries no status field, so
+nothing can tell the two apart. Treat a tool error rate as counting executions that never completed,
+not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that
+navigated away mid-turn is not a failure.
+
+### Task queue
+
+The background task queue's health, from the two chokepoints every task passes through: the
+repository's `enqueue` and the worker's processing path.
+
+| Metric                                      | Type      | Labels                             |
+| ------------------------------------------- | --------- | ---------------------------------- |
+| `family_assistant_tasks_enqueued_total`     | Counter   | `task_type`, `priority`            |
+| `family_assistant_tasks_processed_total`    | Counter   | `task_type`, `priority`, `outcome` |
+| `family_assistant_task_duration_seconds`    | Histogram | `task_type`, `priority`            |
+| `family_assistant_tasks_queued`             | Gauge     | `priority`, `state`                |
+| `family_assistant_task_due_latency_seconds` | Gauge     | `priority`                         |
+
+`priority` is the queue lane the task runs in: `interactive` for work somebody is waiting on or
+expects at a particular time, `background` for work that catches up when nothing interactive is due.
+The queue always takes a due interactive task before any background one, so the two lanes have
+different expectations and are worth reading apart.
+
+Task `outcome` is how the *execution* ended: `completed`, `retried` (it failed and the queue will
+try again) or `failed` (it failed and the queue has given up). A task that succeeds on its third
+attempt therefore records two `retried` and one `completed`. The duration histogram times the
+handler alone, not the bookkeeping around it, so it answers which task types hold a worker long
+enough to delay everything behind them.
+
+`family_assistant_tasks_queued` counts what the queue still owns; `done` and `failed` rows are
+history, and the processed counter has them:
+
+| `state`      | Meaning                                                         |
+| ------------ | --------------------------------------------------------------- |
+| `scheduled`  | Pending, with a scheduled time still in the future              |
+| `due`        | Eligible to run and not yet claimed by a worker                 |
+| `processing` | Claimed by a worker that is still within the reclaim window     |
+| `stalled`    | Claimed more than 15 minutes ago — the worker probably died     |
+| `exhausted`  | Pending with its retries spent, so nothing will ever dequeue it |
+
+**`family_assistant_task_due_latency_seconds{priority="interactive"}` is the metric to alert on.**
+It is the age of the oldest task in the lane that is eligible to run and has not been claimed, and
+it is near zero on a healthy queue. Background latency is expected to rise while interactive work is
+being served, which is the design working, not a fault. Depth cannot replace it: a task type that
+enqueues its own continuation holds exactly one row at a time, so a chain that starves everything
+else for an hour still reads as a depth of zero. Both gauges are sampled once per health-check
+period by the worker pool's health monitor, not by each worker. See
+[docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md) for the ordering
+rules these numbers describe.
+
+### Indexing
+
+| Metric                                      | Type    | Labels                   |
+| ------------------------------------------- | ------- | ------------------------ |
+| `family_assistant_indexing_documents_total` | Counter | `source_type`, `outcome` |
+
+`outcome` is `embedded` (an embedding provider call was made and billed) or `skipped_unchanged` (the
+stored embedding already covered that text under that model, so no call was made). The ratio is the
+health signal, not either count on its own: indexing is enqueued redundantly by design — a backfill
+walk, one task per row of a turn, task retries — and the skip is what keeps that from costing money.
+
+### Useful queries
+
+Token spend per profile, in tokens per second:
+
+```promql
+sum by (profile) (rate(family_assistant_llm_tokens_total[1h]))
 ```
 
-### Custom Metrics for LLM
+What is driving the spend — chat, tool-call review, agent runs, embeddings:
 
-Track LLM-specific metrics by instrumenting the LLM client:
+```promql
+sum by (operation) (rate(family_assistant_llm_tokens_total[1h]))
+```
 
-```python
-# Conceptual example for custom metrics
-from prometheus_client import Counter, Histogram
+Which profile is spending on reasoning rather than answers:
 
-llm_requests = Counter(
-    'llm_requests_total',
-    'Total LLM API requests',
-    ['model', 'status']
+```promql
+sum by (profile) (rate(family_assistant_llm_tokens_total{kind="reasoning"}[1h]))
+  / sum by (profile) (rate(family_assistant_llm_tokens_total{kind=~"output|reasoning"}[1h]))
+```
+
+Prompt-cache hit rate — the denominator is the reconstructed full prompt, which is what makes this
+comparable across providers:
+
+```promql
+sum by (model) (rate(family_assistant_llm_tokens_total{kind="cache_read"}[1h]))
+  / sum by (model) (
+      rate(family_assistant_llm_tokens_total{kind=~"input_uncached|input_image|cache_read|cache_write"}[1h])
+    )
+```
+
+Whether a profile is being served by its configured model or by a fallback:
+
+```promql
+sum by (profile, model, resolved_model) (rate(family_assistant_llm_calls_total[1h]))
+```
+
+What fraction of indexing passes are paying for an embedding. On a corpus that is not growing this
+should sit near zero; a sustained rise means indexing has come loose from what is already stored,
+and the embedding bill will follow:
+
+```promql
+sum by (source_type) (rate(family_assistant_indexing_documents_total{outcome="embedded"}[1h]))
+  / sum by (source_type) (rate(family_assistant_indexing_documents_total[1h]))
+```
+
+LLM calls per turn, which is where a runaway tool loop shows up. Scoped to `operation="chat"`,
+because the iteration cap counts model turns: structured output adds a call per reviewed tool call,
+and a delegated `coder` or Deep Research run increments the numerator without ever entering the
+streaming loop that produces a turn, so an unscoped ratio is inflated for profiles that delegate and
+undefined for those that only delegate.
+
+```promql
+sum by (profile) (rate(family_assistant_llm_calls_total{operation="chat"}[1h]))
+  / sum by (profile) (rate(family_assistant_turns_total[1h]))
+```
+
+Error rate by provider:
+
+```promql
+sum by (provider) (rate(family_assistant_llm_calls_total{outcome="error"}[15m]))
+  / sum by (provider) (rate(family_assistant_llm_calls_total[15m]))
+```
+
+Estimated cost, if you keep a price table in a recording rule — prices are deliberately not compiled
+into the binary, where they would go stale silently:
+
+```promql
+sum by (profile) (
+  rate(family_assistant_llm_tokens_total[1h]) * on (model, kind) group_left
+    llm_price_per_token
 )
+```
 
-llm_latency = Histogram(
-    'llm_request_duration_seconds',
-    'LLM request duration',
-    ['model']
+How long the oldest due task has been waiting, straight from the database when the exporter is not
+available. On PostgreSQL:
+
+```sql
+SELECT priority, max(now() - COALESCE(scheduled_at, created_at))
+  FROM tasks
+ WHERE status = 'pending'
+   AND retry_count <= max_retries
+   AND (scheduled_at IS NULL OR scheduled_at <= now())
+ GROUP BY priority;
+```
+
+On SQLite, which has no `now()` and no interval arithmetic, the same reading in seconds:
+
+```sql
+SELECT priority,
+       max((julianday('now') - julianday(COALESCE(scheduled_at, created_at))) * 86400)
+  FROM tasks
+ WHERE status = 'pending'
+   AND retry_count <= max_retries
+   AND (scheduled_at IS NULL OR scheduled_at <= strftime('%Y-%m-%d %H:%M:%f', 'now'))
+ GROUP BY priority;
+```
+
+The retry predicate matters: a pending row whose retries are spent is `exhausted`, not `due`, and
+without it an old exhausted row reports an arbitrarily high latency while the exported gauge reads
+zero.
+
+A task type that regenerates itself — its enqueue rate tracks its completion rate one for one while
+the queue never grows:
+
+```promql
+sum by (task_type) (rate(family_assistant_tasks_enqueued_total[15m]))
+```
+
+Which task types are holding workers:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, task_type) (rate(family_assistant_task_duration_seconds_bucket[1h]))
 )
 ```
 
@@ -287,13 +501,14 @@ These require immediate attention:
 
 These indicate potential issues:
 
-| Condition             | Threshold     | Suggested Action           |
-| --------------------- | ------------- | -------------------------- |
-| LLM request latency   | p95 > 30s     | Review model selection     |
-| HTTP request latency  | p95 > 5s      | Investigate slow endpoints |
-| Error rate            | > 5%          | Review error logs          |
-| Background task queue | > 100 pending | Check worker capacity      |
-| Disk usage            | > 80%         | Clean up or expand storage |
+| Condition                  | Threshold | Suggested Action           |
+| -------------------------- | --------- | -------------------------- |
+| LLM request latency        | p95 > 30s | Review model selection     |
+| HTTP request latency       | p95 > 5s  | Investigate slow endpoints |
+| Error rate                 | > 5%      | Review error logs          |
+| Task due latency           | > 5 min   | Check worker capacity      |
+| Stalled or exhausted tasks | Any       | Investigate the task type  |
+| Disk usage                 | > 80%     | Clean up or expand storage |
 
 ### Example Prometheus Alert Rules
 
@@ -310,12 +525,52 @@ groups:
           summary: "Family Assistant health check failing"
 
       - alert: HighLLMLatency
-        expr: histogram_quantile(0.95, llm_request_duration_seconds_bucket) > 30
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le, profile) (
+              rate(family_assistant_llm_call_duration_seconds_bucket[15m])
+            )
+          ) > 30
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High LLM response latency (p95 > 30s)"
+          summary: "High LLM response latency (p95 > 30s) on {{ $labels.profile }}"
+
+      - alert: LLMCallsFailing
+        expr: >-
+          sum by (provider) (rate(family_assistant_llm_calls_total{outcome="error"}[15m]))
+            / sum by (provider) (rate(family_assistant_llm_calls_total[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 10% of {{ $labels.provider }} LLM calls are failing"
+
+      - alert: TaskQueueDueLatency
+        expr: family_assistant_task_due_latency_seconds{priority="interactive"} > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest due interactive task has been waiting over 5 minutes"
+
+      - alert: StalledTasks
+        expr: family_assistant_tasks_queued{state="stalled"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tasks are stuck in processing past the reclaim cutoff"
+
+      - alert: ExhaustedTasks
+        expr: family_assistant_tasks_queued{state="exhausted"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tasks are pending with their retries spent and will never run"
 
       - alert: HighErrorRate
         expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
@@ -381,6 +636,18 @@ WARNING - Environment variable expansion failed in MCP config: ...
 
 **Cause**: MCP server process failed to start or missing environment variables. **Solution**: Check
 MCP configuration, verify required environment variables.
+
+#### MCP Tool List Changes
+
+```
+INFO - MCP server 'brave' reported a changed tool list on health check: now 3 tool(s) (added: brave_search; removed: none)
+```
+
+**Cause**: the tool list a server reports is re-read on every health check, so the tools the
+assistant can reach follow the server rather than being frozen at connect time. A server that came
+up reporting the wrong set — most damagingly an empty one — recovers on its own within one health
+check interval. **Solution**: none needed for a one-off. A server that flips its list back and forth
+every cycle is misbehaving; check that server's own logs.
 
 ### Debugging Tips
 
@@ -467,7 +734,49 @@ data:
 
 ### Prometheus/Grafana Stack
 
-If adding Prometheus metrics support:
+Scrape the metrics port (9090 by default), not the application port — and note that the metrics port
+is deliberately **not** on the Kubernetes Service. `deploy/service.yaml` publishes only port 80 to
+the application's 8000, because the Service backs a public Ingress; a static target of
+`family-assistant:9090` would never resolve.
+
+**Kubernetes** — discover pods rather than the Service. With the Prometheus Operator or
+VictoriaMetrics Operator, a pod scrape selecting the workload's labels:
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: family-assistant
+spec:
+  selector:
+    matchLabels:
+      app: family-assistant
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+```
+
+The container must declare the port for `port: metrics` to match:
+
+```yaml
+ports:
+  - name: metrics
+    containerPort: 9090
+```
+
+Plain Prometheus without an operator wants `kubernetes_sd_configs` with a `role: pod` job and the
+same label filter — again, not a static target.
+
+**Docker Compose** — use the compose service name, which is the DNS name on the shared network. In
+the devcontainer stack that service is `backend`, so:
+
+```yaml
+scrape_configs:
+  - job_name: "family-assistant"
+    static_configs:
+      - targets: ["backend:9090"]
+    scrape_interval: 30s
+```
 
 ```yaml
 version: "3.8"
@@ -477,7 +786,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "9091:9090"
 
   grafana:
     image: grafana/grafana:latest

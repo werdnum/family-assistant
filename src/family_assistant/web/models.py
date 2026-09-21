@@ -53,6 +53,7 @@ class GeminiLiveTranscriptionConfig(BaseModel):
 
     input_enabled: bool = True
     output_enabled: bool = True
+    language_codes: list[str] = []
 
 
 class GeminiLiveVADConfig(BaseModel):
@@ -91,14 +92,24 @@ class GeminiLiveGreetingConfig(BaseModel):
     wav_path: str | None = None
 
 
+class GeminiLiveToolsConfig(BaseModel):
+    """How a Live session reaches the profile's tools."""
+
+    on_demand: bool = True
+
+
 class GeminiLiveConfig(BaseModel):
     """Full Gemini Live Voice API configuration."""
 
-    model: str = "gemini-3.1-flash-live-preview"
+    model: str = "gemini-3.8-live"
+    tools: GeminiLiveToolsConfig = GeminiLiveToolsConfig()
     voice: GeminiLiveVoiceConfig = GeminiLiveVoiceConfig()
     session: GeminiLiveSessionConfig = GeminiLiveSessionConfig()
     transcription: GeminiLiveTranscriptionConfig = GeminiLiveTranscriptionConfig()
     vad: GeminiLiveVADConfig = GeminiLiveVADConfig()
+    car_audio_vad: GeminiLiveVADConfig = GeminiLiveVADConfig(
+        start_of_speech_sensitivity="START_SENSITIVITY_LOW", prefix_padding_ms=300
+    )
     affective_dialog: GeminiLiveAffectiveDialogConfig = (
         GeminiLiveAffectiveDialogConfig()
     )
@@ -112,12 +123,18 @@ class GeminiLiveConfig(BaseModel):
         """Create a GeminiLiveConfig from a dictionary (e.g., from config.yaml)."""
         return cls(
             model=config_dict.get("model", cls.model_fields["model"].default),
+            tools=GeminiLiveToolsConfig(**config_dict.get("tools", {})),
             voice=GeminiLiveVoiceConfig(**config_dict.get("voice", {})),
             session=GeminiLiveSessionConfig(**config_dict.get("session", {})),
             transcription=GeminiLiveTranscriptionConfig(
                 **config_dict.get("transcription", {})
             ),
             vad=GeminiLiveVADConfig(**config_dict.get("vad", {})),
+            car_audio_vad=(
+                GeminiLiveVADConfig(**config_dict["car_audio_vad"])
+                if "car_audio_vad" in config_dict
+                else cls.model_fields["car_audio_vad"].default
+            ),
             affective_dialog=GeminiLiveAffectiveDialogConfig(
                 **config_dict.get("affective_dialog", {})
             ),
@@ -263,6 +280,14 @@ class ChatPromptRequest(BaseModel):
             "instead of re-driving the LLM."
         ),
     )
+    model_tier: str | None = Field(
+        default=None,
+        description=(
+            "Optional model tier to run this request on, from the profile's "
+            "model_tiers. Omit to use the profile's default. A tier the profile "
+            "does not accept is a 400."
+        ),
+    )
 
 
 class VoiceSessionTurn(BaseModel):
@@ -280,6 +305,14 @@ class VoiceSessionRequest(BaseModel):
         description="Client-supplied conversation id. Generated when omitted.",
     )
     turns: list[VoiceSessionTurn]
+    profile_id: str | None = Field(
+        default=None,
+        description=(
+            "The profile the voice session ran under, as returned by "
+            "/api/gemini/ephemeral-token. Omit to record the session against the "
+            "default profile, which is what an omitted profile resolves to there."
+        ),
+    )
 
 
 class VoiceSessionResponse(BaseModel):
@@ -318,6 +351,12 @@ class CodeExchangeResponse(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
+
+class OpaqueTokenExchangeRequest(BaseModel):
+    """An opaque API token to upgrade to a short-lived signed JWT."""
+
+    token: str
 
 
 class RefreshTokenResponse(BaseModel):

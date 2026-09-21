@@ -22,7 +22,7 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import ContentProcessor, IndexingPipeline
 from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.storage.tasks import tasks_table
@@ -239,45 +239,45 @@ async def test_note_update_reindexing_e2e(
 
     try:
         # --- Step 1: Create Initial Note ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await db_context.notes.add_or_update(
-                title=unique_note_title,
-                content=initial_content,
-                write_policy=NoteWritePolicy.UNCONSTRAINED,
-            )
-            assert result == "Success"
+        db_context = Database(engine=pg_vector_db_engine)
+        result = await db_context.notes.add_or_update(
+            title=unique_note_title,
+            content=initial_content,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+        assert result == "Success"
 
-            note_stmt = select(notes_table.c.id).where(
-                notes_table.c.title == unique_note_title
-            )
-            note_row = await db_context.fetch_one(note_stmt)
-            assert note_row is not None, "Note not found after creation"
-            note_id = note_row["id"]
-            logger.info(f"Created initial note with ID: {note_id}")
+        note_stmt = select(notes_table.c.id).where(
+            notes_table.c.title == unique_note_title
+        )
+        note_row = await db_context.fetch_one(note_stmt)
+        assert note_row is not None, "Note not found after creation"
+        note_id = note_row["id"]
+        logger.info(f"Created initial note with ID: {note_id}")
 
         # Wait for initial indexing task
         test_new_task_event.set()
 
         # Find and wait for the initial indexing task to complete
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)  # Wait for task to be enqueued
 
-            # Find the index_note task
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.task_type == "index_note",
-                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
-                )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
+        # Find the index_note task
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.task_type == "index_note",
+                tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
             )
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find initial indexing task for note ID {note_id}"
-            )
-            initial_task_id = task_info["task_id"]
-            logger.info(f"Found initial indexing task ID: {initial_task_id}")
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, (
+            f"Could not find initial indexing task for note ID {note_id}"
+        )
+        initial_task_id = task_info["task_id"]
+        logger.info(f"Found initial indexing task ID: {initial_task_id}")
 
         # Wait for initial indexing to complete
         await wait_for_tasks_to_complete(
@@ -296,56 +296,55 @@ async def test_note_update_reindexing_e2e(
         logger.info("Embedding tasks completed")
 
         # Get document ID and count embeddings
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_record = await db.vector.get_document_by_source_id(unique_note_title)
-            assert doc_record is not None
-            document_db_id = doc_record.id
+        db = Database(engine=pg_vector_db_engine)
+        doc_record = await db.vector.get_document_by_source_id(unique_note_title)
+        assert doc_record is not None
+        document_db_id = doc_record.id
 
-            # Count initial embeddings
+        # Count initial embeddings
 
-            initial_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
-                DocumentEmbeddingRecord.document_id == document_db_id
-            )
-            initial_embeddings = await db.fetch_all(initial_embeddings_stmt)
-            initial_count = len(initial_embeddings)
-            logger.info(f"Initial embeddings count: {initial_count}")
-            assert initial_count > 0, "No embeddings created during initial indexing"
+        initial_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
+            DocumentEmbeddingRecord.document_id == document_db_id
+        )
+        initial_embeddings = await db.fetch_all(initial_embeddings_stmt)
+        initial_count = len(initial_embeddings)
+        logger.info(f"Initial embeddings count: {initial_count}")
+        assert initial_count > 0, "No embeddings created during initial indexing"
 
         # --- Step 2: Update Note Content ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await db_context.notes.add_or_update(
-                title=unique_note_title,
-                content=updated_content,
-                write_policy=NoteWritePolicy.UNCONSTRAINED,
-            )
-            assert result == "Success"
-            logger.info("Updated note content")
+        db_context = Database(engine=pg_vector_db_engine)
+        result = await db_context.notes.add_or_update(
+            title=unique_note_title,
+            content=updated_content,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+        assert result == "Success"
+        logger.info("Updated note content")
 
         # Wait for re-indexing task
         test_new_task_event.set()
 
         # Find and wait for the re-indexing task
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)  # Wait for task to be enqueued
 
-            # Find the new index_note task (created after update)
-            select_update_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.task_type == "index_note",
-                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
-                    tasks_table.c.task_id
-                    != initial_task_id,  # Exclude the initial task
-                )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
+        # Find the new index_note task (created after update)
+        select_update_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.task_type == "index_note",
+                tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
+                tasks_table.c.task_id != initial_task_id,  # Exclude the initial task
             )
-            update_task_info = await db.fetch_one(select_update_task_stmt)
-            assert update_task_info is not None, (
-                f"Could not find re-indexing task for note ID {note_id}"
-            )
-            update_task_id = update_task_info["task_id"]
-            logger.info(f"Found re-indexing task ID: {update_task_id}")
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        update_task_info = await db.fetch_one(select_update_task_stmt)
+        assert update_task_info is not None, (
+            f"Could not find re-indexing task for note ID {note_id}"
+        )
+        update_task_id = update_task_info["task_id"]
+        logger.info(f"Found re-indexing task ID: {update_task_id}")
 
         # Wait for re-indexing to complete
         await wait_for_tasks_to_complete(
@@ -364,17 +363,17 @@ async def test_note_update_reindexing_e2e(
         logger.info("Re-indexing embedding tasks completed")
 
         # --- Step 3: Verify Re-indexing Occurred ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            # Check that we still have embeddings (they should be replaced, not just deleted)
-            final_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
-                DocumentEmbeddingRecord.document_id == document_db_id
-            )
-            final_embeddings = await db.fetch_all(final_embeddings_stmt)
-            final_count = len(final_embeddings)
-            logger.info(f"Final embeddings count: {final_count}")
+        db = Database(engine=pg_vector_db_engine)
+        # Check that we still have embeddings (they should be replaced, not just deleted)
+        final_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
+            DocumentEmbeddingRecord.document_id == document_db_id
+        )
+        final_embeddings = await db.fetch_all(final_embeddings_stmt)
+        final_count = len(final_embeddings)
+        logger.info(f"Final embeddings count: {final_count}")
 
-            # Should have same number of embeddings (old ones deleted, new ones created)
-            assert final_count > 0, "No embeddings found after update"
+        # Should have same number of embeddings (old ones deleted, new ones created)
+        assert final_count > 0, "No embeddings found after update"
 
         # --- Step 4: Verify Updated Content is Searchable ---
         # Use a query that would match the updated content better
@@ -383,15 +382,15 @@ async def test_note_update_reindexing_e2e(
         )
         assert query_embedding is not None, "Query embedding not found"
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            search_results = await query_vectors(
-                db,
-                query_embedding=query_embedding,
-                embedding_model=TEST_EMBEDDING_MODEL,
-                keywords="quantum entanglement",  # Match updated content
-                limit=5,
-                filters={"source_id": unique_note_title},
-            )
+        db = Database(engine=pg_vector_db_engine)
+        search_results = await query_vectors(
+            db,
+            query_embedding=query_embedding,
+            embedding_model=TEST_EMBEDDING_MODEL,
+            keywords="quantum entanglement",  # Match updated content
+            limit=5,
+            filters={"source_id": unique_note_title},
+        )
 
         assert len(search_results) > 0, "Updated note not found in search"
         result = search_results[0]
@@ -419,15 +418,15 @@ async def test_note_update_reindexing_e2e(
 
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(f"Cleanup error: {e}")
 
         if note_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.notes.delete(unique_note_title)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.notes.delete(unique_note_title)
             except Exception as e:
                 logger.warning(f"Note cleanup error: {e}")
 
@@ -492,41 +491,41 @@ async def test_notes_indexing_graceful_degradation(
 
     try:
         # Create large note
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await db_context.notes.add_or_update(
-                title=unique_note_title,
-                content=LARGE_CONTENT,
-                write_policy=NoteWritePolicy.UNCONSTRAINED,
-            )
-            assert result == "Success"
+        db_context = Database(engine=pg_vector_db_engine)
+        result = await db_context.notes.add_or_update(
+            title=unique_note_title,
+            content=LARGE_CONTENT,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+        assert result == "Success"
 
-            note_stmt = select(notes_table.c.id).where(
-                notes_table.c.title == unique_note_title
-            )
-            note_row = await db_context.fetch_one(note_stmt)
-            assert note_row is not None, "Note not found after creation"
-            note_id = note_row["id"]
-            logger.info(f"Created large note with ID: {note_id}")
+        note_stmt = select(notes_table.c.id).where(
+            notes_table.c.title == unique_note_title
+        )
+        note_row = await db_context.fetch_one(note_stmt)
+        assert note_row is not None, "Note not found after creation"
+        note_id = note_row["id"]
+        logger.info(f"Created large note with ID: {note_id}")
 
         # Find the indexing task
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)  # Wait for task to be enqueued
 
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.task_type == "index_note",
-                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
-                )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.task_type == "index_note",
+                tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
             )
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find indexing task for note ID {note_id}"
-            )
-            indexing_task_id = task_info["task_id"]
-            logger.info(f"Found indexing task ID: {indexing_task_id}")
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, (
+            f"Could not find indexing task for note ID {note_id}"
+        )
+        indexing_task_id = task_info["task_id"]
+        logger.info(f"Found indexing task ID: {indexing_task_id}")
 
         # Wait for indexing task to complete
         test_new_task_event.set()
@@ -542,90 +541,86 @@ async def test_notes_indexing_graceful_degradation(
         test_new_task_event.set()
 
         # Find any embed_and_store_batch tasks for this document
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            # First get the document ID
-            doc_record = await db.vector.get_document_by_source_id(unique_note_title)
-            if doc_record:
-                embed_task_stmt = select(
-                    tasks_table.c.task_id, tasks_table.c.status
-                ).where(
-                    tasks_table.c.task_type == "embed_and_store_batch",
-                    tasks_table.c.payload.cast(Text).like(
-                        f'%"document_id": {doc_record.id}%'
-                    ),
-                )
-                embed_tasks = await db.fetch_all(embed_task_stmt)
-                if embed_tasks:
-                    logger.info(f"Found {len(embed_tasks)} embed_and_store_batch tasks")
-                    embed_task_ids = {
-                        task["task_id"]
-                        for task in embed_tasks
-                        if task["status"] != "completed"
-                    }
-                    if embed_task_ids:
-                        logger.info(
-                            f"Waiting for {len(embed_task_ids)} embed tasks to complete"
-                        )
-                        await wait_for_tasks_to_complete(
-                            pg_vector_db_engine,
-                            task_ids=embed_task_ids,
-                            timeout_seconds=10.0,
-                        )
+        db = Database(engine=pg_vector_db_engine)
+        # First get the document ID
+        doc_record = await db.vector.get_document_by_source_id(unique_note_title)
+        if doc_record:
+            embed_task_stmt = select(tasks_table.c.task_id, tasks_table.c.status).where(
+                tasks_table.c.task_type == "embed_and_store_batch",
+                tasks_table.c.payload.cast(Text).like(
+                    f'%"document_id": {doc_record.id}%'
+                ),
+            )
+            embed_tasks = await db.fetch_all(embed_task_stmt)
+            if embed_tasks:
+                logger.info(f"Found {len(embed_tasks)} embed_and_store_batch tasks")
+                embed_task_ids = {
+                    task["task_id"]
+                    for task in embed_tasks
+                    if task["status"] != "completed"
+                }
+                if embed_task_ids:
+                    logger.info(
+                        f"Waiting for {len(embed_task_ids)} embed tasks to complete"
+                    )
+                    await wait_for_tasks_to_complete(
+                        pg_vector_db_engine,
+                        task_ids=embed_task_ids,
+                        timeout_seconds=10.0,
+                    )
 
         # Verify document and embeddings
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_record = await db.vector.get_document_by_source_id(unique_note_title)
-            assert doc_record is not None
-            document_db_id = doc_record.id
+        db = Database(engine=pg_vector_db_engine)
+        doc_record = await db.vector.get_document_by_source_id(unique_note_title)
+        assert doc_record is not None
+        document_db_id = doc_record.id
 
-            # Check embeddings
+        # Check embeddings
 
-            embeddings_stmt = select(
-                DocumentEmbeddingRecord.embedding_type,
-                DocumentEmbeddingRecord.embedding_model,
-                DocumentEmbeddingRecord.content,
-            ).where(DocumentEmbeddingRecord.document_id == document_db_id)
-            embeddings = await db.fetch_all(embeddings_stmt)
+        embeddings_stmt = select(
+            DocumentEmbeddingRecord.embedding_type,
+            DocumentEmbeddingRecord.embedding_model,
+            DocumentEmbeddingRecord.content,
+        ).where(DocumentEmbeddingRecord.document_id == document_db_id)
+        embeddings = await db.fetch_all(embeddings_stmt)
 
-            # Should have at least one embedding record
-            assert len(embeddings) > 0
+        # Should have at least one embedding record
+        assert len(embeddings) > 0
 
-            # Find the raw_note_text embedding
-            raw_note_embedding = None
-            for emb in embeddings:
-                if emb["embedding_type"] == "raw_note_text":
-                    raw_note_embedding = emb
-                    break
+        # Find the raw_note_text embedding
+        raw_note_embedding = None
+        for emb in embeddings:
+            if emb["embedding_type"] == "raw_note_text":
+                raw_note_embedding = emb
+                break
 
-            assert raw_note_embedding is not None, "raw_note_text embedding not found"
+        assert raw_note_embedding is not None, "raw_note_text embedding not found"
 
-            # Check if it was stored without embedding due to size
-            # The actual content embedded includes title + content
-            combined_text_len = (
-                len(raw_note_embedding["content"])
-                if raw_note_embedding["content"]
-                else 0
+        # Check if it was stored without embedding due to size
+        # The actual content embedded includes title + content
+        combined_text_len = (
+            len(raw_note_embedding["content"]) if raw_note_embedding["content"] else 0
+        )
+        if combined_text_len > 30000:  # Matches MAX_CONTENT_LENGTH in tasks.py
+            assert raw_note_embedding["embedding_model"] in {
+                "text_only_too_long",
+                "text_only_error",
+                "text_only_empty_result",
+            }, (
+                f"Expected storage-only model, got: {raw_note_embedding['embedding_model']}"
             )
-            if combined_text_len > 30000:  # Matches MAX_CONTENT_LENGTH in tasks.py
-                assert raw_note_embedding["embedding_model"] in {
-                    "text_only_too_long",
-                    "text_only_error",
-                    "text_only_empty_result",
-                }, (
-                    f"Expected storage-only model, got: {raw_note_embedding['embedding_model']}"
-                )
-                logger.info(
-                    f"Large content ({combined_text_len} chars) was stored without embedding as expected"
-                )
-            else:
-                logger.info(
-                    f"Content ({combined_text_len} chars) was small enough to embed"
-                )
+            logger.info(
+                f"Large content ({combined_text_len} chars) was stored without embedding as expected"
+            )
+        else:
+            logger.info(
+                f"Content ({combined_text_len} chars) was small enough to embed"
+            )
 
-            # Verify content is stored
-            assert raw_note_embedding["content"] is not None
-            assert unique_note_title in raw_note_embedding["content"]
-            assert len(raw_note_embedding["content"]) > 30000
+        # Verify content is stored
+        assert raw_note_embedding["content"] is not None
+        assert unique_note_title in raw_note_embedding["content"]
+        assert len(raw_note_embedding["content"]) > 30000
 
         logger.info("--- Notes Indexing Graceful Degradation Test Passed ---")
 
@@ -641,43 +636,43 @@ async def test_notes_indexing_graceful_degradation(
 
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(f"Document cleanup error: {e}")
 
         if note_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.notes.delete(unique_note_title)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.notes.delete(unique_note_title)
             except Exception as e:
                 logger.warning(f"Note cleanup error: {e}")
 
         if indexing_task_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_id == indexing_task_id
-                    )
-                    await db_cleanup.execute_with_retry(delete_stmt)
-                    logger.info(f"Cleaned up test task ID {indexing_task_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_id == indexing_task_id
+                )
+                await db_cleanup.execute(delete_stmt)
+                logger.info(f"Cleaned up test task ID {indexing_task_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during task cleanup: {cleanup_err}")
 
         # Also clean up any embed_and_store_batch tasks
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_embed_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_type == "embed_and_store_batch",
-                        tasks_table.c.payload.cast(Text).like(
-                            f'%"document_id": {document_db_id}%'
-                        ),
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_embed_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_type == "embed_and_store_batch",
+                    tasks_table.c.payload.cast(Text).like(
+                        f'%"document_id": {document_db_id}%'
+                    ),
+                )
+                result = await db_cleanup.execute(delete_embed_stmt)
+                if result.rowcount > 0:
+                    logger.info(
+                        f"Cleaned up {result.rowcount} embed_and_store_batch tasks"
                     )
-                    result = await db_cleanup.execute_with_retry(delete_embed_stmt)
-                    if result.rowcount > 0:  # type: ignore[attr-defined]
-                        logger.info(
-                            f"Cleaned up {result.rowcount} embed_and_store_batch tasks"
-                        )
             except Exception as cleanup_err:
                 logger.warning(f"Error during embed task cleanup: {cleanup_err}")

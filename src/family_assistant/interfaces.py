@@ -8,6 +8,21 @@ if TYPE_CHECKING:
     from family_assistant.security.taint import TaintMetadata
 
 
+class ChatDeliveryError(RuntimeError):
+    """A chat interface could not deliver a message.
+
+    Carries whether the identical send could succeed later, which is the
+    interface's judgement to make: only the transport knows that a Telegram
+    ``BadRequest`` will be refused again forever while a ``TimedOut`` may not
+    be. Callers use it to choose between retrying the same text and doing
+    something else with it.
+    """
+
+    def __init__(self, message: str, *, transient: bool) -> None:
+        super().__init__(message)
+        self.transient = transient
+
+
 class ChatInterface(Protocol):
     """
     Protocol defining how the assistant sends messages back to a chat interface.
@@ -25,7 +40,7 @@ class ChatInterface(Protocol):
         taint_metadata: "TaintMetadata | None" = None,
         # Potentially add other common parameters like inline keyboard markup
         # For now, keeping it simple with text, parse_mode, reply_to, and attachments.
-    ) -> str | None:  # Returns interface-specific message ID if successful, else None
+    ) -> str:  # Returns the interface-specific message ID
         """
         Sends a message to the specified conversation.
 
@@ -44,7 +59,11 @@ class ChatInterface(Protocol):
                 interfaces ignore it.
 
         Returns:
-            The interface-specific ID of the sent message, or None if sending failed.
+            The interface-specific ID of the sent message.
+
+        Raises:
+            ChatDeliveryError: The message was not delivered. ``transient`` says
+                whether sending the same text again could succeed.
         """
         ...
 

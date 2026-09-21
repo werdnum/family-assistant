@@ -1,0 +1,166 @@
+{
+  "replay_id": "integration.llm.test_shipped_model_media_input/test_shipped_google_model_calls_a_tool/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.8-flash:generateContent",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "What is 42 times 17? Use the calculate tool."
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "description": "Evaluate an arithmetic expression.",
+                    "name": "calculate",
+                    "parameters": {
+                      "properties": {
+                        "expression": {
+                          "description": "",
+                          "type": "STRING"
+                        }
+                      },
+                      "required": [
+                        "expression"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "X-Gemini-Service-Tier": "standard",
+          "Content-Type": "application/json; charset=UTF-8",
+          "Vary": "Origin, X-Origin, Referer",
+          "Content-Encoding": "gzip",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+          "Transfer-Encoding": "chunked"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "functionCall": {
+                        "name": "calculate",
+                        "args": {
+                          "expression": "42 * 17"
+                        },
+                        "id": "call_2663670"
+                      },
+                      "thoughtSignature": "EowCCokCARFNMg8tBjke6WiHy9AcQVyP5hUnplMOOGqbThHgRYfXzbRGogVopDtWQQrrW6rB7Lrtq81rDsRf5/q93oWcxT4SLXOaKGfLIEXhg+ydj3u6wZZwUyltUe9RYPxVz/syQFmfX9cGTOgCxHcrPT7jC63ndsfksTp2WHXHOCRtfxcHV5+NvzdbLCWxyrZLTH82mtLPyHv8N/JFt3TcnDbVIiOeT7nC5zDDXUdGtkbCa49xcULbtMAbla/UB+RC4i7k+gFdCLESpU10U+MzNUuoHpyOZmw8/vS5iVcrikUBBXXNFNZgqZtWbF6I2kF9j0G6W/UJHW0p9yy6fHkQSNHvEXEE4+mngeUS6A=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0,
+                "finishMessage": "Model generated function call(s)."
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 56,
+              "candidatesTokenCount": 19,
+              "totalTokenCount": 125,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 56
+                }
+              ],
+              "thoughtsTokenCount": 50,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "JT2Yavi5EuLFg8UPi4qu-Qs"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "X-Gemini-Service-Tier": "standard",
+                "Content-Type": "application/json; charset=UTF-8",
+                "Vary": "Origin, X-Origin, Referer",
+                "Content-Encoding": "gzip",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+                "Transfer-Encoding": "chunked"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "call_2663670",
+                        "args": {
+                          "expression": "42 * 17"
+                        },
+                        "name": "calculate"
+                      },
+                      "thought_signature": "EowCCokCARFNMg8tBjke6WiHy9AcQVyP5hUnplMOOGqbThHgRYfXzbRGogVopDtWQQrrW6rB7Lrtq81rDsRf5_q93oWcxT4SLXOaKGfLIEXhg-ydj3u6wZZwUyltUe9RYPxVz_syQFmfX9cGTOgCxHcrPT7jC63ndsfksTp2WHXHOCRtfxcHV5-NvzdbLCWxyrZLTH82mtLPyHv8N_JFt3TcnDbVIiOeT7nC5zDDXUdGtkbCa49xcULbtMAbla_UB-RC4i7k-gFdCLESpU10U-MzNUuoHpyOZmw8_vS5iVcrikUBBXXNFNZgqZtWbF6I2kF9j0G6W_UJHW0p9yy6fHkQSNHvEXEE4-mngeUS6A=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.8-flash",
+            "response_id": "JT2Yavi5EuLFg8UPi4qu-Qs",
+            "usage_metadata": {
+              "candidates_token_count": 19,
+              "prompt_token_count": 56,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 56
+                }
+              ],
+              "thoughts_token_count": 50,
+              "total_token_count": 125
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

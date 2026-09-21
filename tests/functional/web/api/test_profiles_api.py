@@ -10,6 +10,11 @@ import pytest
 from tests.functional.web.conftest import WebTestFixture
 
 
+# Marked playwright because every test here drives a real browser page via
+# `web_test_fixture_readonly`. Without it these run in the backend job, whose
+# adaptive runner keeps ~12 workers busy, and the fixture's 10s wait for
+# `data-app-ready` loses that race often enough to fail CI.
+@pytest.mark.playwright
 @pytest.mark.asyncio
 class TestProfilesAPI:
     """Test suite for the /v1/profiles API endpoint."""

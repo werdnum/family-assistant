@@ -135,6 +135,63 @@ The approved bypasses (the `NoteWritePolicy` definition itself, the web notes ad
 call-transcript writer) are listed in `.ast-grep/exemptions.yml`; a new admin surface that genuinely
 needs the bypass belongs there with a justification.
 
+### `no-unrestricted-note-read-policy`
+
+**Pattern**: any mention of `NoteReadPolicy.UNRESTRICTED`.
+
+**Why it's banned**: `UNRESTRICTED` drops both halves of read confinement — the visibility-grants
+subset check and the required-label floor. The floor is the only thing that keeps a confined profile
+(the memory curator) out of unlabelled notes and label-less file skills, because an empty label set
+is a subset of every grant set. A read that skips the policy is therefore not a narrower read, it is
+an unconfined one, and the confinement is worth only as much as the boundaries that honour it.
+
+**Replacement**: derive the policy from the active profile with `exec_context.note_read_policy()`,
+and pass that one object to both boundaries that resolve notes — `NotesRepository` for stored notes
+and `NoteRegistry` for file-based skills.
+
+The approved bypasses are listed in `.ast-grep/exemptions.yml`: the `NoteReadPolicy` definition, the
+web notes admin API, the notes indexer, the memory apply path, and the confirmation preview's
+existence lookup. Each reads on nobody's behalf, so there is no profile whose confinement could
+apply; a new surface of that kind belongs there with a justification.
+
+## Database Engine Construction
+
+### `no-raw-create-async-engine`
+
+**Pattern**: any call to SQLAlchemy's `create_async_engine()`.
+
+**Why it's banned**: `create_engine_with_sqlite_optimizations()` in
+`src/family_assistant/storage/base.py` is what applies the pool class, the SQLite PRAGMAs and reset
+policy, the URL normalization, and (opt-in) the transaction-duration and connection-leak
+instrumentation. An engine built with the raw constructor silently gets SQLAlchemy's defaults, so a
+test using one is not exercising the configuration production runs — the pool and serialization
+behaviour the transactional design depends on is exactly what goes untested. See
+[docs/design/db-commit-as-you-go.md](../../docs/design/db-commit-as-you-go.md).
+
+**Replacement**: `create_engine_with_sqlite_optimizations(url)`, or
+`create_engine_with_sqlite_optimizations(url, instrument=True)` in tests.
+
+Admin engines that exist only to `CREATE`/`DROP` a test database (AUTOCOMMIT, never used for
+application queries) are the legitimate exception and carry an inline exemption. The factory itself
+is exempted in `.ast-grep/exemptions.yml`.
+
+### `no-raw-transaction-management`
+
+**Pattern**: `engine.begin()` or `engine.begin_nested()` on anything named like an engine.
+
+**Why it's banned**: a raw transaction scope bypasses the per-engine SQLite lock in
+`storage/database.py`. Because SQLite's `StaticPool` hands the same DBAPI connection to every
+checkout, such a block reads another unit of work's uncommitted rows and commits them when it exits
+— silently turning that unit's rollback into a no-op. On PostgreSQL it escapes the pool bounds and
+the ambient-transaction guard.
+
+**Replacement**: a `Database` handle call, `async with db.transaction()`, or
+`await db.atomic(body)`. See
+[docs/design/db-commit-as-you-go.md](../../docs/design/db-commit-as-you-go.md).
+
+The storage layer implements these primitives and is exempt; test fixtures doing schema setup before
+any application code runs carry inline exemptions.
+
 ## Type Annotation Quality
 
 ### `no-dict-any`

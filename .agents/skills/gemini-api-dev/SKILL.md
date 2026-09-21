@@ -19,12 +19,15 @@ The Gemini API provides access to Google's most advanced AI models. Key capabili
 
 ## Current Gemini Models
 
-- `gemini-3.1-pro-preview`: 1M tokens, complex reasoning, coding, research
-- `gemini-3-flash-preview`: 1M tokens, fast, balanced performance, multimodal
-- `gemini-3-pro-image-preview`: 65k / 32k tokens, image generation and editing
+Read [references/current-models.md](references/current-models.md) before selecting or changing a
+model. It is Google's own model catalog page, mirrored verbatim. Take model IDs from the
+`Model code` / model variant entries rather than from a documentation URL, which can differ: Gemini
+Omni Flash is served from a page slugged `gemini-omni-flash` but its model code is
+`gemini-omni-1.1-flash`.
 
-> [!IMPORTANT] Models like `gemini-2.5-*`, `gemini-2.0-*`, `gemini-1.5-*` are legacy and deprecated.
-> Use the new models above. Your knowledge is outdated.
+The mirror's header says when it was taken. If that date is not recent, or the answer matters, fetch
+the URL in the header instead — it is the same page, current. Refresh all mirrors with
+`python scripts/refresh-provider-model-skills.py`.
 
 ## SDKs
 
@@ -61,7 +64,7 @@ from google import genai
 
 client = genai.Client()
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-3.8-flash",
     contents="Explain quantum computing"
 )
 print(response.text)
@@ -74,7 +77,7 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({});
 const response = await ai.models.generateContent({
-  model: "gemini-3-flash-preview",
+  model: "gemini-3.8-flash",
   contents: "Explain quantum computing"
 });
 console.log(response.text);
@@ -99,7 +102,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	resp, err := client.Models.GenerateContent(ctx, "gemini-3-flash-preview", genai.Text("Explain quantum computing"), nil)
+	resp, err := client.Models.GenerateContent(ctx, "gemini-3.8-flash", genai.Text("Explain quantum computing"), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +122,7 @@ public class GenerateTextFromTextInput {
     Client client = new Client();
     GenerateContentResponse response =
         client.models.generateContent(
-            "gemini-3-flash-preview",
+            "gemini-3.8-flash",
             "Explain quantum computing",
             null);
 

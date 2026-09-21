@@ -29,7 +29,11 @@ from family_assistant.web.auth import (
     SESSION_SECRET_KEY,
     AuthMiddleware,
     AuthService,
+    BootstrapBodyLimitMiddleware,
     create_auth_router,
+)
+from family_assistant.web.cancel_on_disconnect import (
+    CancelOnClientDisconnectMiddleware,
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.routers.a2a_api import a2a_wellknown_router
@@ -49,11 +53,16 @@ from family_assistant.web.routers.app_auth import (
 from family_assistant.web.routers.asterisk_live_api import asterisk_live_router
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
+from family_assistant.web.routers.errors_api import (
+    ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
+    ErrorIntakeRateLimiter,
+)
 from family_assistant.web.routers.gemini_live_api import gemini_live_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
 from family_assistant.web.routers.health import health_router
 from family_assistant.web.routers.ios_push import router as ios_push_router
+from family_assistant.web.routers.legal import legal_router
 from family_assistant.web.routers.push import router as push_router
 from family_assistant.web.routers.ucp import router as ucp_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
@@ -89,7 +98,9 @@ templates.env.filters["tojson"] = json.dumps
 templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
 
 
-middleware = []
+# Outermost, so a disconnect stops the whole stack -- auth, routing, handler and
+# the database work underneath -- rather than only the innermost part of it.
+middleware = [Middleware(CancelOnClientDisconnectMiddleware)]
 
 if SESSION_SECRET_KEY:
     middleware.append(Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY))
@@ -119,17 +130,21 @@ class AuthMiddlewareWrapper:
                         self.app, self.auth_service, PUBLIC_PATHS
                     )
 
-        # Use AuthMiddleware if available and auth is enabled
-        if self.auth_middleware and AUTH_ENABLED:
+        if self.auth_middleware:
             await self.auth_middleware(scope, receive, send)
         else:
             await self.app(scope, receive, send)
 
 
-if AUTH_ENABLED:
-    middleware.append(Middleware(AuthMiddlewareWrapper))
-else:
-    logger.info("AuthMiddleware NOT added as AUTH_ENABLED is false.")
+# The body cap runs before auth so oversized unauthenticated bootstrap
+# payloads are rejected while still streaming (see BootstrapBodyLimitMiddleware).
+middleware.append(Middleware(BootstrapBodyLimitMiddleware))
+
+# Install independently of OIDC: AuthMiddleware decides at request time whether
+# OIDC or signed-JWT API authentication is configured. This is what keeps a
+# JWT-only LAN/Tailscale path fail-closed while preserving installations with
+# neither authentication mode configured.
+middleware.append(Middleware(AuthMiddlewareWrapper))
 
 
 # --- Lifespan context manager for startup/shutdown ---
@@ -143,6 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Note: database_engine will be set by Assistant during setup
     if hasattr(app.state, "database_engine"):
         app.state.auth_service = AuthService(app.state.database_engine)
+        app.state.jwt_token_service = app.state.auth_service.jwt_tokens
         logger.info("AuthService initialized with database engine")
 
         # Initialize WebChatInterface for web UI message delivery
@@ -180,6 +196,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         # For development or when database is not yet initialized
         app.state.auth_service = AuthService()
+        app.state.jwt_token_service = app.state.auth_service.jwt_tokens
         logger.warning(
             "AuthService initialized without database engine - API token auth will not work"
         )
@@ -214,6 +231,10 @@ def create_app() -> FastAPI:
     new_app.state.templates = templates
     new_app.state.server_url = SERVER_URL
     new_app.state.docs_user_dir = docs_user_dir
+    new_app.state.error_intake_rate_limiter = ErrorIntakeRateLimiter()
+    new_app.state.error_intake_address_admission_limiter = ErrorIntakeRateLimiter(
+        ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT
+    )
 
     # In-memory broker for resumable conversation streaming. Holds in-flight
     # turn state, the per-conversation event ring buffer, subscriber queues,
@@ -288,6 +309,7 @@ def create_app() -> FastAPI:
     new_app.include_router(webhooks_router, tags=["Webhooks"])
     new_app.include_router(context_viewer_router, tags=["Context Viewer UI"])
     new_app.include_router(health_router, tags=["Health Check"])
+    new_app.include_router(legal_router, tags=["Legal Pages"])
 
     # Client configuration and push notification endpoints
     new_app.include_router(client_config_router, tags=["Client Configuration"])
@@ -443,6 +465,7 @@ def configure_app_auth(
     # Initialize AuthService
     auth_service = AuthService(database_engine)
     app.state.auth_service = auth_service
+    app.state.jwt_token_service = auth_service.jwt_tokens
 
     # Include auth router
     if AUTH_ENABLED:

@@ -48,6 +48,7 @@ final class ErrorReporter: @unchecked Sendable {
 
     private let lock = NSLock()
     private var baseURLProvider: (() -> URL?)?
+    private var authTokenProvider: (() async throws -> String?)?
     private var recentReports: [String: Date] = [:]
 
     /// Cap on spooled reports so a server outage cannot grow the cache without bound.
@@ -68,8 +69,16 @@ final class ErrorReporter: @unchecked Sendable {
     // MARK: - Configuration
 
     /// Provide a resolver for the backend base URL (e.g. `https://assistant.example.com`).
-    func configure(baseURLProvider: @escaping () -> URL?) {
-        lock.withLock { self.baseURLProvider = baseURLProvider }
+    /// The token provider supplies the current API access token so reports keep
+    /// landing in the persistent error lane on authenticated deployments.
+    func configure(
+        baseURLProvider: @escaping () -> URL?,
+        authTokenProvider: (() async throws -> String?)? = nil
+    ) {
+        lock.withLock {
+            self.baseURLProvider = baseURLProvider
+            self.authTokenProvider = authTokenProvider
+        }
     }
 
     /// Install a global uncaught-exception handler that persists the exception for delivery on the
@@ -197,9 +206,25 @@ final class ErrorReporter: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let tokenProvider = lock.withLock { authTokenProvider }
+        let token: String?
+        do {
+            token = try await tokenProvider?()
+        } catch {
+            // Authentication enriches reports but must not block the public error-intake path.
+            token = nil
+        }
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (_, response) = try await session.data(for: request)
+        let (data, response) = try await session.dataExpectingJSON(for: request, authWallError: ReporterError.authWall)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: ReporterError.authWall
+        )
         guard let httpResponse = response as? HTTPURLResponse,
               200..<300 ~= httpResponse.statusCode
         else {
@@ -302,21 +327,21 @@ final class ErrorReporter: @unchecked Sendable {
     private static func syntheticURL(component: String) -> String {
         let encoded = component.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
             ?? component
-        return "familyassistant://ios/\(encoded)"
+        return "familyassistant://\(platform)/\(encoded)"
     }
 
     private static var userAgent: String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
-        return "FamilyAssistant-iOS/\(version) (build \(build); "
+        return "FamilyAssistant-\(platform == "ios" ? "iOS" : "watchOS")/\(version) (build \(build); "
             + "\(ProcessInfo.processInfo.operatingSystemVersionString))"
     }
 
     private static func metadata() -> [String: String] {
         let info = Bundle.main.infoDictionary
         var data: [String: String] = [
-            "platform": "ios",
+            "platform": platform,
             "app_version": info?["CFBundleShortVersionString"] as? String ?? "unknown",
             "build": info?["CFBundleVersion"] as? String ?? "unknown",
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
@@ -326,6 +351,14 @@ final class ErrorReporter: @unchecked Sendable {
             data["installation_id"] = installationID
         }
         return data
+    }
+
+    private static var platform: String {
+        #if os(watchOS)
+        "watchos"
+        #else
+        "ios"
+        #endif
     }
 
     /// A TestFlight (sandbox) build ships a `sandboxReceipt` rather than a production receipt.
@@ -343,6 +376,7 @@ final class ErrorReporter: @unchecked Sendable {
     private enum ReporterError: Error {
         case invalidURL
         case badResponse
+        case authWall
     }
 }
 

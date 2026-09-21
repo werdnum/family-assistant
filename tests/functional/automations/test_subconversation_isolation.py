@@ -28,7 +28,7 @@ from family_assistant.processing import (
 )
 from family_assistant.security.taint import TaintMetadata
 from family_assistant.storage import delegation_runs_table, message_history_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -272,108 +272,102 @@ async def test_subconversation_isolation(
     )
 
     # Execute the interaction
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_processing_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[
-                {
-                    "type": "text",
-                    "text": "Please delegate this task to the specialist",
-                }
-            ],
-            trigger_interface_message_id="msg1",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=None,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_processing_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[
+            {
+                "type": "text",
+                "text": "Please delegate this task to the specialist",
+            }
+        ],
+        trigger_interface_message_id="msg1",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=None,
+    )
 
     # Verify no errors
     assert result.error_traceback is None
     assert result.text_reply is not None
 
     # Check message history isolation
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Get all messages for this conversation
-        all_messages = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CHAT_ID)
-            .order_by(message_history_table.c.timestamp.asc())
-        )
+    db_context = Database(engine=db_engine)
+    # Get all messages for this conversation
+    all_messages = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CHAT_ID)
+        .order_by(message_history_table.c.timestamp.asc())
+    )
 
-        # Separate main conversation messages from subconversation messages
-        main_messages = [
-            msg for msg in all_messages if msg["subconversation_id"] is None
-        ]
-        subconversation_messages = [
-            msg for msg in all_messages if msg["subconversation_id"] is not None
-        ]
+    # Separate main conversation messages from subconversation messages
+    main_messages = [msg for msg in all_messages if msg["subconversation_id"] is None]
+    subconversation_messages = [
+        msg for msg in all_messages if msg["subconversation_id"] is not None
+    ]
 
-        logger.info(f"Main conversation messages: {len(main_messages)}")
-        logger.info(f"Subconversation messages: {len(subconversation_messages)}")
+    logger.info(f"Main conversation messages: {len(main_messages)}")
+    logger.info(f"Subconversation messages: {len(subconversation_messages)}")
 
-        # Verify main conversation has expected messages
-        assert len(main_messages) >= 3, (
-            "Expected at least user, assistant, and tool messages in main conversation"
-        )
+    # Verify main conversation has expected messages
+    assert len(main_messages) >= 3, (
+        "Expected at least user, assistant, and tool messages in main conversation"
+    )
 
-        # Verify main conversation contains user message
-        user_messages = [msg for msg in main_messages if msg["role"] == "user"]
-        assert len(user_messages) >= 1, "Expected user message in main conversation"
-        assert "delegate" in user_messages[0]["content"].lower()
+    # Verify main conversation contains user message
+    user_messages = [msg for msg in main_messages if msg["role"] == "user"]
+    assert len(user_messages) >= 1, "Expected user message in main conversation"
+    assert "delegate" in user_messages[0]["content"].lower()
 
-        # Verify main conversation contains delegation tool call
-        assistant_messages = [
-            msg for msg in main_messages if msg["role"] == "assistant"
-        ]
-        delegation_tool_call = None
-        for msg in assistant_messages:
-            if msg["tool_calls"]:
-                for tc in msg["tool_calls"]:
-                    if tc.get("function", {}).get("name") == "delegate_to_service":
-                        delegation_tool_call = tc
-                        break
+    # Verify main conversation contains delegation tool call
+    assistant_messages = [msg for msg in main_messages if msg["role"] == "assistant"]
+    delegation_tool_call = None
+    for msg in assistant_messages:
+        if msg["tool_calls"]:
+            for tc in msg["tool_calls"]:
+                if tc.get("function", {}).get("name") == "delegate_to_service":
+                    delegation_tool_call = tc
+                    break
 
-        assert delegation_tool_call is not None, (
-            "Expected delegation tool call in main conversation"
-        )
+    assert delegation_tool_call is not None, (
+        "Expected delegation tool call in main conversation"
+    )
 
-        # Verify subconversation exists and has its own messages
-        assert len(subconversation_messages) > 0, "Expected subconversation messages"
+    # Verify subconversation exists and has its own messages
+    assert len(subconversation_messages) > 0, "Expected subconversation messages"
 
-        # Verify all subconversation messages have the same subconversation_id
-        subconversation_ids = {
-            msg["subconversation_id"] for msg in subconversation_messages
-        }
-        assert len(subconversation_ids) == 1, (
-            "Expected all subconversation messages to have the same subconversation_id"
-        )
+    # Verify all subconversation messages have the same subconversation_id
+    subconversation_ids = {
+        msg["subconversation_id"] for msg in subconversation_messages
+    }
+    assert len(subconversation_ids) == 1, (
+        "Expected all subconversation messages to have the same subconversation_id"
+    )
 
-        # Verify subconversation contains the delegated profile's messages
-        subconv_profile_ids = {
-            msg["processing_profile_id"] for msg in subconversation_messages
-        }
-        assert DELEGATED_PROFILE_ID in subconv_profile_ids, (
-            "Expected delegated profile messages in subconversation"
-        )
+    # Verify subconversation contains the delegated profile's messages
+    subconv_profile_ids = {
+        msg["processing_profile_id"] for msg in subconversation_messages
+    }
+    assert DELEGATED_PROFILE_ID in subconv_profile_ids, (
+        "Expected delegated profile messages in subconversation"
+    )
 
-        # Verify main conversation does not contain delegated profile's internal messages
-        main_profile_ids = {
-            msg["processing_profile_id"]
-            for msg in main_messages
-            if msg["processing_profile_id"]
-        }
-        # The main conversation should only have messages from the primary profile
-        assert DELEGATED_PROFILE_ID not in main_profile_ids or all(
-            msg["role"] == "tool"
-            for msg in main_messages
-            if msg["processing_profile_id"] == DELEGATED_PROFILE_ID
-        ), (
-            "Delegated profile's internal messages should not appear in main conversation"
-        )
+    # Verify main conversation does not contain delegated profile's internal messages
+    main_profile_ids = {
+        msg["processing_profile_id"]
+        for msg in main_messages
+        if msg["processing_profile_id"]
+    }
+    # The main conversation should only have messages from the primary profile
+    assert DELEGATED_PROFILE_ID not in main_profile_ids or all(
+        msg["role"] == "tool"
+        for msg in main_messages
+        if msg["processing_profile_id"] == DELEGATED_PROFILE_ID
+    ), "Delegated profile's internal messages should not appear in main conversation"
 
-        logger.info("✓ Subconversation isolation verified successfully")
+    logger.info("✓ Subconversation isolation verified successfully")
 
 
 @pytest.mark.asyncio
@@ -503,19 +497,19 @@ async def test_async_delegation_completion_wakes_source_profile_with_history(
     )
 
     conversation_id = "async_completion_wakeup_flow"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        initial_result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=conversation_id,
-            trigger_content_parts=[
-                {"type": "text", "text": "Please delegate asynchronously"}
-            ],
-            trigger_interface_message_id="msg_async",
-            user_name=TEST_USER_NAME,
-            chat_interface=cast("ChatInterface", chat_interface),
-            request_confirmation_callback=None,
-        )
+    db_context = Database(engine=db_engine)
+    initial_result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=conversation_id,
+        trigger_content_parts=[
+            {"type": "text", "text": "Please delegate asynchronously"}
+        ],
+        trigger_interface_message_id="msg_async",
+        user_name=TEST_USER_NAME,
+        chat_interface=cast("ChatInterface", chat_interface),
+        request_confirmation_callback=None,
+    )
 
     assert initial_result.error_traceback is None
     assert (
@@ -559,55 +553,55 @@ async def test_async_delegation_completion_wakes_source_profile_with_history(
     async def load_committed_wakeup_state() -> (
         tuple[list[Any], list[Any], list[Any]] | None
     ):
-        async with DatabaseContext(engine=db_engine) as db_context:
-            rows = await db_context.fetch_all(
-                select(message_history_table)
-                .where(message_history_table.c.conversation_id == conversation_id)
-                .order_by(message_history_table.c.internal_id)
-            )
-            main_rows = [row for row in rows if row["subconversation_id"] is None]
-            sub_rows = [row for row in rows if row["subconversation_id"] is not None]
-            system_rows = [
-                row
-                for row in main_rows
-                if row["role"] == "system"
-                and "System: Delegated profile task completed." in row["content"]
-            ]
-            data_rows = [
-                row
-                for row in main_rows
-                if row["role"] == "user"
-                and "Delegated task completed successfully." in row["content"]
-            ]
-            final_rows = [
-                row
-                for row in main_rows
-                if row["role"] == "assistant"
-                and row["content"]
-                == "Source profile reviewed the delegated result for the user."
-            ]
-            if (
-                len(system_rows) != 1
-                or len(data_rows) != 1
-                or len(final_rows) != 1
-                or final_rows[0]["interface_message_id"] != "recorded-message-1"
-                or not sub_rows
-            ):
-                return None
-            next_turn_history = await db_context.message_history.get_recent(
-                interface_type=TEST_INTERFACE_TYPE,
-                conversation_id=conversation_id,
-                limit=20,
-                processing_profile_id=PRIMARY_PROFILE_ID,
-                subconversation_id=None,
-                current_time=primary_service.clock.now(),
-            )
-            reply_thread_history = await db_context.message_history.get_by_thread_id(
-                thread_root_id=data_rows[0]["internal_id"],
-                processing_profile_id=PRIMARY_PROFILE_ID,
-                subconversation_id=None,
-            )
-            return rows, next_turn_history, reply_thread_history
+        db_context = Database(engine=db_engine)
+        rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == conversation_id)
+            .order_by(message_history_table.c.internal_id)
+        )
+        main_rows = [row for row in rows if row["subconversation_id"] is None]
+        sub_rows = [row for row in rows if row["subconversation_id"] is not None]
+        system_rows = [
+            row
+            for row in main_rows
+            if row["role"] == "system"
+            and "System: Delegated profile task completed." in row["content"]
+        ]
+        data_rows = [
+            row
+            for row in main_rows
+            if row["role"] == "user"
+            and "Delegated task completed successfully." in row["content"]
+        ]
+        final_rows = [
+            row
+            for row in main_rows
+            if row["role"] == "assistant"
+            and row["content"]
+            == "Source profile reviewed the delegated result for the user."
+        ]
+        if (
+            len(system_rows) != 1
+            or len(data_rows) != 1
+            or len(final_rows) != 1
+            or final_rows[0]["interface_message_id"] != "recorded-message-1"
+            or not sub_rows
+        ):
+            return None
+        next_turn_history = await db_context.message_history.get_recent(
+            interface_type=TEST_INTERFACE_TYPE,
+            conversation_id=conversation_id,
+            limit=20,
+            processing_profile_id=PRIMARY_PROFILE_ID,
+            subconversation_id=None,
+            current_time=primary_service.clock.now(),
+        )
+        reply_thread_history = await db_context.message_history.get_by_thread_id(
+            thread_root_id=data_rows[0]["internal_id"],
+            processing_profile_id=PRIMARY_PROFILE_ID,
+            subconversation_id=None,
+        )
+        return rows, next_turn_history, reply_thread_history
 
     rows, next_turn_history, reply_thread_history = cast(
         "tuple[list[Any], list[Any], list[Any]]",
@@ -896,17 +890,17 @@ async def test_nested_async_delegation_completion_wakes_source_subconversation(
     )
 
     conversation_id = "nested_async_delegation_wakeup_flow"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        initial_result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=conversation_id,
-            trigger_content_parts=[{"type": "text", "text": "Start nested delegation"}],
-            trigger_interface_message_id="msg_nested_async",
-            user_name=TEST_USER_NAME,
-            chat_interface=cast("ChatInterface", chat_interface),
-            request_confirmation_callback=None,
-        )
+    db_context = Database(engine=db_engine)
+    initial_result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=conversation_id,
+        trigger_content_parts=[{"type": "text", "text": "Start nested delegation"}],
+        trigger_interface_message_id="msg_nested_async",
+        user_name=TEST_USER_NAME,
+        chat_interface=cast("ChatInterface", chat_interface),
+        request_confirmation_callback=None,
+    )
 
     assert initial_result.error_traceback is None
     assert initial_result.text_reply == "Primary handed off the parent task."
@@ -923,55 +917,50 @@ async def test_nested_async_delegation_completion_wakes_source_subconversation(
     assert delegated_wakeup_calls, "Expected delegated profile to receive child wakeup"
 
     async def load_nested_wakeup_state() -> tuple[Any, Any, str, list[Any]] | None:
-        async with DatabaseContext(engine=db_engine) as db_context:
-            run_rows = await db_context.fetch_all(
-                select(delegation_runs_table)
-                .where(delegation_runs_table.c.conversation_id == conversation_id)
-                .order_by(delegation_runs_table.c.created_at)
-            )
-            parent_run = next(
-                (
-                    row
-                    for row in run_rows
-                    if row["target_service_id"] == DELEGATED_PROFILE_ID
-                ),
-                None,
-            )
-            child_run = next(
-                (
-                    row
-                    for row in run_rows
-                    if row["target_service_id"] == NESTED_PROFILE_ID
-                ),
-                None,
-            )
-            if parent_run is None or child_run is None:
-                return None
-            # The wake commits its data/system rows, the visible response row, and
-            # mark_notified(result_message_internal_id=...) atomically in a single
-            # transaction. run_rows and message_rows are read as two separate READ
-            # COMMITTED snapshots, so a wake that commits between them read-skews: a
-            # stale child_run (result_message_internal_id still NULL) against freshly
-            # committed message rows. Keep polling until the run row reflects the
-            # committed wake so the two snapshots are consistent.
-            if child_run["result_message_internal_id"] is None:
-                return None
-            parent_subconversation_id = parent_run["subconversation_id"]
-            message_rows = await db_context.fetch_all(
-                select(message_history_table)
-                .where(message_history_table.c.conversation_id == conversation_id)
-                .order_by(message_history_table.c.internal_id)
-            )
-            has_child_wake = any(
-                row["role"] == "system"
-                and row["processing_profile_id"] == DELEGATED_PROFILE_ID
-                and f"Delegation reference: {child_run['delegation_id']}"
-                in row["content"]
-                for row in message_rows
-            )
-            if not has_child_wake:
-                return None
-            return parent_run, child_run, parent_subconversation_id, list(message_rows)
+        db_context = Database(engine=db_engine)
+        run_rows = await db_context.fetch_all(
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.conversation_id == conversation_id)
+            .order_by(delegation_runs_table.c.created_at)
+        )
+        parent_run = next(
+            (
+                row
+                for row in run_rows
+                if row["target_service_id"] == DELEGATED_PROFILE_ID
+            ),
+            None,
+        )
+        child_run = next(
+            (row for row in run_rows if row["target_service_id"] == NESTED_PROFILE_ID),
+            None,
+        )
+        if parent_run is None or child_run is None:
+            return None
+        # The wake commits its data/system rows, the visible response row, and
+        # mark_notified(result_message_internal_id=...) atomically in a single
+        # transaction. run_rows and message_rows are read as two separate READ
+        # COMMITTED snapshots, so a wake that commits between them read-skews: a
+        # stale child_run (result_message_internal_id still NULL) against freshly
+        # committed message rows. Keep polling until the run row reflects the
+        # committed wake so the two snapshots are consistent.
+        if child_run["result_message_internal_id"] is None:
+            return None
+        parent_subconversation_id = parent_run["subconversation_id"]
+        message_rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == conversation_id)
+            .order_by(message_history_table.c.internal_id)
+        )
+        has_child_wake = any(
+            row["role"] == "system"
+            and row["processing_profile_id"] == DELEGATED_PROFILE_ID
+            and f"Delegation reference: {child_run['delegation_id']}" in row["content"]
+            for row in message_rows
+        )
+        if not has_child_wake:
+            return None
+        return parent_run, child_run, parent_subconversation_id, list(message_rows)
 
     nested_wakeup_state = await wait_for_condition(
         load_nested_wakeup_state,

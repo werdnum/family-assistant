@@ -118,81 +118,101 @@ async def read_text_attachment_tool(
         f"Reading text attachment {attachment_id_str} (grep={grep}, offset={offset}, limit={limit})"
     )
 
-    db_context = exec_context.db_context
     if not exec_context.attachment_registry:
         return ToolResult(text="Error: Attachment registry not available.")
 
     try:
-        attachment_metadata = await exec_context.attachment_registry.get_attachment(
-            db_context, attachment_id_str, acting_user_id=exec_context.user_id
+        return await _read_text_attachment(
+            exec_context, attachment_id_str, grep=grep, offset=offset, limit=limit
         )
-        record_sensitive_read(
-            exec_context,
-            kind="attachments",
-            qualifier=f"text:{attachment_id_str}",
-            surfaced_ids=[attachment_id_str],
-        )
-        if attachment_metadata is not None:
-            merge_artifact_taint_into_context(
-                exec_context,
-                provenance_metadata=attachment_metadata.metadata,
-                fallback_source_type=TaintSourceType.ATTACHMENT,
-                fallback_source_id=attachment_id_str,
-                fallback_reason="Attachment read provenance.",
-            )
-
-        # Fetch attachment content
-        content_bytes = await exec_context.attachment_registry.get_attachment_content(
-            db_context, attachment_id_str, acting_user_id=exec_context.user_id
-        )
-
-        if content_bytes is None:
-            return ToolResult(
-                text=f"Error: Attachment {attachment_id_str} not found or has no content."
-            )
-
-        try:
-            content_text = content_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            return ToolResult(text="Error: Attachment content is not valid UTF-8 text.")
-
-        lines = content_text.splitlines()
-        total_lines = len(lines)
-
-        # Filter lines if grep is provided
-        if grep:
-            grep_lower = grep.lower()
-            lines = [line for line in lines if grep_lower in line.lower()]
-            filtered_count = len(lines)
-        else:
-            filtered_count = total_lines
-
-        # Apply pagination
-        paged_lines = lines[offset : offset + limit]
-        result_text = "\n".join(paged_lines)
-
-        summary = f"Read {len(paged_lines)} lines"
-        if grep:
-            summary += f" matching '{grep}'"
-        summary += f" (offset={offset}, total available={filtered_count})"
-        if filtered_count != total_lines:
-            summary += f" [out of {total_lines} total lines in file]"
-
-        return ToolResult(
-            text=f"--- Attachment {attachment_id_str} ({summary}) ---\n{result_text}",
-            data={
-                "attachment_id": attachment_id_str,
-                "total_lines": total_lines,
-                "filtered_count": filtered_count,
-                "offset": offset,
-                "limit": limit,
-                "lines": paged_lines,
-            },
-        )
-
     except Exception as e:
         logger.exception(f"Error reading attachment {attachment_id_str}: {e}")
         return ToolResult(text=f"Error: Failed to read attachment. {e!s}")
+
+
+async def _read_text_attachment(
+    exec_context: ToolExecutionContext,
+    attachment_id: str,
+    *,
+    grep: str | None,
+    offset: int,
+    limit: int,
+) -> ToolResult:
+    registry = exec_context.attachment_registry
+    if registry is None:
+        return ToolResult(text="Error: Attachment registry not available.")
+
+    attachment_metadata = await registry.get_attachment(
+        exec_context.db_context, attachment_id, acting_user_id=exec_context.user_id
+    )
+    record_sensitive_read(
+        exec_context,
+        kind="attachments",
+        qualifier=f"text:{attachment_id}",
+        surfaced_ids=[attachment_id],
+    )
+    if attachment_metadata is not None:
+        merge_artifact_taint_into_context(
+            exec_context,
+            provenance_metadata=attachment_metadata.metadata,
+            fallback_source_type=TaintSourceType.ATTACHMENT,
+            fallback_source_id=attachment_id,
+            fallback_reason="Attachment read provenance.",
+        )
+
+    content_bytes = await registry.get_attachment_content(
+        exec_context.db_context, attachment_id, acting_user_id=exec_context.user_id
+    )
+    if content_bytes is None:
+        return ToolResult(
+            text=f"Error: Attachment {attachment_id} not found or has no content."
+        )
+    try:
+        content_text = content_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return ToolResult(text="Error: Attachment content is not valid UTF-8 text.")
+
+    lines = content_text.splitlines()
+    total_lines = len(lines)
+    if grep:
+        grep_lower = grep.lower()
+        lines = [line for line in lines if grep_lower in line.lower()]
+        filtered_count = len(lines)
+    else:
+        filtered_count = total_lines
+
+    paged_lines = lines[offset : offset + limit]
+    summary = f"Read {len(paged_lines)} lines"
+    if grep:
+        summary += f" matching '{grep}'"
+    summary += f" (offset={offset}, total available={filtered_count})"
+    if filtered_count != total_lines:
+        summary += f" [out of {total_lines} total lines in file]"
+
+    result_text = "\n".join(paged_lines)
+    return ToolResult(
+        text=f"--- Attachment {attachment_id} ({summary}) ---\n{result_text}",
+        data={
+            "attachment_id": attachment_id,
+            "total_lines": total_lines,
+            "filtered_count": filtered_count,
+            "offset": offset,
+            "limit": limit,
+            "lines": paged_lines,
+        },
+    )
+
+
+def _response_attachment_id(attachment: ScriptAttachment | str) -> str:
+    if isinstance(attachment, str):
+        logger.debug(f"Processing string attachment ID: {attachment}")
+        return attachment
+
+    attachment_id = attachment.get_id()
+    logger.debug(
+        f"Processing ScriptAttachment: {attachment_id} - {attachment.get_description()}"
+    )
+    return attachment_id
 
 
 async def attach_to_response_tool(
@@ -229,21 +249,7 @@ async def attach_to_response_tool(
     validated_ids = []
     for attachment in attachment_ids:
         try:
-            if isinstance(attachment, str):
-                # Direct string ID (from LLM tool calls)
-                attachment_id = attachment
-                logger.debug(f"Processing string attachment ID: {attachment_id}")
-            else:
-                # ScriptAttachment object (from script contexts)
-                attachment_id = attachment.get_id()
-                logger.debug(
-                    f"Processing ScriptAttachment: {attachment_id} - {attachment.get_description()}"
-                )
-
-            # Basic validation - verify attachment exists and is accessible
-            # TODO: Add conversation-level access validation here
-            validated_ids.append(attachment_id)
-
+            validated_ids.append(_response_attachment_id(attachment))
         except Exception as e:
             logger.error(f"Error processing attachment object: {e}")
             continue

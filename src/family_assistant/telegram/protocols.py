@@ -8,7 +8,10 @@ if TYPE_CHECKING:
 
     from family_assistant.security.taint import TaintMetadata
     from family_assistant.telegram.types import AttachmentData
-    from family_assistant.tools.types import ConfirmationOutcome
+    from family_assistant.tools.types import (
+        ConfirmationOutcome,
+        ToolCallReviewAuthorization,
+    )
 
 
 @runtime_checkable
@@ -91,6 +94,7 @@ class ConfirmationUIManager(Protocol):
         wait_for_durable_execution: bool = True,
         taint_state_json: TaintMetadata | None = None,
         processing_profile_id: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> ConfirmationOutcome:
         """
         Requests confirmation from the user via the UI.

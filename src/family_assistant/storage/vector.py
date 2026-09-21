@@ -7,9 +7,11 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 
 import json
 import logging  # Import the logging module
+from collections.abc import Sequence
 from datetime import datetime
 from typing import (
     Any,
+    NamedTuple,
     Protocol,
 )
 
@@ -37,13 +39,16 @@ from sqlalchemy.orm import (
     relationship,
     selectinload,
 )
-from sqlalchemy.sql import functions  # Import functions explicitly
+from sqlalchemy.sql import (
+    Select,
+    functions,  # Import functions explicitly
+)
 
 # Use absolute package path
 from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -193,17 +198,17 @@ class DocumentEmbeddingRecord(Base):
 # --- API Functions ---
 
 
-async def init_vector_db(db_context: DatabaseContext) -> None:
+async def init_vector_db(db_context: DatabaseExecutor) -> None:
     """
     Initializes the vector database components (extension, indexes) using the provided context.
     Tables should be created separately via storage.init_db or metadata.create_all.
 
     Args:
-        db_context: The DatabaseContext to use for executing initialization commands.
+        db_context: The Database to use for executing initialization commands.
     """
     # Check if the dialect is PostgreSQL before running PG-specific commands
     # Access the engine from the context
-    if db_context.engine.dialect.name == "postgresql":
+    if db_context.dialect_name == "postgresql":
         logger.info(
             "PostgreSQL dialect detected. Initializing vector extension and indexes..."
         )
@@ -211,9 +216,7 @@ async def init_vector_db(db_context: DatabaseContext) -> None:
             # Use execute_with_retry for DDL statements within the context
             # Commit/rollback is handled by the context manager (__aexit__)
             # Only create the extension here. Indexes will be created separately after tables exist.
-            await db_context.execute_with_retry(
-                sa.text("CREATE EXTENSION IF NOT EXISTS vector;")
-            )
+            await db_context.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector;"))
             logger.info("Ensured 'vector' extension exists.")
 
         except SQLAlchemyError as e:
@@ -224,12 +227,12 @@ async def init_vector_db(db_context: DatabaseContext) -> None:
         logger.info("PostgreSQL vector database extension initialized.")
     else:
         logger.warning(
-            f"Database dialect is '{db_context.engine.dialect.name}', not 'postgresql'. Skipping vector extension and index creation. Vector search functionality may be limited or unavailable."
+            f"Database dialect is '{db_context.dialect_name}', not 'postgresql'. Skipping vector extension and index creation. Vector search functionality may be limited or unavailable."
         )
 
 
 async def add_document(
-    db_context: DatabaseContext,  # Added context
+    db_context: DatabaseExecutor,  # Added context
     doc: Document,
     # ast-grep-ignore: no-dict-any - enriched metadata has source-specific varying fields
     enriched_doc_metadata: dict[str, Any] | None = None,
@@ -238,7 +241,7 @@ async def add_document(
     Adds a document record to the database or updates it based on source_id.
 
     Args:
-        db_context: The DatabaseContext to use for the operation.
+        db_context: The Database to use for the operation.
         doc: An object conforming to the Document protocol.
         enriched_doc_metadata: Optional dictionary containing enriched metadata.
 
@@ -250,7 +253,7 @@ async def add_document(
 
     visibility_labels_json = json.dumps(doc.visibility_labels or [])
 
-    values_to_insert = {
+    values_to_insert: dict[str, object] = {
         "source_type": doc.source_type,
         "source_id": doc.source_id,
         "source_uri": doc.source_uri,
@@ -262,35 +265,7 @@ async def add_document(
     }
 
     try:
-        # Atomic ON CONFLICT DO UPDATE upsert on both engines. A
-        # select-then-insert "manual upsert" races when two transactions index
-        # the same source_id concurrently (e.g. several index_message_history
-        # tasks for one turn running on parallel workers): both SELECT nothing,
-        # both INSERT, and the loser fails with a UNIQUE violation.
-        if db_context.engine.dialect.name == "postgresql":
-            stmt = insert(DocumentRecord).values(**values_to_insert)
-        else:
-            stmt = sqlite_insert(DocumentRecord).values(**values_to_insert)
-        update_dict = {
-            col: getattr(stmt.excluded, col)
-            for col in values_to_insert
-            if col != "source_id"  # Don't update the conflict target
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["source_id"],  # The unique constraint column
-            set_=update_dict,
-        ).returning(DocumentRecord.id)
-        result = await db_context.execute_with_retry(stmt)
-        doc_id_scalar = result.scalar_one()  # Get the inserted or existing ID
-        if (
-            doc_id_scalar is None
-        ):  # Should not happen with scalar_one() but good for typing
-            raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
-        doc_id = doc_id_scalar
-        logger.info(
-            f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
-        )
-        return doc_id
+        return await _add_document(db_context, doc, values_to_insert)
     except SQLAlchemyError as e:
         logger.exception(
             f"Database error adding/updating document with source_id {doc.source_id}: {e}"
@@ -298,115 +273,176 @@ async def add_document(
         raise
 
 
+async def _add_document(
+    db_context: DatabaseExecutor,
+    doc: Document,
+    values_to_insert: dict[str, object],
+) -> int:
+    if db_context.dialect_name == "postgresql":
+        stmt = insert(DocumentRecord).values(**values_to_insert)
+    else:
+        stmt = sqlite_insert(DocumentRecord).values(**values_to_insert)
+    update_dict = {
+        column: getattr(stmt.excluded, column)
+        for column in values_to_insert
+        if column != "source_id"
+    }
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["source_id"],
+        set_=update_dict,
+    ).returning(DocumentRecord.id)
+    result = await db_context.execute(stmt)
+    doc_id = result.scalar_one()
+    if doc_id is None:
+        raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
+    logger.info(
+        f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
+    )
+    return doc_id
+
+
+async def _load_document(
+    db_context: DatabaseExecutor,
+    stmt: Select[tuple[DocumentRecord]],
+) -> DocumentRecord | None:
+    """Run an ORM SELECT for a document against ``db_context``.
+
+    The ORM session borrows a connection, so this needs a transaction to borrow
+    it from -- on a handle ``atomic`` opens one, and inside a caller's block it
+    joins that one. The session owns neither the connection nor the transaction
+    lifecycle.
+    """
+
+    async def _load(txn: DatabaseTransaction) -> DocumentRecord | None:
+        session = AsyncSession(bind=txn.connection, expire_on_commit=False)
+        try:
+            return (await session.execute(stmt)).scalar_one_or_none()
+        finally:
+            await session.close()
+
+    return await db_context.atomic(_load)
+
+
 async def get_document_by_source_id(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     source_id: str,  # Added context
 ) -> DocumentRecord | None:
     """Retrieves a document ORM object by its source ID."""
+    stmt = select(DocumentRecord).where(DocumentRecord.source_id == source_id)
     try:
-        stmt = select(DocumentRecord).where(DocumentRecord.source_id == source_id)
-
-        if db_context.conn is None:
-            logger.error(
-                "get_document_by_source_id called with a DatabaseContext that has no active connection."
-            )
-            raise RuntimeError("DatabaseContext has no active connection.")
-
-        # Create an AsyncSession that will use the existing connection (and thus transaction)
-        # from the db_context. The session does not own the connection or transaction lifecycle.
-        async_session_instance = AsyncSession(
-            bind=db_context.conn, expire_on_commit=False
-        )
-        try:
-            # Execute the ORM statement using this session
-            result = await async_session_instance.execute(stmt)
-            record = result.scalar_one_or_none()
-        finally:
-            # Close the session; this does not close db_context.conn.
-            await async_session_instance.close()
-
-        if record:
-            logger.debug(
-                f"Found document with source_id {source_id} using db_context's transaction."
-            )
-            return record
-        else:
-            logger.debug(
-                f"No document found with source_id {source_id} using db_context's transaction."
-            )
-            return None
-
-    except SQLAlchemyError as e:  # Catch database-specific errors
+        return await _load_document(db_context, stmt)
+    except SQLAlchemyError as e:
         logger.exception(
             f"Database error retrieving document with source_id {source_id}: {e}"
         )
         raise
-    except (
-        Exception
-    ) as e:  # Catch other potential errors like RuntimeError from pre-checks
-        logger.exception(
-            f"Unexpected error retrieving document with source_id {source_id}: {e}"
+
+
+class IndexedContentFingerprint(NamedTuple):
+    """What a stored embedding was made from, for a re-index decision."""
+
+    content_hash: str | None
+    embedding_model: str
+
+
+async def get_indexed_content_fingerprints(
+    db_context: DatabaseExecutor,
+    *,
+    source_ids: Sequence[str],
+    embedding_type: str,
+    chunk_index: int = 0,
+) -> dict[str, IndexedContentFingerprint]:
+    """Return, per source ID, what the stored embedding was generated from.
+
+    An indexer compares this against the text and model it is about to send.
+    The write side already upserts on ``source_id``, so re-indexing unchanged
+    content produces no duplicate rows -- but the provider call that produces
+    the vector is billed whether or not the row that follows is new. This is
+    the read that lets a caller skip the call.
+    """
+    if not source_ids:
+        return {}
+
+    stmt = (
+        select(
+            DocumentRecord.source_id,
+            DocumentEmbeddingRecord.content_hash,
+            DocumentEmbeddingRecord.embedding_model,
         )
+        .join(
+            DocumentEmbeddingRecord,
+            DocumentEmbeddingRecord.document_id == DocumentRecord.id,
+        )
+        .where(
+            DocumentRecord.source_id.in_(source_ids),
+            DocumentEmbeddingRecord.embedding_type == embedding_type,
+            DocumentEmbeddingRecord.chunk_index == chunk_index,
+        )
+    )
+    try:
+        rows = await db_context.fetch_all(stmt)
+    except SQLAlchemyError as e:
+        logger.exception(f"Database error reading indexed content fingerprints: {e}")
+        raise
+
+    return {
+        row["source_id"]: IndexedContentFingerprint(
+            content_hash=row["content_hash"],
+            embedding_model=row["embedding_model"],
+        )
+        for row in rows
+    }
+
+
+async def has_embeddings_outside_model(
+    db_context: DatabaseExecutor,
+    *,
+    embedding_type: str,
+    embedding_model: str,
+) -> bool:
+    """Whether stored embeddings of this type were made by some other model.
+
+    Search matches ``embedding_model`` exactly, so a row under a retired model
+    answers nothing. This is how a caller learns that the stored corpus and
+    the configured model have diverged -- after a migration, or after a
+    rollback to a model the corpus has since been re-embedded away from.
+    """
+    stmt = (
+        select(DocumentEmbeddingRecord.id)
+        .where(
+            DocumentEmbeddingRecord.embedding_type == embedding_type,
+            DocumentEmbeddingRecord.embedding_model != embedding_model,
+        )
+        .limit(1)
+    )
+    try:
+        return await db_context.fetch_one(stmt) is not None
+    except SQLAlchemyError as e:
+        logger.exception(f"Database error checking for foreign embeddings: {e}")
         raise
 
 
 async def get_document_by_id(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     document_id: int,  # Added context and id
 ) -> DocumentRecord | None:
     """Retrieves a document ORM object by its internal primary key ID."""
+    stmt = (
+        select(DocumentRecord)
+        .where(DocumentRecord.id == document_id)
+        .options(selectinload(DocumentRecord.embeddings))
+    )
     try:
-        stmt = (
-            select(DocumentRecord)
-            .where(DocumentRecord.id == document_id)
-            .options(selectinload(DocumentRecord.embeddings))
-        )
-
-        if db_context.conn is None:
-            logger.error(
-                "get_document_by_id called with a DatabaseContext that has no active connection."
-            )
-            raise RuntimeError("DatabaseContext has no active connection.")
-
-        # Create an AsyncSession that will use the existing connection (and thus transaction)
-        # from the db_context. The session does not own the connection or transaction lifecycle.
-        async_session_instance = AsyncSession(
-            bind=db_context.conn, expire_on_commit=False
-        )
-        try:
-            # Execute the ORM statement using this session
-            result = await async_session_instance.execute(stmt)
-            record = result.scalar_one_or_none()
-        finally:
-            # Close the session; this does not close db_context.conn.
-            await async_session_instance.close()
-
-        if record:
-            logger.debug(
-                f"Found document with ID {document_id} using db_context's transaction."
-            )
-            return record
-        else:
-            logger.debug(
-                f"No document found with ID {document_id} using db_context's transaction."
-            )
-            return None
-    except SQLAlchemyError as e:  # Catch database-specific errors
+        return await _load_document(db_context, stmt)
+    except SQLAlchemyError as e:
         logger.exception(
             f"Database error retrieving document with ID {document_id}: {e}"
-        )
-        raise
-    except (
-        Exception
-    ) as e:  # Catch other potential errors like RuntimeError from pre-checks
-        logger.exception(
-            f"Unexpected error retrieving document with ID {document_id}: {e}"
         )
         raise
 
 
 async def add_embedding(
-    db_context: DatabaseContext,  # Added context
+    db_context: DatabaseExecutor,  # Added context
     document_id: int,
     chunk_index: int,
     embedding_type: str,
@@ -421,7 +457,7 @@ async def add_embedding(
     Adds an embedding record linked to a document, updating if it already exists.
 
     Args:
-        db_context: The DatabaseContext to use for the operation.
+        db_context: The Database to use for the operation.
         document_id: ID of the parent document.
         chunk_index: Index of this chunk within the document for this embedding type.
         embedding_type: Type of embedding (e.g., 'title', 'content_chunk').
@@ -443,7 +479,7 @@ async def add_embedding(
     else:
         embedding_value = embedding
 
-    values_to_insert = {
+    values_to_insert: dict[str, object] = {
         "document_id": document_id,
         "chunk_index": chunk_index,
         "embedding_type": embedding_type,
@@ -455,25 +491,12 @@ async def add_embedding(
     }
 
     try:
-        # Atomic ON CONFLICT DO UPDATE upsert on both engines; see add_document
-        # for why a select-then-insert manual upsert is unsafe under
-        # concurrent indexing.
-        if db_context.engine.dialect.name == "postgresql":
-            stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
-        else:
-            stmt = sqlite_insert(DocumentEmbeddingRecord).values(**values_to_insert)
-        update_dict = {
-            col: getattr(stmt.excluded, col)
-            for col in values_to_insert
-            if col not in {"document_id", "chunk_index", "embedding_type"}
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["document_id", "chunk_index", "embedding_type"],
-            set_=update_dict,
-        )
-        await db_context.execute_with_retry(stmt)
-        logger.info(
-            f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+        await _add_embedding(
+            db_context,
+            values_to_insert,
+            document_id,
+            chunk_index,
+            embedding_type,
         )
     except SQLAlchemyError as e:
         logger.exception(
@@ -482,33 +505,57 @@ async def add_embedding(
         raise
 
 
-async def delete_document(db_context: DatabaseContext, document_id: int) -> bool:
+async def _add_embedding(
+    db_context: DatabaseExecutor,
+    values_to_insert: dict[str, object],
+    document_id: int,
+    chunk_index: int,
+    embedding_type: str,
+) -> None:
+    if db_context.dialect_name == "postgresql":
+        stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
+    else:
+        stmt = sqlite_insert(DocumentEmbeddingRecord).values(**values_to_insert)
+    update_dict = {
+        column: getattr(stmt.excluded, column)
+        for column in values_to_insert
+        if column not in {"document_id", "chunk_index", "embedding_type"}
+    }
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["document_id", "chunk_index", "embedding_type"],
+        set_=update_dict,
+    )
+    await db_context.execute(stmt)
+    logger.info(
+        f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+    )
+
+
+async def delete_document(db_context: DatabaseExecutor, document_id: int) -> bool:
     """
     Deletes a document and its associated embeddings (via CASCADE constraint).
 
     Returns:
         True if a document was deleted, False otherwise.
     """
+    stmt = delete(DocumentRecord).where(DocumentRecord.id == document_id)
     try:
-        stmt = delete(DocumentRecord).where(DocumentRecord.id == document_id)
-        # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
+        result = await db_context.execute(stmt)
         deleted_count = result.rowcount
-        if deleted_count > 0:
-            logger.info(
-                f"Successfully deleted document {document_id} and its embeddings (via cascade)."
-            )
-            return True
-        else:
-            logger.warning(f"No document found with ID {document_id} to delete.")
-            return False
     except SQLAlchemyError as e:
         logger.exception(f"Database error deleting document {document_id}: {e}")
         raise
+    if deleted_count > 0:
+        logger.info(
+            f"Successfully deleted document {document_id} and its embeddings (via cascade)."
+        )
+        return True
+    logger.warning(f"No document found with ID {document_id} to delete.")
+    return False
 
 
 async def query_vectors(
-    db_context: DatabaseContext,  # Added context
+    db_context: DatabaseExecutor,  # Added context
     query_embedding: list[float],
     embedding_model: str,
     keywords: str | None = None,
@@ -520,10 +567,10 @@ async def query_vectors(
 ) -> list[dict[str, Any]]:
     """
     Performs a hybrid search combining vector similarity and keyword search
-    with metadata filtering using the provided DatabaseContext.
+    with metadata filtering using the provided Database.
 
     Args:
-        db_context: The DatabaseContext to use for the query.
+        db_context: The Database to use for the query.
         query_embedding: The vector representation of the search query.
         embedding_model: Identifier of the model used for the query vector.
         keywords: Keywords for full-text search.
@@ -534,7 +581,7 @@ async def query_vectors(
     Returns:
         A list of dictionaries representing relevant document embeddings.
     """
-    if db_context.engine.dialect.name != "postgresql":
+    if db_context.dialect_name != "postgresql":
         logger.error("Vector search query requires PostgreSQL dialect. Skipping query.")
         return []
 
@@ -723,7 +770,7 @@ async def query_vectors(
         *final_select_cols
     )  # Assign to final_query
 
-    # --- 6. Execute and Return using DatabaseContext ---
+    # --- 6. Execute and Return using Database ---
     logger.info("Final vector query: %s", final_query)
     try:
         logger.debug(f"Executing vector search query: {final_query}")
@@ -738,13 +785,13 @@ async def query_vectors(
 
 
 async def update_document_title_in_db(
-    db_context: DatabaseContext, document_id: int, new_title: str
+    db_context: DatabaseExecutor, document_id: int, new_title: str
 ) -> None:
     """
     Updates the title of a specific document in the database.
 
     Args:
-        db_context: The DatabaseContext to use for the operation.
+        db_context: The Database to use for the operation.
         document_id: The ID of the document to update.
         new_title: The new title for the document.
     """
@@ -761,7 +808,7 @@ async def update_document_title_in_db(
         .values(title=new_title.strip())
     )
     try:
-        result = await db_context.execute_with_retry(stmt)
+        result = await db_context.execute(stmt)
         if result.rowcount > 0:
             logger.info(
                 f"Successfully updated title for document ID {document_id} to '{new_title.strip()}'."
@@ -778,20 +825,20 @@ async def update_document_title_in_db(
 
 
 async def delete_document_embeddings(
-    db_context: DatabaseContext, document_id: int
+    db_context: DatabaseExecutor, document_id: int
 ) -> None:
     """
     Delete all embeddings for a specific document (for re-indexing).
 
     Args:
-        db_context: The DatabaseContext to use for the operation.
+        db_context: The Database to use for the operation.
         document_id: The ID of the document whose embeddings should be deleted.
     """
     try:
         stmt = delete(DocumentEmbeddingRecord).where(
             DocumentEmbeddingRecord.document_id == document_id
         )
-        result = await db_context.execute_with_retry(stmt)
+        result = await db_context.execute(stmt)
         deleted_count = result.rowcount
         logger.info(
             f"Deleted {deleted_count} existing embeddings for document ID {document_id}"

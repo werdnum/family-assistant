@@ -1,9 +1,10 @@
-import { useMessage } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import { ImageOffIcon } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
+import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { collectResponseImages, type ResponseImage } from './responseImages';
 
-const ImageTile: React.FC<{ image: ResponseImage }> = ({ image }) => {
+const ImageTile: React.FC<{ image: ResponseImage; onOpen: () => void }> = ({ image, onOpen }) => {
   const [failed, setFailed] = useState(false);
 
   // A broken image must not vanish silently: fall back to a labelled link so the
@@ -24,12 +25,13 @@ const ImageTile: React.FC<{ image: ResponseImage }> = ({ image }) => {
   }
 
   return (
-    <a
-      href={image.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block"
+    <button
+      type="button"
+      onClick={onOpen}
+      className="block cursor-zoom-in rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       title={image.name}
+      aria-label={`View ${image.name}`}
+      data-testid="response-image-trigger"
     >
       <img
         src={image.url}
@@ -38,7 +40,7 @@ const ImageTile: React.FC<{ image: ResponseImage }> = ({ image }) => {
         onError={() => setFailed(true)}
         data-testid="response-image"
       />
-    </a>
+    </button>
   );
 };
 
@@ -53,14 +55,19 @@ const ImageTile: React.FC<{ image: ResponseImage }> = ({ image }) => {
 export const AssistantResponseImages: React.FC = () => {
   // Serialize inside the selector so a fresh array on every store read doesn't
   // retrigger a render (same reason ToolGroup does this).
-  const serialized = useMessage<string>({
-    optional: true,
-    selector: (message) => JSON.stringify(collectResponseImages(message.content)),
+  const serialized = useAuiState((s) => {
+    const message = s.optional.message;
+    if (!message) {
+      return undefined;
+    }
+    return JSON.stringify(collectResponseImages(message.content));
   });
   const images = useMemo<ResponseImage[]>(
     () => (serialized ? (JSON.parse(serialized) as ResponseImage[]) : []),
     [serialized]
   );
+
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
 
   if (images.length === 0) {
     return null;
@@ -68,9 +75,15 @@ export const AssistantResponseImages: React.FC = () => {
 
   return (
     <div className="mt-2 flex flex-wrap gap-3" data-testid="assistant-response-images">
-      {images.map((image) => (
-        <ImageTile key={image.key} image={image} />
+      {images.map((image, index) => (
+        <ImageTile key={image.key} image={image} onOpen={() => setOpenIndex(index)} />
       ))}
+      <ImageLightbox
+        images={images}
+        index={openIndex}
+        onIndexChange={setOpenIndex}
+        onClose={() => setOpenIndex(null)}
+      />
     </div>
   );
 };

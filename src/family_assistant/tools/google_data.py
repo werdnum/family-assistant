@@ -24,13 +24,15 @@ from email.message import EmailMessage
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import filetype  # type: ignore[import-untyped]
 from markdownify import markdownify
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.services.api_backend import ApiBackendError
+from family_assistant.services.google_api import GoogleApiError, GoogleUserApi
 from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
 from family_assistant.services.oauth_credentials import (
     OAuthCredentialError,
+    OAuthNoActingUserError,
     OAuthScopeNotGrantedError,
 )
 from family_assistant.tools.types import ToolAttachment, ToolResult
@@ -38,7 +40,7 @@ from family_assistant.tools.types import ToolAttachment, ToolResult
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
-    from family_assistant.services.api_backend import ApiBackend, ApiResponse
+    from family_assistant.services.api_backend import ApiResponse
     from family_assistant.services.attachment_registry import AttachmentMetadata
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -51,6 +53,9 @@ type GoogleJson = dict[str, Any]
 
 _GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 _DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
+# What a sender's mailer declares when it has nothing useful to say about a
+# file's type; the attachment registry's allowlist rejects it.
+_GENERIC_CONTENT_TYPE = "application/octet-stream"
 
 # Result-size bounds so a hostile mailbox/Drive cannot blow out the context.
 _GMAIL_SEARCH_CAP = 25
@@ -150,8 +155,9 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "by its id (as returned by gmail_search). Returns the parsed headers, "
                 "the plain-text body (HTML is converted to text; long bodies are "
                 "truncated with a marker), and a list of attachment metadata "
-                "(attachment_id, filename, mime type, size). Use gmail_get_attachment "
-                "to download a specific attachment."
+                "(attachment_id, part_id, filename, mime type, size). Use "
+                "gmail_get_attachment to download a specific attachment, passing "
+                "both its attachment_id and its part_id."
             ),
             "parameters": {
                 "type": "object",
@@ -172,8 +178,9 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
             "description": (
                 "Download one attachment from a message in the requesting user's own "
                 "mailbox and store it as an attachment you can then attach to your "
-                "reply or read back. Provide the message_id and the attachment_id from "
-                "gmail_get_message. The stored file is private to the requesting user."
+                "reply or read back. Provide the message_id, the attachment_id and "
+                "the part_id from gmail_get_message. The stored file is private to "
+                "the requesting user."
             ),
             "parameters": {
                 "type": "object",
@@ -189,6 +196,16 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "The attachment id from gmail_get_message's attachments "
                             "list."
+                        ),
+                    },
+                    "part_id": {
+                        "type": "string",
+                        "description": (
+                            "The part id from gmail_get_message's attachments list. "
+                            "Always pass this when you have it: Gmail can hand out a "
+                            "fresh attachment id every time a message is fetched, "
+                            "and the part id is what reliably identifies the file's "
+                            "name and type."
                         ),
                     },
                     "filename": {
@@ -366,21 +383,17 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
-class _GoogleToolError(Exception):
-    """A non-credential failure to be rendered as a tool error message."""
-
-
 async def _guard(
     impl: Callable[[], Awaitable[ToolResult]],
 ) -> ToolResult:
     """Run a tool body, rendering credential/API failures as tool errors.
 
-    Credential errors carry actionable messages; ``_GoogleToolError`` carries a
+    Credential errors carry actionable messages; ``GoogleApiError`` carries a
     concise, token-free API failure message.
     """
     try:
         return await impl()
-    except (OAuthCredentialError, _GoogleToolError) as exc:
+    except (OAuthCredentialError, GoogleApiError) as exc:
         return ToolResult(text=f"Error: {exc}")
 
 
@@ -394,103 +407,29 @@ async def _google_request(
     content: bytes | None = None,
     content_type: str | None = None,
 ) -> ApiResponse:
-    """Issue an authenticated Google REST request for the acting user.
+    """Issue an authenticated Google REST request for the tool's acting user.
 
-    Resolves the access token from the execution context, calls the injected
-    backend, and transparently retries once on a ``401`` after a forced token
-    refresh (a revoked-before-expiry token). A second ``401`` propagates as a
-    :class:`_GoogleToolError`; if the forced refresh itself fails with
-    ``invalid_grant`` the resolver raises ``OAuthReauthRequiredError``, which the
-    tool boundary renders directly.
+    See :meth:`GoogleUserApi.request` for the retry and error semantics. A turn
+    with no acting user resolves through the credential resolver so it fails
+    closed with its actionable message.
     """
     resolvers = exec_context.credential_resolvers or {}
     resolver = resolvers.get(GOOGLE_PROVIDER.name)
-    backend = exec_context.api_backend
-    if resolver is None or backend is None:
-        raise _GoogleToolError(
+    if resolver is None or exec_context.api_backend is None:
+        raise GoogleApiError(
             "Google integration is not configured or enabled for this deployment."
         )
-
-    access_token = await resolver.access_token_for(exec_context, scope)
-    response = await _backend_request(
-        backend,
+    api = GoogleUserApi.from_exec_context(exec_context)
+    if api is None:
+        raise OAuthNoActingUserError(GOOGLE_PROVIDER.display_name)
+    return await api.request(
+        scope,
         method=method,
         url=url,
-        access_token=access_token,
         params=params,
         content=content,
         content_type=content_type,
     )
-    if response.status_code == 401:
-        if exec_context.user_id is not None:
-            resolver.evict_cached_token(exec_context.user_id)
-        access_token = await resolver.access_token_for(exec_context, scope)
-        response = await _backend_request(
-            backend,
-            method=method,
-            url=url,
-            access_token=access_token,
-            params=params,
-            content=content,
-            content_type=content_type,
-        )
-
-    if 200 <= response.status_code < 300:
-        if exec_context.user_id is not None:
-            await exec_context.db_context.oauth_connections.update_last_used(
-                exec_context.user_id, GOOGLE_PROVIDER.name
-            )
-        return response
-    raise _GoogleToolError(_format_api_error(response))
-
-
-async def _backend_request(
-    backend: ApiBackend,
-    *,
-    method: str,
-    url: str,
-    access_token: str,
-    params: Mapping[str, str] | None,
-    content: bytes | None,
-    content_type: str | None,
-) -> ApiResponse:
-    """Call the shared backend, naming the provider in transport errors.
-
-    The backend is provider-neutral and shared, so its transport/oversize
-    messages carry no provider name; these errors deliberately propagate past
-    the tool boundary to the generic tool-error renderer, where the user must
-    still see which provider failed ("Google API request to ... failed").
-    """
-    try:
-        return await backend.request(
-            method=method,
-            url=url,
-            access_token=access_token,
-            params=params,
-            content=content,
-            content_type=content_type,
-        )
-    except ApiBackendError as exc:
-        raise ApiBackendError(f"{GOOGLE_PROVIDER.display_name} {exc}") from exc
-
-
-def _format_api_error(response: ApiResponse) -> str:
-    """Build a concise, token-free error message from a non-2xx response."""
-    detail = ""
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = None
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict):
-            message = error.get("message")
-            if isinstance(message, str):
-                detail = message
-        elif isinstance(error, str):
-            detail = error
-    suffix = f": {detail}" if detail else ""
-    return f"Google API request failed (HTTP {response.status_code}){suffix}"
 
 
 def _decode_base64url(data: str) -> bytes:
@@ -651,6 +590,7 @@ def _render_message_text(
         # Include the ids the LLM needs to call gmail_get_attachment.
         rendered = ", ".join(
             f"{att.get('filename')} (attachment_id: {att.get('attachment_id')}, "
+            f"part_id: {att.get('part_id')}, "
             f"{att.get('mime_type')}, {att.get('size')} bytes)"
             for att in attachments
         )
@@ -698,6 +638,7 @@ def _collect_parts(
     if filename:
         attachments.append({
             "attachment_id": body.get("attachmentId"),
+            "part_id": part.get("partId"),
             "filename": filename,
             "mime_type": mime_type,
             "size": body.get("size"),
@@ -733,6 +674,7 @@ async def gmail_get_attachment_tool(
     exec_context: ToolExecutionContext,
     message_id: str,
     attachment_id: str,
+    part_id: str | None = None,
     filename: str | None = None,
 ) -> ToolResult:
     """Download one Gmail attachment into the attachment registry."""
@@ -760,13 +702,9 @@ async def gmail_get_attachment_tool(
         # "invoice.txt" would be served as text/plain). The filename argument
         # survives only as display metadata in the description.
         part_filename, part_mime = await _lookup_attachment_part(
-            exec_context, message_id, attachment_id
+            exec_context, message_id, attachment_id, part_id
         )
-        content_type = (
-            part_mime
-            or (mimetypes.guess_type(part_filename)[0] if part_filename else None)
-            or "application/octet-stream"
-        )
+        content_type = await _resolve_content_type(content, part_filename, part_mime)
         stored_name = part_filename or (
             f"gmail_attachment_{attachment_id}"
             f"{mimetypes.guess_extension(content_type) or ''}"
@@ -788,13 +726,19 @@ async def _lookup_attachment_part(
     exec_context: ToolExecutionContext,
     message_id: str,
     attachment_id: str,
+    part_id: str | None,
 ) -> tuple[str | None, str | None]:
     """Recover an attachment's filename and MIME type from its message's parts.
 
-    Gmail's attachment download endpoint returns only the raw bytes, so when the
-    caller omitted the filename the part metadata is the only source for a real
-    name and content type (a bare fallback name would guess
-    ``application/octet-stream``, which the attachment allowlist rejects).
+    Gmail's attachment download endpoint returns only the raw bytes, so the part
+    metadata is the source for a real name and content type.
+
+    The part is matched by ``partId`` when the caller supplied one, because
+    Gmail hands out a fresh ``attachmentId`` token on each ``messages.get`` for
+    the same message: matching on the attachment id alone finds nothing whenever
+    the token rotated between the caller's fetch and this one, and the file then
+    gets stored as ``application/octet-stream``, losing the type a model needs
+    to decide how to read it.
     """
     message = (
         await _google_request(
@@ -805,16 +749,63 @@ async def _lookup_attachment_part(
         )
     ).json()
     _, attachments = await _walk_message_payload(message.get("payload", {}))
+    match = _match_attachment_part(attachments, attachment_id, part_id)
+    if match is None:
+        return (None, None)
+    part_filename = match.get("filename")
+    part_mime = match.get("mime_type")
+    return (
+        part_filename if isinstance(part_filename, str) and part_filename else None,
+        part_mime if isinstance(part_mime, str) and part_mime else None,
+    )
+
+
+def _match_attachment_part(
+    attachments: list[GoogleJson],
+    attachment_id: str,
+    part_id: str | None,
+) -> GoogleJson | None:
+    """Find the part an attachment id / part id pair refers to.
+
+    The attachment id wins when it still resolves: it identifies exactly one
+    part, whereas a part id is positional and a model that mixed two
+    attachments up would name a real but wrong part rather than missing.
+    The part id is the fallback for the case it exists to cover — the
+    attachment id having rotated out from under the caller.
+    """
     for attachment in attachments:
-        if attachment.get("attachment_id") != attachment_id:
-            continue
-        part_filename = attachment.get("filename")
-        part_mime = attachment.get("mime_type")
-        return (
-            part_filename if isinstance(part_filename, str) and part_filename else None,
-            part_mime if isinstance(part_mime, str) and part_mime else None,
-        )
-    return (None, None)
+        if attachment.get("attachment_id") == attachment_id:
+            return attachment
+    if part_id:
+        for attachment in attachments:
+            if attachment.get("part_id") == part_id:
+                return attachment
+    return None
+
+
+async def _resolve_content_type(
+    content: bytes,
+    part_filename: str | None,
+    part_mime: str | None,
+) -> str:
+    """Decide what type an attachment's bytes should be stored as.
+
+    Gmail echoes the sender's ``Content-Type``, and plenty of mailers label
+    every attachment ``application/octet-stream``, so a declared generic type is
+    treated as no answer at all rather than a truthy one — the bytes usually say
+    what the file really is, and a real type is what tells a model whether it
+    can read the file at all.
+    Sniffing beats the part filename because it cannot be talked into
+    reclassifying content: only formats with no magic number (CSV, plain text)
+    fall through to the sender-supplied name.
+    """
+    if part_mime and part_mime != _GENERIC_CONTENT_TYPE:
+        return part_mime
+    kind = await asyncio.to_thread(filetype.guess, content)
+    if kind is not None:
+        return str(kind.mime)
+    guessed = mimetypes.guess_type(part_filename)[0] if part_filename else None
+    return guessed or _GENERIC_CONTENT_TYPE
 
 
 def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
@@ -831,18 +822,18 @@ def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
 def _validated_addresses(addresses: list[str], field_name: str) -> list[str]:
     """Return normalized bare email addresses or raise a user-facing error."""
     if not addresses and field_name == "to":
-        raise _GoogleToolError("A Gmail draft requires at least one recipient.")
+        raise GoogleApiError("A Gmail draft requires at least one recipient.")
     normalized: list[str] = []
     for raw_address in addresses:
         candidate = raw_address.strip()
         try:
             address = Address(addr_spec=candidate)
         except (HeaderParseError, TypeError, ValueError) as exc:
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 f"Invalid {field_name} email address: {raw_address!r}."
             ) from exc
         if not address.username or not address.domain:
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 f"Invalid {field_name} email address: {raw_address!r}."
             )
         normalized.append(str(address))
@@ -856,7 +847,7 @@ def _google_user_operation_lock(
     user_id = exec_context.user_id
     resolver = (exec_context.credential_resolvers or {}).get(GOOGLE_PROVIDER.name)
     if user_id is None or resolver is None:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             "Google integration is not configured for a specific requesting user."
         )
     return resolver.user_operation_lock(user_id, operation)
@@ -867,7 +858,7 @@ def _set_draft_header(message: EmailMessage, name: str, value: str) -> None:
     try:
         message[name] = value
     except ValueError as exc:
-        raise _GoogleToolError(f"Invalid Gmail draft {name} header: {exc}") from exc
+        raise GoogleApiError(f"Invalid Gmail draft {name} header: {exc}") from exc
 
 
 def _attachment_filename(metadata: AttachmentMetadata, attachment_id: str) -> str:
@@ -880,7 +871,7 @@ def _attachment_filename(metadata: AttachmentMetadata, attachment_id: str) -> st
     else:
         filename = f"attachment-{attachment_id}"
     if "\r" in filename or "\n" in filename:
-        raise _GoogleToolError(f"Attachment {attachment_id} has an invalid filename.")
+        raise GoogleApiError(f"Attachment {attachment_id} has an invalid filename.")
     return filename
 
 
@@ -888,7 +879,7 @@ def _encode_gmail_draft_payload(message: EmailMessage) -> bytes:
     """Serialize and encode a Gmail draft outside the async event loop."""
     raw_message = message.as_bytes()
     if len(raw_message) > _GMAIL_DRAFT_RAW_MESSAGE_LIMIT:
-        raise _GoogleToolError("The encoded Gmail draft is too large to upload.")
+        raise GoogleApiError("The encoded Gmail draft is too large to upload.")
     return json.dumps({
         "message": {"raw": base64.urlsafe_b64encode(raw_message).decode("ascii")}
     }).encode("utf-8")
@@ -908,14 +899,14 @@ async def _load_owned_attachment(
     )
     registry = exec_context.attachment_registry
     if registry is None:
-        raise _GoogleToolError("Attachment registry is not available.")
+        raise GoogleApiError("Attachment registry is not available.")
     metadata = await registry.get_attachment(
         exec_context.db_context,
         attachment_id_str,
         acting_user_id=exec_context.user_id,
     )
     if metadata is None:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"Attachment {attachment_id_str} was not found for the requesting user."
         )
     legacy_user_owned = (
@@ -933,11 +924,11 @@ async def _load_owned_attachment(
         and not legacy_user_owned
         and not same_conversation_ownerless
     ):
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"Attachment {attachment_id_str} is not owned by the requesting user."
         )
     if metadata.size > max_bytes:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"Attachment {attachment_id_str} exceeds the {max_bytes}-byte upload limit."
         )
     content = await registry.get_attachment_content(
@@ -946,11 +937,9 @@ async def _load_owned_attachment(
         acting_user_id=exec_context.user_id,
     )
     if content is None:
-        raise _GoogleToolError(
-            f"Attachment {attachment_id_str} has no readable content."
-        )
+        raise GoogleApiError(f"Attachment {attachment_id_str} has no readable content.")
     if len(content) > max_bytes:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"Attachment {attachment_id_str} exceeds the {max_bytes}-byte upload limit."
         )
     return (
@@ -973,22 +962,22 @@ async def gmail_create_draft_tool(
 
     async def _impl() -> ToolResult:
         if len(attachment_ids or []) > _GMAIL_DRAFT_ATTACHMENT_CAP:
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 f"A Gmail draft supports at most {_GMAIL_DRAFT_ATTACHMENT_CAP} "
                 "attachments."
             )
         if exec_context.user_id is None:
-            raise _GoogleToolError("Google access requires a specific requesting user.")
+            raise GoogleApiError("Google access requires a specific requesting user.")
         connection = await exec_context.db_context.oauth_connections.get_connection(
             exec_context.user_id, GOOGLE_PROVIDER.name
         )
         if connection is None:
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 "No Google account is connected — connect from Settings."
             )
 
         if len(body.encode("utf-8")) > _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT:
-            raise _GoogleToolError("The Gmail draft body is too large to upload.")
+            raise GoogleApiError("The Gmail draft body is too large to upload.")
         message = EmailMessage()
         _set_draft_header(message, "From", connection.provider_account_email)
         _set_draft_header(message, "To", ", ".join(_validated_addresses(to, "to")))
@@ -1011,7 +1000,7 @@ async def gmail_create_draft_tool(
             )
             total_attachment_bytes += len(content)
             if total_attachment_bytes > _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT:
-                raise _GoogleToolError(
+                raise GoogleApiError(
                     "The draft attachments exceed the combined Google upload limit."
                 )
             maintype, separator, subtype = mime_type.partition("/")
@@ -1215,7 +1204,7 @@ async def drive_get_file_tool(
         # refused before any body is fetched (Google-native exports report no
         # size and rely on the backend's response-body cap instead).
         if size is not None and size > _DRIVE_DOWNLOAD_LIMIT:
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 f"Drive file {name} is {size} bytes, which exceeds the "
                 f"{_DRIVE_DOWNLOAD_LIMIT}-byte download limit."
             )
@@ -1332,7 +1321,7 @@ def _validated_drive_name(name: str) -> str:
         or len(normalized) > 200
         or any(ord(character) < 32 for character in normalized)
     ):
-        raise _GoogleToolError(
+        raise GoogleApiError(
             "Drive file names must be 1-200 characters and cannot contain paths "
             "or control characters."
         )
@@ -1389,7 +1378,7 @@ async def _find_app_folder(exec_context: ToolExecutionContext) -> GoogleJson | N
     ).json()
     folders = listing.get("files") or []
     if len(folders) > 1:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             "Multiple Family Assistant Drive folders are marked for this account; "
             "resolve the duplicate folders before writing."
         )
@@ -1446,7 +1435,7 @@ async def _find_app_file(
     ).json()
     files = listing.get("files") or []
     if len(files) > 1:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"Multiple app-created Drive files are named {name!r}; rename the "
             "duplicates before overwriting."
         )
@@ -1465,12 +1454,12 @@ async def _drive_write_payload(
     """Create or replace one app-marked file beneath the dedicated folder."""
     existing = await _find_app_file(exec_context, folder_id, name)
     if existing is not None and not overwrite:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"A file named {name!r} already exists in the Family Assistant "
             "folder; set overwrite=true to replace it."
         )
     if existing is not None and existing.get("mimeType") != mime_type:
-        raise _GoogleToolError(
+        raise GoogleApiError(
             f"Cannot overwrite {name!r} with a different file type; choose a new "
             "name or match the existing type."
         )
@@ -1523,7 +1512,7 @@ async def drive_write_file_tool(
 
     async def _impl() -> ToolResult:
         if (content is None) == (attachment_id is None):
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 "Provide exactly one of content or attachment_id when writing to Drive."
             )
         if attachment_id is not None:
@@ -1536,7 +1525,7 @@ async def drive_write_file_tool(
         else:
             assert content is not None
             if name is None:
-                raise _GoogleToolError("A name is required for authored Drive content.")
+                raise GoogleApiError("A name is required for authored Drive content.")
             resolved_name = _validated_drive_name(name)
             file_content = content.encode("utf-8")
             mime_types = {
@@ -1547,11 +1536,11 @@ async def drive_write_file_tool(
             try:
                 mime_type = mime_types[file_type]
             except KeyError as exc:
-                raise _GoogleToolError(
+                raise GoogleApiError(
                     "file_type must be google_doc, text, or markdown."
                 ) from exc
         if len(file_content) > _DRIVE_MULTIPART_CONTENT_LIMIT:
-            raise _GoogleToolError(
+            raise GoogleApiError(
                 f"Drive writes are limited to {_DRIVE_MULTIPART_CONTENT_LIMIT} bytes."
             )
 
@@ -1559,7 +1548,7 @@ async def drive_write_file_tool(
             folder = await _ensure_app_folder(exec_context)
             folder_id = folder.get("id")
             if not isinstance(folder_id, str) or not folder_id:
-                raise _GoogleToolError("Google Drive did not return an app folder ID.")
+                raise GoogleApiError("Google Drive did not return an app folder ID.")
             written, status = await _drive_write_payload(
                 exec_context,
                 folder_id=folder_id,

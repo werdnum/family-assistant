@@ -1,6 +1,6 @@
 """Storage table for runtime taint audit events."""
 
-from sqlalchemy import Column, DateTime, Index, String, Table, Text
+from sqlalchemy import Column, DateTime, Float, Index, String, Table, Text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import functions as func
 from sqlalchemy.types import JSON
@@ -35,6 +35,14 @@ taint_audit_events_table = Table(
     Column("requested_outcome", String(64), nullable=True, index=True),
     Column("effective_outcome", String(64), nullable=True, index=True),
     Column("mode", String(64), nullable=True, index=True),
+    Column("review_verdict", String(64), nullable=True, index=True),
+    Column("review_status", String(64), nullable=True, index=True),
+    Column("review_latency_ms", Float, nullable=True),
+    Column(
+        "review_context_json",
+        JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
+        nullable=True,
+    ),
     Column("reason", Text, nullable=False),
     Column(
         "arguments_summary_json",

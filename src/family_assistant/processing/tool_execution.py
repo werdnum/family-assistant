@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 from opentelemetry import trace
@@ -28,12 +29,17 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.attachment_utils import is_attachment_id
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
-from family_assistant.tools.confirmation import confirmation_payload_block_reason
+from family_assistant.tools.confirmation import confirmation_arguments_block_reason
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     confirmation_outcome_to_tool_result,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolCallBatch,
+    ToolCallReviewTurnState,
+    ToolResult,
+)
 
 from .types import (
     RequestConfirmationCallback,
@@ -43,14 +49,17 @@ from .types import (
 from .utils import get_file_extension_from_mime_type
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping, Sequence
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm import LLMInterface
     from family_assistant.llm.google_types import GeminiProviderMetadata
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.security.taint import (
         TaintMetadata,
         TurnTaintTracker,
@@ -58,7 +67,8 @@ if TYPE_CHECKING:
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.services.tool_call_review import TriggerReviewInput
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById
     from family_assistant.utils.clock import Clock
@@ -76,6 +86,38 @@ class _PrecomputedToolResult:
 
     result: ToolResult | str
     action_attempted: bool
+
+
+@dataclass(frozen=True)
+class _ToolOutput:
+    """Rendered tool output: stream payload, LLM message, and attachment IDs.
+
+    ``auto_attachment_ids`` are queued for display in the assistant's reply;
+    ``large_result_attachment_ids`` are the auto-converted oversized results,
+    which stay out of the display queue because they are working data for the
+    model rather than something the user asked to see.
+    """
+
+    content_for_stream: str
+    llm_message: ToolMessage
+    stream_metadata: StreamEventMetadata | None
+    auto_attachment_ids: list[str]
+    large_result_attachment_ids: list[str]
+
+
+@contextlib.contextmanager
+def _batch_completion(batch: ToolCallBatch | None, call_id: str) -> Iterator[None]:
+    """Report this call's completion to its batch however the call ends.
+
+    Siblings that wait for issue order wait on this, so a denied, failed or
+    declined call must report too — otherwise it leaves the rest of the batch
+    waiting on a call that will never run.
+    """
+    try:
+        yield
+    finally:
+        if batch is not None:
+            batch.mark_done(call_id)
 
 
 def _argument_attachment_ids(value: object) -> set[str]:
@@ -133,7 +175,7 @@ class ToolExecutor:
 
     async def _build_attach_to_response_metadata(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         attachment_ids: list[str],
         *,
         acting_user_id: str | None,
@@ -166,7 +208,7 @@ class ToolExecutor:
 
     async def _build_attach_to_response_output(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         result_payload: str,
         *,
         acting_user_id: str | None,
@@ -185,7 +227,7 @@ class ToolExecutor:
         )
         return queued_attachment_ids, {"attachments": attachment_metadata_list}
 
-    def _build_execution_context(
+    def build_execution_context(
         self,
         *,
         interface_type: str,
@@ -193,18 +235,25 @@ class ToolExecutor:
         user_name: str,
         user_id: str | None,
         turn_id: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         chat_interface: ChatInterface | None,
         chat_interfaces: dict[str, ChatInterface] | None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None,
         request_confirmation_callback: RequestConfirmationCallback | None,
         subconversation_id: str | None,
         processing_service: ProcessingService | None,
+        llm_client: LLMInterface | None,
         home_assistant_client: HomeAssistantClientWrapper | None,
         camera_backend: CameraBackend | None,
         event_sources: EventSourcesById | None,
         taint_tracker: TurnTaintTracker | None,
         taint_policy_snapshot: TurnTaintState | None,
+        tool_call_review_state: ToolCallReviewTurnState | None,
+        tool_call_review_messages: Sequence[LLMMessage] | None,
+        tool_call_review_trigger: TriggerReviewInput | None,
+        memory_review: MemoryReviewContext | None,
+        tool_call_id: str | None = None,
+        tool_call_batch: ToolCallBatch | None = None,
     ) -> ToolExecutionContext:
         chat_interfaces_dict = chat_interfaces
         if chat_interfaces_dict is None and chat_interface:
@@ -225,6 +274,7 @@ class ToolExecutor:
             subconversation_id=subconversation_id,
             request_confirmation_callback=request_confirmation_callback,
             processing_service=processing_service,
+            llm_client=llm_client,
             clock=self.clock,
             home_assistant_client=home_assistant_client,
             event_sources=event_sources,
@@ -238,6 +288,8 @@ class ToolExecutor:
             credential_resolvers=self.credential_resolvers,
             api_backend=self.api_backend,
             visibility_grants=self.config.visibility_grants,
+            required_note_read_labels=self.config.required_note_read_labels,
+            memory_read=self.config.memory_read,
             default_note_visibility_labels=self.config.default_note_visibility_labels,
             required_note_visibility_labels=self.config.required_note_visibility_labels,
             allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,
@@ -245,6 +297,16 @@ class ToolExecutor:
             note_registry=self.config.note_registry,
             taint_tracker=taint_tracker,
             taint_policy_snapshot=taint_policy_snapshot,
+            tool_call_review_state=(
+                tool_call_review_state
+                if tool_call_review_state is not None
+                else ToolCallReviewTurnState()
+            ),
+            tool_call_review_messages=tool_call_review_messages,
+            tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
+            tool_call_id=tool_call_id,
+            tool_call_batch=tool_call_batch,
         )
 
     @staticmethod
@@ -428,6 +490,9 @@ class ToolExecutor:
         span: Span,
     ) -> ToolResult | object | ToolExecutionResult:
         """Execute a tool and map tool runtime failures to tool_result errors."""
+        # Not counted here: MeteredToolsProvider wraps the provider itself, so
+        # every entry path is counted once, including the ones that never reach
+        # this executor.
         try:
             result = await self.tools_provider.execute_tool(
                 function_name, arguments, tool_execution_context, call_id
@@ -530,7 +595,7 @@ class ToolExecutor:
         acting_user_id: str | None,
         *,
         arguments: dict[str, object] | None,
-        db_context: DatabaseContext,
+        db_context: Database,
     ) -> str | None:
         """Owner for a large-result auto-conversion.
 
@@ -569,7 +634,7 @@ class ToolExecutor:
     async def _handle_large_text_result(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         content: str,
         function_name: str,
         conversation_id: str,
@@ -601,7 +666,7 @@ class ToolExecutor:
     async def _process_tool_attachments(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         attachments: list[ToolAttachment],
         function_name: str,
         conversation_id: str,
@@ -670,7 +735,7 @@ class ToolExecutor:
     async def _build_output_for_tool_result(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         result: ToolResult,
         function_name: str,
         conversation_id: str,
@@ -679,10 +744,13 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
-    ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
+    ) -> _ToolOutput:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
         content_for_stream = result.get_text()
-        content_for_stream, auto_attachment_ids = await self._handle_large_text_result(
+        (
+            content_for_stream,
+            large_result_attachment_ids,
+        ) = await self._handle_large_text_result(
             db_context=db_context,
             content=content_for_stream,
             function_name=function_name,
@@ -692,7 +760,8 @@ class ToolExecutor:
             acting_user_id=acting_user_id,
             arguments=arguments,
         )
-        if auto_attachment_ids:
+        auto_attachment_ids: list[str] = []
+        if large_result_attachment_ids:
             # Result data is now persisted as attachment; keep content as hint text.
             result.text = content_for_stream
             result.data = None
@@ -738,12 +807,18 @@ class ToolExecutor:
                 update={"attachments": attachments_data}
             )
 
-        return content_for_stream, llm_message, stream_metadata, auto_attachment_ids
+        return _ToolOutput(
+            content_for_stream=content_for_stream,
+            llm_message=llm_message,
+            stream_metadata=stream_metadata,
+            auto_attachment_ids=auto_attachment_ids,
+            large_result_attachment_ids=large_result_attachment_ids,
+        )
 
     async def _build_output_for_string_result(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         result: object,
         function_name: str,
         conversation_id: str,
@@ -751,10 +826,13 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
-    ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
+    ) -> _ToolOutput:
         """Convert plain string-like tool output into stream/message payload."""
         content_for_stream = str(result)
-        content_for_stream, auto_attachment_ids = await self._handle_large_text_result(
+        (
+            content_for_stream,
+            large_result_attachment_ids,
+        ) = await self._handle_large_text_result(
             db_context=db_context,
             content=content_for_stream,
             function_name=function_name,
@@ -764,15 +842,16 @@ class ToolExecutor:
             acting_user_id=acting_user_id,
             arguments=arguments,
         )
-        return (
-            content_for_stream,
-            ToolMessage(
+        return _ToolOutput(
+            content_for_stream=content_for_stream,
+            llm_message=ToolMessage(
                 tool_call_id=call_id,
                 content=content_for_stream,
                 name=function_name,
             ),
-            None,
-            auto_attachment_ids,
+            stream_metadata=None,
+            auto_attachment_ids=[],
+            large_result_attachment_ids=large_result_attachment_ids,
         )
 
     async def execute(
@@ -783,7 +862,7 @@ class ToolExecutor:
         conversation_id: str,
         user_name: str,
         turn_id: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
@@ -791,11 +870,17 @@ class ToolExecutor:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         processing_service: ProcessingService | None = None,
+        llm_client: LLMInterface | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         taint_policy_snapshot: TurnTaintState | None = None,
+        tool_call_review_state: ToolCallReviewTurnState | None = None,
+        tool_call_review_messages: Sequence[LLMMessage] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
+        tool_call_batch: ToolCallBatch | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -833,13 +918,16 @@ class ToolExecutor:
             else TurnTaintState.empty().to_metadata()
         )
 
-        with tracer.start_as_current_span(
-            f"tool.execute.{function_name}",
-            attributes={
-                "tool.name": function_name,
-                "tool.call_id": call_id,
-            },
-        ) as span:
+        with (
+            _batch_completion(tool_call_batch, call_id),
+            tracer.start_as_current_span(
+                f"tool.execute.{function_name}",
+                attributes={
+                    "tool.name": function_name,
+                    "tool.call_id": call_id,
+                },
+            ) as span,
+        ):
             # Parse arguments
             try:
                 arguments = self._parse_arguments(function_name, function_args)
@@ -922,7 +1010,7 @@ class ToolExecutor:
                 sorted(arguments.keys()),
             )
 
-            tool_execution_context = self._build_execution_context(
+            tool_execution_context = self.build_execution_context(
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 user_name=user_name,
@@ -935,11 +1023,18 @@ class ToolExecutor:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
                 processing_service=processing_service,
+                llm_client=llm_client,
                 home_assistant_client=home_assistant_client,
                 camera_backend=camera_backend,
                 event_sources=event_sources,
                 taint_tracker=taint_tracker,
                 taint_policy_snapshot=taint_policy_snapshot,
+                tool_call_review_state=tool_call_review_state,
+                tool_call_review_messages=tool_call_review_messages,
+                tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
+                tool_call_id=call_id,
+                tool_call_batch=tool_call_batch,
             )
 
             # Result of a durable "completed" confirmation that already
@@ -964,9 +1059,9 @@ class ToolExecutor:
                         taint_metadata=initial_taint_metadata,
                     )
 
-                # Refuse when the confirmation prompt could not show the
-                # approver the full payload (same rule as policy confirms).
-                block_reason = confirmation_payload_block_reason(
+                # Refuse arguments no confirmation prompt could describe
+                # faithfully (same rule as policy confirms).
+                block_reason = confirmation_arguments_block_reason(
                     function_name, arguments
                 )
                 if block_reason is not None:
@@ -1050,12 +1145,7 @@ class ToolExecutor:
                 result_taint_metadata = (
                     tool_execution_context.tool_result_taint_metadata.get(call_id)
                 )
-                (
-                    content_for_stream,
-                    llm_message,
-                    stream_metadata,
-                    auto_attachment_ids,
-                ) = await self._build_output_for_tool_result(
+                output = await self._build_output_for_tool_result(
                     db_context=db_context,
                     result=result,
                     function_name=function_name,
@@ -1070,12 +1160,7 @@ class ToolExecutor:
                 result_taint_metadata = (
                     tool_execution_context.tool_result_taint_metadata.get(call_id)
                 )
-                (
-                    content_for_stream,
-                    llm_message,
-                    stream_metadata,
-                    auto_attachment_ids,
-                ) = await self._build_output_for_string_result(
+                output = await self._build_output_for_string_result(
                     db_context=db_context,
                     result=result,
                     function_name=function_name,
@@ -1086,9 +1171,17 @@ class ToolExecutor:
                     arguments=arguments,
                 )
                 if result_taint_metadata is not None:
-                    llm_message = llm_message.model_copy(
-                        update={"taint_metadata": result_taint_metadata}
+                    output = replace(
+                        output,
+                        llm_message=output.llm_message.model_copy(
+                            update={"taint_metadata": result_taint_metadata}
+                        ),
                     )
+
+            content_for_stream = output.content_for_stream
+            llm_message = output.llm_message
+            stream_metadata = output.stream_metadata
+            auto_attachment_ids = output.auto_attachment_ids
 
             if function_name == "attach_to_response":
                 (
@@ -1114,5 +1207,6 @@ class ToolExecutor:
                 auto_attachment_ids=auto_attachment_ids
                 if auto_attachment_ids
                 else None,
+                large_result_attachment_ids=output.large_result_attachment_ids or None,
                 explicit_attachment_ids=explicit_attachment_ids,
             )

@@ -60,7 +60,7 @@ struct NotesAPIClient {
 
     func listNotes() async throws -> [NativeNote] {
         let request = try await authManager.authorizedRequest(url: apiURL("/api/notes/"), method: "GET")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder().decode([NativeNote].self, from: data)
     }
@@ -70,7 +70,7 @@ struct NotesAPIClient {
             url: apiURL("/api/notes/\(Self.encodedPathComponent(title))"),
             method: "GET"
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder().decode(NativeNote.self, from: data)
     }
@@ -80,7 +80,7 @@ struct NotesAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(note)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
     }
 
@@ -89,7 +89,7 @@ struct NotesAPIClient {
             url: apiURL("/api/notes/\(Self.encodedPathComponent(title))"),
             method: "DELETE"
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
     }
 
@@ -106,6 +106,11 @@ struct NotesAPIClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NotesAPIError.invalidResponse
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: NotesAPIError.authWall
+        )
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let detail = try? JSONDecoder().decode(ServerError.self, from: data).detail
             throw NotesAPIError.server(statusCode: httpResponse.statusCode, detail: detail)
@@ -126,6 +131,9 @@ private struct ServerError: Decodable {
 enum NotesAPIError: LocalizedError {
     case invalidServerURL
     case invalidResponse
+    /// The server answered with an HTML sign-in page (an edge authentication
+    /// wall) instead of the expected API payload.
+    case authWall
     case server(statusCode: Int, detail: String?)
 
     var errorDescription: String? {
@@ -134,6 +142,8 @@ enum NotesAPIError: LocalizedError {
             return "Invalid server URL"
         case .invalidResponse:
             return "The server returned an invalid response."
+        case .authWall:
+            return "Server requires sign-in or is unreachable (authentication wall detected)."
         case .server(let statusCode, let detail):
             if let detail, !detail.isEmpty {
                 return detail

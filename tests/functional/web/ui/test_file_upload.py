@@ -105,45 +105,96 @@ async def test_image_upload_basic_functionality(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_image_upload_validation_file_type(
+async def test_send_button_usable_after_attaching_a_file(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test file type validation for uploads."""
+    """The send button sends the turn after a file is attached.
+
+    The composer disables sending while an attachment is still uploading, so an
+    attachment that never finishes uploading leaves the send button greyed out
+    with no way for the user to send at all. Other tests here send with Enter,
+    which the composer allows regardless, so only clicking the button covers it.
+    """
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
-    # Navigate to chat
+    mock_llm_client.default_response = LLMOutput(content="Got your file.")
+
     await chat_page.navigate_to_chat()
 
-    # Create an unsupported file type (docx is not in SUPPORTED_FILE_TYPES)
-    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as temp_file:
-        temp_file.write(b"This is an unsupported file type")
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+        Image.new("RGB", (50, 50), color="blue").save(temp_file.name, "PNG")
         temp_path = temp_file.name
 
     try:
-        # Wait for attachment button
         attachment_button = page.locator('[data-testid="add-attachment-button"]').first
         await attachment_button.wait_for(state="visible", timeout=10000)
 
-        # Set up file chooser handler
         async with page.expect_file_chooser() as fc_info:
             await attachment_button.click()
-
         file_chooser = await fc_info.value
         await file_chooser.set_files(temp_path)
 
-        # Wait for error message about unsupported file type
-        # Look for the error message element using data-testid
-        error_message = page.locator('[data-testid="attachment-error-message"]').first
-        await error_message.wait_for(state="visible", timeout=5000)
+        chat_input = page.locator('[data-testid="chat-input"]')
+        await chat_input.click()
+        await chat_input.type("What do you see?")
 
-        # Verify error message is displayed and contains expected text
-        error_text = await error_message.text_content()
-        assert error_text
-        assert "unsupported" in error_text.lower() and "file" in error_text.lower()
+        # Playwright waits for the button to be enabled, so the upload finishing
+        # is what this asserts; it times out on an attachment stuck uploading.
+        await page.locator('[data-testid="send-button"]').click(timeout=15000)
+
+        await chat_page.wait_for_message_content("Got your file.", timeout=30000)
 
     finally:
-        # Clean up temp file
+        await anyio.Path(temp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_file_of_an_unusual_type_can_be_attached_and_sent(
+    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """No file is turned away for its type.
+
+    A 3D model or an accounts export is not something a model reads directly,
+    which is not a reason to refuse the upload: the assistant can still open it
+    with its attachment tools. This covers the whole path -- the picker offers
+    the file, the upload is accepted, and the turn sends.
+    """
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+
+    mock_llm_client.default_response = LLMOutput(content="Got your model file.")
+
+    await chat_page.navigate_to_chat()
+
+    with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as temp_file:
+        temp_file.write(b"solid bracket\nendsolid bracket\n")
+        temp_path = temp_file.name
+
+    try:
+        attachment_button = page.locator('[data-testid="add-attachment-button"]').first
+        await attachment_button.wait_for(state="visible", timeout=10000)
+
+        async with page.expect_file_chooser() as fc_info:
+            await attachment_button.click()
+        file_chooser = await fc_info.value
+        await file_chooser.set_files(temp_path)
+
+        attachment_preview = page.locator('[data-testid="attachment-preview"]').first
+        await attachment_preview.wait_for(state="visible", timeout=5000)
+
+        error_message = page.locator('[data-testid="attachment-error-message"]')
+        assert await error_message.count() == 0
+
+        chat_input = page.locator('[data-testid="chat-input"]')
+        await chat_input.click()
+        await chat_input.type("What is this?")
+        await page.locator('[data-testid="send-button"]').click(timeout=15000)
+
+        await chat_page.wait_for_message_content("Got your model file.", timeout=30000)
+
+    finally:
         await anyio.Path(temp_path).unlink(missing_ok=True)
 
 

@@ -5,14 +5,40 @@ Moved here to avoid circular imports.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
+
+
+class CalDavCalendarEntryConfig(TypedDict, total=False):
+    """Configuration for an individual CalDAV calendar collection."""
+
+    url: str
+    id: str | None
+    name: str | None
+    default: bool | None
+
+
+class ICalFeedEntryConfig(TypedDict, total=False):
+    """Configuration for an individual iCal feed."""
+
+    url: str
+    id: str | None
+    name: str | None
 
 
 class CalDavConfig(TypedDict, total=False):
@@ -20,14 +46,24 @@ class CalDavConfig(TypedDict, total=False):
 
     username: str | None
     password: str | None
-    calendar_urls: list[str]
+    calendar_urls: list[str | CalDavCalendarEntryConfig]
     base_url: str | None
 
 
 class ICalConfig(TypedDict, total=False):
     """iCal URL configuration."""
 
-    urls: list[str]
+    urls: list[str | ICalFeedEntryConfig]
+
+
+class DuplicateDetectionConfig(TypedDict, total=False):
+    """Configuration for duplicate event detection."""
+
+    enabled: bool
+    similarity_threshold: float
+    time_window_hours: int | float
+    similarity_strategy: str
+    embedding: dict[str, object]
 
 
 class CalendarConfig(TypedDict, total=False):
@@ -35,6 +71,7 @@ class CalendarConfig(TypedDict, total=False):
 
     caldav: CalDavConfig | None
     ical: ICalConfig | None
+    duplicate_detection: DuplicateDetectionConfig | None
 
 
 class MCPServerStdIOConfig(TypedDict, total=False):
@@ -45,6 +82,7 @@ class MCPServerStdIOConfig(TypedDict, total=False):
     args: list[str]
     env: dict[str, str]
     tool_metadata: dict[str, list[str]]
+    parameter_overrides: dict[str, dict[str, object]]
 
 
 class MCPServerSSEConfig(TypedDict):
@@ -54,6 +92,7 @@ class MCPServerSSEConfig(TypedDict):
     url: str
     token: NotRequired[str | None]
     tool_metadata: NotRequired[dict[str, list[str]]]
+    parameter_overrides: NotRequired[dict[str, dict[str, object]]]
 
 
 class MCPServerStreamableHTTPConfig(TypedDict):
@@ -67,6 +106,7 @@ class MCPServerStreamableHTTPConfig(TypedDict):
     url: str
     token: NotRequired[str | None]
     tool_metadata: NotRequired[dict[str, list[str]]]
+    parameter_overrides: NotRequired[dict[str, dict[str, object]]]
 
 
 class MCPServerGenericConfig(TypedDict, total=False):
@@ -79,6 +119,7 @@ class MCPServerGenericConfig(TypedDict, total=False):
     url: str
     token: str
     tool_metadata: dict[str, list[str]]
+    parameter_overrides: dict[str, dict[str, object]]
 
 
 # Use a Union to represent the allowed MCP server configurations.
@@ -225,7 +266,18 @@ if TYPE_CHECKING:
     from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
+    from family_assistant.llm import LLMInterface
+    from family_assistant.llm.messages import LLMMessage
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.processing import ProcessingService
+    from family_assistant.scripting.invocation import (
+        PreparedScriptInvocation,
+        ScriptExecutionScope,
+    )
+    from family_assistant.security.definition_records import (
+        DefinitionGateOutcome,
+        PendingDefinitionReview,
+    )
     from family_assistant.security.taint import (
         TaintMetadata,
         TurnTaintState,
@@ -237,9 +289,14 @@ if TYPE_CHECKING:
         ConfirmationResultWaiterRegistry,
     )
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.skills.registry import NoteRegistry
-    from family_assistant.storage.context import DatabaseContext
-    from family_assistant.storage.repositories.notes import NoteWritePolicy
+    from family_assistant.storage.database import Database
+    from family_assistant.storage.repositories.notes import (
+        NoteReadPolicy,
+        NoteWritePolicy,
+    )
+    from family_assistant.storage.tasks import TaskAttempt, TaskPriority
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -300,6 +357,15 @@ class RequestConfirmationCallback(Protocol):
         ...
 
 
+@runtime_checkable
+class DeferredConfirmationCallback(RequestConfirmationCallback, Protocol):
+    """Marker for a confirmation channel that executes approved calls later."""
+
+    def is_deferred_confirmation(self) -> bool:
+        """Return true when approval does not resume the current tool call."""
+        ...
+
+
 class CalendarEvent(TypedDict):
     """Represents a calendar event with structured data."""
 
@@ -310,6 +376,94 @@ class CalendarEvent(TypedDict):
     all_day: bool
     calendar_url: str | None
     similarity: float | None
+    source_id: NotRequired[str | None]
+    source_name: NotRequired[str | None]
+    source_kind: NotRequired[Literal["caldav", "ical", "google"] | None]
+    writable: NotRequired[bool | None]
+
+
+@dataclass
+class ToolCallReviewTurnState:
+    """Mutable reviewer budget and escalation counters shared by one turn."""
+
+    review_count: int = 0
+    consecutive_denials: int = 0
+    total_denials: int = 0
+    escalation_handled: bool = False
+    terminal_denial_escalation_message: str | None = None
+
+
+@dataclass
+class ToolCallReviewAuthorization:
+    """One-shot authorization for an exact, human-approved reviewed call.
+
+    Durable confirmations reconstruct this marker from the stored tool payload and
+    the review policy contexts recorded with it.  It can satisfy only the same
+    review gates for the same call and is consumed before execution, so it is not
+    a reusable capability for nested calls.
+    """
+
+    tool_name: str
+    call_id: str
+    tool_args: ToolArguments
+    sink_class: str
+    static_policy_reason: str | None
+    taint_policy_reason: str | None
+    consumed: bool = False
+
+
+@dataclass
+class ToolConfirmationAuthorization:
+    """One-shot authorization for an exact durably approved tool call."""
+
+    tool_name: str
+    call_id: str
+    tool_args: ToolArguments
+    consumed: bool = False
+
+
+class ToolCallBatch:
+    """The tool calls of one model response, in the order the model issued them.
+
+    The loop runs them concurrently, so a tool that must respect issue order
+    (browser operations, which all drive one page) asks the batch which of its
+    siblings came before it and waits for them. Completion is reported by the
+    executor for every call it handles — including denials, failures and
+    declined confirmations — so a sibling that never ran cannot leave the rest
+    of the batch waiting.
+    """
+
+    def __init__(self, calls: Sequence[tuple[str, str]]) -> None:
+        self._calls = list(calls)
+        self._done: dict[str, asyncio.Event] = {
+            call_id: asyncio.Event() for call_id, _ in self._calls
+        }
+
+    def _index_of(self, call_id: str) -> int:
+        for index, (candidate, _) in enumerate(self._calls):
+            if candidate == call_id:
+                return index
+        raise ValueError(f"call id {call_id!r} is not part of this tool-call batch")
+
+    def mark_done(self, call_id: str) -> None:
+        """Record that ``call_id`` has finished, however it finished."""
+        event = self._done.get(call_id)
+        if event is None:
+            raise ValueError(f"call id {call_id!r} is not part of this tool-call batch")
+        event.set()
+
+    def earlier(self, call_id: str) -> list[tuple[str, str]]:
+        """The ``(call_id, tool_name)`` pairs the model issued before this one."""
+        return self._calls[: self._index_of(call_id)]
+
+    def later(self, call_id: str) -> list[tuple[str, str]]:
+        """The ``(call_id, tool_name)`` pairs the model issued after this one."""
+        return self._calls[self._index_of(call_id) + 1 :]
+
+    async def wait_done(self, call_ids: Sequence[str]) -> None:
+        """Wait until every named call has reported completion."""
+        for call_id in call_ids:
+            await self._done[call_id].wait()
 
 
 @dataclass
@@ -356,7 +510,7 @@ class ToolExecutionContext:
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     user_name: str  # Name of the user initiating the request
     turn_id: str | None  # The ID of the current processing turn
-    db_context: DatabaseContext
+    db_context: Database
     # Infrastructure fields - REQUIRED (no defaults) to catch bugs via type checker
     processing_service: ProcessingService | None  # NO DEFAULT - must specify explicitly
     clock: Clock | None  # NO DEFAULT - must specify explicitly
@@ -382,6 +536,33 @@ class ToolExecutionContext:
     processing_profile_id: str | None = (
         None  # Processing profile associated with the request
     )
+    llm_client: LLMInterface | None = None
+    """The client the running turn is bound to, for a tool that calls a model.
+
+    The turn's *resolved model tier* decides this, so a tool must use it rather
+    than reaching for ``processing_service.llm_client``, which is the profile's
+    default tier and would spend at a tier the turn is not running at while
+    telemetry attributes the call to the one it is. ``None`` outside a turn --
+    a script or an API tool call, where there is no run binding to inherit.
+    """
+    task_priority: TaskPriority | None = None
+    """The queue lane of the task this context is running under.
+
+    Set by the task worker from the dequeued row, and the only place a running
+    task's lane is known. ``None`` when there is no task: a chat turn, an HTTP
+    request, a script run from the API. Read it through
+    :meth:`inherited_task_priority` when enqueueing further work of the same
+    kind.
+    """
+    task_attempt: TaskAttempt | None = None
+    """Which attempt of the running task this is, and whether it is the last.
+
+    Set by the task worker from the dequeued row, alongside ``task_priority``,
+    and the only place a running task's retry budget is known. ``None`` outside
+    a task, where there is no budget: a handler that must decide between
+    failing for a retry and giving up durably treats that as its last attempt,
+    since nothing will run it again.
+    """
     subconversation_id: str | None = (
         None  # Subconversation ID for delegated conversations, None for main conversation
     )
@@ -393,10 +574,28 @@ class ToolExecutionContext:
     indexing_source: IndexingSource | None = None  # Add indexing_source
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
     visibility_grants: set[str] | None = None
+    required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    memory_read: bool = False
+    """Whether the active profile sees the household's memory notes.
+
+    Fail-closed by default: a context built without it reads no memory and so
+    may not write any either. See ``ProcessingConfig.memory_read``.
+    """
+    memory_review: MemoryReviewContext | None = None
+    """The curator review this turn is running for, when it is one.
+
+    Carries the stretch a memory edit may cite, the store revision the
+    proposal is computed against, and the watermark a successful apply
+    advances -- as one value, so a turn can never hold the scope without the
+    revision that guards it. ``None`` in the foreground, where the tool
+    derives the scope from this context's own ``turn_id`` (a "remember this"
+    cites the message in which the person asked, and can cite nothing else)
+    and reads the current revision immediately before applying.
+    """
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None
@@ -407,9 +606,58 @@ class ToolExecutionContext:
     (notably ``delegate_to_service``'s async handoff) must run synchronously and
     return their result directly so the script can use it.
     """
+    prepared_script: PreparedScriptInvocation | None = None
+    script_execution: ScriptExecutionScope | None = None
     taint_tracker: TurnTaintTracker | None = None
     taint_policy_snapshot: TurnTaintState | None = None
     tool_result_taint_metadata: dict[str, TaintMetadata] = field(default_factory=dict)
+    tool_call_review_state: ToolCallReviewTurnState = field(
+        default_factory=ToolCallReviewTurnState
+    )
+    tool_call_review_messages: Sequence[LLMMessage] | None = None
+    tool_call_review_trigger: TriggerReviewInput | None = None
+    tool_call_id: str | None = None
+    """Id of the tool call this context is executing, when there is one."""
+    tool_call_batch: ToolCallBatch | None = None
+    """The response's tool calls in issue order, when this call came from one.
+
+    Tools that must respect issue order relative to their siblings — browser
+    operations, which all drive one page — read it through this field.
+    """
+    tool_call_review_confirmation_reason: str | None = None
+    tool_call_review_authorization: ToolCallReviewAuthorization | None = None
+    tool_confirmation_authorization: ToolConfirmationAuthorization | None = None
+    pending_definition_review: PendingDefinitionReview | None = None
+    """An observe-mode review still running for the current call, if any.
+
+    Held here so the gating wrapper can tell it when the call finished, whether
+    the call ended at a dispatch, a confirmation, or an exception. The writes it
+    covers reach it through ``definition_gate_outcome``.
+    """
+    definition_gate_outcome: DefinitionGateOutcome | None = None
+    """How the gate that admitted the current tool call resolved.
+
+    Deposited by the confirmation and adjudication chokepoints before the call
+    executes, and consumed by whichever executable-persistence write the call
+    performs. A call no gate examined leaves it ``None``, which resolves as an
+    absent disposition -- the fail-closed state.
+    """
+
+    def inherited_task_priority(self) -> TaskPriority:
+        """The lane work enqueued by this handler stays in.
+
+        A handler that enqueues more of its own kind of work -- a backfill
+        continuation, an embedding batch, the next poll of a delegated run --
+        passes this rather than naming a lane, so the lane its producer chose
+        survives however many hops the work takes. Raises outside a task, where
+        there is no lane to inherit; a caller there is a producer and chooses.
+        """
+        if self.task_priority is None:
+            raise RuntimeError(
+                "No task priority to inherit: this context is not a task's. "
+                "A producer outside the queue chooses a lane explicitly."
+            )
+        return self.task_priority
 
     def note_write_policy(self) -> NoteWritePolicy:
         """Derive the note write policy for the active profile from this context.
@@ -421,6 +669,7 @@ class ToolExecutionContext:
         # Local import: the notes repository transitively imports the tools
         # package (repositories/__init__ -> schedule_automations -> task_worker
         # -> tools), so a top-level import here would be circular.
+        from family_assistant.memory.invariants import MEMORY_LABEL  # noqa: PLC0415
         from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
             NoteWritePolicy,
         )
@@ -430,6 +679,28 @@ class ToolExecutionContext:
             default_labels=self.default_note_visibility_labels,
             required_labels=self.required_note_visibility_labels,
             allowed_labels=self.allowed_note_visibility_labels,
+            denied_labels=(
+                frozenset() if self.memory_read else frozenset({MEMORY_LABEL})
+            ),
+        )
+
+    def note_read_policy(self) -> NoteReadPolicy:
+        """Derive the note read policy for the active profile from this context.
+
+        The read-side mirror of :meth:`note_write_policy`, and the only way a
+        tool should resolve a note or a file skill: both boundaries take this
+        one object, so a confined profile cannot reach an unlabelled note
+        through a path that only checked grants.
+        """
+        # Local import for the same cycle reason as note_write_policy above.
+        from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+            NoteReadPolicy,
+        )
+
+        return NoteReadPolicy.for_profile(
+            visibility_grants=self.visibility_grants,
+            required_labels=self.required_note_read_labels,
+            memory_read=self.memory_read,
         )
 
 

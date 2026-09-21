@@ -9,23 +9,25 @@ just the part you need.
 
 ## Start here
 
-| Guide                                  | Read it when you want to…                                       |
-| -------------------------------------- | --------------------------------------------------------------- |
-| [QUICK_START.md](QUICK_START.md)       | Get going in five minutes with a handful of example requests    |
-| [interfaces.md](interfaces.md)         | Know what Telegram, the web app, and the iOS app each offer     |
-| [slash-commands.md](slash-commands.md) | Look up `/browse`, `/research`, `/engineer` and the other modes |
+| Guide                                            | Read it when you want to…                                       |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| [QUICK_START.md](QUICK_START.md)                 | Get going in five minutes with a handful of example requests    |
+| [interfaces.md](interfaces.md)                   | Know what Telegram, the web app, and the iOS app each offer     |
+| [slash-commands.md](slash-commands.md)           | Look up `/browse`, `/research`, `/engineer` and the other modes |
+| [intelligence-levels.md](intelligence-levels.md) | Ask for more thinking on a request that deserves it             |
 
 ## Everyday features
 
 | Guide                                                | Covers                                                                   |
 | ---------------------------------------------------- | ------------------------------------------------------------------------ |
 | [notes-and-skills.md](notes-and-skills.md)           | Saving facts as notes, and teaching the assistant reusable skills        |
-| [calendar.md](calendar.md)                           | Adding, finding, changing, and deleting calendar events                  |
+| [memory.md](memory.md)                               | What it remembers about your household on its own, and how to forget     |
+| [calendar.md](calendar.md)                           | Adding, finding, changing, and deleting calendar events, incl. Google    |
 | [scheduling.md](scheduling.md)                       | Reminders, follow-ups, one-off callbacks, and recurring schedules        |
 | [documents-and-search.md](documents-and-search.md)   | Indexing files and web pages, and searching everything you've stored     |
 | [attachments.md](attachments.md)                     | Sending photos and files, and moving them between tools                  |
 | [email.md](email.md)                                 | Emailing or forwarding mail to the assistant, and what it may do with it |
-| [google-workspace.md](google-workspace.md)           | Connecting your Google account for Gmail and Drive access                |
+| [google-workspace.md](google-workspace.md)           | Connecting your Google account for Gmail, Drive and Calendar access      |
 | [smart-home.md](smart-home.md)                       | Controlling Home Assistant devices, and who's home                       |
 | [automations.md](automations.md)                     | Automations that react to events or run on a schedule                    |
 | [research-and-browsing.md](research-and-browsing.md) | Web search, page summaries, browsing sites, and deep research            |
@@ -49,7 +51,8 @@ just the part you need.
 The assistant draws on:
 
 - **What you tell it** — notes you ask it to remember.
-- **Connected calendars** — shared family calendars linked by your operator.
+- **Connected calendars** — shared family calendars linked by your operator, plus your own Google
+  Calendar once you connect your Google account.
 - **The current conversation** — recent messages, for context.
 - **Stored documents** — notes, uploaded files, indexed web pages, and forwarded email.
 - **Your Google account** — Gmail and Drive, if you have connected one.

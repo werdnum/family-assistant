@@ -576,17 +576,8 @@ def create_mock_llm_client(
 
 
 @pytest.fixture
-def mock_processing_service() -> Mock:
-    """Create a mock processing service with LLM client."""
-    mock_service = Mock()
-    mock_service.llm_client = create_mock_llm_client()
-    return mock_service
-
-
-@pytest.fixture
 def exec_context_with_llm(
     fake_camera_backend: FakeCameraBackend,
-    mock_processing_service: Mock,
 ) -> ToolExecutionContext:
     """Create a ToolExecutionContext with fake camera backend and LLM client."""
     return ToolExecutionContext(
@@ -595,7 +586,8 @@ def exec_context_with_llm(
         user_name="test_user",
         turn_id=None,
         db_context=Mock(),
-        processing_service=mock_processing_service,
+        processing_service=Mock(),
+        llm_client=create_mock_llm_client(),
         clock=None,
         home_assistant_client=None,
         event_sources=None,
@@ -704,16 +696,14 @@ async def test_scan_camera_frames_no_matches() -> None:
         ),
     ] * 3
 
-    mock_service = Mock()
-    mock_service.llm_client = create_mock_llm_client(no_match_responses)
-
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
         db_context=Mock(),
-        processing_service=mock_service,
+        processing_service=Mock(),
+        llm_client=create_mock_llm_client(no_match_responses),
         clock=None,
         home_assistant_client=None,
         event_sources=None,
@@ -746,16 +736,14 @@ async def test_scan_camera_frames_no_matches() -> None:
 @pytest.mark.asyncio
 async def test_scan_camera_frames_no_backend() -> None:
     """Test scanning frames returns error when camera_backend is None."""
-    mock_service = Mock()
-    mock_service.llm_client = create_mock_llm_client()
-
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
         db_context=Mock(),
-        processing_service=mock_service,
+        processing_service=Mock(),
+        llm_client=create_mock_llm_client(),
         clock=None,
         home_assistant_client=None,
         event_sources=None,
@@ -783,17 +771,18 @@ async def test_scan_camera_frames_no_backend() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_camera_frames_no_processing_service(
+async def test_scan_camera_frames_without_a_run_client(
     fake_camera_backend: FakeCameraBackend,
 ) -> None:
-    """Test scanning frames returns error when processing_service is None."""
+    """A context outside a turn carries no client, and cannot analyse frames."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
         user_name="test_user",
         turn_id=None,
         db_context=Mock(),
-        processing_service=None,  # No processing service
+        processing_service=None,
+        llm_client=None,
         clock=None,
         home_assistant_client=None,
         event_sources=None,
@@ -817,7 +806,7 @@ async def test_scan_camera_frames_no_processing_service(
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" in data
-    assert "Processing service not available" in data["error"]
+    assert "No LLM client is available" in data["error"]
 
 
 @pytest.mark.asyncio
@@ -878,9 +867,8 @@ async def test_scan_camera_frames_handles_llm_errors() -> None:
             detected_objects=[],
         )
 
-    mock_service = Mock()
-    mock_service.llm_client = Mock()
-    mock_service.llm_client.generate_structured = mock_generate_with_error
+    erroring_client = Mock()
+    erroring_client.generate_structured = mock_generate_with_error
 
     exec_context = ToolExecutionContext(
         interface_type="test",
@@ -888,7 +876,8 @@ async def test_scan_camera_frames_handles_llm_errors() -> None:
         user_name="test_user",
         turn_id=None,
         db_context=Mock(),
-        processing_service=mock_service,
+        processing_service=Mock(),
+        llm_client=erroring_client,
         clock=None,
         home_assistant_client=None,
         event_sources=None,

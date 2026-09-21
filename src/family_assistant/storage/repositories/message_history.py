@@ -2,6 +2,8 @@
 
 import json
 import logging
+import random
+import re
 import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -10,12 +12,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from sqlalchemy import String, and_, case, insert, or_, select, update
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import cast as sa_cast
 from sqlalchemy.sql import func as sql_func
 from sqlalchemy.sql import functions as func
 from sqlalchemy.sql.elements import ColumnElement
 
+from family_assistant.llm.content_parts import can_inline_attachment_bytes
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -35,6 +37,7 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.taint import (
     LEGACY_MISSING_TAINT_METADATA_LABEL,
+    LEGACY_TAINT_METADATA_VERSIONS,
     TAINT_METADATA_VERSION,
     SourceTrustTier,
     TaintMetadata,
@@ -46,8 +49,14 @@ from family_assistant.security.taint import (
     merge_history_taint,
     strip_legacy_labeled_echoes,
 )
-from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
+from family_assistant.storage.message_history import (
+    MESSAGE_CONTENT_SEARCH_CONFIG,
+    MESSAGE_CONTENT_TSVECTOR,
+    message_history_table,
+)
 from family_assistant.storage.repositories.base import BaseRepository
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,23 @@ _MAX_ASSISTANT_ROWS_PER_TOOL_EXAMPLE = 20
 _DEFAULT_MESSAGE_HISTORY_LIMIT = 20
 _MAX_MESSAGE_HISTORY_LIMIT = 100
 _MAX_CONTEXT_MESSAGES_PER_SIDE = 10
+
+MESSAGE_HISTORY_INDEX_DELAY = timedelta(minutes=2)
+"""How long a persisted row waits before its turn is indexed.
+
+Long enough that an ordinary turn -- including its tool calls -- has finished
+by the time the first of its indexing tasks runs, and short enough that a turn
+becomes semantically searchable while the conversation is still going on.
+"""
+
+MESSAGE_HISTORY_INDEX_JITTER = timedelta(seconds=60)
+"""Spread applied on top of the delay, so a turn's tasks do not come due at once.
+
+The tasks of one turn are identical, and the first to run is what saves the
+rest a provider call -- but only if it has finished before they start. Rows
+that landed together would otherwise become due together and be handed to
+different workers in the same instant.
+"""
 
 MessageHistoryScope = Literal["current_conversation", "same_user", "all_accessible"]
 MessageHistorySearchMode = Literal["structured", "semantic", "hybrid"]
@@ -117,6 +143,36 @@ def _is_pre_epoch_row(timestamp: object, history_taint_epoch: datetime) -> bool:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     return timestamp < history_taint_epoch
+
+
+# ast-grep-ignore: no-dict-any - attachment metadata as stored on the history row
+def _attachment_mime_type(attachment: Mapping[str, Any]) -> str:
+    """The MIME type a stored attachment row carries, under either key."""
+    for key in ("mime_type", "content_type"):
+        value = attachment.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+# ast-grep-ignore: no-dict-any - attachment metadata as stored on the history row
+def _describe_attachment(attachment: Mapping[str, Any]) -> str:
+    """Name an attachment whose bytes are not being replayed to the model.
+
+    The id is the load-bearing part: it is what the assistant passes to its
+    attachment tools, or to a profile that can read the file, so a type no
+    provider takes inline is still reachable on a later turn.
+    """
+    described = [
+        str(value)
+        for value in (
+            attachment.get("filename") or attachment.get("description") or "attachment",
+            _attachment_mime_type(attachment),
+            attachment.get("attachment_id"),
+        )
+        if value
+    ]
+    return f"[File: {', '.join(described)}]"
 
 
 def _message_history_taint_metadata(
@@ -235,6 +291,39 @@ def _subconversation_filter(
 def _visible_message_condition() -> ColumnElement[bool]:
     """Return the predicate for rows shown through user-facing history APIs."""
     return message_history_table.c.is_internal.is_(False)
+
+
+_EXCERPT_CONTEXT_BEFORE = 40
+_EXCERPT_LENGTH = 140
+
+
+def _prefix_tsquery(term: str) -> ColumnElement[Any]:
+    """A tsquery for tokens starting with ``term``, in the index's text config.
+
+    ``term`` is passed as one quoted lexeme so PostgreSQL's parser tokenizes it
+    exactly as it tokenized the indexed content: an address or a decimal stays a
+    single token, where splitting it on punctuation here would require pieces
+    the index never stored.
+    """
+    quoted = term.replace("\\", "\\\\").replace("'", "''")
+    return sql_func.to_tsquery(MESSAGE_CONTENT_SEARCH_CONFIG, f"'{quoted}':*")
+
+
+def _excerpt_around(content: str, term: str) -> str:
+    """A one-line snippet of ``content`` around the first occurrence of ``term``.
+
+    If the database matched a word that differs from ``term`` in case folding
+    alone, the snippet starts at the beginning of the message instead.
+    """
+    flattened = " ".join(content.split())
+    position = flattened.lower().find(term)
+    start = max(position - _EXCERPT_CONTEXT_BEFORE, 0) if position >= 0 else 0
+    excerpt = flattened[start : start + _EXCERPT_LENGTH]
+    if start > 0:
+        excerpt = f"…{excerpt}"
+    if start + _EXCERPT_LENGTH < len(flattened):
+        excerpt = f"{excerpt}…"
+    return excerpt
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,7 +447,11 @@ class MessageHistoryRepository(BaseRepository):
         )
         rows = await self._db.fetch_all(stmt)
         valid_tiers = {tier.config_value for tier in SourceTrustTier}
-        valid_versions = {TAINT_METADATA_VERSION, "legacy_inferred"}
+        valid_versions = {
+            TAINT_METADATA_VERSION,
+            *LEGACY_TAINT_METADATA_VERSIONS,
+            "legacy_inferred",
+        }
         diagnostics: list[MessageHistoryTaintDiagnosticsRow] = []
         for row in rows:
             role = str(row["role"])
@@ -423,6 +516,23 @@ class MessageHistoryRepository(BaseRepository):
         )
 
         rows = await self._db.fetch_all(stmt)
+        return [self._process_message_row_as_dict(row) for row in rows]
+
+    async def rows_matching(
+        self, condition: ColumnElement[bool]
+    ) -> list[MessageHistoryRow]:
+        """Every row matching ``condition``, oldest first, fully deserialized.
+
+        The primitive for a caller that owns its own selection predicate -- the
+        memory review's eligibility rule, which is about contributing profiles
+        and enablement moments rather than about message history -- and needs
+        the same deserialization every other read of this table gets.
+        """
+        rows = await self._db.fetch_all(
+            select(message_history_table)
+            .where(condition)
+            .order_by(message_history_table.c.internal_id.asc())
+        )
         return [self._process_message_row_as_dict(row) for row in rows]
 
     async def hydrate_history_results(
@@ -875,7 +985,7 @@ class MessageHistoryRepository(BaseRepository):
             conditions.append(subconversation_condition)
 
         if include_text_query and query.query:
-            if self._db.engine.dialect.name == "postgresql":
+            if self._db.dialect_name == "postgresql":
                 postgres_text_query = sql_func.plainto_tsquery("english", query.query)
                 like_pattern = f"%{query.query.lower()}%"
                 conditions.append(
@@ -969,7 +1079,7 @@ class MessageHistoryRepository(BaseRepository):
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
         is_internal: bool = False,
-    ) -> int | None:
+    ) -> int:
         """
         Stores a typed LLMMessage in the history table.
 
@@ -1094,7 +1204,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None,
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> int | None:
+    ) -> int:
         """
         Internal method that serializes and inserts a message into the database.
 
@@ -1177,48 +1287,72 @@ class MessageHistoryRepository(BaseRepository):
             }
         }
 
-        try:
+        async def _insert_and_enqueue(txn: DatabaseTransaction) -> int:
+            """Persist the row and queue its indexing as one unit.
+
+            Split, an enqueue failure reaches the caller as a failed
+            ``add_message`` even though the row is already committed, so a
+            caller that retries duplicates the message; and a row whose task
+            never lands is silently absent from search for good.
+            """
             stmt = (
                 insert(message_history_table)
                 .values(**values)
                 .returning(message_history_table.c.internal_id)
             )
-            result = await self._db.execute_with_retry(stmt)
-            row = result.one()  # type: ignore[attr-defined]
-            internal_id = row[0]
+            result = await txn.execute(stmt)
+            internal_id = cast("int", result.scalar_one())
 
             self._logger.info(
                 f"Added message to history: role={role}, "
                 f"interface={interface_type}, internal_id={internal_id}"
             )
 
-        except SQLAlchemyError as e:
-            self._logger.exception(f"Failed to add message to history: {e}")
-            return None
+            await self._enqueue_message_history_indexing_task(
+                internal_id=internal_id,
+                turn_id=turn_id,
+                db=txn,
+            )
+            return internal_id
 
-        await self._enqueue_message_history_indexing_task(
-            internal_id=internal_id,
-            turn_id=turn_id,
-        )
-        return internal_id
+        # Deliberately unguarded. A database write failure here used to become
+        # None, and callers that treat None as merely "no id" would carry on --
+        # continuing an LLM turn whose prompt or assistant checkpoint was never
+        # committed. Letting it propagate keeps a failed write looking like one.
+        return await self._db.atomic(_insert_and_enqueue)
 
     async def _enqueue_message_history_indexing_task(
         self,
         *,
         internal_id: int,
         turn_id: str | None,
+        db: DatabaseExecutor | None = None,
     ) -> None:
-        """Queue indexing for newly persisted message history."""
+        """Queue indexing for newly persisted message history.
+
+        Every row of a turn queues one of these, and each indexes the whole
+        turn, so running them as the rows land embeds the same conversation
+        once per row over a growing prefix of itself. The delay lets the turn
+        finish first: the task that runs first covers the completed turn, and
+        its siblings find their content already indexed and skip without a
+        provider call.
+        """
         payload: dict[str, object] = {"limit": 50}
         if turn_id:
             payload["turn_id"] = turn_id
         else:
             payload["internal_id"] = internal_id
 
-        await self._db.tasks.enqueue(
+        await (db if db is not None else self._db).tasks.enqueue(
             task_id=f"index_message_history_{uuid.uuid4()}",
             task_type="index_message_history_batch",
             payload=payload,
+            scheduled_at=datetime.now(UTC)
+            + MESSAGE_HISTORY_INDEX_DELAY
+            + timedelta(
+                seconds=random.uniform(0, MESSAGE_HISTORY_INDEX_JITTER.total_seconds())
+            ),
+            priority=TaskPriority.BACKGROUND,
         )
 
     async def get_recent(
@@ -1230,6 +1364,7 @@ class MessageHistoryRepository(BaseRepository):
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
         current_time: datetime | None = None,
+        exclude_turn_id: str | None = None,
     ) -> list[LLMMessage]:
         """
         Retrieves recent message history for a conversation.
@@ -1242,6 +1377,10 @@ class MessageHistoryRepository(BaseRepository):
             processing_profile_id: Filter by processing profile
             subconversation_id: Filter by subconversation ID
             current_time: Current time for calculating cutoff (defaults to now)
+            exclude_turn_id: Omit the rows a turn has already written. For a
+                caller reading "the conversation before this turn" on a path
+                that persists its trigger before reading, where the row would
+                otherwise come back as history of itself.
 
         Returns:
             List of typed LLMMessage objects in chronological order
@@ -1254,6 +1393,14 @@ class MessageHistoryRepository(BaseRepository):
             message_history_table.c.conversation_id == conversation_id,
             message_history_table.c.timestamp >= cutoff,
         ]
+
+        if exclude_turn_id is not None:
+            conditions.append(
+                or_(
+                    message_history_table.c.turn_id.is_(None),
+                    message_history_table.c.turn_id != exclude_turn_id,
+                )
+            )
 
         if processing_profile_id:
             conditions.append(
@@ -1761,6 +1908,33 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return any(not row["tool_calls"] for row in rows)
 
+    async def get_undelivered_terminal_reply(
+        self,
+        turn_id: str,
+    ) -> MessageHistoryRow | None:
+        """The turn's final assistant reply, if it was never delivered.
+
+        A terminal reply carries no tool_calls (an intermediate tool-calling
+        iteration is not terminal), and ``interface_message_id`` is set only
+        once an interface has accepted it. A row matching both means generation
+        finished but delivery did not -- so a retry can resume at delivery
+        rather than running the turn again.
+        """
+        stmt = (
+            select(message_history_table)
+            .where(
+                message_history_table.c.turn_id == turn_id,
+                message_history_table.c.role == "assistant",
+                message_history_table.c.interface_message_id.is_(None),
+            )
+            .order_by(message_history_table.c.internal_id.desc())
+        )
+        rows = await self._db.fetch_all(stmt)
+        # tool_calls stores None as JSON null rather than SQL NULL, so the
+        # terminal check happens in Python (see has_terminal_reply_for_turn).
+        terminal = [row for row in rows if not row["tool_calls"]]
+        return cast("MessageHistoryRow", dict(terminal[0])) if terminal else None
+
     async def get_interface_type_for_conversation(
         self, conversation_id: str
     ) -> str | None:
@@ -1805,12 +1979,26 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return {row["user_id"] for row in rows if row["user_id"] is not None}
 
-    async def get_by_turn_id(self, turn_id: str) -> list[LLMMessage]:
+    async def get_by_turn_id(
+        self,
+        turn_id: str,
+        *,
+        visible_only: bool = False,
+        before: datetime | None = None,
+    ) -> list[LLMMessage]:
         """
         Retrieves all messages for a specific turn.
 
         Args:
             turn_id: The turn identifier
+            visible_only: Exclude internal rows -- machine-generated material
+                the turn was given rather than anything a person sent. Callers
+                asking "what did the human say here?" need this; callers
+                reconstructing what the model saw do not.
+            before: Exclude rows persisted at or after this time. A turn keeps
+                accepting user input while it runs, so a caller reconstructing
+                what the turn looked like at some earlier moment -- rather than
+                how it ended -- has to say when.
 
         Returns:
             List of typed LLMMessage objects in the turn
@@ -1820,6 +2008,10 @@ class MessageHistoryRepository(BaseRepository):
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(message_history_table.c.timestamp.asc())
         )
+        if visible_only:
+            stmt = stmt.where(_visible_message_condition())
+        if before is not None:
+            stmt = stmt.where(message_history_table.c.timestamp < before)
 
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
@@ -1910,8 +2102,8 @@ class MessageHistoryRepository(BaseRepository):
             .values(interface_message_id=interface_message_id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update interface ID"
             )
@@ -1934,7 +2126,7 @@ class MessageHistoryRepository(BaseRepository):
             .values(attachments=attachments)
         )
 
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         if result.rowcount == 0:  # type: ignore[attr-defined]  # SQLAlchemy runtime API.
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update attachments"
@@ -1956,8 +2148,8 @@ class MessageHistoryRepository(BaseRepository):
             .values(error_traceback=error_traceback)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update error traceback"
             )
@@ -2252,28 +2444,11 @@ class MessageHistoryRepository(BaseRepository):
                     # Already a ToolCallItem, keep it as-is
                     tool_call_items.append(tc_dict)
                 elif isinstance(tc_dict, dict):
-                    # Deserialize provider_metadata if present
-                    provider_metadata = tc_dict.get("provider_metadata")
-                    if (
-                        isinstance(provider_metadata, dict)
-                        and provider_metadata.get("provider") == "google"
-                    ):
-                        provider_metadata = GeminiProviderMetadata.from_dict(
-                            provider_metadata
-                        )
-
-                    # Create ToolCallItem with typed provider_metadata
-                    tool_call_items.append(
-                        ToolCallItem(
-                            id=tc_dict["id"],
-                            type=tc_dict["type"],
-                            function=ToolCallFunction(
-                                name=tc_dict["function"]["name"],
-                                arguments=tc_dict["function"]["arguments"],
-                            ),
-                            provider_metadata=provider_metadata,
-                        )
+                    item = self._tool_call_from_stored(
+                        tc_dict, internal_id=msg.get("internal_id")
                     )
+                    if item is not None:
+                        tool_call_items.append(item)
                 else:
                     self._logger.warning(
                         f"Unexpected tool_call type: {type(tc_dict)}, skipping"
@@ -2329,6 +2504,67 @@ class MessageHistoryRepository(BaseRepository):
         # Convert dict to typed LLMMessage
         return self._dict_to_typed_message(msg)
 
+    def _tool_call_from_stored(
+        self,
+        tc_dict: Mapping[str, Any],
+        *,
+        internal_id: object = None,
+    ) -> ToolCallItem | None:
+        """Rebuild a stored tool call, or return ``None`` if it cannot be read.
+
+        The writer serializes a ``ToolCallItem``, whose ``id``, ``type`` and
+        ``function`` are all required, so a stored call missing any of them was
+        written by an older shape of this code. Reading history is not the place
+        to insist on the current shape: the row cannot be corrected from here,
+        and raising would cost the reader the whole conversation -- in the chat
+        API and the diagnostics export, both of which share this path -- over
+        one archived call. It is skipped, and the row named, so the scope stays
+        discoverable in the logs.
+
+        Skipped, not repaired: a missing field has no defensible substitute.
+        ``arguments`` is the one that tempts a default, and ``""`` is not a
+        valid one -- it is not JSON, so it survives the read only to fail in
+        the provider adapters, a turn later and a long way from the row that
+        caused it.
+
+        Shared by the two readers because the same strict reconstruction existed
+        in both, which is how one of them raising went unnoticed until an
+        extraction read every row.
+        """
+        provider_metadata = tc_dict.get("provider_metadata")
+        if (
+            isinstance(provider_metadata, dict)
+            and provider_metadata.get("provider") == "google"
+        ):
+            provider_metadata = GeminiProviderMetadata.from_dict(provider_metadata)
+
+        function = tc_dict.get("function")
+        missing = [key for key in ("id", "type") if tc_dict.get(key) is None]
+        if not isinstance(function, dict):
+            missing.append("function")
+        else:
+            if function.get("name") is None:
+                missing.append("function.name")
+            if not isinstance(function.get("arguments"), str | dict):
+                missing.append("function.arguments")
+        if missing or not isinstance(function, dict):
+            self._logger.warning(
+                "Skipping malformed tool_call in message %s: missing %s",
+                internal_id,
+                ", ".join(missing),
+            )
+            return None
+
+        return ToolCallItem(
+            id=tc_dict["id"],
+            type=tc_dict["type"],
+            function=ToolCallFunction(
+                name=function["name"],
+                arguments=function["arguments"],
+            ),
+            provider_metadata=provider_metadata,
+        )
+
     def _process_message_row_as_dict(self, row: Mapping[str, Any]) -> MessageHistoryRow:
         """
         Process a message row and return as dict with all database fields preserved.
@@ -2364,28 +2600,11 @@ class MessageHistoryRepository(BaseRepository):
                     # Already a ToolCallItem, keep it as-is
                     tool_call_items.append(tc_dict)
                 elif isinstance(tc_dict, dict):
-                    # Deserialize provider_metadata if present
-                    provider_metadata = tc_dict.get("provider_metadata")
-                    if (
-                        isinstance(provider_metadata, dict)
-                        and provider_metadata.get("provider") == "google"
-                    ):
-                        provider_metadata = GeminiProviderMetadata.from_dict(
-                            provider_metadata
-                        )
-
-                    # Create ToolCallItem with typed provider_metadata
-                    tool_call_items.append(
-                        ToolCallItem(
-                            id=tc_dict["id"],
-                            type=tc_dict["type"],
-                            function=ToolCallFunction(
-                                name=tc_dict["function"]["name"],
-                                arguments=tc_dict["function"]["arguments"],
-                            ),
-                            provider_metadata=provider_metadata,
-                        )
+                    item = self._tool_call_from_stored(
+                        tc_dict, internal_id=msg.get("internal_id")
                     )
+                    if item is not None:
+                        tool_call_items.append(item)
                 else:
                     self._logger.warning(
                         f"Unexpected tool_call type: {type(tc_dict)}, skipping"
@@ -2460,35 +2679,37 @@ class MessageHistoryRepository(BaseRepository):
             text_content_str = msg.get("content") or ""
             attachments = msg.get("attachments")
 
-            # Reconstruct multimodal content from attachments if present
-            # Attachments with content_url that are images/video/audio/PDF should be
-            # included as content parts for the LLM
+            # Replay every attachment the message carried. The MIME type decides
+            # how, not the stored label: bytes a provider can read are inlined
+            # from their URL, and anything else is named instead, because an
+            # inline part of a type the adapter cannot read costs the turn
+            # rather than the file. Keying on the label instead dropped whatever
+            # a client had labelled generically, so a later turn answered as
+            # though the file had never been sent.
             if attachments and isinstance(attachments, list):
-                multimodal_attachments = [
-                    att
-                    for att in attachments
-                    if att.get("content_url")
-                    and (
-                        att.get("type") in {"image", "video", "audio", "document"}
-                        or att.get("content_type") == "application/pdf"
-                        or att.get("mime_type") == "application/pdf"
-                    )
-                ]
+                replayable = [att for att in attachments if att.get("content_url")]
 
-                if multimodal_attachments:
-                    # Build multimodal content: text first, then attachment URLs
+                if replayable:
                     content_parts: list[ContentPart] = []
                     if text_content_str:
                         content_parts.append(
                             TextContentPart(type="text", text=text_content_str)
                         )
-                    for att in multimodal_attachments:
-                        content_parts.append(
-                            ImageUrlContentPart(
-                                type="image_url",
-                                image_url={"url": att["content_url"]},
+                    for att in replayable:
+                        if can_inline_attachment_bytes(_attachment_mime_type(att)):
+                            content_parts.append(
+                                ImageUrlContentPart(
+                                    type="image_url",
+                                    image_url={"url": att["content_url"]},
+                                    attachment_id=att.get("attachment_id"),
+                                )
                             )
-                        )
+                        else:
+                            content_parts.append(
+                                TextContentPart(
+                                    type="text", text=_describe_attachment(att)
+                                )
+                            )
 
                     return UserMessage(
                         content=content_parts,
@@ -2647,6 +2868,30 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return {str(row["user_id"]) for row in rows}
 
+    @staticmethod
+    def _conversation_search_terms(search_query: str | None) -> list[str]:
+        """Split a conversation-list search into the terms every result must contain.
+
+        Splits on whitespace only, leaving the rest of the tokenizing to the
+        database, and trims punctuation from each term's ends ("(3.25)", "renew,")
+        so it can also be found literally for the excerpt.
+        """
+        terms = (
+            re.sub(r"^\W+|\W+$", "", chunk)
+            for chunk in (search_query or "").lower().split()
+        )
+        return list(dict.fromkeys(term for term in terms if term))
+
+    def _content_matches_search_term(self, word: str) -> ColumnElement[bool]:
+        """Whether a message's content has a word starting with ``word``.
+
+        PostgreSQL matches words by prefix through the GIN index on
+        ``MESSAGE_CONTENT_TSVECTOR``; SQLite falls back to a substring match.
+        """
+        if self._db.dialect_name == "postgresql":
+            return MESSAGE_CONTENT_TSVECTOR.bool_op("@@")(_prefix_tsquery(word))
+        return message_history_table.c.content.icontains(word, autoescape=True)
+
     async def get_conversation_summaries(
         self,
         interface_type: str | None = None,
@@ -2657,11 +2902,17 @@ class MessageHistoryRepository(BaseRepository):
         date_to: datetime | None = None,
         include_subconversations: bool = True,
         owner_user_ids: set[str] | None = None,
+        search_query: str | None = None,
     ) -> tuple[list[ConversationSummaryRow], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
 
         Args:
+            search_query: When provided, restrict results to conversations in which
+                every whitespace-separated word appears (case-insensitively) in
+                some visible user or assistant message -- not necessarily the
+                same one. Each returned summary then carries a ``match_excerpt``
+                from the most recent message containing the longest word.
             interface_type: Filter by interface type (None for all interfaces)
             limit: Maximum number of conversations to return
             offset: Number of conversations to skip for pagination
@@ -2710,33 +2961,82 @@ class MessageHistoryRepository(BaseRepository):
         if not include_subconversations:
             base_conditions.append(message_history_table.c.subconversation_id.is_(None))
 
-        # Subquery to get the latest message id and count per conversation
-        # We get the max internal_id within the max timestamp to handle timestamp collisions
-        latest_msg_subq = (
+        search_terms = self._conversation_search_terms(search_query)
+        # Rows a search term may match: the visible chat transcript, not tool
+        # payloads, which would match nearly every conversation that used a tool.
+        searchable_conditions = [
+            _visible_message_condition(),
+            message_history_table.c.role.in_(["user", "assistant"]),
+            message_history_table.c.content.isnot(None),
+        ]
+        if not include_subconversations:
+            searchable_conditions.append(
+                message_history_table.c.subconversation_id.is_(None)
+            )
+        # A term may match anywhere in the conversation, so each is its own
+        # conversation-level predicate rather than a filter on the rows
+        # aggregated below: the latest-message preview and message count must
+        # stay those of the whole conversation.
+        for term in search_terms:
+            base_conditions.append(
+                message_history_table.c.conversation_id.in_(
+                    select(message_history_table.c.conversation_id).where(
+                        *searchable_conditions,
+                        self._content_matches_search_term(term),
+                    )
+                )
+            )
+
+        # Select the requested page of *conversations* before computing anything
+        # per-conversation. Ordering by each conversation's latest timestamp is
+        # the same order as ordering by the latest message's timestamp, so this
+        # picks exactly the page the final select returns -- but it lets the
+        # latest-message and message-count lookups below run against `limit`
+        # conversations instead of every conversation the caller owns. Doing
+        # those aggregations first and paginating afterwards made the cost grow
+        # with total history rather than page size, and stacking the resulting
+        # group-by joins collapsed the planner's row estimates to 1 (against
+        # thousands actual), which on PostgreSQL flipped the whole statement
+        # into a nested-loop plan orders of magnitude slower than the hash-join
+        # one.
+        #
+        # A CTE rather than a subquery: it is referenced twice below, and
+        # inlining would evaluate this pagination scan once per reference.
+        max_timestamp = func.max(message_history_table.c.timestamp).label(
+            "max_timestamp"
+        )
+        page_cte = (
             select(
                 message_history_table.c.conversation_id,
-                func.max(message_history_table.c.timestamp).label("max_timestamp"),
+                max_timestamp,
             )
             .where(*base_conditions)
             .group_by(message_history_table.c.conversation_id)
-            .subquery()
+            # conversation_id breaks ties on identical latest timestamps. Without
+            # it the order within a tie is whatever the plan happens to produce,
+            # which lets a client paging through the list see one conversation
+            # twice and miss another.
+            .order_by(
+                max_timestamp.desc(),
+                message_history_table.c.conversation_id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+            .cte("conversation_page")
         )
 
-        # Get the max internal_id for messages with the latest timestamp
+        # Get the max internal_id for messages with the latest timestamp, to
+        # break ties when several messages share that conversation's latest
+        # timestamp.
         latest_id_subq = (
             select(
                 message_history_table.c.conversation_id,
                 func.max(message_history_table.c.internal_id).label("max_id"),
             )
             .join(
-                latest_msg_subq,
-                (
-                    message_history_table.c.conversation_id
-                    == latest_msg_subq.c.conversation_id
-                )
-                & (
-                    message_history_table.c.timestamp == latest_msg_subq.c.max_timestamp
-                ),
+                page_cte,
+                (message_history_table.c.conversation_id == page_cte.c.conversation_id)
+                & (message_history_table.c.timestamp == page_cte.c.max_timestamp),
             )
             .where(*base_conditions)
             .group_by(message_history_table.c.conversation_id)
@@ -2747,8 +3047,11 @@ class MessageHistoryRepository(BaseRepository):
         count_conditions = []
         count_conditions.append(_visible_message_condition())
         count_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
-        if ownership_condition is not None:
-            count_conditions.append(ownership_condition)
+        # No ownership condition here: this count is joined to the page, and
+        # ownership is a property of the conversation, not of the row. Every
+        # conversation on the page already satisfied it, so re-checking it would
+        # re-run the correlated NOT EXISTS per counted row for no change in
+        # result.
 
         if interface_type:
             count_conditions.append(
@@ -2776,12 +3079,18 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.conversation_id,
                 func.count(message_history_table.c.internal_id).label("msg_count"),
             )
+            .join(
+                page_cte,
+                message_history_table.c.conversation_id == page_cte.c.conversation_id,
+            )
             .where(*count_conditions)
             .group_by(message_history_table.c.conversation_id)
             .subquery()
         )
 
-        # Main query to get conversation summaries with the latest message content
+        # Main query to get conversation summaries with the latest message
+        # content. No LIMIT/OFFSET: ``page_cte`` already applied them, and both
+        # joins below are restricted to that page.
         summaries_query = (
             select(
                 message_history_table.c.conversation_id,
@@ -2802,9 +3111,12 @@ class MessageHistoryRepository(BaseRepository):
             .where(
                 message_history_table.c.content.isnot(None),
             )
-            .order_by(message_history_table.c.timestamp.desc())
-            .limit(limit)
-            .offset(offset)
+            # Same key as ``page_cte``: the selected row is its conversation's
+            # latest, so its timestamp is that conversation's max_timestamp.
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.conversation_id.desc(),
+            )
         )
 
         # Count query - count conversations that have messages with content
@@ -2821,6 +3133,14 @@ class MessageHistoryRepository(BaseRepository):
         count_row = await self._db.fetch_one(count_query)
         total_count = count_row["count"] if count_row else 0
 
+        excerpts: dict[str, str] = {}
+        if search_terms and summaries_rows:
+            excerpts = await self._search_match_excerpts(
+                conversation_ids=[row["conversation_id"] for row in summaries_rows],
+                term=max(search_terms, key=len),
+                searchable_conditions=searchable_conditions,
+            )
+
         # Process results
         summaries: list[ConversationSummaryRow] = []
         for row in summaries_rows:
@@ -2831,7 +3151,40 @@ class MessageHistoryRepository(BaseRepository):
                     last_timestamp=row["timestamp"],
                     message_count=row["message_count"],
                     interface_type=row["interface_type"],
+                    match_excerpt=excerpts.get(row["conversation_id"]),
                 )
             )
 
         return summaries, total_count
+
+    async def _search_match_excerpts(
+        self,
+        *,
+        conversation_ids: list[str],
+        term: str,
+        searchable_conditions: list[ColumnElement[bool]],
+    ) -> dict[str, str]:
+        """Snippet from each conversation's most recent message matching ``term``."""
+        latest_match = (
+            select(func.max(message_history_table.c.internal_id).label("internal_id"))
+            .where(
+                *searchable_conditions,
+                message_history_table.c.conversation_id.in_(conversation_ids),
+                self._content_matches_search_term(term),
+            )
+            .group_by(message_history_table.c.conversation_id)
+            .subquery()
+        )
+        rows = await self._db.fetch_all(
+            select(
+                message_history_table.c.conversation_id,
+                message_history_table.c.content,
+            ).join(
+                latest_match,
+                message_history_table.c.internal_id == latest_match.c.internal_id,
+            )
+        )
+        return {
+            row["conversation_id"]: _excerpt_around(row["content"], term)
+            for row in rows
+        }

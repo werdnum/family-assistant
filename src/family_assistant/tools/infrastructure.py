@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import inspect
 import json
 import logging
 import re
+import time
 import uuid
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
+from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     Protocol,
     cast,
     get_args,
@@ -24,49 +29,177 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.observability.metrics import (
+    UNATTRIBUTED_PROFILE,
+    UNKNOWN_TOOL,
+    record_tool_call,
+)
+from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.scripting.invocation import (
+    ScriptInvocationArguments,
+    ScriptPreparationError,
+    prepare_script_invocation,
+)
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    DefinitionGateOutcome,
+    GateLayer,
+    GateProvenance,
+    PendingDefinitionReview,
+)
+from family_assistant.security.definition_resolution import attach_pending_verdict
 from family_assistant.security.taint import (
+    SensitiveReadScope,
+    SinkClass,
     TaintPolicyConfig,
     TaintPolicyEvaluation,
     TaintPolicyEvaluator,
     TaintPolicyMode,
     TaintPolicyOutcome,
+    TaintSource,
     TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
     merge_taint_state_into_tracker,
+    resolve_tool_sink_class,
 )
+from family_assistant.security.taint_audit import taint_audit_sources
+from family_assistant.services.tool_call_review import (
+    DelegatingPolicyContext,
+    ToolCallReviewConstraints,
+    ToolCallReviewer,
+    ToolCallReviewInput,
+    ToolCallReviewResult,
+    ToolCallReviewStatus,
+    ToolCallReviewVerdict,
+    compute_trusted_destination_echo,
+)
+from family_assistant.storage.database import spawn_detached
+from family_assistant.tools.argument_schema import check_parameter_schema
 from family_assistant.tools.attachment_utils import (
     is_attachment_id,
     process_attachment_arguments,
 )
-from family_assistant.tools.confirmation import confirmation_payload_block_reason
+from family_assistant.tools.confirmation import confirmation_arguments_block_reason
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     ToolRegistration,
+    ToolTag,
     build_local_tool_descriptors,
 )
-from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
-from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    PolicyEvaluation,
+    ToolPolicyDecision,
+)
+from family_assistant.tools.taint_helpers import (
+    merge_artifact_taint_into_context,
+)
 from family_assistant.tools.types import (
     CalendarConfig,
     ConfirmationOutcome,
+    DeferredConfirmationCallback,
     RequestConfirmationCallback,
     ToolArguments,
+    ToolCallReviewAuthorization,
+    ToolConfirmationAuthorization,
     ToolDefinition,
     ToolExecutionContext,
     ToolResult,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Sequence
 
+    from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.storage.types import (
         TaintAuditArgumentsSummary,
-        TaintAuditSourceSummary,
+        TaintAuditReviewContext,
     )
 
 logger = logging.getLogger(__name__)
+
+_NO_TAINT_GATE_MODE = "none"
+"""Recorded mode for a gate no runtime taint policy participated in."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ConfirmationGateResult:
+    """Terminal confirmation result plus whether execution was attempted."""
+
+    result: str | ToolResult
+    action_attempted: bool
+
+
+def _review_authorization_matches(
+    authorization: ToolCallReviewAuthorization | None,
+    *,
+    name: str,
+    arguments: Mapping[str, object],
+    call_id: str | None,
+    sink_class: SinkClass,
+    static_evaluation: PolicyEvaluation | None,
+    taint_evaluation: TaintPolicyEvaluation | None,
+) -> bool:
+    """Consume an exact durable review authorization when all gates still match."""
+    if authorization is None or authorization.consumed:
+        return False
+    resolved_call_id = call_id or ""
+    if (
+        authorization.tool_name != name
+        or authorization.call_id != resolved_call_id
+        or authorization.tool_args != arguments
+        or authorization.sink_class != sink_class.value
+    ):
+        return False
+    if (
+        static_evaluation is not None
+        and static_evaluation.decision is ToolPolicyDecision.REVIEW
+        and authorization.static_policy_reason is None
+    ):
+        return False
+    if (
+        taint_evaluation is not None
+        and taint_evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+        and (
+            authorization.taint_policy_reason is None
+            or taint_evaluation.verdict_floor is TaintPolicyOutcome.DENY
+        )
+    ):
+        return False
+    authorization.consumed = True
+    return True
+
+
+def _review_authorization_for_confirmation(
+    *,
+    name: str,
+    arguments: Mapping[str, object],
+    call_id: str | None,
+    sink_class: SinkClass,
+    static_evaluation: PolicyEvaluation | None,
+    taint_evaluation: TaintPolicyEvaluation | None,
+) -> ToolCallReviewAuthorization:
+    """Describe the exact reviewed call whose verdict escalated to a human."""
+    return ToolCallReviewAuthorization(
+        tool_name=name,
+        call_id=call_id or "",
+        tool_args=cast("ToolArguments", copy.deepcopy(dict(arguments))),
+        sink_class=sink_class.value,
+        static_policy_reason=(
+            static_evaluation.reason
+            if static_evaluation is not None
+            and static_evaluation.decision is ToolPolicyDecision.REVIEW
+            else None
+        ),
+        taint_policy_reason=(
+            taint_evaluation.reason
+            if taint_evaluation is not None
+            and taint_evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+            else None
+        ),
+    )
 
 
 def _annotation_contains_type_name(annotation: object, type_name: str) -> bool:
@@ -335,6 +468,187 @@ class ToolsProvider(Protocol):
         ...
 
 
+async def _prepare_script_call(
+    name: str,
+    arguments: dict[str, object],
+    context: ToolExecutionContext,
+    descriptors: ToolDescriptorProvider,
+    policy: PolicyEngine | None = None,
+) -> dict[str, object] | ToolResult:
+    """Normalize only after original-argument policy, before any review or confirm.
+
+    Durable replay is deliberately an inline call under current policy; it does
+    not retain a named invocation's policy grants or look up that name again.
+    """
+    if name != "execute_script":
+        return arguments
+    unknown = arguments.keys() - {
+        "script",
+        "globals",
+        "name",
+        "parameters",
+        "script_bindings",
+    }
+    if unknown:
+        return ToolResult(text=f"Error: Unknown script arguments: {sorted(unknown)}")
+    try:
+        invocation = await prepare_script_invocation(
+            context, **cast("ScriptInvocationArguments", arguments)
+        )
+    except ScriptPreparationError as exc:
+        return ToolResult(
+            text=f"Error: {exc}",
+            data={"status": "error", "error_type": exc.error_type, "error": str(exc)},
+        )
+    inventory = await descriptors.get_tool_descriptors()
+    if policy is not None:
+        inventory = [
+            item
+            for item in inventory
+            if policy.evaluate_for_advertisement(
+                item, can_confirm=context.request_confirmation_callback is not None
+            ).decision
+            is not ToolPolicyDecision.DENY
+        ]
+    policy_context: dict[str, object] = {
+        "tool_tags": {item.name: sorted(item.tags) for item in inventory},
+        "runtime_controls": "Tool availability, hard denials, confirmation floors and resource limits remain enforced.",
+        "model_boundaries": "Hash-bound static child scripts share program approval. llm/llm_json, unbound scripts and other non-script_deterministic tools end inherited approval, including the caller continuation.",
+        "resource_limits": {"max_execution_time_seconds": 600},
+    }
+    if policy is not None:
+        policy_context["default_decision"] = policy.default_decision.value
+        policy_context["rules"] = [
+            {
+                "layer": item.layer,
+                "declaration_order": item.declaration_order,
+                "rule": item.rule.model_dump(mode="json"),
+            }
+            for item in policy.rules
+        ]
+    invocation.review = replace(
+        invocation.review,
+        tools=tuple(copy.deepcopy(item.definition) for item in inventory),
+        policy=policy_context,
+    )
+    context.prepared_script = invocation
+    definition = invocation.review.definition
+    if definition is not None and context.taint_tracker is not None:
+        if definition.taint_metadata is not None:
+            # Stored authorship is provenance, not a live profile authorization.
+            definition_state = replace(
+                TurnTaintState.from_metadata(definition.taint_metadata),
+                approved_sinks=frozenset(),
+            )
+            merge_taint_state_into_tracker(
+                context.taint_tracker,
+                definition_state,
+            )
+        context.taint_tracker.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"script:{invocation.review.stored_name}",
+                tier=definition.tier,
+                labels=frozenset({"script_definition"}),
+                reason="Provenance of the exact loaded script definition.",
+            )
+        )
+        context.taint_policy_snapshot = None
+    return invocation.arguments()
+
+
+def _script_call_inherits(
+    descriptor: ToolDescriptor,
+    context: ToolExecutionContext,
+    arguments: Mapping[str, object],
+) -> bool:
+    scope = context.script_execution
+    if scope is None:
+        return False
+    prepared = context.prepared_script
+    if (
+        descriptor.name == "execute_script"
+        and prepared is not None
+        and prepared.bound_child
+    ):
+        if scope.approved:
+            _approve_prepared_script(
+                context, "inherited", scope.invocation.review.review_id
+            )
+        return scope.approved
+    if (
+        ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
+        or descriptor.tags.intersection({ToolTag.CODE_EXECUTION, ToolTag.DELEGATION})
+        or resolve_tool_sink_class(descriptor, arguments) is SinkClass.SANDBOX_NETWORK
+        or not any(
+            item.get("function", {}).get("name") == descriptor.name
+            for item in scope.invocation.review.tools
+        )
+    ):
+        scope.revoke()
+        return False
+    return scope.approved
+
+
+def _approve_prepared_script(
+    context: ToolExecutionContext, decision: str, review_id: str | None = None
+) -> None:
+    if context.prepared_script is not None:
+        context.prepared_script.approved = True
+        context.prepared_script.review = replace(
+            context.prepared_script.review, decision=decision, review_id=review_id
+        )
+
+
+def _approve_confirmed_script(
+    context: ToolExecutionContext,
+    name: str,
+    arguments: Mapping[str, object],
+    call_id: str | None,
+) -> None:
+    authorization = context.tool_confirmation_authorization
+    if (
+        context.prepared_script is not None
+        and authorization is not None
+        and not authorization.consumed
+        and (
+            authorization.tool_name == name
+            and authorization.call_id == (call_id or "")
+            and authorization.tool_args == arguments
+        )
+    ):
+        authorization.consumed = True
+        _approve_prepared_script(context, "human_confirmed")
+
+
+type AuthorizedToolExecutor = Callable[[], Awaitable[str | ToolResult]]
+type PolicyExecutionCoordinator = Callable[
+    [
+        ToolDescriptor,
+        PolicyEvaluation,
+        AuthorizedToolExecutor,
+        dict[str, object],
+        ToolExecutionContext,
+    ],
+    Awaitable[str | ToolResult],
+]
+
+
+@runtime_checkable
+class PolicyCoordinatingToolsProvider(Protocol):
+    """Provider that owns static-policy evaluation and authorized dispatch."""
+
+    async def execute_with_policy_coordinator(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        coordinator: PolicyExecutionCoordinator,
+    ) -> str | ToolResult: ...
+
+
 class ToolNotFoundError(Exception):
     """Raised when a requested tool is not found by a provider."""
 
@@ -440,6 +754,8 @@ class LocalToolsProvider:
             self._definitions = list(definitions)
             self._implementations = implementations
             self._descriptors = list(descriptors) if descriptors is not None else []
+        for definition in self._definitions:
+            check_parameter_schema(definition["function"].get("parameters", {}))
         self._embedding_generator = embedding_generator
         self._calendar_config = calendar_config
         logger.info(
@@ -493,7 +809,8 @@ class LocalToolsProvider:
 
         callable_func = self._implementations[name]
         logger.info(f"Executing local tool '{name}' with args: {arguments}")
-        try:
+
+        async def _execute() -> str | ToolResult:
             # Prepare arguments, potentially injecting context or generator
             call_args = arguments.copy()
             logger.debug(f"Tool '{name}' - Initial arguments from LLM: {arguments}")
@@ -551,16 +868,16 @@ class LocalToolsProvider:
                         )
 
                 elif param_name == "db_context":
-                    # Check for DatabaseContext by name since we can't import it
+                    # Check for Database by name since we can't import it
                     if (
                         hasattr(annotation_to_check, "__name__")
-                        and annotation_to_check.__name__ == "DatabaseContext"
+                        and annotation_to_check.__name__ == "Database"
                     ):
                         needs_db_context = True
                     # Fallback for unresolved forward reference string
                     elif isinstance(param.annotation, str) and (
-                        param.annotation == "DatabaseContext"
-                        or param.annotation.endswith(".DatabaseContext")
+                        param.annotation == "Database"
+                        or param.annotation.endswith(".Database")
                     ):
                         needs_db_context = True
                         logger.debug(
@@ -684,6 +1001,9 @@ class LocalToolsProvider:
             else:
                 logger.warning(f"Local tool '{name}' reported an error: {result_str}")
             return result_str
+
+        try:
+            return await _execute()
         except Exception as e:
             logger.exception(f"Error executing local tool '{name}': {e}")
             # Re-raise or return formatted error string? Returning error string for now.
@@ -841,6 +1161,11 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         """
         return self._policy_engine
 
+    @property
+    def descriptor_provider(self) -> ToolDescriptorProvider:
+        """Return the unfiltered descriptor provider for outer coordinators."""
+        return self._descriptor_provider
+
     async def get_tool_definitions(
         self,
         *,
@@ -931,15 +1256,49 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         call_id: str | None = None,
     ) -> str | ToolResult:
-        """Execute a tool while enforcing policy decisions."""
+        """Execute through the provider's central static-policy chokepoint."""
+
+        async def coordinate_default_policy(
+            _descriptor: ToolDescriptor,
+            evaluation: PolicyEvaluation,
+            execute_authorized: AuthorizedToolExecutor,
+            effective_arguments: dict[str, object],
+            execution_context: ToolExecutionContext,
+        ) -> str | ToolResult:
+            return await self._execute_default_policy_decision(
+                name=name,
+                arguments=effective_arguments,
+                context=execution_context,
+                call_id=call_id,
+                evaluation=evaluation,
+                execute_authorized=execute_authorized,
+            )
+
+        return await self.execute_with_policy_coordinator(
+            name,
+            arguments,
+            context,
+            call_id,
+            coordinate_default_policy,
+        )
+
+    async def execute_with_policy_coordinator(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        coordinator: PolicyExecutionCoordinator,
+    ) -> str | ToolResult:
+        """Evaluate policy once and dispatch only through an explicit coordinator."""
         descriptor = await self._descriptor_provider.get_tool_descriptor(name)
         if descriptor is None:
             raise ToolNotFoundError(name, type(self).__name__)
 
-        evaluation = self._policy_engine.evaluate_for_execution(
+        evaluation = self._policy_engine.evaluate(
             descriptor,
             arguments=arguments,
-            can_confirm=context.request_confirmation_callback is not None,
         )
         if evaluation.decision is ToolPolicyDecision.DENY:
             logger.info(
@@ -949,27 +1308,75 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             )
             raise ToolPolicyDeniedError(name, evaluation.reason or "denied by policy")
 
-        if evaluation.decision is ToolPolicyDecision.CONFIRM:
-            # Refuse a confirm-gated call whose confirmation prompt could not show
-            # the approver the full payload, instead of rendering a misleading
-            # prompt. Scoped to confirm-gated calls, so unconfirmed calls are
-            # never constrained by it.
-            block_reason = confirmation_payload_block_reason(name, arguments)
+        context = replace(
+            context,
+            prepared_script=None,
+            definition_gate_outcome=None,
+            pending_definition_review=None,
+        )
+        prepared = await _prepare_script_call(
+            name, arguments, context, self._descriptor_provider, self._policy_engine
+        )
+        if isinstance(prepared, ToolResult):
+            return prepared
+        arguments = prepared
+        _script_call_inherits(descriptor, context, arguments)
+
+        async def execute_authorized() -> str | ToolResult:
+            return await self.wrapped_provider.execute_tool(
+                name, arguments, context, call_id
+            )
+
+        return await coordinator(
+            descriptor, evaluation, execute_authorized, arguments, context
+        )
+
+    async def _execute_default_policy_decision(
+        self,
+        *,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        evaluation: PolicyEvaluation,
+        execute_authorized: AuthorizedToolExecutor,
+    ) -> str | ToolResult:
+        """Apply standalone confirmation semantics before authorized dispatch."""
+        inherited = (
+            context.script_execution is not None and context.script_execution.approved
+        )
+        if evaluation.decision is ToolPolicyDecision.CONFIRM or (
+            evaluation.decision is ToolPolicyDecision.REVIEW and not inherited
+        ):
+            # Refuse a confirm-gated call whose arguments no prompt could
+            # describe faithfully, instead of rendering a misleading prompt.
+            # Scoped to confirm-gated calls, so unconfirmed calls are never
+            # constrained by it.
+            block_reason = confirmation_arguments_block_reason(name, arguments)
             if block_reason is not None:
                 logger.info("Refusing confirm-gated tool '%s': %s", name, block_reason)
                 return ToolResult(text=block_reason, attachments=None)
 
-            logger.info("Tool '%s' requires policy confirmation.", name)
+            logger.info(
+                "Tool '%s' requires policy confirmation%s.",
+                name,
+                " (review fallback)"
+                if evaluation.decision is ToolPolicyDecision.REVIEW
+                else "",
+            )
             if not context.request_confirmation_callback:
-                raise ToolNotFoundError(name, type(self).__name__)
+                raise ToolPolicyDeniedError(
+                    name,
+                    f"{evaluation.reason}; confirmation required but unavailable",
+                )
+
+            typed_callback = context.request_confirmation_callback
+            resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
+            if context.tools_provider is None:
+                context.tools_provider = self
 
             try:
-                typed_callback = context.request_confirmation_callback
-                resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
-
-                if context.tools_provider is None:
-                    context.tools_provider = self
-
                 confirmation_result = await typed_callback(
                     interface_type=context.interface_type,
                     conversation_id=context.conversation_id,
@@ -1005,39 +1412,54 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     f"Error during confirmation process for tool '{name}': {conf_err}"
                 )
 
-        return await self.wrapped_provider.execute_tool(
-            name, arguments, context, call_id
-        )
+            _approve_prepared_script(context, "human_confirmed")
+
+        _approve_confirmed_script(context, name, arguments, call_id)
+        return await execute_authorized()
 
     async def close(self) -> None:
         """Close the wrapped provider."""
         await self.wrapped_provider.close()
 
 
-def _taint_audit_sources(state: TurnTaintState) -> list[TaintAuditSourceSummary]:
-    return [
-        {
-            "source_type": source.source_type.value,
-            "source_id": source.source_id,
-            "tier": source.tier.config_value,
-            "labels": sorted(source.labels),
-            "reason": source.reason,
-        }
-        for source in state.sources
-    ]
-
-
 def _summarize_tool_arguments(
     arguments: Mapping[str, object],
+    *,
+    safe_keys: Collection[str] = (),
 ) -> TaintAuditArgumentsSummary:
-    """Return an audit-safe shape summary for tool arguments."""
-    keys = sorted(str(key) for key in arguments)
+    """Return argument shape, naming only keys declared by trusted tool schema."""
+    allowed = set(safe_keys)
+    items = sorted(arguments.items(), key=lambda item: str(item[0]))
+    summarized: list[tuple[str, object]] = []
+    for index, (key, value) in enumerate(items, start=1):
+        raw_key = str(key)
+        summarized.append((
+            raw_key if raw_key in allowed else f"argument_{index}",
+            value,
+        ))
     return {
-        "keys": keys,
-        "value_types": {
-            str(key): type(value).__name__ for key, value in sorted(arguments.items())
-        },
+        "keys": [key for key, _value in summarized],
+        "value_types": {key: type(value).__name__ for key, value in summarized},
     }
+
+
+def _descriptor_argument_keys(descriptor: ToolDescriptor) -> frozenset[str]:
+    """Return trusted top-level argument names declared by a tool descriptor."""
+    # MCP schemas are supplied by the remote server. Their property names are
+    # therefore untrusted content and must not be copied verbatim into durable
+    # audit records; only local definitions are part of the trusted deployment.
+    if descriptor.origin != "local":
+        return frozenset()
+    function = descriptor.definition.get("function")
+    if not isinstance(function, Mapping):
+        return frozenset()
+    parameters = function.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return frozenset()
+    properties = parameters.get("properties")
+    if not isinstance(properties, Mapping):
+        return frozenset()
+    return frozenset(str(key) for key in properties)
 
 
 def _collect_attachment_argument_ids(
@@ -1085,8 +1507,15 @@ def _collect_attachment_argument_ids(
                 )
             )
         return attachment_ids
-    if in_attachment_slot and is_attachment_id(value):
-        return {cast("str", value)}
+    if in_attachment_slot:
+        if isinstance(value, ScriptAttachment):
+            # A script resolves its own attachment arguments before dispatch, so
+            # what reaches the policy gate is the object rather than the id it
+            # was named by. Reading the id off it keeps the attachment's
+            # provenance in the evaluation instead of silently dropping it.
+            return {value.get_id()}
+        if is_attachment_id(value):
+            return {cast("str", value)}
     return set()
 
 
@@ -1097,6 +1526,142 @@ def _tool_parameters_schema(descriptor: ToolDescriptor) -> object:
     return function_definition.get("parameters")
 
 
+_REVIEW_DISCLOSURE_SINKS = frozenset({
+    SinkClass.ARBITRARY_EXTERNAL_MESSAGE,
+    SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+})
+
+
+def _review_messages_are_current_turn_only(
+    messages: Sequence[object] | None,
+    *,
+    active_request_role: Literal["user", "system"],
+) -> bool:
+    """Whether the reviewer window proves no conversation history was included."""
+    # A system-role wake has no active user row. Searching backward for a user
+    # would select historical conversation state and could incorrectly treat it
+    # as the current confined request. Until the window carries an explicit
+    # turn-boundary identity, only an active user request can prove confinement.
+    if messages is None or active_request_role != "user":
+        return False
+    current_user_index: int | None = None
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        role = (
+            message.get("role")
+            if isinstance(message, Mapping)
+            else getattr(message, "role", None)
+        )
+        is_scaffolding = (
+            message.get("is_turn_scaffolding", False)
+            if isinstance(message, Mapping)
+            else getattr(message, "is_turn_scaffolding", False)
+        )
+        if role == "user" and not is_scaffolding:
+            current_user_index = index
+            break
+    if current_user_index is None:
+        return False
+    return all(
+        (
+            message.get("role")
+            if isinstance(message, Mapping)
+            else getattr(message, "role", None)
+        )
+        == "system"
+        for message in messages[:current_user_index]
+    )
+
+
+def _review_verdict_for_taint_outcome(
+    outcome: TaintPolicyOutcome,
+) -> ToolCallReviewVerdict:
+    if outcome is TaintPolicyOutcome.DENY:
+        return ToolCallReviewVerdict.DENY
+    if outcome is TaintPolicyOutcome.CONFIRM:
+        return ToolCallReviewVerdict.CONFIRM
+    msg = f"Unsupported tool-call review constraint outcome: {outcome.value}"
+    raise ValueError(msg)
+
+
+def _strictest_review_verdict(
+    verdicts: Iterable[ToolCallReviewVerdict],
+) -> ToolCallReviewVerdict:
+    rank = {
+        ToolCallReviewVerdict.ALLOW: 0,
+        ToolCallReviewVerdict.CONFIRM: 1,
+        ToolCallReviewVerdict.DENY: 2,
+    }
+    return max(verdicts, key=rank.__getitem__)
+
+
+def _review_verdict_space(
+    floor: ToolCallReviewVerdict,
+) -> frozenset[ToolCallReviewVerdict]:
+    if floor is ToolCallReviewVerdict.DENY:
+        return frozenset({ToolCallReviewVerdict.DENY})
+    if floor is ToolCallReviewVerdict.CONFIRM:
+        return frozenset({
+            ToolCallReviewVerdict.CONFIRM,
+            ToolCallReviewVerdict.DENY,
+        })
+    return frozenset(ToolCallReviewVerdict)
+
+
+def _is_escalatable_review_denial(
+    result: ToolCallReviewResult,
+    constraints: ToolCallReviewConstraints,
+) -> bool:
+    """Return whether a model freely chose deny where confirm was available."""
+    return (
+        result.verdict is ToolCallReviewVerdict.DENY
+        and result.status is ToolCallReviewStatus.MODEL_VERDICT
+        and not result.used_fallback
+        and ToolCallReviewVerdict.CONFIRM in constraints.available_verdicts
+    )
+
+
+def _argument_at_path(arguments: Mapping[str, object], path: str) -> object:
+    value: object = arguments
+    for segment in path.split("."):
+        if not isinstance(value, Mapping) or segment not in value:
+            return None
+        value = value[segment]
+    return value
+
+
+def _destination_argument(
+    descriptor: ToolDescriptor,
+    arguments: Mapping[str, object],
+) -> str | None:
+    for path in descriptor.destination_argument_paths:
+        value = _argument_at_path(arguments, path)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _is_profile_sink(
+    name: str,
+    arguments: Mapping[str, object],
+) -> bool:
+    """Return whether this is the internal gate for the named profile."""
+    profile_id = arguments.get("profile_id")
+    return (
+        isinstance(profile_id, str)
+        and bool(profile_id)
+        and name == f"profile:{profile_id}"
+    )
+
+
+def _is_sensitive_read_descriptor(descriptor: ToolDescriptor) -> bool:
+    """Return whether successful execution acquires potentially private data."""
+    return {
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+    }.issubset(descriptor.tags)
+
+
 class TaintTrackingToolsProvider(ToolsProvider):
     """Wraps another provider with runtime taint policy and result tracking."""
 
@@ -1105,6 +1670,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         wrapped_provider: ToolsProvider,
         taint_policy: TaintPolicyConfig | None = None,
         confirmation_timeout: float = 3600.0,
+        delegation_sink_classes: Mapping[str, SinkClass] | None = None,
+        tool_call_reviewer: ToolCallReviewer | None = None,
+        review_config: ToolCallReviewConfig | None = None,
+        deployment_review_guidance: str = "",
+        profile_review_guidance: str = "",
+        include_aggregated_context: bool | None = None,
+        profile: str = UNATTRIBUTED_PROFILE,
     ) -> None:
         if not isinstance(wrapped_provider, ToolDescriptorProvider):
             msg = (
@@ -1117,6 +1689,66 @@ class TaintTrackingToolsProvider(ToolsProvider):
         self._taint_policy_config = taint_policy or TaintPolicyConfig()
         self._taint_evaluator = TaintPolicyEvaluator(self._taint_policy_config)
         self.confirmation_timeout = confirmation_timeout
+        # Profile id -> the sink class a whole turn on that profile counts as,
+        # so a delegation is evaluated as what the target does rather than as a
+        # generic delegation. Spans profiles, so it is built once at startup.
+        self._delegation_sink_classes = dict(delegation_sink_classes or {})
+        self._tool_call_reviewer = tool_call_reviewer
+        self._review_config = review_config
+        self._deployment_review_guidance = deployment_review_guidance
+        self._profile_review_guidance = profile_review_guidance
+        self._include_aggregated_context = include_aggregated_context
+        self._review_tasks: set[asyncio.Task[object]] = set()
+        # This is the outermost provider every caller holds, so counting
+        # executions here counts them whichever entry path reached them --
+        # the processing loop, native voice, the tools API, Monty scripts,
+        # the durable-confirmation worker. Counted here rather than in a
+        # wrapper of its own because a wrapper is a new type, and the
+        # providers are probed with isinstance against several capability
+        # protocols; one that delegates by __getattr__ satisfies hasattr but
+        # not isinstance, so it silently strips capabilities.
+        self._profile = profile
+
+    def _record_sink_approval(
+        self,
+        context: ToolExecutionContext,
+        descriptor: ToolDescriptor,
+        sink_class: SinkClass,
+        arguments: Mapping[str, object],
+    ) -> None:
+        """Record that a human approved this turn's content for a sink.
+
+        Called only where a confirmation was actually shown and approved --
+        never for an outcome that simply did not require one. Those are
+        different facts: this turn's policy not asking says nothing about a
+        target profile whose own matrix tightens the same sink to `confirm`,
+        and recording passage as approval would answer that profile's question
+        on a user's behalf.
+
+        Only for a delegation, and bound to its exact target profile: an ordinary
+        tool call *is* the sink, and a class-wide marker would hand a later,
+        unrelated named sink an approval it never asked for. A delegation is
+        different -- the same content continues under the named target profile,
+        whose own gate would otherwise have to infer whether this one asked.
+        Recording that exact handoff on the taint means the evidence travels with
+        the content it is about and is persisted with the delegation run.
+        """
+        tracker = context.taint_tracker
+        if tracker is None:
+            return
+        if "delegation" not in {
+            str(getattr(tag, "value", tag)) for tag in descriptor.tags
+        }:
+            return
+        target_profile_id = arguments.get("target_service_id")
+        if not isinstance(target_profile_id, str) or not target_profile_id:
+            return
+        tracker.replace(
+            tracker.snapshot().approve_sink(
+                sink_class,
+                profile_id=target_profile_id,
+            )
+        )
 
     async def get_tool_definitions(
         self,
@@ -1137,6 +1769,304 @@ class TaintTrackingToolsProvider(ToolsProvider):
         """Return the wrapped descriptor for a tool."""
         return await self._descriptor_provider.get_tool_descriptor(name)
 
+    async def authorize_taint_sink(
+        self,
+        *,
+        name: str,
+        sink_class: SinkClass,
+        # ast-grep-ignore: no-dict-any - sink arguments are dynamic audit and confirmation context
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+        taint_policy: TaintPolicyConfig | None = None,
+    ) -> None:
+        """Apply runtime taint policy to an egress sink outside tool dispatch."""
+        scope = context.script_execution
+        if scope is not None and name != "keychute_http_request":
+            scope.revoke()
+        if context.taint_tracker is None:
+            return
+
+        state = context.taint_tracker.snapshot()
+        evaluator = (
+            TaintPolicyEvaluator(taint_policy)
+            if taint_policy is not None
+            else self._taint_evaluator
+        )
+        evaluation = evaluator.evaluate(
+            state=state,
+            sink_class=sink_class,
+        )
+        logger.info(
+            "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
+            "requested=%s effective=%s mode=%s reason=%s",
+            name,
+            call_id,
+            evaluation.sink_class.value,
+            evaluation.requested_outcome.value,
+            evaluation.effective_outcome.value,
+            evaluation.mode.value,
+            evaluation.reason,
+        )
+        if (
+            evaluation.mode is TaintPolicyMode.OBSERVE
+            and evaluation.requested_outcome is not evaluation.effective_outcome
+        ):
+            logger.warning(
+                "Runtime taint WOULD ENFORCE (observe mode, not blocked): "
+                "tool=%s call_id=%s conversation=%s sink=%s would_be=%s "
+                "max_tier=%s reason=%s",
+                name,
+                call_id,
+                context.conversation_id,
+                evaluation.sink_class.value,
+                evaluation.requested_outcome.value,
+                state.max_tier.config_value,
+                evaluation.reason,
+            )
+        await self._record_named_policy_evaluation_audit(
+            tool_name=name,
+            context=context,
+            call_id=call_id,
+            arguments=arguments,
+            state=state,
+            evaluation=evaluation,
+        )
+        if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
+            raise ToolPolicyDeniedError(name, evaluation.reason)
+        if evaluation.effective_outcome is TaintPolicyOutcome.REDACT:
+            raise ToolPolicyDeniedError(
+                name,
+                f"{evaluation.reason}; redaction outcomes are not executable yet",
+            )
+        if scope is not None and scope.approved and name == "keychute_http_request":
+            constraints = self._review_constraints(
+                taint_evaluation=evaluation,
+                static_evaluation=None,
+                include_observe_taint_constraints=False,
+            )
+            if constraints.available_verdicts == frozenset({
+                ToolCallReviewVerdict.DENY
+            }):
+                raise ToolPolicyDeniedError(
+                    name, "Inherited script approval cannot override the denial floor"
+                )
+            if ToolCallReviewVerdict.ALLOW not in constraints.available_verdicts:
+                await self._request_named_sink_confirmation(
+                    name=name,
+                    sink_class=sink_class,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    reason=evaluation.reason,
+                    state=state,
+                )
+            await self._record_script_inheritance(
+                context, name, call_id, state, sink_class
+            )
+            return
+        profile_id = arguments.get("profile_id")
+        carried_profile_approval = (
+            _is_profile_sink(name, arguments)
+            and isinstance(profile_id, str)
+            and state.is_sink_approved(sink_class, profile_id=profile_id)
+        )
+        if carried_profile_approval and (
+            evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM
+            or (
+                evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+                and evaluation.verdict_floor is not TaintPolicyOutcome.DENY
+            )
+        ):
+            logger.info(
+                "Carried human approval satisfies named sink authorization: "
+                "tool=%s call_id=%s sink=%s requested=%s floor=%s",
+                name,
+                call_id,
+                sink_class.value,
+                evaluation.requested_outcome.value,
+                evaluation.verdict_floor.value
+                if evaluation.verdict_floor is not None
+                else None,
+            )
+            return
+        if evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE:
+            descriptor = ToolDescriptor(
+                name=name,
+                definition={
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": "Direct runtime-taint sink authorization.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+                tags=frozenset(),
+                origin="local",
+            )
+            if evaluation.mode is TaintPolicyMode.OBSERVE:
+                self._start_shadow_review(
+                    descriptor=descriptor,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    state=state,
+                    sink_class=sink_class,
+                    taint_evaluation=evaluation,
+                    static_evaluation=None,
+                )
+                return
+            result = await self._review_tool_call(
+                descriptor=descriptor,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                state=state,
+                sink_class=sink_class,
+                taint_evaluation=evaluation,
+                static_evaluation=None,
+                include_observe_taint_constraints=False,
+            )
+            if result.verdict is ToolCallReviewVerdict.DENY:
+                raise ToolPolicyDeniedError(name, result.reason)
+            if result.verdict is ToolCallReviewVerdict.CONFIRM:
+                await self._request_named_sink_confirmation(
+                    name=name,
+                    sink_class=sink_class,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    reason=result.reason,
+                    state=state,
+                )
+            return
+        if evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
+            await self._request_named_sink_confirmation(
+                name=name,
+                sink_class=sink_class,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                reason=evaluation.reason,
+                state=state,
+            )
+
+    async def _request_named_sink_confirmation(
+        self,
+        *,
+        name: str,
+        sink_class: SinkClass,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        reason: str,
+        state: TurnTaintState,
+    ) -> None:
+        """Request a live, decision-only confirmation for a non-tool sink.
+
+        Named sinks such as ``profile:<id>`` authorize the model call currently
+        waiting in this coroutine. They are not executable tools and therefore
+        must never enter normal durable replay. A live UI manager may persist a
+        decision-only request, but approval resumes only this call; unattended
+        contexts without such a manager fail closed.
+        """
+        manager = (context.confirmation_ui_managers or {}).get(context.interface_type)
+        if manager is None:
+            raise ToolPolicyDeniedError(
+                name,
+                f"{reason}; live decision-only confirmation is unavailable in "
+                "this unattended or deferred context",
+            )
+
+        resolved_call_id = call_id or f"sink_{uuid.uuid4()}"
+        source_message_internal_id: int | None = None
+        if context.turn_id is not None:
+            source_row = (
+                await context.db_context.message_history.get_user_row_by_turn_id(
+                    context.turn_id
+                )
+            )
+            if source_row is not None:
+                source_message_internal_id = source_row["internal_id"]
+        try:
+            rendered_arguments = json.dumps(
+                dict(arguments),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ToolPolicyDeniedError(
+                name,
+                "live confirmation refused because the complete request payload "
+                "could not be rendered for the approver",
+            ) from exc
+        quoted_reason = "\n".join(f"> {line}" for line in reason.splitlines())
+        prompt = (
+            f"Allow the current request to enter '{name}'?\n\n"
+            f"Complete request payload:\n{rendered_arguments}\n\n"
+            f"Automatic review reason:\n{quoted_reason}"
+        )
+        # No size rule here: the prompt is rendered whole and the selected
+        # manager decides whether its interface can display it, routing to one
+        # that can where it cannot. See
+        # docs/design/confirmation-prompt-capacity.md.
+        try:
+            outcome = await manager.request_confirmation(
+                conversation_id=context.conversation_id,
+                interface_type=context.interface_type,
+                turn_id=context.turn_id,
+                prompt_text=prompt,
+                tool_name=name,
+                tool_args=dict(arguments),
+                timeout=self.confirmation_timeout,
+                target_user_id=context.user_id,
+                tool_call_id=resolved_call_id,
+                source_message_internal_id=source_message_internal_id,
+                wait_for_durable_execution=False,
+                taint_state_json=state.to_metadata(),
+                processing_profile_id=context.processing_profile_id,
+            )
+        except TimeoutError as exc:
+            raise ToolPolicyDeniedError(
+                name,
+                f"{reason}; live decision-only confirmation timed out",
+            ) from exc
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Live confirmation failed for named sink '%s'", name)
+            raise ToolPolicyDeniedError(
+                name,
+                f"{reason}; live decision-only confirmation failed",
+            ) from exc
+
+        if outcome.kind == "approved":
+            tracker = context.taint_tracker
+            profile_id = arguments.get("profile_id")
+            if (
+                tracker is not None
+                and _is_profile_sink(name, arguments)
+                and isinstance(profile_id, str)
+            ):
+                tracker.replace(
+                    tracker.snapshot().approve_sink(
+                        sink_class,
+                        profile_id=profile_id,
+                    )
+                )
+            return
+        detail_result = confirmation_outcome_to_tool_result(name=name, outcome=outcome)
+        detail = (
+            detail_result.get_text()
+            if isinstance(detail_result, ToolResult)
+            else detail_result
+        )
+        raise ToolPolicyDeniedError(
+            name,
+            f"{reason}; live decision-only confirmation did not approve: {detail}",
+        )
+
     async def execute_tool(
         self,
         name: str,
@@ -1145,9 +2075,184 @@ class TaintTrackingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         call_id: str | None = None,
     ) -> str | ToolResult:
-        """Execute a tool and merge result taint into the turn tracker."""
+        """Coordinate taint review through the static-policy execution chokepoint."""
+        started = time.monotonic()
+        outcome = "error"
+        try:
+            result = await self._execute_tool_tracked(name, arguments, context, call_id)
+            # `returned`, not `success`: a tool reports an expected failure by
+            # returning a result, and ToolResult has no status field, so
+            # nothing here can tell a refusal from an answer.
+            outcome = "returned"
+            return result
+        except ToolPolicyDeniedError:
+            outcome = "denied"
+            raise
+        except ToolNotFoundError:
+            outcome = "not_found"
+            raise
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            # A name that resolved to no tool never came from the registry: it
+            # came from an LLM or from /api/tools/execute/{tool_name}, so it is
+            # attacker-shaped free text. Prometheus keeps every distinct label
+            # tuple for the life of the process, so recording those verbatim
+            # would let a typo loop grow the series set without bound. The
+            # sentinel keeps "how often is a missing tool asked for" visible
+            # while making the label's range finite.
+            record_tool_call(
+                profile=self._profile,
+                tool=UNKNOWN_TOOL if outcome == "not_found" else name,
+                outcome=outcome,
+                duration_seconds=time.monotonic() - started,
+            )
+
+    async def _execute_tool_tracked(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        """The taint-tracked execution itself, without the accounting."""
+        policy_provider = (
+            self.wrapped_provider
+            if isinstance(self.wrapped_provider, PolicyCoordinatingToolsProvider)
+            else None
+        )
+
+        if policy_provider is not None:
+
+            async def coordinate_policy(
+                descriptor: ToolDescriptor,
+                static_evaluation: PolicyEvaluation,
+                execute_authorized: AuthorizedToolExecutor,
+                effective_arguments: dict[str, object],
+                execution_context: ToolExecutionContext,
+            ) -> str | ToolResult:
+                return await self._authorize_and_execute_tool(
+                    name=name,
+                    arguments=effective_arguments,
+                    context=execution_context,
+                    call_id=call_id,
+                    descriptor=descriptor,
+                    static_evaluation=static_evaluation,
+                    execute_authorized=execute_authorized,
+                )
+
+            return await policy_provider.execute_with_policy_coordinator(
+                name,
+                arguments,
+                context,
+                call_id,
+                coordinate_policy,
+            )
+
         descriptor = await self._descriptor_provider.get_tool_descriptor(name)
-        if descriptor is not None and context.taint_tracker is not None:
+        if descriptor is None:
+            raise ToolNotFoundError(name, type(self).__name__)
+
+        context = replace(
+            context,
+            prepared_script=None,
+            definition_gate_outcome=None,
+            pending_definition_review=None,
+        )
+        prepared = await _prepare_script_call(
+            name, arguments, context, self._descriptor_provider
+        )
+        if isinstance(prepared, ToolResult):
+            return prepared
+        arguments = prepared
+        _script_call_inherits(descriptor, context, arguments)
+
+        async def execute_authorized() -> str | ToolResult:
+            return await self.wrapped_provider.execute_tool(
+                name,
+                arguments,
+                context,
+                call_id,
+            )
+
+        return await self._authorize_and_execute_tool(
+            name=name,
+            arguments=arguments,
+            context=context,
+            call_id=call_id,
+            descriptor=descriptor,
+            static_evaluation=None,
+            execute_authorized=execute_authorized,
+        )
+
+    async def _authorize_and_execute_tool(
+        self,
+        *,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        descriptor: ToolDescriptor,
+        static_evaluation: PolicyEvaluation | None,
+        execute_authorized: AuthorizedToolExecutor,
+    ) -> str | ToolResult:
+        """Gate one call, guaranteeing any shadow review learns when it finished.
+
+        A verdict computed off the critical path attaches to the definitions the
+        call wrote, so it must know when every write is registered -- including
+        when the call ends at a confirmation or an exception rather than at a
+        dispatch.
+        """
+        previous_pending = context.pending_definition_review
+        context.pending_definition_review = None
+        try:
+            return await self._gate_and_execute_tool(
+                name=name,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                descriptor=descriptor,
+                static_evaluation=static_evaluation,
+                execute_authorized=execute_authorized,
+            )
+        finally:
+            if context.pending_definition_review is not None:
+                context.pending_definition_review.settled.set()
+            context.pending_definition_review = previous_pending
+
+    async def _gate_and_execute_tool(
+        self,
+        *,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        descriptor: ToolDescriptor,
+        static_evaluation: PolicyEvaluation | None,
+        execute_authorized: AuthorizedToolExecutor,
+    ) -> str | ToolResult:
+        """Merge static and taint decisions, then invoke authorized dispatch once."""
+
+        inherited = _script_call_inherits(descriptor, context, arguments)
+        if context.prepared_script is not None:
+            review = context.prepared_script.review
+            context.prepared_script.review = replace(
+                review,
+                policy={
+                    **review.policy,
+                    "taint_policy": self._taint_policy_config.model_dump(mode="json"),
+                },
+            )
+        state = TurnTaintState.empty()
+        sink_class = resolve_tool_sink_class(
+            descriptor, arguments, self._delegation_sink_classes
+        )
+        evaluation: TaintPolicyEvaluation | None = None
+        if context.taint_tracker is not None:
             argument_taint_merged = await self._merge_argument_taint_into_context(
                 arguments,
                 context,
@@ -1156,9 +2261,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
             state = context.taint_tracker.snapshot()
             if context.taint_policy_snapshot is not None and not argument_taint_merged:
                 state = context.taint_policy_snapshot
-            evaluation = self._taint_evaluator.evaluate_tool(
-                descriptor=descriptor,
-                state=state,
+            evaluation = self._taint_evaluator.evaluate(
+                state=state, sink_class=sink_class
             )
             logger.info(
                 "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
@@ -1198,6 +2302,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 state=state,
                 evaluation=evaluation,
             )
+
+        if evaluation is not None:
             if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
                 raise ToolPolicyDeniedError(name, evaluation.reason)
             if evaluation.effective_outcome is TaintPolicyOutcome.REDACT:
@@ -1205,41 +2311,362 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     name,
                     f"{evaluation.reason}; redaction outcomes are not executable yet",
                 )
-            if evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
+
+        static_review = (
+            static_evaluation is not None
+            and static_evaluation.decision is ToolPolicyDecision.REVIEW
+        )
+        taint_review = (
+            evaluation is not None
+            and evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+        )
+        confined_exemption = (
+            taint_review
+            and evaluation is not None
+            and not static_review
+            and self._is_confined_review_exempt(
+                descriptor=descriptor,
+                state=state,
+                sink_class=sink_class,
+                evaluation=evaluation,
+                review_messages=context.tool_call_review_messages,
+                active_request_role=(
+                    context.tool_call_review_trigger.active_request_role
+                    if context.tool_call_review_trigger is not None
+                    else "user"
+                ),
+            )
+        )
+
+        constraints = self._review_constraints(
+            taint_evaluation=evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=False,
+        )
+        if inherited and constraints.available_verdicts == frozenset({
+            ToolCallReviewVerdict.DENY
+        }):
+            raise ToolPolicyDeniedError(
+                name, "Inherited script approval cannot override the denial floor"
+            )
+        inherited_confirm = (
+            inherited
+            and ToolCallReviewVerdict.ALLOW not in constraints.available_verdicts
+        )
+        review_result: ToolCallReviewResult | None = None
+        inline_confirmation_authorization: ToolConfirmationAuthorization | None = None
+        # How this call left its gates, for whichever executable-persistence
+        # write it goes on to perform. The gates record it; the write consumes
+        # it; no tool maps verdicts to dispositions itself.
+        definition_gate: DefinitionGateOutcome | None = None
+        pending_definition_review: PendingDefinitionReview | None = None
+        if inherited:
+            await self._record_script_inheritance(
+                context, name, call_id, state, sink_class
+            )
+        elif confined_exemption and evaluation is not None:
+            await self._record_confined_exemption_audit(
+                descriptor=descriptor,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                state=state,
+                evaluation=evaluation,
+            )
+        elif (
+            taint_review
+            and evaluation is not None
+            and (evaluation.mode is TaintPolicyMode.OBSERVE and not static_review)
+        ):
+            # The verdict does not block the call, so any definition this call
+            # writes lands pending and resolves uncured until the review
+            # completes -- a latency-bounded window, seconds wide, in which a
+            # firing enters conservative.
+            pending_definition_review = PendingDefinitionReview(
+                write_id=str(uuid.uuid4())
+            )
+            context.pending_definition_review = pending_definition_review
+            definition_gate = DefinitionGateOutcome(
+                disposition=None,
+                gate=self._gate_provenance(
+                    layer=GateLayer.TAINT_CELL, taint_evaluation=evaluation
+                ),
+                pending=pending_definition_review,
+            )
+            self._start_shadow_review(
+                descriptor=descriptor,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                state=state,
+                sink_class=sink_class,
+                taint_evaluation=evaluation,
+                static_evaluation=static_evaluation,
+                pending=pending_definition_review,
+            )
+        elif (
+            static_review or taint_review or context.prepared_script is not None
+        ) and _review_authorization_matches(
+            context.tool_call_review_authorization,
+            name=name,
+            arguments=arguments,
+            call_id=call_id,
+            sink_class=sink_class,
+            static_evaluation=static_evaluation,
+            taint_evaluation=evaluation,
+        ):
+            logger.info(
+                "Reusing durable human approval for reviewed tool %s (%s)",
+                name,
+                call_id,
+            )
+            _approve_prepared_script(context, "human_confirmed")
+            definition_gate = DefinitionGateOutcome(
+                disposition=CreationDisposition.HUMAN_CONFIRMED,
+                gate=self._gate_provenance(
+                    layer=GateLayer.CONFIRMATION, taint_evaluation=evaluation
+                ),
+            )
+        elif static_review or taint_review:
+            review_result = await self._review_tool_call(
+                descriptor=descriptor,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                state=state,
+                sink_class=sink_class,
+                taint_evaluation=evaluation,
+                static_evaluation=static_evaluation,
+                include_observe_taint_constraints=False,
+            )
+
+        if review_result is not None:
+            if context.prepared_script is not None:
+                context.prepared_script.review = replace(
+                    context.prepared_script.review,
+                    decision=f"{review_result.verdict.value}:{review_result.status.value}",
+                    review_id=review_result.audit_event_id,
+                )
+            if (
+                review_result.verdict is ToolCallReviewVerdict.ALLOW
+                and review_result.status is ToolCallReviewStatus.MODEL_VERDICT
+                and not review_result.used_fallback
+            ):
+                _approve_prepared_script(context, "allow", review_result.audit_event_id)
+            definition_gate = self._judge_gate_outcome(
+                review_result=review_result,
+                taint_review=taint_review,
+                taint_evaluation=evaluation,
+                static_evaluation=static_evaluation,
+            )
+            if review_result.verdict is ToolCallReviewVerdict.DENY:
                 state_before_confirmation = (
                     context.taint_tracker.snapshot()
                     if context.taint_tracker is not None
                     else None
                 )
-                confirmation_result = await self._request_taint_confirmation(
-                    name=name,
+                escalation_result = await self._maybe_escalate_review_denial(
+                    descriptor=descriptor,
                     arguments=arguments,
                     context=context,
                     call_id=call_id,
-                    reason=evaluation.reason,
+                    state=state,
+                    sink_class=sink_class,
+                    mode=evaluation.mode if evaluation is not None else None,
+                    review_result=review_result,
+                    constraints=self._review_constraints(
+                        taint_evaluation=evaluation,
+                        static_evaluation=static_evaluation,
+                        include_observe_taint_constraints=False,
+                    ),
+                    authorization=_review_authorization_for_confirmation(
+                        name=name,
+                        arguments=arguments,
+                        call_id=call_id,
+                        sink_class=sink_class,
+                        static_evaluation=static_evaluation,
+                        taint_evaluation=evaluation,
+                    ),
                 )
-                if confirmation_result is not None:
-                    if descriptor is not None:
+                if escalation_result is not None:
+                    action_attempted = (
+                        escalation_result.action_attempted
+                        if isinstance(escalation_result, _ConfirmationGateResult)
+                        else False
+                    )
+                    result = (
+                        escalation_result.result
+                        if isinstance(escalation_result, _ConfirmationGateResult)
+                        else escalation_result
+                    )
+                    if action_attempted:
                         await self._record_result_taint_and_audit(
                             descriptor=descriptor,
                             context=context,
                             call_id=call_id,
                             state_before_execution=state_before_confirmation,
                         )
-                    return confirmation_result
+                    elif context.taint_tracker is not None:
+                        context.tool_result_taint_metadata[
+                            call_id or descriptor.name
+                        ] = context.taint_tracker.snapshot().to_metadata()
+                    return result
+                # The denial was escalated and a human approved the call anyway,
+                # rendering it in full. That is a sighted approval; the recorded
+                # denial it overrode is not what the write carries forward.
+                _approve_prepared_script(
+                    context, "human_confirmed", review_result.audit_event_id
+                )
+                definition_gate = DefinitionGateOutcome(
+                    disposition=CreationDisposition.HUMAN_CONFIRMED,
+                    gate=self._gate_provenance(
+                        layer=GateLayer.CONFIRMATION,
+                        taint_evaluation=evaluation,
+                        verdict_id=review_result.audit_event_id,
+                    ),
+                )
+                self._record_sink_approval(context, descriptor, sink_class, arguments)
+            elif review_result.verdict is ToolCallReviewVerdict.CONFIRM:
+                state_before_confirmation = (
+                    context.taint_tracker.snapshot()
+                    if context.taint_tracker is not None
+                    else None
+                )
+                confirmation_result = await self._request_review_confirmation(
+                    descriptor=descriptor,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    reason=review_result.reason,
+                    authorization=_review_authorization_for_confirmation(
+                        name=name,
+                        arguments=arguments,
+                        call_id=call_id,
+                        sink_class=sink_class,
+                        static_evaluation=static_evaluation,
+                        taint_evaluation=evaluation,
+                    ),
+                )
+                if confirmation_result is not None:
+                    # The confirmation outcome is synthetic: the tool never ran,
+                    # so its declared output provenance must not be added. Preserve
+                    # the live state, including any metadata returned by the
+                    # confirmation adapter itself.
+                    if confirmation_result.action_attempted:
+                        await self._record_result_taint_and_audit(
+                            descriptor=descriptor,
+                            context=context,
+                            call_id=call_id,
+                            state_before_execution=state_before_confirmation,
+                        )
+                    elif context.taint_tracker is not None:
+                        context.tool_result_taint_metadata[
+                            call_id or descriptor.name
+                        ] = context.taint_tracker.snapshot().to_metadata()
+                    return confirmation_result.result
+                # The escalation or confirmation prompt rendered the complete
+                # call and a human approved it, which is a sighted approval of
+                # the definition it writes -- the one thing a recorded
+                # ``confirm`` never was.
+                _approve_prepared_script(
+                    context, "human_confirmed", review_result.audit_event_id
+                )
+                definition_gate = DefinitionGateOutcome(
+                    disposition=CreationDisposition.HUMAN_CONFIRMED,
+                    gate=self._gate_provenance(
+                        layer=GateLayer.CONFIRMATION,
+                        taint_evaluation=evaluation,
+                        verdict_id=review_result.audit_event_id,
+                    ),
+                )
+                # A live human approval has already confirmed this exact reviewed
+                # call. Scope a consumed generic authorization to its immediate
+                # execution so an inner gate (notably delegate_to_service's own
+                # confirmation) cannot prompt for the same payload a second time.
+                inline_confirmation_authorization = ToolConfirmationAuthorization(
+                    tool_name=name,
+                    call_id=call_id or "",
+                    tool_args=cast("ToolArguments", copy.deepcopy(dict(arguments))),
+                    consumed=True,
+                )
+                self._record_sink_approval(context, descriptor, sink_class, arguments)
+
+        hard_confirm = (
+            inherited_confirm
+            or (
+                static_evaluation is not None
+                and static_evaluation.decision is ToolPolicyDecision.CONFIRM
+            )
+            or (
+                evaluation is not None
+                and evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM
+            )
+        )
+        if hard_confirm and (
+            review_result is None
+            or review_result.verdict is ToolCallReviewVerdict.ALLOW
+        ):
+            state_before_confirmation = (
+                context.taint_tracker.snapshot()
+                if context.taint_tracker is not None
+                else None
+            )
+            reasons = [
+                item
+                for item in (
+                    static_evaluation.reason
+                    if static_evaluation is not None
+                    and static_evaluation.decision is ToolPolicyDecision.CONFIRM
+                    else None,
+                    evaluation.reason
+                    if evaluation is not None
+                    and evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM
+                    else None,
+                )
+                if item
+            ]
+            confirmation_result = await self._request_taint_confirmation(
+                name=name,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                reason="; ".join(reasons),
+            )
+            if confirmation_result is not None:
+                if confirmation_result.action_attempted:
+                    await self._record_result_taint_and_audit(
+                        descriptor=descriptor,
+                        context=context,
+                        call_id=call_id,
+                        state_before_execution=state_before_confirmation,
+                    )
+                elif context.taint_tracker is not None:
+                    context.tool_result_taint_metadata[call_id or descriptor.name] = (
+                        context.taint_tracker.snapshot().to_metadata()
+                    )
+                return confirmation_result.result
+            _approve_prepared_script(context, "human_confirmed")
+            definition_gate = DefinitionGateOutcome(
+                disposition=CreationDisposition.HUMAN_CONFIRMED,
+                gate=self._gate_provenance(
+                    layer=GateLayer.CONFIRMATION, taint_evaluation=evaluation
+                ),
+            )
+            self._record_sink_approval(context, descriptor, sink_class, arguments)
 
         state_before_execution = (
             context.taint_tracker.snapshot()
             if context.taint_tracker is not None
             else None
         )
+        previous_confirmation_authorization = context.tool_confirmation_authorization
+        previous_definition_gate = context.definition_gate_outcome
+        if inline_confirmation_authorization is not None:
+            context.tool_confirmation_authorization = inline_confirmation_authorization
+        context.definition_gate_outcome = definition_gate
+        _approve_confirmed_script(context, name, arguments, call_id)
         try:
-            result = await self.wrapped_provider.execute_tool(
-                name,
-                arguments,
-                context,
-                call_id,
-            )
+            result = await execute_authorized()
         except Exception:
             if descriptor is not None:
                 await self._record_result_taint_and_audit(
@@ -1249,8 +2676,19 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     state_before_execution=state_before_execution,
                 )
             raise
+        finally:
+            context.definition_gate_outcome = previous_definition_gate
+            if inline_confirmation_authorization is not None:
+                context.tool_confirmation_authorization = (
+                    previous_confirmation_authorization
+                )
 
         if descriptor is not None:
+            self._record_generic_sensitive_read(
+                descriptor=descriptor,
+                context=context,
+                state_before_execution=state_before_execution,
+            )
             await self._record_result_taint_and_audit(
                 descriptor=descriptor,
                 context=context,
@@ -1258,6 +2696,791 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 state_before_execution=state_before_execution,
             )
         return result
+
+    def _is_confined_review_exempt(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        evaluation: TaintPolicyEvaluation,
+        review_messages: Sequence[object] | None,
+        active_request_role: Literal["user", "system"],
+    ) -> bool:
+        """Return whether a disclosure review can safely resolve to audit."""
+        return (
+            self._include_aggregated_context is False
+            and sink_class in _REVIEW_DISCLOSURE_SINKS
+            and not state.sensitive_reads
+            and not state.history_high_taint_present
+            and _review_messages_are_current_turn_only(
+                review_messages,
+                active_request_role=active_request_role,
+            )
+            and evaluation.verdict_floor is None
+        )
+
+    def _review_policy_contexts(
+        self,
+        *,
+        state: TurnTaintState,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+    ) -> list[DelegatingPolicyContext]:
+        contexts: list[DelegatingPolicyContext] = []
+        if (
+            taint_evaluation is not None
+            and taint_evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+        ):
+            contexts.append(
+                DelegatingPolicyContext(
+                    kind="taint_cell",
+                    identifier=(
+                        f"{state.max_tier.config_value}."
+                        f"{taint_evaluation.sink_class.value}"
+                    ),
+                    description=taint_evaluation.reason,
+                )
+            )
+        if (
+            static_evaluation is not None
+            and static_evaluation.decision is ToolPolicyDecision.REVIEW
+        ):
+            matched_rule = static_evaluation.matched_rule
+            identifier = (
+                f"{matched_rule.layer}:{matched_rule.declaration_order}"
+                if matched_rule is not None
+                else "default"
+            )
+            contexts.append(
+                DelegatingPolicyContext(
+                    kind="static_rule",
+                    identifier=identifier,
+                    description=static_evaluation.reason,
+                )
+            )
+        return contexts
+
+    def _review_constraints(
+        self,
+        *,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+        include_observe_taint_constraints: bool,
+    ) -> ToolCallReviewConstraints:
+        floors = [ToolCallReviewVerdict.ALLOW]
+        fallbacks: list[ToolCallReviewVerdict] = []
+        static_decision = (
+            static_evaluation.decision if static_evaluation is not None else None
+        )
+        if taint_evaluation is not None and (
+            taint_evaluation.mode is TaintPolicyMode.ENFORCE
+            or include_observe_taint_constraints
+        ):
+            if taint_evaluation.verdict_floor is not None:
+                floors.append(
+                    _review_verdict_for_taint_outcome(taint_evaluation.verdict_floor)
+                )
+            if taint_evaluation.fallback_outcome is not None:
+                fallbacks.append(
+                    _review_verdict_for_taint_outcome(taint_evaluation.fallback_outcome)
+                )
+            if taint_evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
+                floors.append(ToolCallReviewVerdict.CONFIRM)
+                fallbacks.append(ToolCallReviewVerdict.CONFIRM)
+        if static_decision is ToolPolicyDecision.REVIEW:
+            fallbacks.append(ToolCallReviewVerdict.CONFIRM)
+        elif static_decision is ToolPolicyDecision.CONFIRM:
+            floors.append(ToolCallReviewVerdict.CONFIRM)
+            fallbacks.append(ToolCallReviewVerdict.CONFIRM)
+        floor = _strictest_review_verdict(floors)
+        fallback = _strictest_review_verdict([
+            *fallbacks,
+            ToolCallReviewVerdict.CONFIRM,
+        ])
+        if fallback not in _review_verdict_space(floor):
+            fallback = floor
+        return ToolCallReviewConstraints(
+            available_verdicts=_review_verdict_space(floor),
+            fallback_verdict=fallback,
+        )
+
+    def _reviewer_revision(self) -> str:
+        """Identify the reviewer that produced a verdict, for a later filterable review.
+
+        A recorded ``judge_allowed`` stands until the content changes, so
+        recalibrating the reviewer -- a new model, or new guidance -- must be
+        visible when an operator comes to review the judge-cured estate. Model
+        and guidance are what change the verdict, so both feed the identifier.
+        """
+        config = self._review_config
+        model = f"{config.provider or 'default'}/{config.model}" if config else "none"
+        guidance = "\n".join((
+            config.guidance if config is not None else "",
+            self._deployment_review_guidance,
+            self._profile_review_guidance,
+        ))
+        digest = hashlib.sha256(guidance.encode("utf-8")).hexdigest()[:12]
+        return f"{model}@{digest}"
+
+    def _allow_is_enforce_equivalent(
+        self,
+        *,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+    ) -> bool:
+        """Whether ``enforce`` would have offered ``allow`` at this cell.
+
+        A merged review under ``observe`` deliberately omits the taint cell's
+        constraints, so a floored cell whose space is ``{confirm, deny}`` gets
+        ``allow`` back through the static layer's presence -- a verdict
+        ``enforce`` could never have issued, and therefore one that cannot cure.
+        Recomputing the constraints with those constraints applied is what tells
+        the two apart, and it is only ever consulted for curing: the verdict the
+        call actually ran under is unchanged.
+        """
+        enforce_equivalent = self._review_constraints(
+            taint_evaluation=taint_evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=True,
+        )
+        return ToolCallReviewVerdict.ALLOW in enforce_equivalent.available_verdicts
+
+    def _judge_gate_outcome(
+        self,
+        *,
+        review_result: ToolCallReviewResult,
+        taint_review: bool,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+    ) -> DefinitionGateOutcome:
+        """Record how a reviewer verdict left the gate, for any definition the call writes."""
+        disposition = {
+            ToolCallReviewVerdict.ALLOW: CreationDisposition.JUDGE_ALLOWED,
+            ToolCallReviewVerdict.CONFIRM: CreationDisposition.JUDGE_CONFIRM_REQUIRED,
+            ToolCallReviewVerdict.DENY: CreationDisposition.JUDGE_DENIED,
+        }[review_result.verdict]
+        return DefinitionGateOutcome(
+            disposition=disposition,
+            gate=self._gate_provenance(
+                layer=GateLayer.TAINT_CELL if taint_review else GateLayer.STATIC_RULE,
+                taint_evaluation=taint_evaluation,
+                verdict_id=review_result.audit_event_id,
+            ),
+            cure_permitted=self._allow_is_enforce_equivalent(
+                taint_evaluation=taint_evaluation,
+                static_evaluation=static_evaluation,
+            ),
+        )
+
+    def _gate_provenance(
+        self,
+        *,
+        layer: GateLayer,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        verdict_id: str | None = None,
+    ) -> GateProvenance:
+        return GateProvenance(
+            layer=layer,
+            mode=(
+                taint_evaluation.mode.value
+                if taint_evaluation is not None
+                else _NO_TAINT_GATE_MODE
+            ),
+            reviewer_revision=self._reviewer_revision(),
+            verdict_id=verdict_id,
+        )
+
+    async def _review_tool_call(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+        include_observe_taint_constraints: bool,
+        count_reserved: bool = False,
+        update_denial_counters: bool = True,
+    ) -> ToolCallReviewResult:
+        constraints = self._review_constraints(
+            taint_evaluation=taint_evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=include_observe_taint_constraints,
+        )
+        config = self._review_config
+        budget_exhausted = (
+            config is not None
+            and context.tool_call_review_state.review_count
+            >= config.max_reviews_per_turn
+            and not count_reserved
+        )
+        if not budget_exhausted and not count_reserved:
+            context.tool_call_review_state.review_count += 1
+        messages = context.tool_call_review_messages
+        if messages is None:
+            messages = (
+                await context.db_context.message_history.get_by_turn_id(context.turn_id)
+                if context.turn_id is not None
+                else []
+            )
+        destination_echo = compute_trusted_destination_echo(
+            _destination_argument(descriptor, arguments),
+            messages,
+            trigger=context.tool_call_review_trigger,
+        )
+        policy_contexts = self._review_policy_contexts(
+            state=state,
+            taint_evaluation=taint_evaluation,
+            static_evaluation=static_evaluation,
+        )
+        review_input = ToolCallReviewInput(
+            messages=messages,
+            descriptor=descriptor,
+            arguments=arguments,
+            sink_class=sink_class,
+            taint_state=state,
+            policy_contexts=policy_contexts,
+            deployment_guidance=self._deployment_review_guidance,
+            profile_guidance=self._profile_review_guidance,
+            trigger=context.tool_call_review_trigger,
+            destination_echo=destination_echo,
+            script=context.prepared_script.review
+            if context.prepared_script is not None
+            else None,
+            enclosing_scripts=context.script_execution.review_contexts()
+            if context.script_execution is not None
+            else (),
+        )
+        if self._tool_call_reviewer is None:
+            delegating_reason = " ".join(
+                item.description for item in policy_contexts if item.description
+            )
+            result = ToolCallReviewResult(
+                verdict=constraints.fallback_verdict,
+                reason=(
+                    f"{delegating_reason} Tool-call reviewer is not configured. "
+                    "Using caller "
+                    f"fallback '{constraints.fallback_verdict.value}'."
+                ).strip(),
+                status=ToolCallReviewStatus.DISABLED_FALLBACK,
+                latency_ms=0,
+                used_fallback=True,
+            )
+        else:
+            result = await self._tool_call_reviewer.review_tool_call(
+                review_input,
+                constraints,
+                budget_exhausted=budget_exhausted,
+            )
+        audit_event_id = await self._record_tool_call_review_audit(
+            descriptor=descriptor,
+            arguments=arguments,
+            context=context,
+            call_id=call_id,
+            state=state,
+            sink_class=sink_class,
+            policy_contexts=policy_contexts,
+            constraints=constraints,
+            destination_echo=(
+                destination_echo.matched if destination_echo is not None else None
+            ),
+            result=result,
+            mode=taint_evaluation.mode if taint_evaluation is not None else None,
+        )
+        result = result.model_copy(update={"audit_event_id": audit_event_id})
+        if update_denial_counters:
+            if _is_escalatable_review_denial(result, constraints):
+                context.tool_call_review_state.consecutive_denials += 1
+                context.tool_call_review_state.total_denials += 1
+            elif result.verdict is not ToolCallReviewVerdict.DENY:
+                # A non-escalatable deny (for example a timeout fallback or a
+                # deny-only policy floor) is not evidence of another model
+                # denial, but neither is it evidence that the denial streak
+                # ended. Only an allow/confirm verdict resets that streak.
+                context.tool_call_review_state.consecutive_denials = 0
+        return result
+
+    def _start_shadow_review(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        taint_evaluation: TaintPolicyEvaluation,
+        static_evaluation: PolicyEvaluation | None,
+        pending: PendingDefinitionReview | None = None,
+    ) -> None:
+        config = self._review_config
+        budget_exhausted = (
+            config is not None
+            and context.tool_call_review_state.review_count
+            >= config.max_reviews_per_turn
+        )
+        if not budget_exhausted:
+            context.tool_call_review_state.review_count += 1
+        review = self._review_tool_call(
+            descriptor=descriptor,
+            arguments=dict(arguments),
+            context=context,
+            call_id=call_id,
+            state=state,
+            sink_class=sink_class,
+            taint_evaluation=taint_evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=True,
+            count_reserved=not budget_exhausted,
+            update_denial_counters=False,
+        )
+        task = spawn_detached(
+            review
+            if pending is None
+            else self._attach_shadow_verdict(
+                review,
+                context=context,
+                pending=pending,
+                taint_evaluation=taint_evaluation,
+            ),
+            name=f"shadow-tool-call-review:{descriptor.name}",
+        )
+        self._review_tasks.add(task)
+        task.add_done_callback(self._finish_shadow_review)
+
+    async def _attach_shadow_verdict(
+        self,
+        review: Awaitable[ToolCallReviewResult],
+        *,
+        context: ToolExecutionContext,
+        pending: PendingDefinitionReview,
+        taint_evaluation: TaintPolicyEvaluation,
+    ) -> ToolCallReviewResult:
+        """Carry an off-critical-path verdict back to the definitions it judged.
+
+        The shadow review runs under the enforce-equivalent verdict space
+        already, so an ``allow`` here is one ``enforce`` would have issued. It
+        attaches once the gated call has settled, because only then is every
+        write it made registered; each store then checks the write id itself, so
+        a mutation racing the review keeps its own pending record.
+        """
+        result = await review
+        await pending.settled.wait()
+        if not pending.writes:
+            return result
+        await attach_pending_verdict(
+            context.db_context,
+            pending,
+            disposition={
+                ToolCallReviewVerdict.ALLOW: CreationDisposition.JUDGE_ALLOWED,
+                ToolCallReviewVerdict.CONFIRM: (
+                    CreationDisposition.JUDGE_CONFIRM_REQUIRED
+                ),
+                ToolCallReviewVerdict.DENY: CreationDisposition.JUDGE_DENIED,
+            }[result.verdict],
+            gate=self._gate_provenance(
+                layer=GateLayer.TAINT_CELL,
+                taint_evaluation=taint_evaluation,
+                verdict_id=result.audit_event_id,
+            ),
+        )
+        return result
+
+    def _finish_shadow_review(self, task: asyncio.Task[object]) -> None:
+        self._review_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logger.exception("Detached tool-call shadow review failed")
+
+    async def _record_script_inheritance(
+        self,
+        context: ToolExecutionContext,
+        name: str,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+    ) -> None:
+        await self._record_taint_audit_event(
+            context=context,
+            event_type="script_inherited_authorization",
+            tool_name=name,
+            tool_call_id=call_id,
+            sink_class=sink_class.value,
+            state=state,
+            requested_outcome="adjudicate",
+            effective_outcome="allow",
+            mode=self._taint_evaluator.mode.value,
+            reason="Covered deterministic operation inherits the enclosing program's approval; runtime controls remain enforced.",
+            arguments_summary=None,
+            review_status="inherited_script_approval",
+            review_context={"script_authorization": "inherited"},
+        )
+
+    async def _record_taint_audit_event(
+        self,
+        *,
+        context: ToolExecutionContext,
+        event_type: str,
+        tool_name: str,
+        tool_call_id: str | None,
+        sink_class: str | None,
+        state: TurnTaintState,
+        requested_outcome: str | None,
+        effective_outcome: str | None,
+        mode: str | None,
+        reason: str,
+        arguments_summary: TaintAuditArgumentsSummary | None,
+        artifact_id: str | None = None,
+        review_verdict: str | None = None,
+        review_status: str | None = None,
+        review_latency_ms: float | None = None,
+        review_context: TaintAuditReviewContext | None = None,
+    ) -> str:
+        """Persist a taint audit event with bounded sources and provenance counts."""
+        event_id = str(uuid.uuid4())
+        payload_context: TaintAuditReviewContext = (
+            dict(review_context) if review_context is not None else {}  # type: ignore[assignment]
+        )
+        if context.script_execution is not None:
+            payload_context["parent_script_review_id"] = (
+                context.script_execution.invocation.review.review_id
+            )
+        payload_context["total_source_count"] = state.total_source_count
+        payload_context["distinct_source_count"] = state.distinct_source_count
+        payload_context["omitted_source_count"] = state.omitted_source_count
+
+        await context.db_context.taint_audit_events.add(
+            event_id=event_id,
+            event_type=event_type,
+            conversation_id=context.conversation_id,
+            turn_id=context.turn_id,
+            processing_profile_id=context.processing_profile_id,
+            subconversation_id=context.subconversation_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            sink_class=sink_class,
+            max_tier=state.max_tier.config_value,
+            sources=taint_audit_sources(state),
+            requested_outcome=requested_outcome,
+            effective_outcome=effective_outcome,
+            mode=mode,
+            reason=reason,
+            arguments_summary=arguments_summary,
+            artifact_id=artifact_id,
+            review_verdict=review_verdict,
+            review_status=review_status,
+            review_latency_ms=review_latency_ms,
+            review_context=payload_context,
+        )
+        return event_id
+
+    async def _record_tool_call_review_audit(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        policy_contexts: list[DelegatingPolicyContext],
+        constraints: ToolCallReviewConstraints,
+        destination_echo: bool | None,
+        result: ToolCallReviewResult,
+        mode: TaintPolicyMode | None,
+    ) -> str:
+        review_context: TaintAuditReviewContext = {
+            "delegating_contexts": [
+                f"{item.kind}:{item.identifier}" for item in policy_contexts
+            ],
+            "allowed_verdicts": sorted(
+                verdict.value for verdict in constraints.available_verdicts
+            ),
+            "fallback_verdict": constraints.fallback_verdict.value,
+            "used_fallback": result.used_fallback,
+            "destination_echo": destination_echo,
+        }
+        return await self._record_taint_audit_event(
+            context=context,
+            event_type="tool_call_review",
+            tool_name=descriptor.name,
+            tool_call_id=call_id,
+            sink_class=sink_class.value,
+            state=state,
+            requested_outcome="review",
+            effective_outcome=result.verdict.value,
+            mode=mode.value if mode is not None else None,
+            reason=result.reason,
+            arguments_summary=_summarize_tool_arguments(
+                arguments,
+                safe_keys=_descriptor_argument_keys(descriptor),
+            ),
+            review_verdict=result.verdict.value,
+            review_status=result.status.value,
+            review_latency_ms=result.latency_ms,
+            review_context=review_context,
+        )
+
+    async def _record_confined_exemption_audit(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+        evaluation: TaintPolicyEvaluation,
+    ) -> None:
+        review_context: TaintAuditReviewContext = {
+            "delegating_contexts": [
+                f"taint_cell:{state.max_tier.config_value}."
+                f"{evaluation.sink_class.value}"
+            ],
+            "allowed_verdicts": [],
+            "fallback_verdict": (
+                evaluation.fallback_outcome.value
+                if evaluation.fallback_outcome is not None
+                else ToolCallReviewVerdict.CONFIRM.value
+            ),
+            "used_fallback": False,
+            "destination_echo": None,
+        }
+        await self._record_taint_audit_event(
+            context=context,
+            event_type="tool_call_review",
+            tool_name=descriptor.name,
+            tool_call_id=call_id,
+            sink_class=evaluation.sink_class.value,
+            state=state,
+            requested_outcome=TaintPolicyOutcome.ADJUDICATE.value,
+            effective_outcome=TaintPolicyOutcome.AUDIT.value,
+            mode=evaluation.mode.value,
+            reason=(
+                "Confined-profile disclosure exemption: aggregated context is "
+                "excluded, the reviewer window is current-turn-only, and the turn "
+                "has no sensitive reads or high-taint history."
+            ),
+            arguments_summary=_summarize_tool_arguments(
+                arguments,
+                safe_keys=_descriptor_argument_keys(descriptor),
+            ),
+            review_status=ToolCallReviewStatus.CONFINED_EXEMPTION.value,
+            review_context=review_context,
+        )
+
+    def _review_denial_result(
+        self,
+        name: str,
+        result: ToolCallReviewResult,
+    ) -> ToolResult:
+        text = f"Action blocked by automatic review for tool '{name}': {result.reason}"
+        if result.safer_alternative:
+            text += f" Safer alternative: {result.safer_alternative}"
+        return ToolResult(text=text, attachments=None)
+
+    async def _request_review_confirmation(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        reason: str,
+        authorization: ToolCallReviewAuthorization,
+    ) -> _ConfirmationGateResult | None:
+        name = descriptor.name
+        if context.request_confirmation_callback is None:
+            return _ConfirmationGateResult(
+                result=ToolResult(
+                    text=(
+                        f"Action blocked by automatic review for tool '{name}': "
+                        f"human confirmation is required but unavailable. {reason}"
+                    ),
+                    attachments=None,
+                ),
+                action_attempted=False,
+            )
+        if (
+            isinstance(
+                context.request_confirmation_callback,
+                DeferredConfirmationCallback,
+            )
+            and context.request_confirmation_callback.is_deferred_confirmation()
+            and not descriptor.deferred_confirmation_eligible
+        ):
+            return _ConfirmationGateResult(
+                result=ToolResult(
+                    text=(
+                        f"Action blocked by automatic review for tool '{name}': "
+                        "human confirmation is required, but deferred execution is "
+                        "unsafe because this call's result is not independent and "
+                        f"terminal. {reason}"
+                    ),
+                    attachments=None,
+                ),
+                action_attempted=False,
+            )
+        previous_reason = context.tool_call_review_confirmation_reason
+        previous_authorization = context.tool_call_review_authorization
+        context.tool_call_review_confirmation_reason = reason
+        context.tool_call_review_authorization = authorization
+        try:
+            return await self._request_taint_confirmation(
+                name=name,
+                arguments=dict(arguments),
+                context=context,
+                call_id=call_id,
+                reason=reason,
+            )
+        finally:
+            context.tool_call_review_confirmation_reason = previous_reason
+            context.tool_call_review_authorization = previous_authorization
+
+    async def _maybe_escalate_review_denial(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        mode: TaintPolicyMode | None,
+        review_result: ToolCallReviewResult,
+        constraints: ToolCallReviewConstraints,
+        authorization: ToolCallReviewAuthorization,
+    ) -> _ConfirmationGateResult | ToolResult | None:
+        if not _is_escalatable_review_denial(review_result, constraints):
+            return self._review_denial_result(descriptor.name, review_result)
+        config = self._review_config
+        threshold_reached = config is not None and (
+            context.tool_call_review_state.consecutive_denials
+            >= config.escalation.consecutive_denials
+            or context.tool_call_review_state.total_denials
+            >= config.escalation.total_denials_per_turn
+        )
+        if not threshold_reached or context.tool_call_review_state.escalation_handled:
+            return self._review_denial_result(descriptor.name, review_result)
+        # Reserve the single turn-level escalation before yielding to the
+        # audit store or confirmation channel. Concurrent denied calls sharing
+        # this turn state must observe the reservation and cannot open a second
+        # prompt or request another deterministic termination.
+        context.tool_call_review_state.escalation_handled = True
+        confirmation_unavailable = self._review_confirmation_unavailable(
+            descriptor, context
+        )
+        escalation_status = (
+            "escalation_turn_terminated"
+            if confirmation_unavailable
+            else "escalation_confirmation_requested"
+        )
+        await self._record_review_escalation_audit(
+            descriptor=descriptor,
+            arguments=arguments,
+            context=context,
+            call_id=call_id,
+            state=state,
+            sink_class=sink_class,
+            mode=mode,
+            constraints=constraints,
+            status=escalation_status,
+        )
+        if confirmation_unavailable:
+            context.tool_call_review_state.terminal_denial_escalation_message = (
+                "I stopped this turn after automatic review repeatedly denied "
+                "proposed actions. The blocked actions were not run, and no live "
+                "or safely deferrable human confirmation was available. Retry from "
+                "an interactive channel or narrow the request before continuing."
+            )
+            return self._review_denial_result(descriptor.name, review_result)
+        confirmation_result = await self._request_review_confirmation(
+            descriptor=descriptor,
+            arguments=arguments,
+            context=context,
+            call_id=call_id,
+            reason=(
+                "Automatic review has repeatedly denied proposed actions this turn. "
+                f"Current denial: {review_result.reason}"
+            ),
+            authorization=authorization,
+        )
+        context.tool_call_review_state.consecutive_denials = 0
+        context.tool_call_review_state.total_denials = 0
+        return confirmation_result
+
+    @staticmethod
+    def _review_confirmation_unavailable(
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+    ) -> bool:
+        callback = context.request_confirmation_callback
+        return callback is None or (
+            isinstance(callback, DeferredConfirmationCallback)
+            and callback.is_deferred_confirmation()
+            and not descriptor.deferred_confirmation_eligible
+        )
+
+    async def _record_review_escalation_audit(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        arguments: Mapping[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+        mode: TaintPolicyMode | None,
+        constraints: ToolCallReviewConstraints,
+        status: str,
+    ) -> None:
+        """Persist one stable, countable event when a denial threshold trips."""
+        review_context: TaintAuditReviewContext = {
+            "delegating_contexts": ["denial_threshold"],
+            "allowed_verdicts": sorted(
+                verdict.value for verdict in constraints.available_verdicts
+            ),
+            "fallback_verdict": constraints.fallback_verdict.value,
+            "used_fallback": False,
+            "destination_echo": None,
+        }
+        await self._record_taint_audit_event(
+            context=context,
+            event_type="tool_call_review_escalation",
+            tool_name=descriptor.name,
+            tool_call_id=call_id,
+            sink_class=sink_class.value,
+            state=state,
+            requested_outcome="review_escalation",
+            effective_outcome=(
+                ToolCallReviewVerdict.DENY.value
+                if status == "escalation_turn_terminated"
+                else ToolCallReviewVerdict.CONFIRM.value
+            ),
+            mode=mode.value if mode is not None else None,
+            reason=(
+                "Automatic-review model-denial threshold reserved exactly once; "
+                + (
+                    "the turn will terminate because confirmation is unavailable."
+                    if status == "escalation_turn_terminated"
+                    else "a human confirmation was requested."
+                )
+            ),
+            arguments_summary=_summarize_tool_arguments(
+                arguments,
+                safe_keys=_descriptor_argument_keys(descriptor),
+            ),
+            review_verdict=ToolCallReviewVerdict.DENY.value,
+            review_status=status,
+            review_latency_ms=None,
+            review_context=review_context,
+        )
 
     async def _merge_argument_taint_into_context(
         self,
@@ -1301,33 +3524,45 @@ class TaintTrackingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         call_id: str | None,
         reason: str,
-    ) -> str | ToolResult | None:
+    ) -> _ConfirmationGateResult | None:
         if context.request_confirmation_callback is None:
             raise ToolPolicyDeniedError(
                 name,
                 f"{reason}; confirmation required but unavailable",
             )
 
-        block_reason = confirmation_payload_block_reason(name, arguments)
+        block_reason = confirmation_arguments_block_reason(name, arguments)
         if block_reason is not None:
             logger.info(
                 "Refusing taint confirm-gated tool '%s': %s", name, block_reason
             )
-            return ToolResult(text=block_reason, attachments=None)
+            return _ConfirmationGateResult(
+                result=ToolResult(text=block_reason, attachments=None),
+                action_attempted=False,
+            )
 
         resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
         if context.tools_provider is None:
             context.tools_provider = self
-        outcome = await context.request_confirmation_callback(
-            interface_type=context.interface_type,
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            tool_name=name,
-            call_id=resolved_call_id,
-            tool_args=cast("ToolArguments", arguments),
-            timeout_seconds=self.confirmation_timeout,
-            context=context,
-        )
+        try:
+            outcome = await context.request_confirmation_callback(
+                interface_type=context.interface_type,
+                conversation_id=context.conversation_id,
+                turn_id=context.turn_id,
+                tool_name=name,
+                call_id=resolved_call_id,
+                tool_args=cast("ToolArguments", arguments),
+                timeout_seconds=self.confirmation_timeout,
+                context=context,
+            )
+        except TimeoutError:
+            # Confirmation adapters normally return a typed ``timed_out`` outcome,
+            # but callback implementations have historically also been allowed to
+            # signal the same terminal state by raising TimeoutError.  The central
+            # authorization path must preserve that contract now that it bypasses
+            # PolicyEnforcingToolsProvider.execute_tool().
+            logger.warning("Confirmation request for tool '%s' timed out.", name)
+            outcome = ConfirmationOutcome(kind="timed_out")
         if outcome.taint_metadata is not None:
             context.tool_result_taint_metadata[resolved_call_id] = (
                 outcome.taint_metadata
@@ -1340,8 +3575,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
         if outcome.kind == "approved":
             return None
         if outcome.kind == "completed":
-            return outcome.result or ToolResult(text="", attachments=None)
-        return confirmation_outcome_to_tool_result(name=name, outcome=outcome)
+            return _ConfirmationGateResult(
+                result=outcome.result or ToolResult(text="", attachments=None),
+                action_attempted=outcome.action_attempted,
+            )
+        return _ConfirmationGateResult(
+            result=confirmation_outcome_to_tool_result(name=name, outcome=outcome),
+            action_attempted=False,
+        )
 
     async def _record_policy_evaluation_audit(
         self,
@@ -1354,23 +3595,71 @@ class TaintTrackingToolsProvider(ToolsProvider):
         state: TurnTaintState,
         evaluation: TaintPolicyEvaluation,
     ) -> None:
-        await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
-            event_type="policy_evaluation",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
+        await self._record_named_policy_evaluation_audit(
             tool_name=descriptor.name,
+            context=context,
+            call_id=call_id,
+            arguments=arguments,
+            state=state,
+            evaluation=evaluation,
+            safe_argument_keys=_descriptor_argument_keys(descriptor),
+        )
+
+    async def _record_named_policy_evaluation_audit(
+        self,
+        *,
+        tool_name: str,
+        context: ToolExecutionContext,
+        call_id: str | None,
+        # ast-grep-ignore: no-dict-any - sink arguments are dynamic audit context
+        arguments: dict[str, Any],
+        state: TurnTaintState,
+        evaluation: TaintPolicyEvaluation,
+        safe_argument_keys: Collection[str] = (),
+    ) -> None:
+        await self._record_taint_audit_event(
+            context=context,
+            event_type="policy_evaluation",
+            tool_name=tool_name,
             tool_call_id=call_id,
             sink_class=evaluation.sink_class.value,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome=evaluation.requested_outcome.value,
             effective_outcome=evaluation.effective_outcome.value,
             mode=evaluation.mode.value,
             reason=evaluation.reason,
-            arguments_summary=_summarize_tool_arguments(arguments),
+            arguments_summary=_summarize_tool_arguments(
+                arguments,
+                safe_keys=safe_argument_keys,
+            ),
+        )
+
+    @staticmethod
+    def _record_generic_sensitive_read(
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        state_before_execution: TurnTaintState | None,
+    ) -> None:
+        """Record the conservative fallback for an uninstrumented private read."""
+        tracker = context.taint_tracker
+        if tracker is None or not _is_sensitive_read_descriptor(descriptor):
+            return
+        live_state = tracker.snapshot()
+        if (
+            state_before_execution is not None
+            and live_state.sensitive_reads != state_before_execution.sensitive_reads
+        ):
+            return
+        tracker.replace(
+            live_state.add_sensitive_read(
+                SensitiveReadScope(
+                    kind="tool",
+                    qualifier=f"tool:{descriptor.name}",
+                    surfaced_ids=frozenset(),
+                ),
+                query_origin="model_generated",
+            )
         )
 
     def _record_result_taint(
@@ -1449,18 +3738,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None,
         state: TurnTaintState,
     ) -> None:
-        await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
+        await self._record_taint_audit_event(
+            context=context,
             event_type="result_taint",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
             tool_name=descriptor.name,
             tool_call_id=call_id,
             sink_class=None,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome=None,
             effective_outcome=None,
             mode=self._taint_evaluator.mode.value,
@@ -1469,7 +3753,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
 
     async def close(self) -> None:
-        """Close the wrapped provider."""
+        """Drain shadow reviews, then close the wrapped provider."""
+        if self._review_tasks:
+            await asyncio.gather(*tuple(self._review_tasks), return_exceptions=True)
+            self._review_tasks.clear()
         await self.wrapped_provider.close()
 
 

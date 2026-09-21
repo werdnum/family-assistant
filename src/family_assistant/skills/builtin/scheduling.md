@@ -74,3 +74,6 @@ Common patterns:
 - Use scripts for deterministic tasks, wake_llm for tasks requiring judgment
 - Manage one-time reminders/callbacks via `list_pending_callbacks`; manage recurring schedules via
   `list_automations` or the Automations page in the web UI
+- One-shot automations that can no longer fire — a listener waiting on a worker that has finished or
+  died, a schedule whose recurrence is exhausted — are deleted by a nightly cleanup, so a missing
+  one-shot automation is expected rather than a fault

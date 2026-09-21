@@ -2,7 +2,8 @@
 set -e
 
 # Container Smoke Test Script
-# Verifies that a Docker image starts completely and returns healthy.
+# Verifies that a Docker image starts completely, returns healthy, and that the MCP servers it
+# ships actually launch inside it.
 
 IMAGE_NAME=${1:-"family-assistant:smoke-test"}
 PORT=${2:-8000}
@@ -10,6 +11,11 @@ HEALTH_PATH=${3:-"/health"}
 CONTAINER_NAME="smoke-test-$(date +%s)"
 MAX_RETRIES=150
 SLEEP_INTERVAL=2
+
+# MCP servers whose entry points the image installs itself, so they must start without reaching the
+# network. Servers fetched at runtime (the Deno ones) are deliberately left out. A failed MCP server
+# does not make the app unhealthy — it just silently loses its tools — so this is checked directly.
+MCP_SERVERS=${MCP_SERVERS:-"time"}
 
 echo "Starting smoke test for image: $IMAGE_NAME"
 echo "Health check endpoint: http://localhost:$PORT$HEALTH_PATH"
@@ -48,6 +54,8 @@ docker run -d --name "$CONTAINER_NAME" -p "$PORT:$PORT" \
 
 # Wait for health check
 RETRY_COUNT=0
+HEALTH="never_checked"
+RESPONSE=""
 until [ $RETRY_COUNT -ge $MAX_RETRIES ]
 do
     # Check if container is still running
@@ -63,8 +71,8 @@ do
     HEALTH=$(echo "$RESPONSE" | jq -r .status 2>/dev/null || echo "unknown")
 
     if [ "$HEALTH" = "healthy" ] || [ "$HEALTH" = "ok" ]; then
-        echo "Container is $HEALTH! Smoke test PASSED."
-        exit 0
+        echo "Container is $HEALTH!"
+        break
     fi
 
     echo "Waiting for container to be healthy... ($RETRY_COUNT/$MAX_RETRIES) Status: $HEALTH"
@@ -72,6 +80,22 @@ do
     sleep "$SLEEP_INTERVAL"
 done
 
-echo "Container failed to become healthy within $MAX_RETRIES retries."
-echo "Final response: $RESPONSE"
-exit 1
+if [ "$HEALTH" != "healthy" ] && [ "$HEALTH" != "ok" ]; then
+    echo "Container failed to become healthy within $MAX_RETRIES retries."
+    echo "Final response: $RESPONSE"
+    exit 1
+fi
+
+# Verify the MCP servers the image installs actually start. This runs inside the container so it
+# exercises the entry points as installed there, and goes through the same MCPToolsProvider the
+# application uses -- including the MCP SDK's environment stripping, which is what stops a `uvx`
+# style command from finding the pre-installed tool environment.
+echo "--- Verifying MCP servers: $MCP_SERVERS ---"
+# shellcheck disable=SC2086 # MCP_SERVERS is a deliberately word-split list of server ids.
+if ! docker exec "$CONTAINER_NAME" python scripts/check_mcp_servers.py $MCP_SERVERS; then
+    echo "ERROR: MCP server verification failed. Smoke test FAILED."
+    exit 1
+fi
+
+echo "Smoke test PASSED."
+exit 0

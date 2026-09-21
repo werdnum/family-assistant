@@ -44,8 +44,9 @@ from family_assistant.services.confirmation_waiters import (
 )
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.telegram.protocols import ConfirmationUIManager
+from family_assistant.tools.confirmation import append_review_reason_to_confirmation
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolArguments,
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.processing import ProcessingService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -131,6 +133,7 @@ async def run_turn_producer(
     initial_history_taint_metadata: TaintMetadata,
     initial_context_taint_metadata: TaintMetadata,
     mid_turn_input_provider: "MidTurnInputProvider | None" = None,
+    model_selection: "ResolvedModelSelection | None" = None,
     ack_grace_seconds: float = DEFAULT_ACK_GRACE_SECONDS,
 ) -> None:
     """Run a single LLM turn end-to-end, publishing events to the hub.
@@ -176,6 +179,9 @@ async def run_turn_producer(
         confirmation_prompt = (
             f"Do you want to execute '{tool_name}' with these parameters?"
         )
+        confirmation_prompt = append_review_reason_to_confirmation(
+            confirmation_prompt, context
+        )
         source_message_internal_id: int | None = None
         if turn_id is not None:
             source_row = (
@@ -204,76 +210,80 @@ async def run_turn_producer(
             source_message_internal_id=source_message_internal_id,
             taint_state_json=taint_state_json,
             processing_profile_id=context.processing_profile_id,
+            tool_call_review_authorization=context.tool_call_review_authorization,
         )
 
-    try:
-        async with get_db_context(app_state.database_engine) as stream_db_context:
-            if trigger_attachments:
-                for attachment in trigger_attachments:
-                    await hub.publish(
-                        conversation_id,
-                        "attachment",
-                        turn_id=turn_id,
-                        payload={
-                            "type": "attachment",
-                            "source": "trigger",
-                            "attachment_id": attachment.get("attachment_id"),
-                            "content_url": attachment.get("content_url"),
-                            "mime_type": attachment.get("mime_type"),
-                            "description": attachment.get("description"),
-                            "size": attachment.get("size"),
-                        },
-                    )
-
-            # Track the most recent reasoning_info (token/model usage) emitted
-            # on a per-turn `done` event so it can be attached to turn_ended,
-            # matching what the old streaming endpoint put on its final event.
-            # ast-grep-ignore: no-dict-any - holds the provider's reasoning_info blob (token counts, model id, optional vendor fields) passed through verbatim to turn_ended
-            last_reasoning_info: dict[str, Any] | None = None
-
-            async for event in processing_service.handle_chat_interaction_stream(
-                db_context=stream_db_context,
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                trigger_content_parts=trigger_content_parts,
-                trigger_interface_message_id=None,
-                user_name=user_name,
-                user_id=user_id,
-                replied_to_interface_id=None,
-                chat_interface=web_chat_interface,
-                chat_interfaces=chat_interfaces,
-                confirmation_ui_managers=confirmation_ui_managers,
-                request_confirmation_callback=web_confirmation_callback,
-                trigger_attachments=trigger_attachments,
-                mid_turn_input_provider=mid_turn_input_provider,
-                turn_id=turn_id,
-                # The chat endpoint persisted the user message before launching
-                # this producer, so reuse that row instead of inserting again.
-                reuse_existing_user_row=True,
-                taint_tracker=live_taint_tracker,
-            ):
-                reasoning_info = await _publish_llm_event(
-                    hub=hub,
-                    conversation_id=conversation_id,
-                    turn_id=turn_id,
-                    event=event,
-                    latex_normalizer=latex_normalizer,
-                    final_reply_parts=final_reply_parts,
-                    db_context=stream_db_context,
-                    attachment_registry=attachment_registry,
-                    acting_user_id=user_id,
-                )
-                if reasoning_info is not None:
-                    last_reasoning_info = reasoning_info
-
-            trailing = latex_normalizer.flush()
-            if trailing:
+    async def produce_turn() -> None:
+        stream_db_context = Database(app_state.database_engine)
+        if trigger_attachments:
+            for attachment in trigger_attachments:
                 await hub.publish(
                     conversation_id,
-                    "text",
+                    "attachment",
                     turn_id=turn_id,
-                    payload={"content": trailing},
+                    payload={
+                        "type": "attachment",
+                        "source": "trigger",
+                        "attachment_id": attachment.get("attachment_id"),
+                        "content_url": attachment.get("content_url"),
+                        "mime_type": attachment.get("mime_type"),
+                        "description": attachment.get("description"),
+                        "size": attachment.get("size"),
+                    },
                 )
+
+        # Track the most recent reasoning_info (token/model usage) emitted
+        # on a per-turn `done` event so it can be attached to turn_ended,
+        # matching what the old streaming endpoint put on its final event.
+        # ast-grep-ignore: no-dict-any - holds the provider's reasoning_info blob (token counts, model id, optional vendor fields) passed through verbatim to turn_ended
+        last_reasoning_info: dict[str, Any] | None = None
+
+        async for event in processing_service.handle_chat_interaction_stream(
+            db_context=stream_db_context,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_interface_message_id=None,
+            user_name=user_name,
+            user_id=user_id,
+            replied_to_interface_id=None,
+            chat_interface=web_chat_interface,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            request_confirmation_callback=web_confirmation_callback,
+            trigger_attachments=trigger_attachments,
+            mid_turn_input_provider=mid_turn_input_provider,
+            turn_id=turn_id,
+            # The chat endpoint persisted the user message before launching
+            # this producer, so reuse that row instead of inserting again.
+            reuse_existing_user_row=True,
+            taint_tracker=live_taint_tracker,
+            # Already admitted by the endpoint, so a refusal reached the client
+            # as a 400 rather than as an error partway through a stream.
+            model_selection=model_selection,
+        ):
+            reasoning_info = await _publish_llm_event(
+                hub=hub,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                event=event,
+                latex_normalizer=latex_normalizer,
+                final_reply_parts=final_reply_parts,
+                db_context=stream_db_context,
+                attachment_registry=attachment_registry,
+                acting_user_id=user_id,
+            )
+            if reasoning_info is not None:
+                last_reasoning_info = reasoning_info
+
+        trailing = latex_normalizer.flush()
+        if trailing:
+            await hub.publish(
+                conversation_id,
+                "text",
+                turn_id=turn_id,
+                payload={"content": trailing},
+            )
 
         # The streaming transaction has committed here (the `async with` block
         # exited): every message handle_chat_interaction_stream persisted is now
@@ -298,14 +308,17 @@ async def run_turn_producer(
             # notification is independent follow-up work, so give it its own
             # short-lived context rather than holding the turn's transaction
             # open across the ack grace window.
-            async with get_db_context(app_state.database_engine) as notify_db_context:
-                await _notify_disconnected_reply(
-                    notify_db_context,
-                    web_chat_interface,
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    reply_text="".join(final_reply_parts).strip(),
-                )
+            notify_db_context = Database(app_state.database_engine)
+            await _notify_disconnected_reply(
+                notify_db_context,
+                web_chat_interface,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                reply_text="".join(final_reply_parts).strip(),
+            )
+
+    try:
+        await produce_turn()
     except asyncio.CancelledError:
         # The producer task was cancelled. This is the stop-generation path: the
         # cancel endpoint calls request_interrupt() (so should_interrupt() is
@@ -435,42 +448,52 @@ async def persist_stopped_reply(
     prompt looking unanswered. Uses its own short DB context because the
     streaming transaction is being torn down by the cancellation. Best-effort —
     failing to persist must not mask the stop.
+
+    Deliberately carries no model-tier record. The envelope the endpoint
+    admitted is not the one the turn ran on -- Auto settles that inside
+    ``handle_chat_interaction_stream``, which a cancelled turn never returns
+    from -- so stamping what is reachable here would record a tier the run may
+    not have used. Absent is readable; wrong is not.
     """
     content = reply_text.strip() or "_Stopped._"
+
+    async def persist_reply() -> None:
+        db_context = Database(database_engine)
+        # The partial reply was generated by this turn, so its taint state
+        # is the merge of the turn's already-persisted rows (user prompt
+        # plus any tool results committed before the stop).
+        turn_messages = await db_context.message_history.get_by_turn_id(turn_id)
+        stopped_taint_tracker = InMemoryTurnTaintTracker(
+            TurnTaintState.from_metadata(initial_history_taint_metadata)
+        )
+        merge_taint_state_into_tracker(
+            stopped_taint_tracker,
+            TurnTaintState.from_metadata(initial_context_taint_metadata),
+        )
+        merge_taint_state_into_tracker(
+            stopped_taint_tracker,
+            TurnTaintState.from_metadata(live_taint_metadata),
+        )
+        merge_taint_state_into_tracker(
+            stopped_taint_tracker,
+            merge_history_taint(turn_messages),
+        )
+        stopped_taint_metadata = stopped_taint_tracker.snapshot().to_metadata()
+        await db_context.message_history.add_message(
+            AssistantMessage(
+                content=content,
+                taint_metadata=stopped_taint_metadata,
+            ),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            turn_id=turn_id,
+            user_id=user_id,
+            processing_profile_id=processing_profile_id,
+        )
+
     try:
-        async with get_db_context(database_engine) as db_context:
-            # The partial reply was generated by this turn, so its taint state
-            # is the merge of the turn's already-persisted rows (user prompt
-            # plus any tool results committed before the stop).
-            turn_messages = await db_context.message_history.get_by_turn_id(turn_id)
-            stopped_taint_tracker = InMemoryTurnTaintTracker(
-                TurnTaintState.from_metadata(initial_history_taint_metadata)
-            )
-            merge_taint_state_into_tracker(
-                stopped_taint_tracker,
-                TurnTaintState.from_metadata(initial_context_taint_metadata),
-            )
-            merge_taint_state_into_tracker(
-                stopped_taint_tracker,
-                TurnTaintState.from_metadata(live_taint_metadata),
-            )
-            merge_taint_state_into_tracker(
-                stopped_taint_tracker,
-                merge_history_taint(turn_messages),
-            )
-            stopped_taint_metadata = stopped_taint_tracker.snapshot().to_metadata()
-            await db_context.message_history.add_message(
-                AssistantMessage(
-                    content=content,
-                    taint_metadata=stopped_taint_metadata,
-                ),
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                timestamp=datetime.now(UTC),
-                turn_id=turn_id,
-                user_id=user_id,
-                processing_profile_id=processing_profile_id,
-            )
+        await persist_reply()
     except Exception:
         logger.warning(
             "Failed to persist stopped reply for conv=%s turn=%s",
@@ -488,7 +511,7 @@ async def _publish_llm_event(
     event: LLMStreamEvent,
     latex_normalizer: StreamingLatexNormalizer,
     final_reply_parts: list[str],
-    db_context: DatabaseContext,
+    db_context: Database,
     attachment_registry: "AttachmentRegistry | None",
     acting_user_id: str | None,
     # ast-grep-ignore: no-dict-any - returns the provider's reasoning_info blob (token counts, model id, optional vendor fields) verbatim for the turn_ended payload
@@ -603,11 +626,20 @@ async def _publish_llm_event(
         # the steering message as a user bubble. Persistence is handled by the
         # service save path, so this branch is display-only.
         if event.content:
+            user_input_payload: dict[str, str] = {
+                "type": "user_input",
+                "content": event.content,
+            }
+            # Present only for a client that supplied one when it steered. It
+            # identifies the submission, so the sender can recognise its own
+            # message rather than guessing from identical text.
+            if event.input_id:
+                user_input_payload["input_id"] = event.input_id
             await hub.publish(
                 conversation_id,
                 "user_input",
                 turn_id=turn_id,
-                payload={"type": "user_input", "content": event.content},
+                payload=user_input_payload,
             )
     elif event.type == "error":
         # ast-grep-ignore: no-dict-any - error event payload carries free-form error string plus optional error_id from provider; structured typing belongs to a future error-codes design, not the hub
@@ -622,7 +654,7 @@ async def _publish_llm_event(
 
 
 async def _notify_disconnected_reply(
-    db_context: DatabaseContext,
+    db_context: Database,
     web_chat_interface: "WebChatInterface",
     *,
     interface_type: str,

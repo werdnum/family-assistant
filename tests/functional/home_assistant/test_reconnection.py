@@ -5,13 +5,28 @@ Test Home Assistant event source reconnection and health checking.
 import asyncio
 import contextlib
 import time
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
+
+
+async def _run_health_check_iteration(source: HomeAssistantSource) -> None:
+    if source._connection_healthy:
+        time_since_last_event = time.time() - source._last_event_time
+        if time_since_last_event > 300:
+            connection_ok = await source._test_connection()
+            if not connection_ok:
+                source._connection_healthy = False
+                if source._websocket_task and not source._websocket_task.done():
+                    source._websocket_task.cancel()
+
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating health check interval timing
+    await asyncio.sleep(source._health_check_interval)
 
 
 @pytest.mark.asyncio
@@ -29,43 +44,32 @@ async def test_exponential_backoff_reconnection() -> None:
     assert source._reconnect_delay == source._base_reconnect_delay
     assert source._reconnect_attempts == 0
 
-    # Track sleep calls
-    sleep_calls = []
-    original_sleep = asyncio.sleep
+    sleep_calls: list[float] = []
+    observed_retries = asyncio.Event()
 
     async def mock_sleep(delay: float) -> None:
         sleep_calls.append(delay)
-        # Only intercept the reconnect delays, not the short test sleeps
-        if delay >= source._base_reconnect_delay:
-            # Don't actually sleep the full delay, just a short time
-            await original_sleep(0.01)
-        else:
-            await original_sleep(delay)
+        if len(sleep_calls) >= 2:
+            observed_retries.set()
+        # Yield to the observer without waiting through the production backoff.
+        await original_sleep(0)
 
-    # Simulate multiple failed connection attempts
-    with (
-        patch(
-            "family_assistant.events.home_assistant_source.asyncio.to_thread",
-            side_effect=Exception("Connection failed"),
-        ),
-        patch("asyncio.sleep", mock_sleep),
-    ):
-        # Run the loop for a bit
+    original_sleep = asyncio.sleep
+    source_asyncio = SimpleNamespace(
+        sleep=mock_sleep,
+        to_thread=AsyncMock(side_effect=RuntimeError("Connection failed")),
+    )
+    # Patch only the source's module reference, leaving other session tasks alone.
+    with patch("family_assistant.events.home_assistant_source.asyncio", source_asyncio):
         source._running = True
         task = asyncio.create_task(source._websocket_loop())
-
-        # Give time for at least 2 reconnection attempts
-        for _ in range(20):
-            await original_sleep(0.01)
-            if source._reconnect_attempts >= 2:
-                break
-
-        # Stop the loop
-        source._running = False
-        task.cancel()
-
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(observed_retries.wait(), timeout=5)
+        finally:
+            source._running = False
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
         # Verify exponential backoff was applied
         # At least one reconnection attempt should have been made
@@ -116,30 +120,7 @@ async def test_health_check_triggers_reconnection() -> None:
             # Skip initial delay
             while source._running:
                 try:
-                    # Check if connection is marked as healthy
-                    if source._connection_healthy:
-                        # Check if we've received any events recently
-                        time_since_last_event = time.time() - source._last_event_time
-
-                        # If no events for extended period, test the connection
-                        if time_since_last_event > 300:  # 5 minutes
-                            # Try to verify connection with a simple API call
-                            connection_ok = await source._test_connection()
-
-                            if not connection_ok:
-                                # Force reconnection by marking unhealthy
-                                source._connection_healthy = False
-                                # Cancel websocket task to trigger reconnection
-                                if (
-                                    source._websocket_task
-                                    and not source._websocket_task.done()
-                                ):
-                                    source._websocket_task.cancel()
-
-                    # Wait before next health check
-                    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating health check interval timing
-                    await asyncio.sleep(source._health_check_interval)
-
+                    await _run_health_check_iteration(source)
                 except asyncio.CancelledError:
                     # Task is being cancelled, exit cleanly
                     break

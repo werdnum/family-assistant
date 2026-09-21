@@ -11,12 +11,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.security.taint import InMemoryTurnTaintTracker, TurnTaintState
+from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     ToolPolicyDeniedError,
+    _descriptor_argument_keys,  # noqa: PLC2701 - directly verifies the audit trust boundary
     resolve_descriptors_version,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
@@ -60,7 +62,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_dict": tool_returns_dict},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-1",
             user_name="test-user",
@@ -117,7 +119,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_list": tool_returns_list},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-2",
             user_name="test-user",
@@ -182,7 +184,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_complex": tool_returns_complex},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-3",
             user_name="test-user",
@@ -245,7 +247,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_none": tool_returns_none},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-4",
             user_name="test-user",
@@ -292,7 +294,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_string": tool_returns_string},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-5",
             user_name="test-user",
@@ -337,7 +339,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_number": tool_returns_number},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-6",
             user_name="test-user",
@@ -396,7 +398,7 @@ class TestLocalToolsProvider:
             implementations={"tool_with_attachment": tool_with_attachment},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-attachment",
             user_name="test-user",
@@ -459,7 +461,7 @@ class TestLocalToolsProvider:
             implementations={"tool_needs_exec_context": tool_needs_exec_context},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-inject",
             user_name="test-user",
@@ -489,10 +491,10 @@ class TestLocalToolsProvider:
     @pytest.mark.asyncio
     async def test_execute_tool_injects_db_context(self) -> None:
         """Test that db_context is properly injected into tool functions."""
-        received_db: list[DatabaseContext | None] = [None]
+        received_db: list[Database | None] = [None]
 
         async def tool_needs_db_context(
-            db_context: DatabaseContext,
+            db_context: Database,
             query: str,
         ) -> str:
             received_db[0] = db_context
@@ -518,7 +520,7 @@ class TestLocalToolsProvider:
             implementations={"tool_needs_db_context": tool_needs_db_context},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-db",
             user_name="test-user",
@@ -550,19 +552,19 @@ class TestLocalToolsProvider:
         """Test that db_context is injected even when the annotation is a string.
 
         This simulates the case where a tool module uses `from __future__ import annotations`
-        and imports DatabaseContext under TYPE_CHECKING, so get_type_hints() cannot
+        and imports Database under TYPE_CHECKING, so get_type_hints() cannot
         resolve the annotation and falls back to the raw string.
         """
         received_db: list[Any] = [None]
 
         async def tool_with_string_annotation(
-            db_context: DatabaseContext,
+            db_context: Database,
             query: str,
         ) -> str:
             received_db[0] = db_context
             return f"Got query: {query}"
 
-        # Simulate a module where DatabaseContext is NOT in the namespace
+        # Simulate a module where Database is NOT in the namespace
         # (as if imported only under TYPE_CHECKING)
         fake_module = types.ModuleType("fake_tool_module")
         fake_module.__dict__["__name__"] = "fake_tool_module"
@@ -593,7 +595,7 @@ class TestLocalToolsProvider:
                 },
             )
 
-            mock_db_context = MagicMock(spec=DatabaseContext)
+            mock_db_context = MagicMock(spec=Database)
             context = ToolExecutionContext(
                 conversation_id="test-conv-str-db",
                 user_name="test-user",
@@ -633,6 +635,7 @@ class TestPolicyConfirmationFlow:
         class StubToolsProvider:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict[str, object], str | None]] = []
+                self.execution_contexts: list[ToolExecutionContext] = []
                 self.descriptor = ToolDescriptor(
                     name="dangerous_tool",
                     definition={
@@ -664,6 +667,7 @@ class TestPolicyConfirmationFlow:
                 call_id: str | None = None,
             ) -> str:
                 self.calls.append((name, arguments, call_id))
+                self.execution_contexts.append(context)
                 return "executed"
 
             async def close(self) -> None:
@@ -708,7 +712,7 @@ class TestPolicyConfirmationFlow:
             captured["context"] = context
             return ConfirmationOutcome(kind="approved")
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         exec_context = ToolExecutionContext(
             conversation_id="conv-1",
             user_name="test-user",
@@ -728,6 +732,7 @@ class TestPolicyConfirmationFlow:
         )
 
         tool_args = {"title": "Hello"}
+        exec_context.taint_tracker = InMemoryTurnTaintTracker(TurnTaintState.empty())
         result = await provider.execute_tool(
             "dangerous_tool",
             tool_args,
@@ -740,7 +745,25 @@ class TestPolicyConfirmationFlow:
         assert captured["call_id"] == "call-explicit-123"
         assert captured["tool_args"] == tool_args
         assert captured["timeout_seconds"] == 42.0
-        assert captured["context"] is exec_context
+        callback_context = captured["context"]
+        assert isinstance(callback_context, ToolExecutionContext)
+        assert callback_context is not exec_context
+        assert len(wrapped_provider.execution_contexts) == 1
+        assert wrapped_provider.execution_contexts[0] is callback_context
+        assert callback_context.db_context is exec_context.db_context
+        assert callback_context.taint_tracker is exec_context.taint_tracker
+        assert (
+            callback_context.tool_call_review_state
+            is exec_context.tool_call_review_state
+        )
+        assert callback_context.request_confirmation_callback is confirmation_callback
+        assert callback_context.conversation_id == exec_context.conversation_id
+        assert callback_context.turn_id == exec_context.turn_id
+        assert callback_context.interface_type == exec_context.interface_type
+        assert captured["conversation_id"] == exec_context.conversation_id
+        assert captured["turn_id"] == exec_context.turn_id
+        assert captured["interface_type"] == exec_context.interface_type
+        assert exec_context.definition_gate_outcome is None
         assert wrapped_provider.calls == [
             ("dangerous_tool", tool_args, "call-explicit-123")
         ]
@@ -774,7 +797,7 @@ class TestPolicyEnforcingToolsProvider:
         *,
         request_confirmation_callback: Any = None,  # noqa: ANN401 - test helper
     ) -> ToolExecutionContext:
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         return ToolExecutionContext(
             conversation_id="policy-conv",
             user_name="test-user",
@@ -1001,6 +1024,7 @@ class TestPolicyEnforcingToolsProvider:
             def __init__(self, descriptor: ToolDescriptor) -> None:
                 self._descriptor = descriptor
                 self.calls: list[tuple[str, dict[str, object], str | None]] = []
+                self.execution_contexts: list[ToolExecutionContext] = []
 
             async def get_tool_definitions(self) -> list[ToolDefinition]:
                 return [self._descriptor.definition]
@@ -1021,6 +1045,7 @@ class TestPolicyEnforcingToolsProvider:
                 call_id: str | None = None,
             ) -> str:
                 self.calls.append((name, arguments, call_id))
+                self.execution_contexts.append(context)
                 return "executed"
 
             async def close(self) -> None:
@@ -1074,6 +1099,7 @@ class TestPolicyEnforcingToolsProvider:
         exec_context = self._make_context(
             request_confirmation_callback=confirmation_callback
         )
+        exec_context.taint_tracker = InMemoryTurnTaintTracker(TurnTaintState.empty())
         result = await provider.execute_tool(
             "delete_note",
             {"title": "hello"},
@@ -1085,7 +1111,25 @@ class TestPolicyEnforcingToolsProvider:
         assert captured["tool_name"] == "delete_note"
         assert captured["call_id"] == "call-explicit-123"
         assert captured["timeout_seconds"] == 42.0
-        assert captured["context"] is exec_context
+        callback_context = captured["context"]
+        assert isinstance(callback_context, ToolExecutionContext)
+        assert callback_context is not exec_context
+        assert len(wrapped_provider.execution_contexts) == 1
+        assert wrapped_provider.execution_contexts[0] is callback_context
+        assert callback_context.db_context is exec_context.db_context
+        assert callback_context.taint_tracker is exec_context.taint_tracker
+        assert (
+            callback_context.tool_call_review_state
+            is exec_context.tool_call_review_state
+        )
+        assert callback_context.request_confirmation_callback is confirmation_callback
+        assert callback_context.conversation_id == exec_context.conversation_id
+        assert callback_context.turn_id == exec_context.turn_id
+        assert callback_context.interface_type == exec_context.interface_type
+        assert captured["conversation_id"] == exec_context.conversation_id
+        assert captured["turn_id"] == exec_context.turn_id
+        assert captured["interface_type"] == exec_context.interface_type
+        assert exec_context.definition_gate_outcome is None
         assert wrapped_provider.calls == [
             ("delete_note", {"title": "hello"}, "call-explicit-123")
         ]
@@ -1210,6 +1254,30 @@ def _make_mcp_descriptor(name: str, server_id: str) -> ToolDescriptor:
         origin="mcp",
         mcp_server_id=server_id,
     )
+
+
+def test_mcp_argument_names_are_not_trusted_for_audit_records() -> None:
+    descriptor = ToolDescriptor(
+        name="remote_tool",
+        definition={
+            "type": "function",
+            "function": {
+                "name": "remote_tool",
+                "description": "Remote description",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "attacker_controlled_audit_text": {"type": "string"}
+                    },
+                },
+            },
+        },
+        tags=frozenset(),
+        origin="mcp",
+        mcp_server_id="remote-server",
+    )
+
+    assert _descriptor_argument_keys(descriptor) == frozenset()
 
 
 class TestResolveDescriptorsVersion:

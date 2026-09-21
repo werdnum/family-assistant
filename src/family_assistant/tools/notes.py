@@ -10,18 +10,22 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.memory.invariants import MemoryWriteError
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintMetadata,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    is_externally_authored,
     merge_taint_state_into_tracker,
 )
 from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -41,10 +45,46 @@ _TAINT_LABELS_BY_TIER: dict[SourceTrustTier, str] = {
 }
 
 
-def _note_provenance_from_taint(
+async def _load_note_attachment(
+    attachment_registry: AttachmentRegistry,
+    db_context: Database,
+    attachment_id: str,
+    *,
+    user_id: str | None,
+    note_title: str,
+) -> ToolAttachment | None:
+    metadata = await attachment_registry.get_attachment(
+        db_context, attachment_id, acting_user_id=user_id
+    )
+    if metadata is None:
+        logger.warning(
+            f"Attachment {attachment_id} referenced in note '{note_title}' not found"
+        )
+        return None
+
+    content = await attachment_registry.get_attachment_content(
+        db_context, attachment_id, acting_user_id=user_id
+    )
+    if not content:
+        logger.warning(f"Could not fetch content for attachment {attachment_id}")
+        return None
+    return ToolAttachment(
+        mime_type=metadata.mime_type,
+        content=content,
+        description=metadata.description,
+        attachment_id=attachment_id,
+    )
+
+
+def note_provenance_from_taint(
     exec_context: ToolExecutionContext,
 ) -> NoteProvenanceMetadata | None:
-    """Return durable provenance metadata for the current turn taint."""
+    """Return durable provenance metadata for the current turn taint.
+
+    Shared with the memory apply path, which stamps its note writes the same
+    way: the repository holds every memory write to the trusted pole, and it
+    can only do that from a stamp the writer supplied.
+    """
     if exec_context.taint_tracker is None:
         return None
     state = exec_context.taint_tracker.snapshot()
@@ -70,7 +110,8 @@ async def add_or_update_note_tool(
         exec_context: The execution context
         title: The title of the note
         content: The content of the note
-        include_in_prompt: Whether to include the note in system prompts
+        include_in_prompt: Whether to auto-load the note into the assistant's
+            per-turn context
         append: Whether to append to existing content instead of replacing it
         attachment_ids: Optional list of attachment UUIDs to associate with this note
         visibility_labels: Optional list of visibility labels for access control.
@@ -94,7 +135,7 @@ async def add_or_update_note_tool(
     # path is covered, not just this tool.
     write_policy = exec_context.note_write_policy()
 
-    provenance_metadata = _note_provenance_from_taint(exec_context)
+    provenance_metadata = note_provenance_from_taint(exec_context)
 
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
@@ -137,6 +178,8 @@ async def add_or_update_note_tool(
             else ""
         )
         return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully{attachment_info}."
+    except MemoryWriteError as e:
+        return f"Error: {e.message}"
     except NoteWritePolicyError as e:
         return f"Error: {e}"
     except Exception as e:
@@ -151,7 +194,12 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "add_or_update_note",
             "description": (
-                "Add a new note or update an existing note with the given title. Use this to remember information provided by the user. "
+                "Add a new note or update an existing note with the given title. Use this for the user's own notes: "
+                "lists, reference material, documents, anything they asked you to write down as a note — including "
+                "when someone asks you to remember something and you have no memory tool. "
+                "If `propose_memory_edits` is among your tools, prefer it for the household's long-term memory — "
+                "standing preferences, facts about people, decisions, routines, and anything you are asked to forget — "
+                "because it edits memory entry by entry and keeps each entry's evidence. "
                 "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs. "
                 "Leave `include_in_prompt` at its default `false` unless the note is short, evergreen context that must load every "
                 "turn (see the parameter description). To create a reusable skill instead of a plain note, load the 'Skill Creation' "
@@ -171,7 +219,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "include_in_prompt": {
                         "type": "boolean",
-                        "description": "Whether to auto-load the full note into every system prompt. Default is false — the note is still stored, searchable, and its title is listed in the system prompt so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
+                        "description": "Whether to auto-load the full note into your context on every turn. Default is false — the note is still stored, searchable, and its title is listed in the `<turn_context>` block so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
                         "default": False,
                     },
                     "append": {
@@ -200,7 +248,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "get_note",
             "description": (
                 "Retrieve a specific note by its title to check its content, prompt inclusion status, and attachments. "
-                "Returns the note's title, content, whether it's included in the system prompt, and any associated attachments.\n\n"
+                "Returns the note's title, content, whether it's auto-loaded into your context every turn, and any associated attachments.\n\n"
                 "Returns: A JSON string containing a dict with the note information. "
                 "If note exists, returns {'exists': true, 'title': [title], 'content': [full content], 'include_in_prompt': [boolean], 'attachment_count': [integer], 'provenance_labels': [labels]}. "
                 "If note not found, returns {'exists': false, 'title': [title], 'content': null, 'include_in_prompt': null, 'attachment_count': 0}. "
@@ -225,7 +273,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "list_notes",
             "description": (
                 "List all notes with their titles, prompt inclusion status, and attachment counts. "
-                "Can optionally filter to show only notes that are included or excluded from the system prompt.\n\n"
+                "Can optionally filter to show only notes that are auto-loaded into your context every turn, or only those that are not.\n\n"
                 "Returns: A JSON string containing a list of note summaries. "
                 "Returns an array where each item is {'title': [title], 'include_in_prompt': [boolean], 'content_preview': [first 100 chars], 'attachment_count': [integer]}. "
                 "If no notes exist or match the filter, returns an empty array '[]'."
@@ -282,13 +330,13 @@ async def get_note_tool(
     attachment_registry = exec_context.attachment_registry
 
     note = await db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
+        title, read_policy=exec_context.note_read_policy()
     )
     if not note:
         # Fall back to file-based skills via NoteRegistry
         if exec_context.note_registry:
             skill = exec_context.note_registry.get_skill_by_name(
-                title, visibility_grants=exec_context.visibility_grants
+                title, exec_context.note_read_policy()
             )
             if skill:
                 result_data = {
@@ -321,7 +369,7 @@ async def get_note_tool(
     if exec_context.taint_tracker is not None and isinstance(provenance_metadata, dict):
         taint_metadata = provenance_metadata.get("taint_metadata")
         note_taint_state = TurnTaintState.from_metadata(taint_metadata)
-        if note_taint_state.max_tier > SourceTrustTier.TRUSTED_USER:
+        if is_externally_authored(note_taint_state.max_tier):
             merge_taint_state_into_tracker(
                 exec_context.taint_tracker,
                 note_taint_state.add_source(
@@ -369,35 +417,20 @@ async def get_note_tool(
     if attachment_ids and attachment_registry:
         for attachment_id in attachment_ids:
             try:
-                metadata = await attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=exec_context.user_id
+                attachment = await _load_note_attachment(
+                    attachment_registry,
+                    db_context,
+                    attachment_id,
+                    user_id=exec_context.user_id,
+                    note_title=title,
                 )
-                if metadata:
-                    # Fetch content
-                    content = await attachment_registry.get_attachment_content(
-                        db_context, attachment_id, acting_user_id=exec_context.user_id
-                    )
-                    if content:
-                        attachments.append(
-                            ToolAttachment(
-                                mime_type=metadata.mime_type,
-                                content=content,
-                                description=metadata.description,
-                                attachment_id=attachment_id,
-                            )
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not fetch content for attachment {attachment_id}"
-                        )
-                else:
-                    logger.warning(
-                        f"Attachment {attachment_id} referenced in note '{title}' not found"
-                    )
             except Exception as e:
                 logger.exception(
                     f"Error fetching attachment {attachment_id} for note '{title}': {e}"
                 )
+            else:
+                if attachment is not None:
+                    attachments.append(attachment)
 
     return ToolResult(
         data=result_data, attachments=attachments if attachments else None
@@ -411,7 +444,7 @@ async def list_notes_tool(
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
     all_notes = await exec_context.db_context.notes.get_all(
-        visibility_grants=exec_context.visibility_grants
+        read_policy=exec_context.note_read_policy()
     )
 
     # Apply filtering if requested
@@ -453,14 +486,17 @@ async def delete_note_tool(
     """Tool wrapper for delete_note."""
     # Enforce visibility: only allow deleting notes the user can see
     visible = await exec_context.db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
+        title, read_policy=exec_context.note_read_policy()
     )
     if not visible:
         return {
             "success": False,
             "message": f"Note '{title}' not found.",
         }
-    deleted = await exec_context.db_context.notes.delete(title)
+    try:
+        deleted = await exec_context.db_context.notes.delete(title)
+    except MemoryWriteError as e:
+        return {"success": False, "message": e.message}
     return {
         "success": deleted,
         "message": f"Note '{title}' deleted successfully."

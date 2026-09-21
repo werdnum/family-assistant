@@ -8,6 +8,7 @@ from family_assistant.llm import LLMInterface
 from family_assistant.llm.messages import SystemMessage, UserMessage
 
 if TYPE_CHECKING:
+    from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.storage.vector import Document
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -119,91 +120,16 @@ class LLMIntelligenceProcessor(ContentProcessor):
             # tool_choice="required" is used in generate_response call directly.
 
             try:
-                logger.debug(
-                    f"Processor '{self.name}': Formatting user message for item type '{item.embedding_type}'. "
-                    f"Prompt text provided: {bool(prompt_text)}. File path provided: {file_path} ({mime_type})."
-                )
-                user_message_dict = await self.llm_client.format_user_message_with_file(
-                    prompt_text=prompt_text,
-                    file_path=file_path,
-                    mime_type=mime_type,
-                    max_text_length=self.max_content_length,
-                )
-
-                # Create messages using Pydantic models but handle non-standard content types
-                # from format_user_message_with_file (e.g., file_placeholder)
-                messages = [
-                    SystemMessage(content=system_prompt),
-                    UserMessage.model_validate(user_message_dict),
-                ]
-
-                logger.debug(
-                    f"Processor '{self.name}': Sending request to LLM. System prompt: '{system_prompt[:100]}...'. User message: {json.dumps(user_message_dict, default=str)[:200]}..."
-                )
-                llm_response = await self.llm_client.generate_response(
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="required",  # Ensure LLM calls the specified tool
-                )
-
-                if llm_response.tool_calls:
-                    for tool_call in llm_response.tool_calls:
-                        # Direct attribute access for ToolCallItem and ToolCallFunction
-                        if (
-                            tool_call.function
-                            and tool_call.function.name == self.tool_name
-                        ):
-                            arguments_str: str | dict[str, object] = {}
-                            try:
-                                arguments_str = tool_call.function.arguments
-                                if isinstance(arguments_str, str):
-                                    extracted_data = json.loads(arguments_str)
-                                else:
-                                    extracted_data = arguments_str
-
-                                new_item_content = json.dumps(extracted_data, indent=2)
-                                new_item = IndexableContent(
-                                    content=new_item_content,
-                                    embedding_type=self.target_embedding_type,
-                                    mime_type="application/json",
-                                    source_processor=self.name,
-                                    metadata={
-                                        "original_item_embedding_type": (
-                                            item.embedding_type
-                                        ),
-                                        "original_item_source_processor": (
-                                            item.source_processor
-                                        ),
-                                        "llm_model_used": getattr(
-                                            self.llm_client, "model", "unknown"
-                                        ),
-                                    },
-                                )
-                                newly_created_items.append(new_item)
-                                logger.info(
-                                    f"Processor '{self.name}': Successfully extracted information, created new item type '{self.target_embedding_type}'."
-                                )
-                            except json.JSONDecodeError as e:
-                                logger.error(
-                                    f"Processor '{self.name}': Failed to parse LLM tool call arguments: {arguments_str}. Error: {e}"
-                                )
-                            except Exception as e:
-                                logger.exception(
-                                    f"Processor '{self.name}': Error processing LLM tool call: {e}"
-                                )
-                        else:
-                            logger.warning(
-                                f"Processor '{self.name}': LLM called unexpected tool: {tool_call.function.name if tool_call.function else 'None'}"
-                            )
-                elif llm_response.content:
-                    logger.warning(
-                        f"Processor '{self.name}': LLM did not use the tool, returned text content: {llm_response.content[:200]}..."
+                newly_created_items.extend(
+                    await self._extract_information_items(
+                        item,
+                        prompt_text,
+                        file_path,
+                        mime_type,
+                        system_prompt,
+                        tools,
                     )
-                else:
-                    logger.warning(
-                        f"Processor '{self.name}': LLM response had no tool calls and no content."
-                    )
-
+                )
             except Exception as e:
                 logger.exception(
                     f"Processor '{self.name}': Error during LLM call or processing response for item type '{item.embedding_type}': {e}"
@@ -219,6 +145,100 @@ class LLMIntelligenceProcessor(ContentProcessor):
         final_output_items.extend(newly_created_items)  # Add any new items generated
 
         return final_output_items
+
+    async def _extract_information_items(
+        self,
+        item: IndexableContent,
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        system_prompt: str,
+        tools: "list[ToolDefinition]",
+    ) -> list[IndexableContent]:
+        logger.debug(
+            f"Processor '{self.name}': Formatting user message for item type '{item.embedding_type}'. "
+            f"Prompt text provided: {bool(prompt_text)}. File path provided: {file_path} ({mime_type})."
+        )
+        user_message_dict = await self.llm_client.format_user_message_with_file(
+            prompt_text=prompt_text,
+            file_path=file_path,
+            mime_type=mime_type,
+            max_text_length=self.max_content_length,
+        )
+        messages = [
+            SystemMessage(content=system_prompt),
+            UserMessage.model_validate(user_message_dict),
+        ]
+        logger.debug(
+            f"Processor '{self.name}': Sending request to LLM. System prompt: '{system_prompt[:100]}...'. User message: {json.dumps(user_message_dict, default=str)[:200]}..."
+        )
+        llm_response = await self.llm_client.generate_response(
+            messages=messages,
+            tools=tools,
+            tool_choice="required",
+        )
+        if llm_response.tool_calls:
+            new_items = []
+            for tool_call in llm_response.tool_calls:
+                if tool_call.function and tool_call.function.name == self.tool_name:
+                    new_item = self._process_information_tool_call(tool_call, item)
+                    if new_item is not None:
+                        new_items.append(new_item)
+                else:
+                    logger.warning(
+                        f"Processor '{self.name}': LLM called unexpected tool: {tool_call.function.name if tool_call.function else 'None'}"
+                    )
+            return new_items
+        if llm_response.content:
+            logger.warning(
+                f"Processor '{self.name}': LLM did not use the tool, returned text content: {llm_response.content[:200]}..."
+            )
+        else:
+            logger.warning(
+                f"Processor '{self.name}': LLM response had no tool calls and no content."
+            )
+        return []
+
+    def _process_information_tool_call(
+        self, tool_call: "ToolCallItem", item: IndexableContent
+    ) -> IndexableContent | None:
+        arguments: str | dict[str, object] = {}
+        try:
+            arguments = tool_call.function.arguments
+            return self._build_information_item(arguments, item)
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Processor '{self.name}': Failed to parse LLM tool call arguments: {arguments}. Error: {e}"
+            )
+        except Exception as e:
+            logger.exception(
+                f"Processor '{self.name}': Error processing LLM tool call: {e}"
+            )
+        return None
+
+    def _build_information_item(
+        self,
+        arguments: str | dict[str, object],
+        item: IndexableContent,
+    ) -> IndexableContent:
+        extracted_data = (
+            json.loads(arguments) if isinstance(arguments, str) else arguments
+        )
+        new_item = IndexableContent(
+            content=json.dumps(extracted_data, indent=2),
+            embedding_type=self.target_embedding_type,
+            mime_type="application/json",
+            source_processor=self.name,
+            metadata={
+                "original_item_embedding_type": item.embedding_type,
+                "original_item_source_processor": item.source_processor,
+                "llm_model_used": getattr(self.llm_client, "model", "unknown"),
+            },
+        )
+        logger.info(
+            f"Processor '{self.name}': Successfully extracted information, created new item type '{self.target_embedding_type}'."
+        )
+        return new_item
 
 
 # --- Default Summary Generation Configuration ---
@@ -443,100 +463,17 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
             # tool_choice="required" is used in generate_response call directly.
 
             try:
-                user_message_dict = await self.llm_client.format_user_message_with_file(
-                    prompt_text=prompt_text,
-                    file_path=file_path,
-                    mime_type=mime_type,
-                    max_text_length=self.max_content_length,
-                )
-                messages = [
-                    SystemMessage(content=system_prompt),
-                    UserMessage.model_validate(user_message_dict),
-                ]
-
-                llm_response = await self.llm_client.generate_response(
-                    messages=messages, tools=tools, tool_choice="required"
-                )
-
-                if llm_response.tool_calls:
-                    for tool_call in llm_response.tool_calls:
-                        # Direct attribute access for ToolCallItem and ToolCallFunction
-                        if (
-                            tool_call.function
-                            and tool_call.function.name == self.tool_name
-                        ):
-                            arguments_str: str | dict[str, object] = {}
-                            try:
-                                arguments_str = tool_call.function.arguments
-                                if isinstance(arguments_str, str):
-                                    extracted_data = json.loads(arguments_str)
-                                else:
-                                    extracted_data = arguments_str
-
-                                primary_url = extracted_data.get("primary_url")
-                                is_primary = extracted_data.get(
-                                    "is_primary_link_email", False
-                                )
-
-                                if (
-                                    is_primary
-                                    and primary_url
-                                    and isinstance(primary_url, str)
-                                ):
-                                    new_url_item = IndexableContent(
-                                        content=primary_url,  # The URL string is the content
-                                        embedding_type=self.target_embedding_type,  # e.g., "raw_url"
-                                        mime_type="text/uri-list",  # Standard MIME type for a list of URIs (here, one URI)
-                                        source_processor=self.name,
-                                        metadata={
-                                            "original_item_embedding_type": (
-                                                item.embedding_type
-                                            ),
-                                            "original_item_source_processor": (
-                                                item.source_processor
-                                            ),
-                                            "llm_model_used": getattr(
-                                                self.llm_client, "model", "unknown"
-                                            ),
-                                            "original_document_source_id": (
-                                                original_document.source_id
-                                            ),
-                                        },
-                                    )
-                                    newly_created_items.append(new_url_item)
-                                    logger.info(
-                                        f"Processor '{self.name}': Extracted primary URL '{primary_url}' from item type '{item.embedding_type}'. Created new item with type '{self.target_embedding_type}'."
-                                    )
-                                elif is_primary and not primary_url:
-                                    logger.info(
-                                        f"Processor '{self.name}': LLM indicated it's a primary link email but did not provide a URL for item type '{item.embedding_type}'."
-                                    )
-                                else:  # Not a primary link email, or no URL provided
-                                    logger.info(
-                                        f"Processor '{self.name}': LLM determined item type '{item.embedding_type}' is not a primary link email or no URL found."
-                                    )
-                            except json.JSONDecodeError as e:
-                                logger.error(
-                                    f"Processor '{self.name}': Failed to parse LLM tool call arguments for link extraction: {arguments_str}. Error: {e}"
-                                )
-                            except (
-                                Exception
-                            ) as e:  # Catch other errors during argument processing
-                                logger.exception(
-                                    f"Processor '{self.name}': Error processing LLM tool call arguments for link extraction: {e}"
-                                )
-                        else:  # LLM called an unexpected tool
-                            logger.warning(
-                                f"Processor '{self.name}': LLM called unexpected tool '{tool_call.function.name if tool_call.function else 'None'}' during link extraction."
-                            )
-                elif llm_response.content:
-                    logger.warning(
-                        f"Processor '{self.name}': LLM did not use tool for link extraction, returned text content: {llm_response.content[:200]}..."
+                newly_created_items.extend(
+                    await self._extract_primary_link_items(
+                        item,
+                        original_document,
+                        prompt_text,
+                        file_path,
+                        mime_type,
+                        system_prompt,
+                        tools,
                     )
-                else:  # No tool calls and no content
-                    logger.warning(
-                        f"Processor '{self.name}': LLM response for link extraction had no tool calls and no content for item type '{item.embedding_type}'."
-                    )
+                )
             except Exception as e:
                 logger.exception(
                     f"Processor '{self.name}': Error during LLM call or response processing for link extraction from item type '{item.embedding_type}': {e}"
@@ -548,3 +485,108 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
         final_output_items.extend(newly_created_items)
 
         return final_output_items
+
+    async def _extract_primary_link_items(
+        self,
+        item: IndexableContent,
+        original_document: "Document",
+        prompt_text: str | None,
+        file_path: str | None,
+        mime_type: str | None,
+        system_prompt: str,
+        tools: "list[ToolDefinition]",
+    ) -> list[IndexableContent]:
+        user_message_dict = await self.llm_client.format_user_message_with_file(
+            prompt_text=prompt_text,
+            file_path=file_path,
+            mime_type=mime_type,
+            max_text_length=self.max_content_length,
+        )
+        messages = [
+            SystemMessage(content=system_prompt),
+            UserMessage.model_validate(user_message_dict),
+        ]
+        llm_response = await self.llm_client.generate_response(
+            messages=messages, tools=tools, tool_choice="required"
+        )
+        if llm_response.tool_calls:
+            new_items = []
+            for tool_call in llm_response.tool_calls:
+                if tool_call.function and tool_call.function.name == self.tool_name:
+                    new_item = self._process_primary_link_tool_call(
+                        tool_call, item, original_document
+                    )
+                    if new_item is not None:
+                        new_items.append(new_item)
+                else:
+                    logger.warning(
+                        f"Processor '{self.name}': LLM called unexpected tool '{tool_call.function.name if tool_call.function else 'None'}' during link extraction."
+                    )
+            return new_items
+        if llm_response.content:
+            logger.warning(
+                f"Processor '{self.name}': LLM did not use tool for link extraction, returned text content: {llm_response.content[:200]}..."
+            )
+        else:
+            logger.warning(
+                f"Processor '{self.name}': LLM response for link extraction had no tool calls and no content for item type '{item.embedding_type}'."
+            )
+        return []
+
+    def _process_primary_link_tool_call(
+        self,
+        tool_call: "ToolCallItem",
+        item: IndexableContent,
+        original_document: "Document",
+    ) -> IndexableContent | None:
+        arguments: str | dict[str, object] = {}
+        try:
+            arguments = tool_call.function.arguments
+            return self._build_primary_link_item(arguments, item, original_document)
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Processor '{self.name}': Failed to parse LLM tool call arguments for link extraction: {arguments}. Error: {e}"
+            )
+        except Exception as e:
+            logger.exception(
+                f"Processor '{self.name}': Error processing LLM tool call arguments for link extraction: {e}"
+            )
+        return None
+
+    def _build_primary_link_item(
+        self,
+        arguments: str | dict[str, object],
+        item: IndexableContent,
+        original_document: "Document",
+    ) -> IndexableContent | None:
+        extracted_data = (
+            json.loads(arguments) if isinstance(arguments, str) else arguments
+        )
+        primary_url = extracted_data.get("primary_url")
+        is_primary = extracted_data.get("is_primary_link_email", False)
+        if is_primary and primary_url and isinstance(primary_url, str):
+            new_url_item = IndexableContent(
+                content=primary_url,
+                embedding_type=self.target_embedding_type,
+                mime_type="text/uri-list",
+                source_processor=self.name,
+                metadata={
+                    "original_item_embedding_type": item.embedding_type,
+                    "original_item_source_processor": item.source_processor,
+                    "llm_model_used": getattr(self.llm_client, "model", "unknown"),
+                    "original_document_source_id": original_document.source_id,
+                },
+            )
+            logger.info(
+                f"Processor '{self.name}': Extracted primary URL '{primary_url}' from item type '{item.embedding_type}'. Created new item with type '{self.target_embedding_type}'."
+            )
+            return new_url_item
+        if is_primary and not primary_url:
+            logger.info(
+                f"Processor '{self.name}': LLM indicated it's a primary link email but did not provide a URL for item type '{item.embedding_type}'."
+            )
+        else:
+            logger.info(
+                f"Processor '{self.name}': LLM determined item type '{item.embedding_type}' is not a primary link email or no URL found."
+            )
+        return None

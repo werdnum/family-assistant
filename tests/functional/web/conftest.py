@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from filelock import FileLock
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page, async_playwright
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -37,7 +37,9 @@ from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
 )
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -51,8 +53,15 @@ from family_assistant.tools import (
     ToolPolicyDecision,
     ToolsProvider,
 )
+from family_assistant.web.auth import AuthService
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.jwt_tokens import JWTTokenService
+from family_assistant.web.routers.errors_api import (
+    ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
+    ErrorIntakeRateLimiter,
+)
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.conftest import check_db_engine_invariants
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -68,6 +77,27 @@ class WebTestFixture(NamedTuple):
     base_url: str
 
 
+async def _server_is_ready(
+    client: httpx.AsyncClient,
+    url: str,
+    health_url: str,
+    elapsed: float,
+) -> bool:
+    response = await client.get(health_url, timeout=5)
+    print(f"[{elapsed:.1f}s] Health check response: {response.status_code}")
+
+    if response.status_code == 200:
+        print(f"[{elapsed:.1f}s] ✓ Health check passed for {health_url}")
+        root_response = await client.get(url, timeout=5)
+        print(f"[{elapsed:.1f}s] Root endpoint response: {root_response.status_code}")
+        return True
+
+    print(
+        f"[{elapsed:.1f}s] Health check returned {response.status_code}: {response.text[:200]}"
+    )
+    return False
+
+
 async def wait_for_server(url: str, timeout: int = 60) -> None:
     """Wait for a server to become available by polling health endpoint."""
     start_time = time.time()
@@ -80,24 +110,8 @@ async def wait_for_server(url: str, timeout: int = 60) -> None:
         while time.time() - start_time < timeout:
             elapsed = time.time() - start_time
             try:
-                # First check if the health endpoint is responding
-                response = await client.get(health_url, timeout=5)
-                print(f"[{elapsed:.1f}s] Health check response: {response.status_code}")
-
-                if response.status_code == 200:
-                    print(f"[{elapsed:.1f}s] ✓ Health check passed for {health_url}")
-                    # Also check the root endpoint
-                    root_response = await client.get(url, timeout=5)
-                    print(
-                        f"[{elapsed:.1f}s] Root endpoint response: {root_response.status_code}"
-                    )
+                if await _server_is_ready(client, url, health_url, elapsed):
                     return
-                else:
-                    # Non-200 response
-                    print(
-                        f"[{elapsed:.1f}s] Health check returned {response.status_code}: {response.text[:200]}"
-                    )
-
             except httpx.ConnectError as e:
                 # Can't connect yet
                 if str(e) != str(last_error):
@@ -545,10 +559,8 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
     ) as db_file:
         db_path = db_file.name
 
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}",
-        echo=False,
-        connect_args={"check_same_thread": False},
+    engine = create_engine_with_sqlite_optimizations(
+        f"sqlite+aiosqlite:///{db_path}", instrument=True
     )
 
     # Initialize schema
@@ -556,6 +568,7 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
 
     yield engine
 
+    await check_db_engine_invariants(engine, "session_db_engine")
     await engine.dispose()
 
     # Clean up database file
@@ -848,7 +861,7 @@ async def authenticated_page(web_test_fixture: WebTestFixture) -> Page:
 class TestDataFactory:
     """Factory for creating test data consistently."""
 
-    def __init__(self, db_context: DatabaseContext) -> None:
+    def __init__(self, db_context: Database) -> None:
         self.db_context = db_context
         self._note_counter = 0
         self._document_counter = 0
@@ -898,7 +911,7 @@ class TestDataFactory:
 @pytest.fixture
 def test_data_factory(db_engine: AsyncEngine) -> TestDataFactory:
     """Factory for creating test data."""
-    # In real implementation, would create a DatabaseContext
+    # In real implementation, would create a Database
     # For now, return a factory that creates mock data
     return TestDataFactory(None)  # type: ignore[arg-type]
 
@@ -916,6 +929,16 @@ class ConsoleErrorCollector:
         """Set up console message listeners."""
 
         def handle_console_message(msg: Any) -> None:  # noqa: ANN401  # playwright console message
+            # The optional session→JWT bridge endpoint does not exist on
+            # deployments without JWT auth configured; the frontend handles
+            # the 404 gracefully and the browser's resource-load log line for
+            # it is not a page defect.
+            location_url = str(msg.location.get("url", ""))
+            if (
+                "/api/auth/browser-token" in (location_url + msg.text)
+                and "404" in msg.text
+            ):
+                return
             if msg.type == "error":
                 self.errors.append(
                     f"{msg.location.get('url', 'unknown')}:{msg.location.get('lineNumber', '?')} - {msg.text}"
@@ -1087,9 +1110,9 @@ async def playwright() -> AsyncGenerator[Any]:
 @pytest_asyncio.fixture(scope="function")
 async def api_db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
+) -> AsyncGenerator[Database]:
     """
-    Provides a high-level `DatabaseContext` instance for API-level tests.
+    Provides a high-level `Database` instance for API-level tests.
 
     Purpose:
         Simplifies database interaction in API tests by providing an already
@@ -1099,8 +1122,8 @@ async def api_db_context(
     Scope:
         Function-scoped. Depends on the standard `db_engine` fixture.
     """
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -1108,11 +1131,7 @@ def api_mock_processing_service_config() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for API tests."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
@@ -1174,18 +1193,20 @@ def api_test_processing_service(
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
+    def get_entered_db_context_for_provider() -> Database:
         """
-        Returns an awaitable that resolves to an entered DatabaseContext.
+        Returns an awaitable that resolves to an entered Database.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=db_engine) as new_ctx:
-            return new_ctx
+        new_ctx = Database(engine=db_engine)
+        return new_ctx
 
     # Create mock context providers
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
         prompts=api_mock_processing_service_config.prompts,
+        # ast-grep-ignore: no-unrestricted-note-read-policy - web API fixture stands in for the default assistant, which is unconfined
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
@@ -1254,6 +1275,12 @@ async def app_fixture(
         api_test_tools_provider  # For /api/tools/execute if needed
     )
     app.state.database_engine = db_engine  # For get_db dependency
+    app.state.jwt_token_service = JWTTokenService.from_environment()
+    app.state.auth_service = AuthService(db_engine, app.state.jwt_token_service)
+    app.state.error_intake_rate_limiter = ErrorIntakeRateLimiter()
+    app.state.error_intake_address_admission_limiter = ErrorIntakeRateLimiter(
+        ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT
+    )
     app.state.config = AppConfig(
         database_url=str(db_engine.url),
     )
@@ -1275,11 +1302,6 @@ async def app_fixture(
         db_engine,
         stream_hub=app.state.conversation_stream_hub,
     )
-
-    # Ensure database is initialized for this app instance
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)  # Initialize main schema
-        await temp_db_ctx.init_vector_db()  # Initialize vector schema
 
     return app
 

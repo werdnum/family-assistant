@@ -21,7 +21,10 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.services.deferred_tool_confirmation import (
+    DeferredConfirmationCallbackAdapter,
+)
+from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -83,8 +86,10 @@ class MinimalToolExecutorConfig:
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
+    required_note_read_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    memory_read: bool = False
     note_registry: NoteRegistry | None = None
 
 
@@ -97,7 +102,6 @@ def make_tool_executor(
     # far below the large-result threshold, so it is a pass-through.
     attachment_processor = AttachmentProcessor(
         attachment_registry=None,
-        llm_client=Mock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -165,7 +169,7 @@ async def test_safety_decision_stripped_before_execution() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -206,7 +210,7 @@ async def test_safety_decision_require_confirmation_approved() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -256,7 +260,7 @@ async def test_safety_decision_require_confirmation_rejected() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -295,7 +299,7 @@ async def test_safety_decision_require_confirmation_timed_out() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -332,7 +336,7 @@ async def test_safety_decision_no_callback_available() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -371,7 +375,7 @@ async def test_safety_decision_allowed_no_confirmation(decision: str) -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -411,7 +415,7 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -459,7 +463,7 @@ async def test_safety_decision_blocked_or_unknown_refused(
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -517,7 +521,7 @@ async def test_safety_confirmation_timeout_error_yields_declined_result() -> Non
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=RaisingConfirmationCallback(TimeoutError()),
     )
@@ -555,7 +559,7 @@ async def test_safety_confirmation_unexpected_error_propagates() -> None:
             conversation_id="conv_123",
             user_name="testuser",
             turn_id="turn_1",
-            db_context=Mock(spec=DatabaseContext),
+            db_context=Mock(spec=Database),
             chat_interface=None,
             request_confirmation_callback=RaisingConfirmationCallback(
                 RuntimeError("confirmation infrastructure broke")
@@ -587,7 +591,7 @@ async def test_safety_decision_not_interpreted_outside_action_space() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -630,7 +634,7 @@ async def test_safety_confirmation_uses_configured_timeout() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -694,7 +698,7 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
         taint_tracker=turn_taint_tracker,
@@ -716,12 +720,17 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
 
 
 @pytest.mark.asyncio
-async def test_safety_confirmation_oversized_type_text_refused() -> None:
-    """A safety-gated type call whose text can't be fully shown is refused."""
+async def test_safety_confirmation_prompts_for_a_long_type_text() -> None:
+    """A long safety-gated payload is put to the approver, not refused first.
+
+    Whether the text can be displayed is settled by the interface rendering the
+    prompt; see docs/design/confirmation-prompt-capacity.md.
+    """
     provider = MinimalToolsProvider()
     executor = make_tool_executor(provider)
 
     callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+    long_text = "x" * 20_000
 
     tool_call = ToolCallItem(
         id="call_123",
@@ -729,7 +738,7 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
         function=ToolCallFunction(
             name="type",
             arguments={
-                "text": "x" * 2000,
+                "text": long_text,
                 "safety_decision": {
                     "decision": "require_confirmation",
                     "explanation": "typing a lot",
@@ -738,21 +747,20 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
         ),
     )
 
-    result = await executor.execute(
+    await executor.execute(
         tool_call,
         interface_type="test",
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
 
-    assert isinstance(result, ToolExecutionResult)
-    assert provider.executed_tool_names == []
-    assert callback.calls == []
-    assert "smaller pieces" in result.llm_message.content
+    assert len(callback.calls) == 1
+    assert callback.calls[0]["tool_args"]["text"] == long_text
+    assert provider.executed_tool_names == ["type"]
 
 
 @pytest.mark.asyncio
@@ -765,13 +773,13 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
         "Waiting on the user to approve this in Telegram or the web UI "
         "(request abc123). It hasn't run yet."
     )
-    callback = StubConfirmationCallback(
+    wrapped_callback = StubConfirmationCallback(
         outcome=ConfirmationOutcome(
             kind="completed",
             result=pending_message,
-            action_attempted=False,
         )
     )
+    callback = DeferredConfirmationCallbackAdapter(wrapped_callback)
 
     tool_call = ToolCallItem(
         id="call_123",
@@ -795,13 +803,14 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
 
     assert isinstance(result, ToolExecutionResult)
     assert provider.executed_tool_names == []
+    assert len(wrapped_callback.calls) == 1
     assert "hasn't run yet" in result.llm_message.content
     assert "safety_acknowledgement" not in result.llm_message.content
 
@@ -841,7 +850,7 @@ async def test_safety_confirmation_completed_string_result_acknowledged() -> Non
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -899,7 +908,7 @@ async def test_safety_confirmation_failed_durable_execution_acknowledged() -> No
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
         taint_tracker=turn_taint_tracker,
@@ -951,7 +960,7 @@ async def test_original_tool_call_arguments_not_mutated() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )

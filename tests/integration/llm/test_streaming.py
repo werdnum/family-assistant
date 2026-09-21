@@ -46,6 +46,7 @@ a single, consistent interface for all providers.
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -123,7 +124,7 @@ async def llm_client_factory() -> (  # type: ignore[misc]
     # Clean up all created clients
     for client in created_clients:
         if hasattr(client, "close"):
-            await client.close()  # type: ignore[attr-defined]
+            await client.close()
 
 
 @pytest_asyncio.fixture
@@ -351,7 +352,12 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
         "provider": "openai",
         "model": "gpt-5.6-sol",
         "api_key": os.getenv("OPENAI_API_KEY", "test-openai-key"),
-        "model_parameters": {"gpt-5.6-sol": {"reasoning_effort": "low"}},
+        "model_parameters": {
+            "gpt-5.6-sol": {
+                "reasoning_effort": "low",
+                "use_responses_api": True,
+            }
+        },
     })
     messages = [create_user_message("What is 42 times 17? Use the calculate tool.")]
 
@@ -372,6 +378,144 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     provider_metadata = done_event.metadata.get("provider_metadata")
     assert isinstance(provider_metadata, dict)
     assert "openai_response_output" in provider_metadata
+    assert provider_metadata["openai_response_stored"] is False
+
+    continuation_messages = [
+        *messages,
+        create_assistant_message(
+            content=None,
+            tool_calls=tool_calls,
+            provider_metadata=provider_metadata,
+        ),
+        create_tool_message(
+            tool_call_id=tool_calls[0].id,
+            content="714",
+            name=tool_calls[0].function.name,
+        ),
+    ]
+    continuation_done_event = None
+    async for event in client.generate_response_stream(
+        continuation_messages, tools=sample_tools, tool_choice="auto"
+    ):
+        if event.type == "done":
+            continuation_done_event = event
+
+    assert continuation_done_event is not None
+
+
+@pytest.fixture
+def require_thinking_cassette(llm_record_mode: str) -> None:
+    """Name the missing recording instead of failing on a downstream assertion.
+
+    Without this, replay in a network-less CI fails on `assert tool_calls`: the
+    connection error is swallowed and the stream yields nothing, so the failure
+    reads as a model that declined to call a tool rather than as a cassette that
+    needs recording. Synchronous on purpose -- the filesystem check must not run
+    on the event loop.
+    """
+    cassette = Path(
+        "tests/cassettes/llm/test_anthropic_streaming_thinking_round_trip.yaml"
+    )
+    if llm_record_mode == "replay" and not cassette.exists():
+        pytest.fail(
+            f"Cassette missing at {cassette}. Record with LLM_RECORD_MODE=record."
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("require_thinking_cassette")
+async def test_anthropic_streaming_thinking_round_trip(
+    sample_tools: list[ToolDefinition],
+    llm_record_mode: str,
+) -> None:
+    """Thinking blocks survive a tool-use continuation and are replayed verbatim.
+
+    The signature on a thinking block is verified by the API, so a continuation
+    that replays a mangled block is rejected. Getting a 200 back on the second
+    call is what proves the round trip preserved them byte-for-byte.
+    """
+    # Gated on the record mode rather than on CI, because the committed cassette
+    # replays without a credential. Skipping whenever CI lacks an Anthropic key
+    # would mean this assertion -- the whole reason the cassette exists -- never
+    # actually runs in CI.
+    if llm_record_mode != "replay" and not os.getenv("ANTHROPIC_API_KEY"):
+        pytest.skip("Recording this test requires ANTHROPIC_API_KEY")
+
+    # Pinned to the shipped thinking shape, which is what this test exists to
+    # exercise: `adaptive` is what the engineer profile sends, and the
+    # `enabled` + `budget_tokens` form this test used to pass with a 400 on that
+    # generation. The cassette is recorded against `claude-sonnet-5` rather than
+    # the `claude-opus-5` the profile now runs -- the two take the identical
+    # request shape and return identically structured signed thinking blocks, so
+    # the capture-and-replay mechanism under test is the same one either way,
+    # and re-recording needs a live Anthropic credential. Re-record against
+    # `claude-opus-5` the next time this cassette is regenerated.
+    #
+    # `display` is the one field set here that the profiles do not set. This
+    # generation defaults it to `omitted`, which still returns thinking blocks
+    # carrying the signature -- so capture and replay, the mechanism under test,
+    # behave identically either way -- but their text is empty, and a turn with
+    # no thinking text cannot show that reasoning stays out of the reply. The
+    # profiles leave the default because nothing renders reasoning text: the
+    # `thinking` stream events are ignored by the processing loop and by the web
+    # and iOS transports, so paying for summaries would buy nothing.
+    client = LLMClientFactory.create_client({
+        "provider": "anthropic",
+        "model": "claude-sonnet-5",
+        "api_key": os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key"),
+        "model_parameters": {
+            "claude-sonnet-5": {
+                "thinking": {"type": "adaptive", "display": "summarized"},
+                "output_config": {"effort": "high"},
+                "max_tokens": 16000,
+            }
+        },
+    })
+    # Adaptive thinking decides per turn whether to think at all, and skips it on
+    # a single multiplication -- which recorded a turn with no thinking block to
+    # replay. Multi-step arithmetic earns the thinking this test needs on the
+    # large majority of runs, but the decision is still the model's: a re-record
+    # that lands on a no-thinking turn fails here rather than committing a
+    # cassette with nothing to replay, and should just be run again.
+    messages = [
+        create_user_message(
+            "A tank holds 4200 litres. It drains at 17 litres per minute for 42 "
+            "minutes, then is refilled at 23 litres per minute for 31 minutes. "
+            "Work out the final volume, using the calculate tool for the arithmetic."
+        )
+    ]
+
+    tool_calls = []
+    thinking_chunks = []
+    content_chunks = []
+    done_event = None
+    async for event in client.generate_response_stream(
+        messages, tools=sample_tools, tool_choice="auto"
+    ):
+        if event.type == "tool_call" and event.tool_call:
+            tool_calls.append(event.tool_call)
+        elif event.type == "thinking" and event.content:
+            thinking_chunks.append(event.content)
+        elif event.type == "content" and event.content:
+            content_chunks.append(event.content)
+        elif event.type == "done":
+            done_event = event
+
+    assert tool_calls, "expected the model to call a tool"
+    assert thinking_chunks, "expected thinking deltas to stream as thinking events"
+    # Reasoning must never be folded into the assistant's reply.
+    assert not any(chunk in "".join(content_chunks) for chunk in thinking_chunks)
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    provider_metadata = done_event.metadata.get("provider_metadata")
+    assert isinstance(provider_metadata, dict)
+    assert provider_metadata["provider"] == "anthropic"
+    thinking_blocks = provider_metadata["thinking_blocks"]
+    assert thinking_blocks, "expected thinking blocks captured for replay"
+    assert all("signature" in block for block in thinking_blocks)
 
     continuation_messages = [
         *messages,
@@ -602,7 +746,7 @@ async def test_streaming_content_accumulation(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_basic_streaming_gemini(
@@ -654,7 +798,7 @@ async def test_basic_streaming_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_streaming_with_system_message_gemini(
@@ -708,7 +852,7 @@ async def test_streaming_with_system_message_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_streaming_with_tool_calls_gemini(
@@ -767,7 +911,7 @@ async def test_streaming_with_tool_calls_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_streaming_error_handling_gemini(
@@ -812,7 +956,7 @@ async def test_streaming_error_handling_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_streaming_with_multi_turn_conversation_gemini(
@@ -857,7 +1001,7 @@ async def test_streaming_with_multi_turn_conversation_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_streaming_reasoning_info_gemini(
@@ -914,7 +1058,7 @@ async def test_streaming_reasoning_info_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.8-flash"),
     ],
 )
 async def test_google_streaming_with_multiturns_and_tool_calls(
@@ -987,7 +1131,12 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
     error_occurred = False
     error_message = None
 
-    try:
+    async def consume_stream() -> None:
+        nonlocal accumulated_content
+        nonlocal done_event_received
+        nonlocal error_message
+        nonlocal error_occurred
+
         async for event in client.generate_response_stream(
             messages, tools=sample_tools, tool_choice="auto"
         ):
@@ -998,6 +1147,9 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
             elif event.type == "error":
                 error_occurred = True
                 error_message = event.error
+
+    try:
+        await consume_stream()
     except Exception as e:
         error_occurred = True
         error_message = str(e)
@@ -1058,7 +1210,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
         "replays_directory": "tests/cassettes/gemini",
     }
 
-    client = await llm_client_factory("google", "gemini-3.6-flash", None, debug_config)
+    client = await llm_client_factory("google", "gemini-3.8-flash", None, debug_config)
     assert isinstance(client, GoogleGenAIClient)
 
     # Create conversation with tool calls - this triggers the buggy code path
@@ -1086,7 +1238,10 @@ async def test_google_streaming_pydantic_validation_reproducer(
     accumulated_content = ""
     done_received = False
 
-    try:
+    async def consume_stream() -> None:
+        nonlocal accumulated_content
+        nonlocal done_received
+
         async for event in client.generate_response_stream(
             messages, tools=sample_tools, tool_choice="auto"
         ):
@@ -1095,11 +1250,13 @@ async def test_google_streaming_pydantic_validation_reproducer(
             elif event.type == "done":
                 done_received = True
             elif event.type == "error":
-                # If we get an error event, fail the test
                 pytest.fail(
                     f"Streaming error event received: {event.error}\n"
                     f"This is likely the Pydantic validation error due to camelCase keys"
                 )
+
+    try:
+        await consume_stream()
     except Exception as e:
         error_msg = str(e)
         # Check if this is the Pydantic validation error we expect

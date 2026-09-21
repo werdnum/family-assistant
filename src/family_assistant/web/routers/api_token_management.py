@@ -6,7 +6,7 @@ from dateutil import parser as dateutil_parser
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from family_assistant.storage import api_tokens as api_tokens_storage
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_active_user, get_db
 from family_assistant.web.models import (
     ApiTokenCreateRequest,
@@ -28,7 +28,7 @@ router = APIRouter()
 async def create_api_token(
     token_data: ApiTokenCreateRequest,
     current_user: Annotated[dict, Depends(get_current_active_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> ApiTokenCreateResponse:
     """
     Creates a new API token for the currently authenticated user (via OIDC).
@@ -121,7 +121,7 @@ async def create_api_token(
 )
 async def list_api_tokens(
     current_user: Annotated[dict, Depends(get_current_active_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> list[dict]:
     """
     Lists all API tokens for the currently authenticated user.
@@ -161,7 +161,7 @@ async def list_api_tokens(
 async def revoke_api_token(
     token_id: int,
     current_user: Annotated[dict, Depends(get_current_active_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> None:
     """
     Revokes an API token by ID.

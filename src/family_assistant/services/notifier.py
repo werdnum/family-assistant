@@ -4,7 +4,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 # APNs notification categories the iOS client registers actions/handling for.
 CONFIRMATION_CATEGORY = "FAMILY_ASSISTANT_CONFIRMATION"
@@ -62,7 +62,7 @@ class Notifier(Protocol):
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:

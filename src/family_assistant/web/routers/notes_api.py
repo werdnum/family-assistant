@@ -4,11 +4,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.memory.invariants import (
+    MemoryStoreRevisionConflict,
+    MemoryWriteError,
+)
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
     NoteModel,
     NoteNotFoundError,
+    NoteReadPolicy,
     NoteWritePolicy,
 )
 from family_assistant.web.dependencies import get_db
@@ -32,19 +37,21 @@ class NoteRequest(NoteModel):
 
 @notes_api_router.get("/")
 async def list_notes(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> list[NoteModel]:
     """Return all notes."""
-    notes = await db_context.notes.get_all(visibility_grants=None)
+    notes = await db_context.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     return notes
 
 
 @notes_api_router.get("/{title}")
 async def get_note(
-    title: str, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    title: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> NoteModel:
     """Return a note by title."""
-    note = await db_context.notes.get_by_title(title, visibility_grants=None)
+    note = await db_context.notes.get_by_title(
+        title, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     if not note:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
     return note
@@ -52,7 +59,7 @@ async def get_note(
 
 @notes_api_router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_or_update_note(
-    note: NoteRequest, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    note: NoteRequest, db_context: Annotated[Database, Depends(get_db)]
 ) -> dict[str, str]:
     """Create or update a note."""
     # If original_title is provided, this is an edit operation with potential rename
@@ -69,6 +76,12 @@ async def create_or_update_note(
                 # Admin management surface: bypasses visibility confinement by design.
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
+        except MemoryStoreRevisionConflict as err:
+            raise HTTPException(status.HTTP_409_CONFLICT, err.message) from err
+        except MemoryWriteError as err:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, err.message
+            ) from err
         except NoteNotFoundError as err:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(err)) from err
         except DuplicateNoteError as err:
@@ -91,6 +104,12 @@ async def create_or_update_note(
                 # Admin management surface: bypasses visibility confinement by design.
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
+        except MemoryStoreRevisionConflict as err:
+            raise HTTPException(status.HTTP_409_CONFLICT, err.message) from err
+        except MemoryWriteError as err:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, err.message
+            ) from err
         except IntegrityError as err:
             # Handle race condition where title was taken between check and create
             raise HTTPException(
@@ -104,10 +123,13 @@ async def create_or_update_note(
 
 @notes_api_router.delete("/{title}")
 async def delete_note(
-    title: str, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    title: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> dict[str, str]:
     """Delete a note by title."""
-    deleted = await db_context.notes.delete(title)
+    try:
+        deleted = await db_context.notes.delete(title)
+    except MemoryWriteError as err:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, err.message) from err
     if not deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
     logger.info("Deleted note %s", title)

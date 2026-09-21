@@ -10,7 +10,12 @@ from family_assistant.actions import (
     WakeLlmProfileError,
     assert_wake_llm_allowed,
 )
+from family_assistant.scripting.apis.keychute import (
+    get_keychute_config,
+    keychute_external_function_names,
+)
 from family_assistant.scripting.validator import ScriptValidator
+from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.tools.stored_scripts import (
     AUTOMATION_RUNTIME_GLOBALS,
     validate_script_action_config,
@@ -21,7 +26,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.config_models import KeychuteConfig
+    from family_assistant.storage.database import Database
     from family_assistant.storage.models import Automation
     from family_assistant.storage.repositories.automations import AutomationType
     from family_assistant.storage.types import ActionConfig
@@ -320,7 +326,7 @@ For script:
 
 # Helper function to fetch and validate an automation exists
 async def _get_automation_or_error(
-    db_context: DatabaseContext,
+    db_context: Database,
     automation_id: int,
     automation_type: str,
 ) -> Automation:
@@ -376,6 +382,7 @@ async def _validate_script_code_with_provider(
     tools_provider: ToolsProvider | None,
     script_code: str,
     input_names: list[str],
+    keychute_config: KeychuteConfig | None = None,
 ) -> str | None:
     tool_definitions = None
     if tools_provider:
@@ -385,6 +392,7 @@ async def _validate_script_code_with_provider(
     validation = validator.validate(
         script_code,
         input_names=input_names,
+        extra_external_functions=keychute_external_function_names(keychute_config),
         include_tools_api=tools_provider is not None,
     )
     if not validation.is_valid:
@@ -393,10 +401,11 @@ async def _validate_script_code_with_provider(
 
 
 async def validate_action_scripts_with_provider(
-    db_context: DatabaseContext,
+    db_context: Database,
     tools_provider: ToolsProvider | None,
     # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],
+    keychute_config: KeychuteConfig | None = None,
 ) -> str | None:
     """Validate a script action_config's code against a profile's tool set.
 
@@ -415,6 +424,7 @@ async def validate_action_scripts_with_provider(
             tools_provider,
             script_code,
             input_names=sorted(AUTOMATION_RUNTIME_GLOBALS),
+            keychute_config=keychute_config,
         )
 
     script_name = action_config.get("script_name")
@@ -440,6 +450,7 @@ async def validate_action_scripts_with_provider(
         tools_provider,
         stored.script_code,
         input_names=sorted(input_names),
+        keychute_config=keychute_config,
     )
     if error:
         return f"Stored script '{script_name}': {error}"
@@ -461,7 +472,10 @@ async def validate_action_scripts(
     ):
         tools_provider = exec_context.processing_service.tools_provider
     return await validate_action_scripts_with_provider(
-        exec_context.db_context, tools_provider, action_config
+        exec_context.db_context,
+        tools_provider,
+        action_config,
+        keychute_config=get_keychute_config(exec_context),
     )
 
 
@@ -492,7 +506,8 @@ async def create_automation_tool(
     Returns:
         ToolResult with structured data containing automation ID and details
     """
-    try:
+
+    async def create_automation() -> ToolResult:
         # Validate automation_type first
         validated_type = _validate_automation_type(automation_type)
 
@@ -561,6 +576,10 @@ async def create_automation_tool(
                 condition_script=condition_script,
                 processing_profile_id=exec_context.processing_profile_id,
                 created_by_user_id=exec_context.user_id,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
+                definition_gate=exec_context.definition_gate_outcome,
             )
 
             # Return structured data with human-readable text
@@ -592,6 +611,10 @@ async def create_automation_tool(
                 timezone=exec_context.timezone,
                 processing_profile_id=exec_context.processing_profile_id,
                 created_by_user_id=exec_context.user_id,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
+                definition_gate=exec_context.definition_gate_outcome,
             )
 
             # Get the automation to show next scheduled time
@@ -615,6 +638,8 @@ async def create_automation_tool(
             text = f"Created schedule automation '{name}' (ID: {automation_id}). Next run: {next_run}"
             return ToolResult(text=text, data=result_data)
 
+    try:
+        return await create_automation()
     except ValueError as e:
         logger.error(f"Validation error creating automation: {e}")
         error_msg = str(e)
@@ -641,7 +666,8 @@ async def list_automations_tool(
     Returns:
         ToolResult with structured list of automations
     """
-    try:
+
+    async def list_automations() -> ToolResult:
         # Validate automation_type if provided
         type_filter: AutomationType | None = (
             _validate_automation_type(automation_type) if automation_type else None
@@ -701,6 +727,8 @@ async def list_automations_tool(
         text = "\n".join(lines)
         return ToolResult(text=text, data={"automations": automation_list})
 
+    try:
+        return await list_automations()
     except Exception as e:
         logger.exception(f"Error listing automations: {e}")
         error_msg = f"Error listing automations: {e}"
@@ -723,7 +751,8 @@ async def get_automation_tool(
     Returns:
         ToolResult with formatted automation details and structured data
     """
-    try:
+
+    async def get_automation() -> ToolResult:
         type_param = _validate_automation_type(automation_type)
 
         automation = await exec_context.db_context.automations.get_by_id(
@@ -816,6 +845,8 @@ async def get_automation_tool(
         text = "\n".join(lines)
         return ToolResult(text=text, data=result_data)
 
+    try:
+        return await get_automation()
     except Exception as e:
         logger.exception(f"Error getting automation: {e}")
         error_msg = f"Error getting automation: {e}"
@@ -846,7 +877,8 @@ async def update_automation_tool(
     Returns:
         ToolResult with success or error message and structured data
     """
-    try:
+
+    async def update_automation() -> ToolResult:
         type_param = _validate_automation_type(automation_type)
 
         # Verify exists
@@ -954,6 +986,10 @@ async def update_automation_tool(
                 ),
                 one_time=existing.one_time or False,
                 enabled=existing.enabled,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
+                definition_gate=exec_context.definition_gate_outcome,
                 condition_script=condition_script,
                 processing_profile_id=restamp_profile_id,
                 created_by_user_id=restamp_user_id,
@@ -982,6 +1018,10 @@ async def update_automation_tool(
                     update_kwargs["created_by_user_id"] = restamp_user_id
             if description is not None:
                 update_kwargs["description"] = description
+            update_kwargs["definition_taint_state"] = authoring_taint_state(
+                exec_context.taint_tracker
+            )
+            update_kwargs["definition_gate"] = exec_context.definition_gate_outcome
 
             success = await exec_context.db_context.schedule_automations.update(
                 **update_kwargs
@@ -993,6 +1033,8 @@ async def update_automation_tool(
             error_msg = f"Failed to update automation {automation_id}"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+    try:
+        return await update_automation()
     except ValueError as e:
         logger.error(f"Validation error updating automation: {e}")
         error_msg = str(e)
@@ -1019,7 +1061,8 @@ async def enable_automation_tool(
     Returns:
         ToolResult with success or error message and structured data
     """
-    try:
+
+    async def enable_automation() -> ToolResult:
         type_param = _validate_automation_type(automation_type)
 
         # Get the automation to retrieve its conversation_id
@@ -1041,6 +1084,8 @@ async def enable_automation_tool(
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+    try:
+        return await enable_automation()
     except ValueError as e:
         logger.error(f"Validation error enabling automation: {e}")
         error_msg = str(e)
@@ -1067,7 +1112,8 @@ async def disable_automation_tool(
     Returns:
         ToolResult with success or error message and structured data
     """
-    try:
+
+    async def disable_automation() -> ToolResult:
         type_param = _validate_automation_type(automation_type)
 
         # Get the automation to retrieve its conversation_id
@@ -1089,6 +1135,8 @@ async def disable_automation_tool(
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+    try:
+        return await disable_automation()
     except ValueError as e:
         logger.error(f"Validation error disabling automation: {e}")
         error_msg = str(e)
@@ -1115,7 +1163,8 @@ async def delete_automation_tool(
     Returns:
         ToolResult with success or error message and structured data
     """
-    try:
+
+    async def delete_automation() -> ToolResult:
         type_param = _validate_automation_type(automation_type)
 
         # Get the automation to retrieve its conversation_id
@@ -1135,6 +1184,8 @@ async def delete_automation_tool(
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+    try:
+        return await delete_automation()
     except ValueError as e:
         logger.error(f"Validation error deleting automation: {e}")
         error_msg = str(e)
@@ -1161,7 +1212,8 @@ async def get_automation_stats_tool(
     Returns:
         ToolResult with formatted statistics and structured data
     """
-    try:
+
+    async def get_automation_stats() -> ToolResult:
         type_param = _validate_automation_type(automation_type)
 
         # First verify the automation exists
@@ -1234,6 +1286,8 @@ async def get_automation_stats_tool(
         text = "\n".join(lines)
         return ToolResult(text=text, data=stats_data)
 
+    try:
+        return await get_automation_stats()
     except Exception as e:
         logger.exception(f"Error getting automation stats: {e}")
         error_msg = f"Error getting automation stats: {e}"

@@ -7,7 +7,7 @@ import pytest
 
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -306,26 +306,26 @@ result = {
 }
 result
 """
-        async with DatabaseContext(engine=db_engine) as db:  # type: ignore[arg-type]
-            context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="tz-test",
-                user_name="tester",
-                turn_id="turn-tz",
-                db_context=db,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("America/New_York"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db = Database(engine=db_engine)  # type: ignore[arg-type]
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="tz-test",
+            user_name="tester",
+            turn_id="turn-tz",
+            db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("America/New_York"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
-            result = await engine.evaluate_async(script, execution_context=context)
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
+        result = await engine.evaluate_async(script, execution_context=context)
 
         assert "America/New_York" in result["now_tz"]
         assert "America/New_York" in result["ts_tz"]

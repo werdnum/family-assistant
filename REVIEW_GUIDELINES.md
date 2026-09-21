@@ -115,6 +115,14 @@ give rare scenarios ideal behavior when reasonable behavior suffices.
 - **Treat machinery-edge-case findings as a design signal.** When review keeps finding new edge
   cases inside defensive machinery rather than in real user-facing behavior, step back and simplify
   or centralize the design. Do not patch each machinery edge case with more state.
+- **Challenge unrequested promises before demanding proof.** If the author volunteered a guarantee,
+  coverage claim, or attestation that the requested outcome does not require, first ask whether the
+  claim should be withdrawn or narrowed. Do not demand evaluators, evidence ledgers, signatures, or
+  enforcement machinery merely to rescue an unnecessary promise.
+- **Track finding lineage on rereview.** Distinguish a defect in the original change from a defect
+  in code added solely for earlier feedback. When the latter would require another defensive layer,
+  treat that as a scope checkpoint: recommend deletion, narrowing, reuse, or a bounded residual, and
+  require the decision owner's approval before prescribing an expanded design.
 - **Machinery vs. a sentence.** When the honest resolution is to document an accepted residual
   behavior, prefer requiring that documentation over requiring new synchronization, classification,
   or plumbing. A *silent* gap is a finding; a documented, reasoned acceptance is not.
@@ -127,6 +135,58 @@ give rare scenarios ideal behavior when reasonable behavior suffices.
   with an explicit, logged operator override to unconditional gates; do not demand that a feature
   hard-refuse configurations an informed operator may legitimately choose. Do flag *silent* insecure
   defaults — the difference is whether the operator made a visible, deliberate choice.
+- **Don't substitute your judgement for the operator's or developer's.** The reviewer's job is to
+  surface consequences the author may not have weighed: state the risk, the exposure, and who can
+  trigger it. Which trade-off to accept is the decision owner's call — the developer, or the
+  operator for operator-owned posture. Once a finding has been rejected with a recorded rationale
+  that reflects the decision owner's acceptance (not merely an implementing agent's own judgement),
+  that is a valid resolution — do not re-raise it in later rounds, or re-derive the same objection
+  from a different angle, unless you have new facts that invalidate the recorded rationale.
+
+## Chokepoints over Enumeration
+
+A defense or invariant that depends on *finding every X* — every call site, every tool that can
+write, every path that renders untrusted text — is a losing battle: future changes add new
+instances, and nothing forces anyone to notice. Review should push designs toward **enforcement
+chokepoints**: a single place all instances necessarily pass through (a shared serializer, a
+required registry, a type the checker enforces, a conformance/ast-grep rule), so that a missed
+instance is a build failure rather than a silent hole.
+
+- **Flag the class, not instance N+1.** When you notice you are reporting the Nth missed instance of
+  the same pattern, the finding worth writing is the class-level one: name the pattern and ask for a
+  chokepoint that makes future instances impossible or loudly visible. A list of per-instance
+  patches leaves the next instance to whoever isn't paying attention.
+- **Gates need a satisfiable path.** An enforcement mechanism that blocks an ordinary, legitimate
+  workflow with no reasonable path through it does not produce security — it produces the operator
+  turning the mechanism off. When reviewing a proposed gate, check the common-case path through it,
+  not just the attack it stops.
+- **Prefer mechanisms whose neglect degrades availability, not safety.** Mechanisms rot: registries
+  go stale, allowlists lag behind new features. Prefer designs where rot makes something visibly
+  fail or get blocked (annoying, gets fixed) over designs where rot silently widens access (quiet,
+  gets exploited). Fail-closed plus a loud error beats fail-open plus a TODO.
+- **Relaxations should be evidence-gated, not speculative.** When a design proposes loosening a
+  control later ("we can allow this once X proves safe"), ask for the measurable condition that
+  triggers the relaxation, not for the relaxation to be pre-built.
+
+## Reviewing Design Documents
+
+Design documents in `docs/design/` set direction at approach level; the implementing PRs carry the
+construction detail. Reviewing a design doc as though it were the implementation inverts that and
+produces prose specifications that drift from the code.
+
+- **Respond to edge cases by increasing altitude.** When you find a genuine edge case in a design
+  doc, the right resolution is usually a more general statement of the rule so the general case
+  covers it — not an added paragraph specifying that case's handling. If the rule cannot be restated
+  to cover the edge case, that is a real design finding; a growing list of per-case carve-outs is
+  the design signal described under Proportionality.
+- **Defer construction detail to the implementing PR.** Field names, serialization formats, cache
+  keys, async plumbing, exact registry contents: the implementing PR is where these are verified by
+  the type checker, tests, and conformance rules, and where review of them is effective. Prose in a
+  design doc has no enforcement mechanism, so detail pinned there is a spec that drifts. Flag a
+  missing *approach*; do not demand a missing *specification*.
+- **Review the work plan for verifiability, not completeness of detail.** A milestone that names its
+  outcome and how it will be verified (tests, conformance rule, measurement) is complete, even if it
+  leaves the construction open. The implementing PR gets its own review.
 
 ## Severity Levels
 

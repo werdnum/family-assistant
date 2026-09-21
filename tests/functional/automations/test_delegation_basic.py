@@ -24,7 +24,7 @@ from family_assistant.processing import (
 )
 from family_assistant.processing.types import DelegationSecurityLevel
 from family_assistant.storage import message_history_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
@@ -51,6 +51,7 @@ from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
     get_last_message_text,
+    last_real_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,8 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 logger.debug("delegate_request_matcher: no messages, returning False")
                 return False
 
-            last_message_role = messages[-1].role
+            last_message = last_real_message(messages)
+            last_message_role = last_message.role if last_message else None
             if last_message_role != "user":
                 logger.debug(
                     f"delegate_request_matcher: last message role is '{last_message_role}', not 'user'. Returning False."
@@ -356,30 +358,48 @@ def create_tools_provider(
 
 
 @pytest_asyncio.fixture
-async def primary_processing_service(
+async def primary_processing_service_factory(
     primary_service_config: ProcessingServiceConfig,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
     dummy_prompts: dict[str, str],
+) -> Callable[[bool | None], Awaitable[ProcessingService]]:
+    """Build the delegating profile around a primary LLM with a given tool arg.
+
+    A factory rather than one service whose client is swapped: the client a
+    profile runs on is fixed when the service is built, so a test that wants a
+    different one builds a different service.
+    """
+
+    async def _factory(confirm_delegation_arg: bool | None) -> ProcessingService:
+        tools_provider = create_tools_provider(primary_service_config.tools_config)
+        await tools_provider.get_tool_definitions()  # Initialize
+
+        known_users_provider = KnownUsersContextProvider(
+            chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME}, prompts=dummy_prompts
+        )
+
+        return ProcessingService(
+            llm_client=primary_llm_mock_factory(confirm_delegation_arg),
+            tools_provider=tools_provider,
+            service_config=primary_service_config,
+            context_providers=[known_users_provider],
+            server_url="http://test.server",
+            app_config=AppConfig(),
+            credential_resolvers=None,
+            api_backend=None,
+        )
+
+    return _factory
+
+
+@pytest_asyncio.fixture
+async def primary_processing_service(
+    primary_processing_service_factory: Callable[
+        [bool | None], Awaitable[ProcessingService]
+    ],
 ) -> ProcessingService:
     # Default to no confirm_delegation argument for the primary LLM's tool call
-    llm_mock = primary_llm_mock_factory(None)
-    tools_provider = create_tools_provider(primary_service_config.tools_config)
-    await tools_provider.get_tool_definitions()  # Initialize
-
-    known_users_provider = KnownUsersContextProvider(
-        chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME}, prompts=dummy_prompts
-    )
-
-    return ProcessingService(
-        llm_client=llm_mock,
-        tools_provider=tools_provider,
-        service_config=primary_service_config,
-        context_providers=[known_users_provider],
-        server_url="http://test.server",
-        app_config=AppConfig(),
-        credential_resolvers=None,
-        api_backend=None,
-    )
+    return await primary_processing_service_factory(None)
 
 
 @pytest_asyncio.fixture
@@ -417,7 +437,7 @@ async def specialized_processing_service(
 
 
 async def assert_message_history_contains(
-    db_context: DatabaseContext,
+    db_context: Database,
     conversation_id: str,
     expected_role: str,
     expected_content_substring: str | None = None,
@@ -474,24 +494,22 @@ async def assert_message_history_contains(
 async def test_delegation_unrestricted_target_no_forced_confirm(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
+    primary_processing_service_factory: Callable[
+        [bool | None], Awaitable[ProcessingService]
+    ],
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
     ],  # This is a factory
     mock_confirmation_callback: AsyncMock,
-    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
     confirm_tool_arg: bool | None,
 ) -> None:
     """Target is 'unrestricted', tool call confirm_delegation is False or omitted. Expect no confirmation."""
     logger.info("--- Test: Unrestricted Target, No Forced Confirmation ---")
 
     # Fixtures are already resolved
-    awaited_primary_service = primary_processing_service
+    awaited_primary_service = await primary_processing_service_factory(confirm_tool_arg)
     awaited_mock_confirmation_callback = mock_confirmation_callback
     awaited_specialized_processing_service_factory = specialized_processing_service
-
-    # Reconfigure primary LLM mock for this specific tool argument
-    awaited_primary_service.llm_client = primary_llm_mock_factory(confirm_tool_arg)
 
     target_service = await awaited_specialized_processing_service_factory(
         DelegationSecurityLevel.UNRESTRICTED
@@ -511,19 +529,19 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await awaited_primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg1",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=awaited_mock_confirmation_callback,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await awaited_primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg1",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=awaited_mock_confirmation_callback,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -532,45 +550,43 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     awaited_mock_confirmation_callback.assert_not_called()
 
     # DB Assertions
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await assert_message_history_contains(
-            db_context, str(TEST_CHAT_ID), "user", user_query
-        )
-        await assert_message_history_contains(
-            db_context, str(TEST_CHAT_ID), "assistant", None, "delegate_to_service"
-        )
-        # Check for the specialized service's response being part of the tool result for delegate_to_service
-        # This is a bit indirect. The final assistant message from primary should contain it.
-        await assert_message_history_contains(
-            db_context,
-            str(TEST_CHAT_ID),
-            "assistant",
-            f"Response from {SPECIALIZED_PROFILE_ID}",
-        )
+    db_context = Database(engine=db_engine)
+    await assert_message_history_contains(
+        db_context, str(TEST_CHAT_ID), "user", user_query
+    )
+    await assert_message_history_contains(
+        db_context, str(TEST_CHAT_ID), "assistant", None, "delegate_to_service"
+    )
+    # Check for the specialized service's response being part of the tool result for delegate_to_service
+    # This is a bit indirect. The final assistant message from primary should contain it.
+    await assert_message_history_contains(
+        db_context,
+        str(TEST_CHAT_ID),
+        "assistant",
+        f"Response from {SPECIALIZED_PROFILE_ID}",
+    )
 
 
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_granted(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
+    primary_processing_service_factory: Callable[
+        [bool | None], Awaitable[ProcessingService]
+    ],
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
     ],  # This is a factory
     mock_confirmation_callback: AsyncMock,
-    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
 ) -> None:
     """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
     logger.info("--- Test: Confirm Target, Confirmation Granted ---")
 
     # Fixtures are already resolved
-    awaited_primary_service = primary_processing_service
+    # Explicitly set confirm_delegation=False
+    awaited_primary_service = await primary_processing_service_factory(False)
     awaited_mock_confirmation_callback = mock_confirmation_callback
     awaited_specialized_processing_service_factory = specialized_processing_service
-
-    awaited_primary_service.llm_client = primary_llm_mock_factory(
-        False
-    )  # Explicitly set confirm_delegation=False
     awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
         kind="approved"
     )
@@ -604,19 +620,19 @@ async def test_delegation_confirm_target_granted(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await awaited_primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg2",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=awaited_mock_confirmation_callback,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await awaited_primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg2",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=awaited_mock_confirmation_callback,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -636,22 +652,21 @@ async def test_delegation_confirm_target_granted(
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_denied(
     db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,
+    primary_processing_service_factory: Callable[
+        [bool | None], Awaitable[ProcessingService]
+    ],
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
     ],  # This is a factory
     mock_confirmation_callback: AsyncMock,
-    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
 ) -> None:
     """Target is 'confirm', user denies confirmation."""
     logger.info("--- Test: Confirm Target, Confirmation Denied ---")
 
     # Fixtures are already resolved
-    awaited_primary_service = primary_processing_service
+    awaited_primary_service = await primary_processing_service_factory(False)
     awaited_mock_confirmation_callback = mock_confirmation_callback
     awaited_specialized_processing_service_factory = specialized_processing_service
-
-    awaited_primary_service.llm_client = primary_llm_mock_factory(False)
     awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
         kind="rejected"
     )
@@ -677,19 +692,19 @@ async def test_delegation_confirm_target_denied(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await awaited_primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg3",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=awaited_mock_confirmation_callback,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await awaited_primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg3",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=awaited_mock_confirmation_callback,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -740,19 +755,19 @@ async def test_delegation_blocked_target(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await awaited_primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg4",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=awaited_mock_confirmation_callback,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await awaited_primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg4",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=awaited_mock_confirmation_callback,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
@@ -766,24 +781,22 @@ async def test_delegation_blocked_target(
 async def test_delegation_unrestricted_confirm_arg_granted(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    primary_processing_service: ProcessingService,  # Uses primary_llm_mock_factory(None) by default
+    primary_processing_service_factory: Callable[
+        [bool | None], Awaitable[ProcessingService]
+    ],
     specialized_processing_service: Callable[
         [str], Awaitable[ProcessingService]
     ],  # This is a factory
     mock_confirmation_callback: AsyncMock,
-    primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
 ) -> None:
     """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
     logger.info("--- Test: Unrestricted Target, Confirm Argument True, Granted ---")
 
     # Fixtures are already resolved
-    awaited_primary_service = primary_processing_service
+    # confirm_delegation=True in tool call
+    awaited_primary_service = await primary_processing_service_factory(True)
     awaited_mock_confirmation_callback = mock_confirmation_callback
     awaited_specialized_processing_service_factory = specialized_processing_service
-
-    awaited_primary_service.llm_client = primary_llm_mock_factory(
-        True
-    )  # confirm_delegation=True in tool call
     awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
         kind="approved"
     )
@@ -806,19 +819,19 @@ async def test_delegation_unrestricted_confirm_arg_granted(
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await awaited_primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg5",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=awaited_mock_confirmation_callback,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await awaited_primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg5",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=awaited_mock_confirmation_callback,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None

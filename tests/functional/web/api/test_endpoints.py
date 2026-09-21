@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from playwright.async_api import Page
 
 from family_assistant.assistant import Assistant
 from family_assistant.web.app_creator import app as fastapi_app
@@ -51,6 +52,43 @@ AUTH_UI_ENDPOINTS = [
 ALL_UI_ENDPOINTS_TO_TEST = BASE_UI_ENDPOINTS
 if AUTH_ENABLED:
     ALL_UI_ENDPOINTS_TO_TEST.extend(AUTH_UI_ENDPOINTS)
+
+
+async def _test_navigation_link(
+    test_page: Page,
+    base_url: str,
+    link_info: dict[str, str],
+    failures: list[str],
+) -> None:
+    page_error_checker = ConsoleErrorCollector(test_page)
+    test_base_page = BasePage(test_page, base_url)
+
+    await test_base_page.navigate_to("/notes")
+    await test_base_page.wait_for_load()
+    await test_page.wait_for_selector("nav a", timeout=10000)
+
+    target_link = test_page.locator(f'nav a[href="{link_info["href"]}"]')
+    await target_link.click()
+
+    if link_info["href"] == "/chat":
+        await test_page.wait_for_selector('[data-app-ready="true"]', timeout=10000)
+        await test_page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
+    else:
+        await test_page.wait_for_load_state("domcontentloaded", timeout=10000)
+
+    current_url = test_page.url
+    if base_url not in current_url:
+        failures.append(
+            f"Navigation failed for link '{link_info['text']}' "
+            f"({link_info['href']}): URL is {current_url}"
+        )
+
+    if page_error_checker.errors:
+        failures.append(
+            f"Console errors on '{link_info['text']}' ({link_info['href']}): "
+            + ", ".join(page_error_checker.errors)
+        )
+
 
 # Extended endpoints with expected elements for Playwright tests
 BASE_UI_ENDPOINTS_WITH_ELEMENTS = [
@@ -234,7 +272,7 @@ async def test_navigation_links_work(
 
     # Collect all navigation links (data only, not element references)
     nav_links = await page.locator("nav a").all()
-    link_data = []
+    link_data: list[dict[str, str]] = []
     for link in nav_links:
         href = await link.get_attribute("href")
         text = await link.text_content()
@@ -245,51 +283,11 @@ async def test_navigation_links_work(
         pytest.fail("No internal navigation links found")
 
     # Test each link in isolation with a fresh page
-    failures = []
+    failures: list[str] = []
     for link_info in link_data:
         test_page = await browser.new_page()
         try:
-            # Set up console error checking for this page
-            page_error_checker = ConsoleErrorCollector(test_page)
-
-            test_base_page = BasePage(test_page, base_url)
-
-            # Navigate to notes page
-            await test_base_page.navigate_to("/notes")
-            await test_base_page.wait_for_load()
-            await test_page.wait_for_selector("nav a", timeout=10000)
-
-            # Find and click the specific link by href
-            target_link = test_page.locator(f'nav a[href="{link_info["href"]}"]')
-            await target_link.click()
-
-            # Wait for navigation based on destination
-            if link_info["href"] == "/chat":
-                await test_page.wait_for_selector(
-                    '[data-app-ready="true"]', timeout=10000
-                )
-                await test_page.wait_for_selector(
-                    "main .flex.flex-1.flex-col", timeout=5000
-                )
-            else:
-                # For other pages, just wait for DOM content loaded
-                # Don't use networkidle as SSE connections prevent it
-                await test_page.wait_for_load_state("domcontentloaded", timeout=10000)
-
-            # Verify navigation succeeded
-            current_url = test_page.url
-            if base_url not in current_url:
-                failures.append(
-                    f"Navigation failed for link '{link_info['text']}' "
-                    f"({link_info['href']}): URL is {current_url}"
-                )
-
-            # Check for console errors on the destination page
-            if page_error_checker.errors:
-                failures.append(
-                    f"Console errors on '{link_info['text']}' ({link_info['href']}): "
-                    + ", ".join(page_error_checker.errors)
-                )
+            await _test_navigation_link(test_page, base_url, link_info, failures)
         except Exception as e:
             failures.append(
                 f"Link '{link_info['text']}' ({link_info['href']}) failed: {e}"

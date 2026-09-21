@@ -240,6 +240,30 @@ _ATTACHMENT_METADATA_HEADER = (
 )
 
 
+def merge_attachment_metadata(
+    *sources: list[MessageAttachmentMetadata] | None,
+) -> list[MessageAttachmentMetadata]:
+    """
+    Combine attachment metadata lists, keeping the first entry seen for each id.
+
+    Earlier sources win because they are the richer ones: a trigger's own
+    attachment metadata carries filename, size and content URL, while a
+    reference synthesized from an injected content part carries little more
+    than the id, and the same attachment can legitimately appear in both.
+    """
+    merged: list[MessageAttachmentMetadata] = []
+    seen_ids: set[str] = set()
+    for source in sources:
+        for attachment in source or []:
+            attachment_id = attachment.get("attachment_id")
+            if attachment_id is not None:
+                if attachment_id in seen_ids:
+                    continue
+                seen_ids.add(attachment_id)
+            merged.append(attachment)
+    return merged
+
+
 def format_attachment_metadata_block(
     attachments: list[MessageAttachmentMetadata],
 ) -> str | None:

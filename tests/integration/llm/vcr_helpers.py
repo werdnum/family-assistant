@@ -17,6 +17,28 @@ def _normalize_json_value(value: Any) -> Any:  # noqa: ANN401
     return value
 
 
+def _strip_cache_control(value: Any) -> Any:  # noqa: ANN401
+    """Drop every ``cache_control`` directive from a request body.
+
+    Prompt-cache breakpoints tell the provider what to keep; they cannot change
+    the response, so a cassette recorded before a breakpoint moved still answers
+    the same request. Matching on them instead makes every caching change
+    invalidate unrelated recordings and demand API keys to re-record.
+
+    Stripping is safe in both directions: recordings made while the directive was
+    being sent lose it here too, so old cassettes keep matching.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _strip_cache_control(item)
+            for key, item in value.items()
+            if key != "cache_control"
+        }
+    if isinstance(value, list):
+        return [_strip_cache_control(item) for item in value]
+    return value
+
+
 # ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 # ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -27,7 +49,9 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     - Sorting keys for consistent ordering
     - Normalizing dynamic values like timestamps
     - Ensuring consistent formatting of nested structures
+    - Dropping prompt-cache breakpoints, which cannot affect the response
     """
+    body = _strip_cache_control(body)
     normalized = {}
 
     # Handle messages array
@@ -113,6 +137,11 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _log_body_mismatch(norm1: object, norm2: object) -> None:
+    if norm1 != norm2:
+        logger.debug(f"Request bodies don't match:\nNorm1: {norm1}\nNorm2: {norm2}")
+
+
 def llm_request_matcher(r1: Any, r2: Any) -> bool:  # noqa: ANN401 # VCR request objects are dynamically typed
     """
     Custom matcher for LLM API requests.
@@ -133,19 +162,16 @@ def llm_request_matcher(r1: Any, r2: Any) -> bool:  # noqa: ANN401 # VCR request
     # For POST requests, compare normalized bodies
     if r1.method == "POST":
         try:
-            body1 = json.loads(r1.body) if isinstance(r1.body, str | bytes) else r1.body
-            body2 = json.loads(r2.body) if isinstance(r2.body, str | bytes) else r2.body
+            body1, body2 = (
+                json.loads(request.body)
+                if isinstance(request.body, str | bytes)
+                else request.body
+                for request in (r1, r2)
+            )
 
             if isinstance(body1, dict) and isinstance(body2, dict):
-                norm1 = normalize_llm_request_body(body1)
-                norm2 = normalize_llm_request_body(body2)
-
-                # Log for debugging
-                if norm1 != norm2:
-                    logger.debug(
-                        f"Request bodies don't match:\nNorm1: {norm1}\nNorm2: {norm2}"
-                    )
-
+                norm1, norm2 = map(normalize_llm_request_body, (body1, body2))
+                _log_body_mismatch(norm1, norm2)
                 return norm1 == norm2
         except (json.JSONDecodeError, AttributeError) as e:
             logger.warning(f"Failed to parse request body for matching: {e}")

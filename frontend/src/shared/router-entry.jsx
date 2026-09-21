@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
+import SessionBridgeGate from './SessionBridgeGate';
 import { ThemeProvider } from './ThemeProvider';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
 
@@ -18,7 +19,9 @@ function mountApp() {
     root.render(
       <React.StrictMode>
         <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
-          <AppRouter />
+          <SessionBridgeGate>
+            <AppRouter />
+          </SessionBridgeGate>
         </ThemeProvider>
       </React.StrictMode>
     );

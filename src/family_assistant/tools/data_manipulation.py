@@ -73,13 +73,12 @@ async def jq_query_tool(
 
     db_context = exec_context.db_context
 
-    if not exec_context.attachment_registry:
+    attachment_registry = exec_context.attachment_registry
+    if not attachment_registry:
         logger.error("AttachmentRegistry not available in ToolExecutionContext")
         return ToolResult(text="Error: Attachment registry not available.")
 
-    try:
-        attachment_registry = exec_context.attachment_registry
-
+    async def _execute_query() -> ToolResult:
         # Retrieve attachment metadata
         attachment = await attachment_registry.get_attachment(
             db_context, attachment_id_str, acting_user_id=exec_context.user_id
@@ -143,6 +142,8 @@ async def jq_query_tool(
             logger.error(f"jq query error: {e}")
             return ToolResult(text=f"Error: Invalid jq query. {e!s}")
 
+    try:
+        return await _execute_query()
     except Exception as e:
         logger.exception(f"Error executing jq query on attachment {attachment_id}: {e}")
         return ToolResult(text=f"Error: Failed to execute jq query. {e!s}")

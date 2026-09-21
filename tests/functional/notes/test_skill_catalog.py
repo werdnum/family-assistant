@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.skills import NoteRegistry, ParsedSkill
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 
 TEST_PROMPTS = {
     "note_item_format": "- {title}: {content}",
@@ -29,9 +29,9 @@ SKILL_FRONTMATTER_CONTENT = (
 
 
 async def cleanup_notes(engine: AsyncEngine) -> None:
-    async with DatabaseContext(engine=engine) as db:
-        stmt = delete(notes_table)
-        await db.execute_with_retry(stmt)
+    db = Database(engine=engine)
+    stmt = delete(notes_table)
+    await db.execute(stmt)
 
 
 @pytest.mark.asyncio
@@ -42,29 +42,30 @@ async def test_db_skill_appears_in_catalog_not_notes(
     """DB notes with skill frontmatter should appear in catalog, not regular notes."""
     await cleanup_notes(pg_vector_db_engine)
 
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        await db.notes.add_or_update(
-            title="Regular Note",
-            content="Just a normal note.",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        await db.notes.add_or_update(
-            title="Email Skill",
-            content=SKILL_FRONTMATTER_CONTENT,
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=pg_vector_db_engine)
+    await db.notes.add_or_update(
+        title="Regular Note",
+        content="Just a normal note.",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await db.notes.add_or_update(
+        title="Email Skill",
+        content=SKILL_FRONTMATTER_CONTENT,
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-    async def get_db_context_func() -> DatabaseContext:
-        return DatabaseContext(engine=pg_vector_db_engine)
+    def get_db_context_func() -> Database:
+        return Database(engine=pg_vector_db_engine)
 
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Find the fragments
     notes_fragment = next((f for f in fragments if "Regular Note" in f), None)
@@ -91,29 +92,30 @@ async def test_db_skill_excluded_from_other_notes_list(
     """DB skills should not appear in 'Other available notes' even if include_in_prompt=False."""
     await cleanup_notes(pg_vector_db_engine)
 
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        await db.notes.add_or_update(
-            title="Hidden Regular Note",
-            content="Regular hidden content.",
-            include_in_prompt=False,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        await db.notes.add_or_update(
-            title="Hidden Skill",
-            content=SKILL_FRONTMATTER_CONTENT,
-            include_in_prompt=False,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=pg_vector_db_engine)
+    await db.notes.add_or_update(
+        title="Hidden Regular Note",
+        content="Regular hidden content.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await db.notes.add_or_update(
+        title="Hidden Skill",
+        content=SKILL_FRONTMATTER_CONTENT,
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-    async def get_db_context_func() -> DatabaseContext:
-        return DatabaseContext(engine=pg_vector_db_engine)
+    def get_db_context_func() -> Database:
+        return Database(engine=pg_vector_db_engine)
 
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Hidden regular note should appear in excluded list
     excluded_fragment = next(
@@ -147,16 +149,17 @@ async def test_file_skills_appear_in_catalog(
     ]
     registry = NoteRegistry(file_skills)
 
-    async def get_db_context_func() -> DatabaseContext:
-        return DatabaseContext(engine=pg_vector_db_engine)
+    def get_db_context_func() -> Database:
+        return Database(engine=pg_vector_db_engine)
 
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
@@ -172,13 +175,13 @@ async def test_mixed_db_and_file_skills_in_catalog(
     """Both DB skills and file skills should appear in the same catalog section."""
     await cleanup_notes(pg_vector_db_engine)
 
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        await db.notes.add_or_update(
-            title="DB Skill Note",
-            content=SKILL_FRONTMATTER_CONTENT,
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=pg_vector_db_engine)
+    await db.notes.add_or_update(
+        title="DB Skill Note",
+        content=SKILL_FRONTMATTER_CONTENT,
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
     file_skills = [
         ParsedSkill(
@@ -190,16 +193,17 @@ async def test_mixed_db_and_file_skills_in_catalog(
     ]
     registry = NoteRegistry(file_skills)
 
-    async def get_db_context_func() -> DatabaseContext:
-        return DatabaseContext(engine=pg_vector_db_engine)
+    def get_db_context_func() -> Database:
+        return Database(engine=pg_vector_db_engine)
 
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
@@ -232,18 +236,18 @@ async def test_file_skill_visibility_filtering(
     ]
     registry = NoteRegistry(file_skills)
 
-    async def get_db_context_func() -> DatabaseContext:
-        return DatabaseContext(engine=pg_vector_db_engine)
+    def get_db_context_func() -> Database:
+        return Database(engine=pg_vector_db_engine)
 
     # Without grants, only public skill visible
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
-        visibility_grants=set(),
+        read_policy=NoteReadPolicy(grants=frozenset(set())),
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
     assert "**Public Skill**" in catalog_fragment
@@ -254,10 +258,12 @@ async def test_file_skill_visibility_filtering(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
-        visibility_grants={"skill_internal"},
+        read_policy=NoteReadPolicy(grants=frozenset({"skill_internal"})),
     )
 
-    fragments_with_grants = await provider_with_grants.get_context_fragments()
+    fragments_with_grants = await provider_with_grants.get_context_fragments(
+        acting_user_id=None
+    )
     catalog_fragment = next(
         (f for f in fragments_with_grants if "Available Skills" in f), None
     )
@@ -274,22 +280,23 @@ async def test_no_catalog_when_no_skills(
     """No catalog section when there are no skills (DB or file-based)."""
     await cleanup_notes(pg_vector_db_engine)
 
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        await db.notes.add_or_update(
-            title="Regular Note",
-            content="Just content, no frontmatter.",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=pg_vector_db_engine)
+    await db.notes.add_or_update(
+        title="Regular Note",
+        content="Just content, no frontmatter.",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-    async def get_db_context_func() -> DatabaseContext:
-        return DatabaseContext(engine=pg_vector_db_engine)
+    def get_db_context_func() -> Database:
+        return Database(engine=pg_vector_db_engine)
 
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is None

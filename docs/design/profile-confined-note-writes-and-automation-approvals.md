@@ -523,12 +523,11 @@ another, gated by the same policy decision as `delegate_to_service(target_servic
 delegation-based setup path above covers the current need, so this is deferred. Prerequisites
 discovered during review, for whenever it is picked up:
 
-- **Confirmation rendering for inline scripts.** There is no attachment-backed confirmation
-  mechanism today; rendered confirmation values are truncated (1,200 chars) and oversized
-  confirm-gated delegations are refused outright (3,000-char cap). Approving a script the approver
-  cannot fully read is exactly the misleading-approval risk this design warns about, so
-  cross-profile automation approval needs either attachment-backed rendering or a web-UI-complete
-  flow first.
+- **Confirmation rendering for inline scripts.** Confirmation values are now rendered in full, and a
+  prompt too large for one interface is handed to one that can show it
+  ([confirmation-prompt-capacity.md](confirmation-prompt-capacity.md)), so a long script body is
+  reviewable in the web app. What is still missing is attachment-backed rendering, which is what
+  would make a large script reviewable on a chat interface rather than only in the web UI.
 - **The second delegation gate.** Besides the policy engine, `delegate_to_service` honors the target
   profile's `allowed_delegation_sources`. A delegation-equivalent check that consults only the
   policy engine would let automation creation bypass that gate.

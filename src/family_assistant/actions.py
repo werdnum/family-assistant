@@ -4,12 +4,23 @@ Shared action execution logic for both event listeners and scheduled tasks.
 
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.tasks import enqueue_task
+from family_assistant.security.definition_records import (
+    DefinitionArtifactKind,
+    DefinitionGateOutcome,
+    authoring_taint_state,
+    register_definition_write,
+    script_invocation_content,
+    stamp_callback_definition,
+    stamp_definition,
+)
+from family_assistant.security.taint import TurnTaintTracker
+from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 
 if TYPE_CHECKING:
     from family_assistant.task_worker import LlmCallbackPayload
@@ -27,13 +38,17 @@ class ActionType(StrEnum):
 class WakeLlmProfileError(RuntimeError):
     """Raised when a profile that may not wake the LLM attempts to.
 
-    ``wake_llm`` (whether an ``action_type="wake_llm"`` automation or a script's
-    built-in ``wake_llm()`` call) does NOT honor the calling profile at execution
-    time: the llm_callback runs under the task worker's default trusted profile.
-    A confined profile that could trigger a wake would therefore silently
-    escalate to full tools and no label confinement. Profiles that must stay
-    confined set ``allow_wake_llm=False``; attempting to wake from such a profile
-    fails loudly rather than escalating.
+    A woken turn does not necessarily run under the profile that scheduled it.
+    Schedule automations, ``schedule_action`` and a script's built-in
+    ``wake_llm()`` stamp their originating profile and ``handle_llm_callback``
+    resolves it, but event listeners deliberately route to the restricted
+    ``event_handler`` profile because the triggering event is untrusted.
+
+    Either way a confined profile must not be able to enqueue a wake: via an
+    event listener it would escalate to ``event_handler``, and via a stamped wake
+    it would fail at fire time, when ``handle_llm_callback`` re-checks the flag.
+    Profiles that must stay confined set ``allow_wake_llm=False`` and are refused
+    here, at creation, instead of either.
     """
 
 
@@ -53,14 +68,14 @@ def assert_wake_llm_allowed(
     if not allow_wake_llm:
         raise WakeLlmProfileError(
             "This profile is not permitted to wake the LLM (allow_wake_llm is "
-            "disabled). wake_llm runs under the default trusted profile, which "
-            'would bypass this profile\'s confinement. Use action_type="script" '
-            "and keep results in data (notes) instead of waking the assistant."
+            "disabled). A woken turn would not stay inside this profile's "
+            'confinement. Use action_type="script" and keep results in data '
+            "(notes) instead of waking the assistant."
         )
 
 
 async def execute_action(
-    db_ctx: DatabaseContext,
+    db_ctx: Database,
     action_type: ActionType,
     # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],
@@ -74,6 +89,11 @@ async def execute_action(
     processing_profile_id: str | None = None,
     created_by_user_id: str | None = None,
     allow_wake_llm: bool = True,
+    tool_call_review_trigger_type: str | None = None,
+    tool_call_review_trigger_definition: str | None = None,
+    tool_call_review_trigger_payload_present: bool | None = None,
+    definition_taint_tracker: TurnTaintTracker | None = None,
+    definition_gate: DefinitionGateOutcome | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -88,22 +108,31 @@ async def execute_action(
         context: Additional context (e.g., event data, trigger info)
         scheduled_at: When to execute the action (None for immediate)
         recurrence_rule: RRULE for recurring tasks (None for one-time)
-        processing_profile_id: Creating profile for script actions; scripts
-            execute under this profile so validation and execution agree.
-            wake_llm actions do NOT honor this profile (they run under the task
-            worker's default profile); confined profiles set allow_wake_llm=False
-            so a wake_llm action from them is refused below.
+        processing_profile_id: The profile the resulting turn or script runs
+            under. Scripts execute under their creating profile so validation and
+            execution agree. wake_llm carries it too -- handle_llm_callback
+            resolves it fail-loud -- except for event listeners, which the event
+            processor stamps with the restricted event_handler profile instead,
+            because the triggering event is untrusted.
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
+        definition_taint_tracker: The authoring turn's taint tracker, stamped
+            onto the enqueued definition record. Absent means the write cannot
+            prove its turn was clean, so the definition stamps unknown_external
+            and its firings stay fail-closed.
+        definition_gate: How the gate that admitted the enqueuing call resolved,
+            recorded on the enqueued definition record. Absent means no gate
+            examined the write, which cures nothing.
         allow_wake_llm: Whether the acting profile may wake the LLM. When False,
             a wake_llm action is refused loudly (see assert_wake_llm_allowed)
-            rather than silently running under the default trusted profile.
+            rather than being enqueued for a turn that would escape the profile's
+            confinement.
     """
     if context is None:
         context = {}
 
-    # wake_llm ignores the acting profile at execution time (it runs under the
-    # default profile), so a confined profile must not be able to enqueue one.
+    # A woken turn does not stay inside a confined profile, so such a profile
+    # must not be able to enqueue one at all.
     assert_wake_llm_allowed(action_type, allow_wake_llm)
 
     if action_type == ActionType.WAKE_LLM:
@@ -117,14 +146,39 @@ async def execute_action(
         if "context" in action_config:
             callback_context["message"] = action_config["context"]
 
-        task_id = f"action_{int(time.time() * 1000)}"
+        # The uuid suffix, not just the millisecond stamp: one event can
+        # match several listeners, and their enqueues land well inside the
+        # same millisecond. task_id is unique, so a bare stamp collides.
+        task_id = f"action_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
 
         payload: LlmCallbackPayload = {
             "interface_type": interface_type,
             "conversation_id": conversation_id,
             "callback_context": callback_context,
             "scheduling_timestamp": datetime.now(UTC).isoformat(),
+            "tool_call_review_trigger_type": (
+                tool_call_review_trigger_type or "scheduled_callback"
+            ),
+            "tool_call_review_trigger_definition": (
+                tool_call_review_trigger_definition
+                if tool_call_review_trigger_type is not None
+                else (
+                    str(action_config["context"])
+                    if isinstance(action_config.get("context"), str)
+                    else None
+                )
+            ),
+            "tool_call_review_trigger_payload_present": (
+                tool_call_review_trigger_payload_present
+                if tool_call_review_trigger_payload_present is not None
+                else False
+            ),
         }
+        payload["tool_call_review_definition_record"] = stamp_callback_definition(
+            payload["tool_call_review_trigger_definition"],
+            tracker=definition_taint_tracker,
+            gate_outcome=definition_gate,
+        )
         if user_name:
             payload["user_name"] = user_name
         if created_by_user_id is not None:
@@ -134,17 +188,23 @@ async def execute_action(
         if processing_profile_id is not None:
             payload["processing_profile_id"] = processing_profile_id
 
-        await enqueue_task(
-            db_context=db_ctx,
+        register_definition_write(
+            definition_gate,
+            payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
+        await db_ctx.tasks.enqueue(
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
+            priority=TaskPriority.INTERACTIVE,
         )
 
     elif action_type == ActionType.SCRIPT:
-        task_id = f"script_{int(time.time() * 1000)}"
+        task_id = f"script_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
 
         script_payload: dict[str, object] = {
             "config": action_config,
@@ -158,6 +218,17 @@ async def execute_action(
             script_payload["script_name"] = action_config["script_name"]
             if action_config.get("parameters"):
                 script_payload["script_parameters"] = action_config["parameters"]
+        # A one-shot script action is stored intent with no definition table:
+        # the action config the payload carries *is* the definition, so it
+        # stamps here like any other executable-persistence write. An action
+        # fired from a durable automation or listener stamps this too, and
+        # resolution ignores it in favour of that row -- this record is written
+        # by the firing, which has no authoring turn to speak for.
+        script_payload["tool_call_review_definition_record"] = stamp_definition(
+            content=script_invocation_content(action_config),
+            taint_state=authoring_taint_state(definition_taint_tracker),
+            gate_outcome=definition_gate,
+        ).to_dict()
         if user_name:
             script_payload["user_name"] = user_name
         if processing_profile_id is not None:
@@ -165,13 +236,19 @@ async def execute_action(
         if created_by_user_id is not None:
             script_payload["created_by_user_id"] = created_by_user_id
 
-        await enqueue_task(
-            db_context=db_ctx,
+        register_definition_write(
+            definition_gate,
+            script_payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
+        await db_ctx.tasks.enqueue(
             task_id=task_id,
             task_type="script_execution",
             payload=script_payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
+            priority=TaskPriority.INTERACTIVE,
         )
     else:
         raise ValueError(f"Unknown action type: {action_type}")

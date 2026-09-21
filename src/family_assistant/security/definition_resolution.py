@@ -1,0 +1,237 @@
+"""Firing-time resolution of stored definition records.
+
+A definition record is written at the creation chokepoint (see
+:mod:`family_assistant.security.definition_records`); this module is the other
+half, where a firing asks what the stored record still entitles the definition
+to. Resolution is a pure function of a record and the content it describes, so
+everything database-shaped lives here: reading each artifact's current content
+back, and walking the **executable closure** -- every artifact whose content a
+firing is about to execute or render.
+
+The closure is why an automation and the stored script it names are resolved
+separately and then combined weakest-first, rather than hashed together. A
+cross-artifact hash would rot the moment either side is edited legitimately;
+resolving each against its own record means editing a shared script from a
+tainted turn un-cures every automation that references it, until the script's
+own gate cures it again.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from family_assistant.security.definition_records import (
+    UNRESOLVED_DEFINITION,
+    CreationDisposition,
+    DefinitionArtifactKind,
+    DefinitionResolution,
+    GateProvenance,
+    PendingDefinitionReview,
+    automation_definition_content,
+    listener_definition_content,
+    resolve_definition_record,
+    script_definition_content,
+)
+from family_assistant.security.script_closure import (
+    ScriptClosure,
+    resolve_script_closure,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
+    from family_assistant.storage.database import Database
+    from family_assistant.storage.repositories.scripts import ScriptRow
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleAutomationRef:
+    """A schedule automation, resolved against its stored row."""
+
+    automation_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class EventListenerRef:
+    """An event listener, resolved against its stored row."""
+
+    listener_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedScriptRef:
+    """A stored script already read for execution, resolved against that body.
+
+    The row is passed in rather than re-read by name on purpose. A firing loads
+    the body it is about to run and then resolves its provenance; a second read
+    could return a different body, and the record that came back with it would
+    then describe code this firing is not executing -- which is the one thing
+    the content hash exists to prevent.
+    """
+
+    script: ScriptRow
+
+
+@dataclass(frozen=True, slots=True)
+class PayloadDefinitionRef:
+    """A definition that rides its task payload, having no durable table.
+
+    Reminders, future callbacks and one-shot script actions are all stored
+    intent with nowhere to store it but the enqueued task, so the record
+    travels beside the content it describes and ``content`` is that content,
+    rebuilt from the payload at the firing.
+    """
+
+    record: object
+    content: Mapping[str, object]
+
+
+DefinitionRef = (
+    ScheduleAutomationRef | EventListenerRef | LoadedScriptRef | PayloadDefinitionRef
+)
+
+
+def _resolve_script_record(script: ScriptRow) -> DefinitionResolution:
+    return resolve_definition_record(
+        script.definition_record,
+        script_definition_content(
+            name=script.name,
+            description=script.description,
+            script_code=script.script_code,
+            parameters_schema=script.parameters_schema,
+        ),
+    )
+
+
+async def _resolve_one(db: Database, ref: DefinitionRef) -> DefinitionResolution:
+    match ref:
+        case ScheduleAutomationRef(automation_id=automation_id):
+            automation = await db.schedule_automations.get_by_id(automation_id)
+            if automation is None:
+                return UNRESOLVED_DEFINITION
+            return resolve_definition_record(
+                automation["definition_record"],
+                automation_definition_content(
+                    name=automation["name"],
+                    description=automation["description"],
+                    recurrence_rule=automation["recurrence_rule"],
+                    action_type=automation["action_type"],
+                    action_config=automation["action_config"],
+                ),
+            )
+        case EventListenerRef(listener_id=listener_id):
+            listener = await db.events.get_event_listener_by_id(listener_id)
+            if listener is None:
+                return UNRESOLVED_DEFINITION
+            return resolve_definition_record(
+                listener["definition_record"],
+                listener_definition_content(
+                    name=listener["name"],
+                    description=listener["description"],
+                    source_id=listener["source_id"],
+                    match_conditions=listener["match_conditions"],
+                    action_type=listener["action_type"],
+                    action_config=listener["action_config"],
+                    condition_script=listener["condition_script"],
+                ),
+            )
+        case LoadedScriptRef(script=script):
+            closure = await resolve_script_closure(
+                db, script.script_code, loaded_root=script
+            )
+            root = _resolve_script_record(script)
+            return (
+                root.combine(closure.resolution)
+                if closure.resolution is not None
+                else root
+            )
+        case PayloadDefinitionRef(record=record, content=content):
+            return resolve_definition_record(record, content)
+
+
+async def resolve_definition_closure(
+    db: Database,
+    refs: Iterable[DefinitionRef],
+    *,
+    script_closure: ScriptClosure | None = None,
+) -> DefinitionResolution:
+    """Resolve every artifact a firing executes or renders; the weakest governs.
+
+    An empty closure is unresolved rather than trusted: a firing that can name
+    no definition artifact has nothing whose authorship it could vouch for, and
+    that is exactly the legacy case this design leaves fail-closed.
+
+    Supply a freshly resolved ``script_closure`` to reuse its static walk.
+    Loaded script refs resolve their own records without walking descendants
+    again; other ref types resolve normally. The caller must supply the closure
+    for the source this firing will execute.
+    An inline closure contributes descendants only, leaving root provenance to
+    the automation or payload ref. Empty inline closures contribute nothing.
+    """
+    resolution = script_closure.resolution if script_closure is not None else None
+    has_invoking_definition = False
+    for ref in refs:
+        has_invoking_definition = True
+        if isinstance(ref, LoadedScriptRef) and script_closure is not None:
+            current = _resolve_script_record(ref.script)
+        else:
+            current = await _resolve_one(db, ref)
+        resolution = current if resolution is None else resolution.combine(current)
+    return (
+        resolution
+        if has_invoking_definition and resolution is not None
+        else UNRESOLVED_DEFINITION
+    )
+
+
+async def attach_pending_verdict(
+    db: Database,
+    pending: PendingDefinitionReview,
+    *,
+    disposition: CreationDisposition,
+    gate: GateProvenance,
+) -> int:
+    """Attach a verdict computed off the critical path to the writes it judged.
+
+    Under ``observe`` the reviewer deliberately does not block the call, so
+    every definition the call wrote is already stored, pending, by the time the
+    verdict exists. Each store checks the write id itself, inside its own
+    transaction, so a write the verdict no longer describes is skipped rather
+    than corrected: it is a different write, and it awaits a verdict of its own.
+
+    Returns how many writes the verdict reached.
+    """
+    attached = 0
+    for ref in pending.writes:
+        match ref.artifact_kind:
+            case DefinitionArtifactKind.SCHEDULE_AUTOMATION:
+                done = await db.schedule_automations.attach_definition_verdict(
+                    int(ref.artifact_id),
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+            case DefinitionArtifactKind.EVENT_LISTENER:
+                done = await db.events.attach_definition_verdict(
+                    int(ref.artifact_id),
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+            case DefinitionArtifactKind.SCRIPT:
+                done = await db.scripts.attach_definition_verdict(
+                    ref.artifact_id,
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+            case DefinitionArtifactKind.TASK_PAYLOAD:
+                done = await db.tasks.attach_definition_verdict(
+                    ref.artifact_id,
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+        attached += int(done)
+    return attached

@@ -42,7 +42,7 @@ class IosPushTokenRepository(BaseRepository):
         # token both insert and one fails the unique constraint.
         insert = (
             postgresql_insert
-            if self._db.engine.dialect.name == "postgresql"
+            if self._db.dialect_name == "postgresql"
             else sqlite_insert
         )
         stmt = insert(ios_push_tokens_table).values(
@@ -60,7 +60,7 @@ class IosPushTokenRepository(BaseRepository):
                 "updated_at": func.now(),
             },
         )
-        await self._db.execute_with_retry(stmt)
+        await self._db.execute(stmt)
 
         row = await self._db.fetch_one(
             select(ios_push_tokens_table.c.id).where(
@@ -89,8 +89,8 @@ class IosPushTokenRepository(BaseRepository):
             (ios_push_tokens_table.c.user_identifier == user_identifier)
             & (ios_push_tokens_table.c.device_token == device_token)
         )
-        result = await self._db.execute_with_retry(stmt)
-        return result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        return result.rowcount
 
     async def delete_by_token(self, device_token: str) -> int:
         """Delete a device token regardless of owner (used for APNs cleanup).
@@ -101,8 +101,8 @@ class IosPushTokenRepository(BaseRepository):
         stmt = ios_push_tokens_table.delete().where(
             ios_push_tokens_table.c.device_token == device_token
         )
-        result = await self._db.execute_with_retry(stmt)
-        return result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        return result.rowcount
 
     async def update_environment(self, device_token: str, environment: str) -> None:
         """Persist a corrected APNs environment for a device token."""
@@ -112,4 +112,4 @@ class IosPushTokenRepository(BaseRepository):
             .where(ios_push_tokens_table.c.device_token == device_token)
             .values(environment=environment, updated_at=func.now())
         )
-        await self._db.execute_with_retry(stmt)
+        await self._db.execute(stmt)

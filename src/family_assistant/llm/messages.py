@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.security.taint import (
-    TaintMetadata,  # noqa: TC001 - Pydantic resolves this TypedDict at runtime
+    TaintMetadata,
+    floor_machine_authored_metadata,
 )
 from family_assistant.tools.types import (  # noqa: TC001  # Pydantic needs runtime import for field validation
     ToolAttachment,
@@ -80,10 +81,11 @@ class MessageAttachmentMetadata(TypedDict, total=False):
 
 
 class MessageReasoningInfo(TypedDict, total=False):
-    """Reasoning/usage metadata stored alongside messages.
+    """Per-call metadata stored alongside a message.
 
-    May contain token usage stats from LLM providers, or provenance
-    info when a message was sent on behalf of another turn.
+    Despite the name, this is what is known about the LLM call that produced
+    the message: token usage, how long it took and which model served it, or
+    provenance when a message was sent on behalf of another turn.
 
     Prompt-cache accounting differs by provider, so ``prompt_tokens`` is not a
     common denominator for a cache hit rate:
@@ -107,9 +109,74 @@ class MessageReasoningInfo(TypedDict, total=False):
     reasoning_tokens: int
     cached_prompt_tokens: int
     cache_write_tokens: int
+    tool_use_tokens: int
+    """Tokens the provider spent running a server-side tool on its own -- code
+    execution, search grounding. Reported by Gemini apart from the prompt and
+    the candidates, so it is a bucket of its own rather than a subset."""
+    image_input_tokens: int
+    """Prompt tokens that were image rather than text, where the provider
+    reports the split. A subset of ``prompt_tokens``, broken out because the
+    two are priced differently -- OpenAI's image models bill image input above
+    text input, so an aggregate cannot be costed from one price."""
+    image_output_tokens: int
+    """Generated tokens that were image rather than text, where the provider
+    reports the split. A subset of ``completion_tokens``, and priced well above
+    text output on the models that emit both, so the two cannot share a
+    price."""
+    cached_image_tokens: int
+    """Image prompt tokens that were served from the cache, where the provider
+    reports the split. The overlap between ``cached_prompt_tokens`` and
+    ``image_input_tokens``, recorded so the exported buckets can stay disjoint
+    rather than counting these tokens under both."""
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]
+
+    # How the call went, as against what it consumed. Stamped by
+    # LLMCallTelemetry so that the row persisted for a reply says not only what
+    # it cost but how long it took and which model actually served it.
+    duration_ms: float
+    """Wall-clock for the provider call behind this message."""
+    time_to_first_output_ms: float
+    """Until the first streamed token. Absent on a non-streamed call, where it
+    could only equal the duration."""
+    resolved_model: str
+    """The model the provider reported serving, which an alias or provider-side
+    routing can make different from the one configured."""
+    finish_reason: str
+    """Why the provider stopped."""
+    provider: str
+    """Which provider served it."""
+    request_id: str
+    """Joins this message to its diagnostics ring-buffer record and to the
+    ``llm.request.id`` span attribute."""
+    model_tier: str
+    """The model tier this call ran at. Absent on a profile pinned to an inline
+    model, which has no tier to name."""
+    model_tier_source: str
+    """Who chose that tier: ``user``, ``model``, or ``default`` for the
+    profile's own. What was resolved and who asked for it are separate
+    questions -- the same models can be reached by either."""
+    model_tier_requested: str
+    """The tier that was actually asked for, where one was. Absent when nobody
+    asked, which is what distinguishes a default from a selection that happened
+    to name the default."""
+    model_tier_routing_outcome: str
+    """How the Auto classifier's call went: ``decided``, ``timeout``,
+    ``invalid`` or ``error``. Absent on a run that was not routed, which is
+    every run on a profile that selects its tier explicitly. Recorded apart
+    from the resolved tier so a classifier outage is visible rather than
+    reading as a run of confident decisions."""
+    model_tier_would_choose: str
+    """The tier Auto would have used, on a shadow-mode run that executed at the
+    profile's configured tier anyway. This is the evaluation record: comparing
+    it against what the run actually did is how Auto is judged before it is
+    trusted to decide."""
+    model_tier_classifier_model: str
+    """Which model made the routing decision on this row. Recorded here and not
+    only on the trace span because the evaluation dataset is this column and
+    traces expire: a decision whose classifier is unidentifiable cannot be
+    re-judged after the classifier has been changed."""
 
 
 # Re-export content part types and helpers for backward compatibility
@@ -142,6 +209,13 @@ class ImageUrlContentPart(BaseModel):
     type: Literal["image_url"]
     # ast-grep-ignore: no-dict-any - OpenAI API compatibility
     image_url: dict[str, str]  # {"url": str}
+    # The attachment this part was resolved from, where it came from one. The
+    # bytes are inlined as a data URI above, which loses the identity a provider
+    # needs to say anything useful about a file it cannot read -- naming the
+    # attachment is what lets the model hand it to a model that can. Optional
+    # because parts also arrive from callers with no attachment behind them, and
+    # because history persisted before this field must still load.
+    attachment_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -194,7 +268,38 @@ class UserMessage(BaseModel):
     # Excluded from serialization as it's only used during provider conversion
     parts: list[Any] | None = Field(default=None, exclude=True)
 
+    is_turn_scaffolding: bool = Field(default=False, exclude=True)
+    """Whether this message is machinery for the current request, not conversation content.
+
+    Set on synthetic user messages the system appends to steer a single request --
+    the per-turn ``<turn_context>`` block and the final-iteration instruction.
+    Code that reasons about what the *user* said has to skip them: scanning back
+    for "the original user query" would otherwise match the scaffolding, empty-input
+    validation would never fire, and turn-based context pruning would count each as
+    a turn.
+
+    ``exclude`` keeps the flag out of serialized forms, since it is per-request
+    state with no meaning in a stored row. It is not what keeps these messages out
+    of the database -- ``MessageHistoryRepository.add_message`` reads fields off
+    the model rather than serializing it. What keeps them out is that the loop
+    never yields them as messages to save.
+    """
+
     model_config = ConfigDict(extra="forbid")
+
+
+def is_turn_scaffolding(message: LLMMessage) -> bool:
+    """Whether *message* is machinery for the current request, not conversation content.
+
+    True for the synthetic user messages the system appends to steer a single
+    request: the ``<turn_context>`` block and the final-iteration instruction.
+    Code that reasons about what the user actually said, that splits the history
+    into turns, or that validates the user's input has to skip them.
+
+    Lives here rather than beside its callers so the provider layer can reach it:
+    ``processing`` imports ``llm``, not the other way round.
+    """
+    return isinstance(message, UserMessage) and message.is_turn_scaffolding
 
 
 class AssistantMessage(BaseModel):
@@ -210,8 +315,29 @@ class AssistantMessage(BaseModel):
     # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
     provider_metadata: Any | None = None
     taint_metadata: TaintMetadata | None = None
+    # What the call that produced *this* message cost and how it went. Carried
+    # on the message because a turn is not one call: a tool loop makes one of
+    # these per iteration, and attributing the last call's numbers to all of
+    # them undercounts every turn that used tools.
+    reasoning_info: MessageReasoningInfo | None = Field(default=None, exclude=True)
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("taint_metadata", mode="after")
+    @classmethod
+    def _floor_machine_authorship(
+        cls,
+        taint_metadata: TaintMetadata | None,
+    ) -> TaintMetadata | None:
+        """Stamp this row at least ``trusted_internal``: no human typed it.
+
+        Applied here rather than at each construction site so that every path
+        that builds one of these rows -- the streaming loop, tool execution,
+        the task worker, a provider round-trip -- gets the authorship floor by
+        construction. Without it a model-composed row in a clean turn would
+        stamp ``trusted_user`` and read back as the human's own words.
+        """
+        return floor_machine_authored_metadata(taint_metadata)
 
     @field_validator("tool_calls", mode="after")
     @classmethod
@@ -256,6 +382,22 @@ class ToolMessage(BaseModel):
 
     # Attachment metadata for database storage (serialized)
     attachments: list[ToolAttachmentMetadata] | None = None
+
+    @field_validator("taint_metadata", mode="after")
+    @classmethod
+    def _floor_machine_authorship(
+        cls,
+        taint_metadata: TaintMetadata | None,
+    ) -> TaintMetadata | None:
+        """Stamp this row at least ``trusted_internal``: no human typed it.
+
+        Applied here rather than at each construction site so that every path
+        that builds one of these rows -- the streaming loop, tool execution,
+        the task worker, a provider round-trip -- gets the authorship floor by
+        construction. Without it a model-composed row in a clean turn would
+        stamp ``trusted_user`` and read back as the human's own words.
+        """
+        return floor_machine_authored_metadata(taint_metadata)
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

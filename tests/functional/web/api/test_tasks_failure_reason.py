@@ -4,14 +4,14 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert
 
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 
 
 @pytest.mark.asyncio
 async def test_tasks_list_returns_error_message(
     api_test_client: AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     """Test that the tasks list endpoint returns the error message for failed tasks."""
 
@@ -31,8 +31,8 @@ async def test_tasks_list_returns_error_message(
 
     # Use a separate context to insert and commit so the API can see the data
     # (API uses a different connection/transaction)
-    async with get_db_context(engine=api_db_context.engine) as db:
-        await db.execute_with_retry(stmt)
+    db = Database(engine=api_db_context.engine)
+    await db.execute(stmt)
 
     # 2. Call the tasks API list endpoint
     response = await api_test_client.get("/api/tasks/")

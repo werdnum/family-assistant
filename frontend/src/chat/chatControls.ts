@@ -21,7 +21,14 @@ export interface ChatControls {
   submitSteer: (prompt: string) => Promise<SteerResult>;
   /** Last steer failure message (transient error), shown above the composer. */
   steerError: string | null;
+  /** Whether the open conversation has history older than what is loaded. */
+  hasOlderMessages: boolean;
+  olderMessagesStatus: OlderMessagesStatus;
+  /** Extend the loaded history of the open conversation by one page. */
+  loadOlderMessages: () => void;
 }
+
+export type OlderMessagesStatus = 'idle' | 'loading' | 'failed';
 
 export const ChatControlsContext = createContext<ChatControls | null>(null);
 

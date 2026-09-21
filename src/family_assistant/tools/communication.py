@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.taint import (
@@ -43,7 +44,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "get_message_history",
             "description": (
                 "Structured and semantic lookup against past conversation history. Use structured mode for exact filters like dates, roles, tools, attachments, or errors; semantic mode for fuzzy recall; and hybrid mode when both are useful. "
-                "Returns compact message summaries (each with a stable message_id, timestamp, role, content, and optional neighboring context), or an empty list when nothing matches."
+                "Returns compact message summaries (each with a stable message_id, timestamp, role, content, and optional neighboring context), or an empty list when nothing matches. "
+                "Semantic recall lags the conversation by a couple of minutes because a turn is indexed once it has finished, so use structured mode to look up something said in the last few exchanges."
             ),
             "parameters": {
                 "type": "object",
@@ -132,12 +134,14 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Sends a textual message to another known user. Use this tool ONLY when explicitly requested to message a specific person (e.g., 'Tell Alice...'). "
                 "Do NOT use this tool for reminders or notifications unless specifically asked to notify another person. "
                 "For normal reminders, simply write the text in your response and it will be delivered to the current user automatically. "
-                "You MUST use the recipient's Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
+                "You MUST use the recipient's Chat ID as the target, which is provided in the 'Known users' section of the `<turn_context>` block at the end of the conversation. "
                 "Optionally, you can include attachments with the message.\n\n"
+                "The target must be an existing conversation that an authorized user has already used to talk to the assistant; invented or guessed IDs are rejected.\n\n"
                 "Returns: A string indicating the result. "
                 "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
                 "If message is sent but history recording fails, returns 'Message sent to user with Chat ID [chat_id], but failed to record in history.'. "
                 "On error, returns 'Error: Could not send message to Chat ID [chat_id]. Details: [error details]', 'Error: Chat interface not available.',"
+                " 'Error: Chat ID [chat_id] is not a known conversation with an authorized user of this assistant.',"
                 " or 'Error: Cannot use send_message_to_user tool to send a message to the user you are already replying to. The user will receive your final response directly in this conversation.'."
             ),
             "parameters": {
@@ -145,7 +149,7 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "properties": {
                     "target_chat_id": {
                         "type": "string",
-                        "description": "The conversation ID of the recipient. For Telegram conversations, this is the numeric Chat ID. For web conversations, this is a UUID. The ID must be from a known conversation provided in the system context.",
+                        "description": "The conversation ID of the recipient. For Telegram conversations, this is the numeric Chat ID. For web conversations, this is a UUID. The ID must be from a known conversation provided in the system context, and must belong to an authorized user who has already talked to the assistant.",
                     },
                     "message_content": {
                         "type": "string",
@@ -429,7 +433,7 @@ async def _semantic_message_history_rows(
         embedding_types=["message_turn"],
         metadata_filters=_message_history_metadata_filters(history_query),
         limit=max(min(history_query.limit, 100), 1),
-        visibility_grants=exec_context.visibility_grants,
+        read_policy=exec_context.note_read_policy(),
     )
     search_results = await query_vector_store(
         db_context=exec_context.db_context,
@@ -510,6 +514,57 @@ def _parse_optional_datetime(value: str | None, field_name: str) -> datetime | N
         raise ValueError(f"{field_name} must be an ISO datetime.") from exc
 
 
+class UnknownMessageTargetError(ValueError):
+    """Raised when a ``send_message_to_user`` target is not a known conversation."""
+
+
+async def _resolve_send_message_target(
+    exec_context: ToolExecutionContext,
+    target_chat_id: str,
+) -> str:
+    """Resolve the interface type of a validated ``send_message_to_user`` target.
+
+    A conversation is a legitimate target only if an authorized user has already
+    talked to the assistant in it: every interface refuses to persist user
+    messages from identities it cannot authorize, so a conversation carrying a
+    user message is one the bot is allowed to reply into. Without this check the
+    model can name any conversation identifier it likes -- an arbitrary Telegram
+    chat ID, or a UUID belonging to nobody -- which turns the tool into an
+    exfiltration channel for injected instructions.
+
+    Returns:
+        The interface type the target conversation belongs to.
+
+    Raises:
+        UnknownMessageTargetError: If the target is not a conversation an
+            authorized user has talked to the assistant in.
+    """
+    message_history = exec_context.db_context.message_history
+    target_interface_type = await message_history.get_interface_type_for_conversation(
+        target_chat_id
+    )
+    owner_ids = (
+        await message_history.get_conversation_owner_ids(target_chat_id)
+        if target_interface_type is not None
+        else set()
+    )
+    if target_interface_type is None or not owner_ids:
+        logger.warning(
+            "Rejected send_message_to_user to unknown conversation %s "
+            "(interface_type=%s, owners=%d)",
+            target_chat_id,
+            target_interface_type,
+            len(owner_ids),
+        )
+        raise UnknownMessageTargetError(
+            f"Error: Chat ID {target_chat_id} is not a known conversation with an "
+            "authorized user of this assistant. Only use IDs from the 'Known users' "
+            "section of the `<turn_context>` block, and only for users who have "
+            "already messaged the assistant."
+        )
+    return target_interface_type
+
+
 async def send_message_to_user_tool(
     exec_context: ToolExecutionContext,
     target_chat_id: str,
@@ -544,21 +599,25 @@ async def send_message_to_user_tool(
     # This is useful for linking the sent message back to the originating interaction.
     requesting_turn_id = exec_context.turn_id
 
-    # Detect the interface type for the target conversation
-    target_interface_type = (
-        await db_context.message_history.get_interface_type_for_conversation(
-            target_chat_id
-        )
-    )
-
-    # If no history exists for this conversation, fall back to current interface type
-    # This allows sending first messages to new conversations
-    if not target_interface_type:
-        target_interface_type = exec_context.interface_type
+    # Validate that the user is not trying to send a message to themselves
+    current_conversation_id = exec_context.conversation_id
+    if target_chat_id == current_conversation_id:
         logger.warning(
-            f"No message history found for conversation {target_chat_id}. "
-            f"Defaulting to current interface type: {target_interface_type}."
+            f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
         )
+        return (
+            "Error: Cannot use send_message_to_user tool to send a message to the user you are "
+            "already replying to. The user will receive your final response directly in this conversation."
+        )
+
+    # Detect the interface type for the target conversation, rejecting any
+    # conversation that no authorized user has ever talked to the bot in.
+    try:
+        target_interface_type = await _resolve_send_message_target(
+            exec_context, target_chat_id
+        )
+    except UnknownMessageTargetError as exc:
+        return str(exc)
 
     # Get the appropriate ChatInterface for this interface type
     # Try chat_interfaces dict first (new way), fall back to single chat_interface (old way)
@@ -578,17 +637,6 @@ async def send_message_to_user_tool(
             )
             return "Error: Chat interface not available."
 
-    # Validate that the user is not trying to send a message to themselves
-    current_conversation_id = exec_context.conversation_id
-    if target_chat_id == current_conversation_id:
-        logger.warning(
-            f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
-        )
-        return (
-            "Error: Cannot use send_message_to_user tool to send a message to the user you are "
-            "already replying to. The user will receive your final response directly in this conversation."
-        )
-
     # Validate attachment IDs if provided
     validated_attachment_ids: list[str] | None = None
     if attachment_ids:
@@ -596,39 +644,33 @@ async def send_message_to_user_tool(
         if exec_context.attachment_registry:
             attachment_registry = exec_context.attachment_registry
 
+            async def validate_attachment(
+                attachment_id: ScriptAttachment | str,
+            ) -> str | None:
+                actual_attachment_id = (
+                    attachment_id.get_id()
+                    if isinstance(attachment_id, ScriptAttachment)
+                    else attachment_id
+                )
+                attachment = await attachment_registry.get_attachment(
+                    exec_context.db_context,
+                    actual_attachment_id,
+                    acting_user_id=exec_context.user_id,
+                )
+                if not attachment:
+                    logger.warning(f"Attachment {actual_attachment_id} not found")
+                    return None
+                logger.debug(f"Validated attachment {actual_attachment_id} for sending")
+                return actual_attachment_id
+
             for attachment_id in attachment_ids:
                 try:
-                    # Handle both string IDs and ScriptAttachment objects
-                    if hasattr(attachment_id, "get_id"):
-                        # It's a ScriptAttachment object, extract the ID
-                        actual_attachment_id = (
-                            attachment_id.get_id()
-                            if isinstance(attachment_id, ScriptAttachment)
-                            else str(attachment_id)
-                        )
-                    else:
-                        # It's a string ID
-                        actual_attachment_id = attachment_id
-
-                    attachment = await attachment_registry.get_attachment(
-                        exec_context.db_context,
-                        actual_attachment_id,
-                        acting_user_id=exec_context.user_id,
-                    )
-
-                    if not attachment:
-                        logger.warning(f"Attachment {actual_attachment_id} not found")
-                        continue
-
-                    # Always append the string ID to the validated list
-                    validated_attachment_ids.append(actual_attachment_id)
-                    logger.debug(
-                        f"Validated attachment {actual_attachment_id} for sending"
-                    )
-
+                    actual_attachment_id = await validate_attachment(attachment_id)
                 except Exception as e:
                     logger.error(f"Error validating attachment {attachment_id}: {e}")
                     continue
+                if actual_attachment_id is not None:
+                    validated_attachment_ids.append(actual_attachment_id)
         else:
             logger.warning(
                 "AttachmentRegistry not available - cannot validate attachment IDs"
@@ -646,24 +688,25 @@ async def send_message_to_user_tool(
         else TurnTaintState.empty().to_metadata()
     )
 
-    try:
-        # Use the ChatInterface to send the message.
-        # Assuming the target_chat_id is for the same interface type as the current context.
-        # The TelegramChatInterface will handle converting target_chat_id to int.
-        sent_message_id_str = await chat_interface.send_message(
-            conversation_id=str(target_chat_id),  # Pass as string
-            text=message_content,
-            attachment_ids=validated_attachment_ids,
-            on_behalf_of_user_id=exec_context.user_id,
-            taint_metadata=message_taint_metadata,
-            # parse_mode can be added if needed, default is plain text
-        )
-
-        if not sent_message_id_str:
-            logger.error(
-                f"Failed to send message to chat_id {target_chat_id} via ChatInterface."
+    async def send_and_record() -> str:
+        try:
+            sent_message_id_str = await chat_interface.send_message(
+                conversation_id=str(target_chat_id),  # Pass as string
+                text=message_content,
+                attachment_ids=validated_attachment_ids,
+                on_behalf_of_user_id=exec_context.user_id,
+                taint_metadata=message_taint_metadata,
+                # parse_mode can be added if needed, default is plain text
             )
-            return f"Error: Could not send message to Chat ID {target_chat_id} (sending failed)."
+        except ChatDeliveryError as delivery_error:
+            logger.error(
+                f"Failed to send message to chat_id {target_chat_id} via "
+                f"ChatInterface: {delivery_error}"
+            )
+            return (
+                f"Error: Could not send message to Chat ID {target_chat_id} "
+                f"({delivery_error})."
+            )
 
         attachment_msg = ""
         if validated_attachment_ids:
@@ -708,6 +751,8 @@ async def send_message_to_user_tool(
 
         return f"Message sent successfully to user with Chat ID {target_chat_id}{attachment_msg}."
 
+    try:
+        return await send_and_record()
     except Exception as e:
         logger.exception(f"Failed to send message to chat_id {target_chat_id}: {e}")
         return (

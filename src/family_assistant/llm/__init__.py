@@ -30,6 +30,7 @@ from .messages import (
     TextContentPart,
     ToolMessage,
     UserMessage,
+    is_turn_scaffolding,
     message_to_json_dict,
     tool_result_to_llm_message,
 )
@@ -63,6 +64,9 @@ class StreamEventMetadata(TypedDict, total=False):
 
     reasoning_info: MessageReasoningInfo
     provider_metadata: object
+    resolved_model: str
+    response_id: str
+    finish_reason: str
     attachment_ids: list[str]
     attachments: list[dict[str, str | int | None]]
     message: AssistantMessage
@@ -87,6 +91,27 @@ class UserMessageDict(TypedDict):
     content: str | list[UserMessageContentPart]
 
 
+def describe_attachment_for_fallback(attachment: "ToolAttachment") -> str:
+    """Text standing in for a media part a provider may not carry.
+
+    Names the type, the size and the id, so a model that never receives the bytes
+    can still say what arrived and hand the id to `delegate_to_service`. Phrased
+    as a description rather than "you cannot read this": the same message goes to
+    the provider that *can* read it, and telling that model the file is
+    unreadable would be false.
+
+    Shared rather than per-adapter because it is the fallback's only source of
+    truth. `RetryingLLMClient.create_attachment_injection` builds the message
+    from the primary's adapter and hands it to the fallback unchanged, so
+    whichever adapter is primary owns what the other one gets to see.
+    """
+    size_mb = len(attachment.content or b"") / (1024 * 1024)
+    described = f"{attachment.mime_type}, {size_mb:.1f}MB"
+    if attachment.attachment_id:
+        described += f", attachment_id={attachment.attachment_id}"
+    return f"[System: File from previous tool response: {described}]"
+
+
 class BaseLLMClient:
     """Base class providing common functionality for LLM clients"""
 
@@ -104,11 +129,16 @@ class BaseLLMClient:
         Raises InvalidRequestError if the last user message is empty.
         This prevents sending empty requests to the LLM which would
         typically result in errors anyway.
+
+        Turn scaffolding is skipped. The prompt now ends with the generated
+        ``<turn_context>`` block, which is never empty, so checking the literal
+        last user message would make this guard unreachable and let an empty
+        trigger (a sticker, an unsupported media type) reach the provider as a
+        generic 400 instead of a typed error naming the real problem.
         """
-        # Find the last UserMessage
         last_user_message = None
         for msg in reversed(messages):
-            if isinstance(msg, UserMessage):
+            if isinstance(msg, UserMessage) and not is_turn_scaffolding(msg):
                 last_user_message = msg
                 break
 
@@ -174,62 +204,18 @@ class BaseLLMClient:
             if content_size <= SIZE_THRESHOLD:
                 # Small file: inject full content inline
                 try:
-                    decoded_content = attachment.content.decode("utf-8")
-                    content = "[System: File from previous tool response]\n"
-                    if attachment.description:
-                        content += f"[Description: {attachment.description}]\n"
-                    if attachment.attachment_id:
-                        content += f"[Attachment ID: {attachment.attachment_id}]\n"
-                    content += f"[Content ({content_size} bytes)]:\n{decoded_content}"
-                    return UserMessage(content=content)
+                    return self._create_small_text_attachment_injection(
+                        attachment, content_size
+                    )
                 except UnicodeDecodeError:
                     # Fall through to default handling
                     pass
             else:
                 # Large file: inject schema for symbolic querying
                 try:
-                    decoded_content = attachment.content.decode("utf-8")
-
-                    # Generate schema for JSON
-                    if attachment.mime_type == "application/json":
-                        try:
-                            json_data = json.loads(decoded_content)
-
-                            # Use genson to generate schema
-                            builder = SchemaBuilder()
-                            builder.add_object(json_data)
-                            schema = builder.to_json(indent=2)
-
-                            content = "[System: Large data attachment from previous tool response]\n"
-                            if attachment.description:
-                                content += f"[Description: {attachment.description}]\n"
-                            content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
-                            if attachment.attachment_id:
-                                content += (
-                                    f"[Attachment ID: {attachment.attachment_id}]\n"
-                                )
-                            content += f"\nData structure (JSON Schema):\n{schema}\n"
-                            content += "\nNote: Use the 'jq' tool to query this data symbolically. "
-                            content += f"Reference attachment ID {attachment.attachment_id} in tool calls."
-
-                            return UserMessage(content=content)
-                        except json.JSONDecodeError:
-                            # Not valid JSON, fall through to text handling
-                            pass
-
-                    # For large CSV or other text, provide summary
-                    content = "[System: Large text file from previous tool response]\n"
-                    if attachment.description:
-                        content += f"[Description: {attachment.description}]\n"
-                    content += (
-                        f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+                    return self._create_large_text_attachment_injection(
+                        attachment, content_size
                     )
-                    if attachment.attachment_id:
-                        content += f"[Attachment ID: {attachment.attachment_id}]\n"
-                    content += f"[MIME type: {attachment.mime_type}]\n"
-                    content += "\nNote: Content too large for inline display. Use tools to access this data."
-
-                    return UserMessage(content=content)
                 except UnicodeDecodeError:
                     # Fall through to default handling
                     pass
@@ -240,6 +226,67 @@ class BaseLLMClient:
         )
         if attachment.attachment_id:
             content += f"\n[Attachment ID: {attachment.attachment_id}]"
+        return UserMessage(content=content)
+
+    @staticmethod
+    def _create_small_text_attachment_injection(
+        attachment: "ToolAttachment", content_size: int
+    ) -> UserMessage:
+        """Render a small textual tool attachment inline."""
+        assert attachment.content is not None
+        decoded_content = attachment.content.decode("utf-8")
+        content = "[System: File from previous tool response]\n"
+        if attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        if attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        content += f"[Content ({content_size} bytes)]:\n{decoded_content}"
+        return UserMessage(content=content)
+
+    def _create_large_text_attachment_injection(
+        self, attachment: "ToolAttachment", content_size: int
+    ) -> UserMessage:
+        """Render schema or metadata for a large textual tool attachment."""
+        assert attachment.content is not None
+        decoded_content = attachment.content.decode("utf-8")
+
+        if attachment.mime_type == "application/json":
+            try:
+                return self._create_large_json_attachment_injection(
+                    attachment, content_size, decoded_content
+                )
+            except json.JSONDecodeError:
+                pass
+
+        content = "[System: Large text file from previous tool response]\n"
+        if attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+        if attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        content += f"[MIME type: {attachment.mime_type}]\n"
+        content += "\nNote: Content too large for inline display. Use tools to access this data."
+        return UserMessage(content=content)
+
+    @staticmethod
+    def _create_large_json_attachment_injection(
+        attachment: "ToolAttachment", content_size: int, decoded_content: str
+    ) -> UserMessage:
+        """Render a JSON schema for a large JSON tool attachment."""
+        json_data = json.loads(decoded_content)
+        builder = SchemaBuilder()
+        builder.add_object(json_data)
+        schema = builder.to_json(indent=2)
+
+        content = "[System: Large data attachment from previous tool response]\n"
+        if attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+        if attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        content += f"\nData structure (JSON Schema):\n{schema}\n"
+        content += "\nNote: Use the 'jq' tool to query this data symbolically. "
+        content += f"Reference attachment ID {attachment.attachment_id} in tool calls."
         return UserMessage(content=content)
 
     def _process_tool_messages(
@@ -484,12 +531,11 @@ class BaseLLMClient:
 
         last_error: Exception | None = None
         raw_response: str | None = None
+        # BaseLLMClient is always mixed into a concrete LLMInterface implementation.
+        llm_client = cast("LLMInterface", self)
 
         for attempt in range(max_retries + 1):
             try:
-                # Generate response - cast self to LLMInterface since BaseLLMClient
-                # is always used as a mixin with classes implementing LLMInterface
-                llm_client = cast("LLMInterface", self)
                 response = await llm_client.generate_response(messages_with_schema)
 
                 if not response.content:
@@ -801,18 +847,48 @@ class LLMOutput:
     tool_calls: list[ToolCallItem] | None = field(default=None)
     reasoning_info: MessageReasoningInfo | None = field(default=None)
     provider_metadata: Any | None = field(default=None)
+    resolved_model: str | None = field(default=None)
+    """Model id the provider reported serving, when it reported one.
+
+    Distinct from the model that was requested: aliases and provider-side
+    routing resolve to a dated snapshot, so this is what a latency or quality
+    change should be attributed to.
+    """
 
 
 @dataclass
 class LLMStreamEvent:
     """Event emitted during streaming LLM responses."""
 
-    type: Literal["content", "tool_call", "tool_result", "user_input", "error", "done"]
+    type: Literal[
+        "content",
+        "tool_call",
+        "tool_result",
+        "user_input",
+        "error",
+        "done",
+        "thinking",
+    ]
+    """Kind of event.
+
+    ``thinking`` carries a provider's reasoning text as it streams. It is
+    deliberately distinct from ``content`` so that reasoning is never
+    concatenated into the assistant's reply; consumers that do not recognise it
+    ignore it, which is the current behaviour of the processing loop and the
+    web/iOS transports. Reasoning state needed to *replay* a turn does not
+    travel on these events -- it rides on the terminal ``done`` event's
+    ``provider_metadata``, which is what gets persisted.
+    """
+
     content: str | None = None  # For content chunks
     tool_call: ToolCallItem | None = None  # For tool calls
     tool_call_id: str | None = None  # For correlating tool results
     tool_result: str | None = None  # For tool execution results
     error: str | None = None  # For error messages
+    # For correlating a ``user_input`` echo with the submission that produced it:
+    # the originating interface's identifier for the steering message, when it
+    # supplied one.
+    input_id: str | None = None
     metadata: StreamEventMetadata | None = None
 
 
@@ -1168,42 +1244,7 @@ class PlaybackLLMClient:
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
         )
         try:
-            with open(self.recording_path, encoding="utf-8") as f:
-                line_num = 0
-                for raw_line in f:
-                    line_num += 1
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                        if "input" not in record or "output" not in record:
-                            logger.warning(
-                                f"Skipping line {line_num} in {self.recording_path}: Missing 'input' or 'output' key."
-                            )
-                            continue
-                        self.recorded_interactions.append(record)
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Skipping invalid JSON on line {line_num} in {self.recording_path}: {line[:100]}..."
-                        )
-                    except Exception as parse_err:
-                        logger.warning(
-                            f"Error parsing record on line {line_num} in {self.recording_path}: {parse_err}"
-                        )
-
-            if not self.recorded_interactions:
-                logger.warning(
-                    f"Recording file {self.recording_path} is empty or contains no valid records."
-                )
-                raise ValueError(
-                    f"No valid interactions loaded from {self.recording_path}"
-                )
-
-            logger.info(
-                f"PlaybackLLMClient initialized. Loaded {len(self.recorded_interactions)} interactions from: {self.recording_path}"
-            )
-
+            self._load_recorded_interactions()
         except FileNotFoundError:
             logger.error(f"Recording file not found: {self.recording_path}")
             raise
@@ -1214,6 +1255,42 @@ class PlaybackLLMClient:
             raise ValueError(
                 f"Failed to load recording file {self.recording_path}: {e}"
             ) from e
+
+    def _load_recorded_interactions(self) -> None:
+        """Load valid interaction records from the configured JSONL file."""
+        with open(self.recording_path, encoding="utf-8") as f:
+            line_num = 0
+            for raw_line in f:
+                line_num += 1
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    if "input" not in record or "output" not in record:
+                        logger.warning(
+                            f"Skipping line {line_num} in {self.recording_path}: Missing 'input' or 'output' key."
+                        )
+                        continue
+                    self.recorded_interactions.append(record)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Skipping invalid JSON on line {line_num} in {self.recording_path}: {line[:100]}..."
+                    )
+                except Exception as parse_err:
+                    logger.warning(
+                        f"Error parsing record on line {line_num} in {self.recording_path}: {parse_err}"
+                    )
+
+        if not self.recorded_interactions:
+            logger.warning(
+                f"Recording file {self.recording_path} is empty or contains no valid records."
+            )
+            raise ValueError(f"No valid interactions loaded from {self.recording_path}")
+
+        logger.info(
+            f"PlaybackLLMClient initialized. Loaded {len(self.recorded_interactions)} interactions from: {self.recording_path}"
+        )
 
     async def generate_response(
         self,
@@ -1307,6 +1384,9 @@ class PlaybackLLMClient:
                         "MessageReasoningInfo | None",
                         output_data.get("reasoning_info"),
                     ),
+                    resolved_model=cast(
+                        "str | None", output_data.get("resolved_model")
+                    ),
                 )
                 logger.debug(
                     f"Playing back matched LLMOutput. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
@@ -1365,12 +1445,13 @@ class PlaybackLLMClient:
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
                 )
 
-        yield LLMStreamEvent(
-            type="done",
-            metadata={"reasoning_info": response.reasoning_info}
-            if response.reasoning_info
-            else None,
-        )
+        done_metadata: StreamEventMetadata = {}
+        if response.reasoning_info:
+            done_metadata["reasoning_info"] = response.reasoning_info
+        if response.resolved_model:
+            done_metadata["resolved_model"] = response.resolved_model
+
+        yield LLMStreamEvent(type="done", metadata=done_metadata or None)
 
     # ast-grep-ignore: no-dict-any - input args dict has heterogeneous values (str, list, None) from VCR recording match keys
     async def _log_no_match_error(self, current_input_args: dict[str, object]) -> None:

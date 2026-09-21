@@ -1,7 +1,6 @@
+@testable import FamilyAssistant
 import Foundation
 import XCTest
-
-@testable import FamilyAssistant
 
 // MARK: - Fakes
 
@@ -11,23 +10,34 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
     private let continuation: AsyncStream<GeminiLiveServerEvent>.Continuation
     var lastError: Error?
     var connectError: Error?
+    var onConnect: (() -> Void)?
     private(set) var connected = false
+    private(set) var connectedActivityDetection: VoiceActivityDetectionConfig?
     private(set) var closed = false
     private(set) var sentAudio: [Data] = []
     private(set) var sentToolResponses: [[GeminiFunctionResponse]] = []
+    var sendToolResponsesError: Error?
+    var beforeSendToolResponses: (() -> Void)?
 
     init() {
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
     }
 
-    func connect(token: EphemeralToken) async throws {
+    func connect(token _: EphemeralToken, activityDetection: VoiceActivityDetectionConfig) async throws {
+        onConnect?()
         if let connectError { throw connectError }
         connected = true
+        connectedActivityDetection = activityDetection
     }
 
-    func sendAudio(_ pcm16: Data) async throws { sentAudio.append(pcm16) }
+    func sendAudio(_ pcm16: Data) async throws {
+        sentAudio.append(pcm16)
+    }
+
     func endAudioStream() async throws {}
     func sendToolResponses(_ responses: [GeminiFunctionResponse]) async throws {
+        beforeSendToolResponses?()
+        if let sendToolResponsesError { throw sendToolResponsesError }
         sentToolResponses.append(responses)
     }
 
@@ -36,7 +46,10 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
         continuation.finish()
     }
 
-    func emit(_ event: GeminiLiveServerEvent) { continuation.yield(event) }
+    func emit(_ event: GeminiLiveServerEvent) {
+        continuation.yield(event)
+    }
+
     func finish(withError error: Error?) {
         lastError = error
         continuation.finish()
@@ -47,27 +60,48 @@ private final class FakeAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
     var onEngineFailure: ((Error) -> Void)?
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
+    var routeSnapshot = VoiceAudioRouteSnapshot.unavailable
     var startError: Error?
+    var beforeStart: (() async -> Void)?
     private(set) var started = false
     private(set) var stopped = false
     private(set) var enqueued: [Data] = []
     private(set) var flushCount = 0
     private(set) var muted = false
 
+    func configureAudioSession() throws {}
+
     func start() async throws {
+        await beforeStart?()
         if let startError { throw startError }
         started = true
     }
 
-    func stop() { stopped = true }
-    func enqueue(_ pcm24k: Data) { enqueued.append(pcm24k) }
-    func flushPlayback() { flushCount += 1 }
-    func setMuted(_ muted: Bool) { self.muted = muted }
+    func stop() {
+        stopped = true
+    }
+
+    func enqueue(_ pcm24k: Data) {
+        enqueued.append(pcm24k)
+    }
+
+    func flushPlayback() {
+        flushCount += 1
+    }
+
+    func setMuted(_ muted: Bool) {
+        self.muted = muted
+    }
+
+    var isDucked = false
 }
 
 private struct FakePermission: VoiceMicrophonePermission {
     let granted: Bool
-    func requestAccess() async -> Bool { granted }
+    func requestAccess() async -> Bool {
+        granted
+    }
 }
 
 /// A permission whose `requestAccess()` suspends until the test resumes it,
@@ -93,9 +127,18 @@ private final class ControllablePermission: VoiceMicrophonePermission, @unchecke
 @MainActor
 private final class FakeTokenProvider: VoiceTokenProviding {
     var error: Error?
+    var beforeFetch: (() async -> Void)?
     var maxSessionMinutes = 15
+    var activityDetection = VoiceActivityDetectionConfig()
+    var carAudioActivityDetection = VoiceActivityDetectionConfig()
+    /// What the backend reports the session resolved onto. Nil models a server
+    /// that predates the field.
+    var resolvedProfileID: String?
+    private(set) var requestedProfileIDs: [String?] = []
 
     func fetchEphemeralToken(profileID: String?) async throws -> EphemeralToken {
+        requestedProfileIDs.append(profileID)
+        await beforeFetch?()
         if let error { throw error }
         return EphemeralToken(
             token: "auth_tokens/test",
@@ -107,8 +150,11 @@ private final class FakeTokenProvider: VoiceTokenProviding {
                 voiceName: "Puck",
                 maxSessionMinutes: maxSessionMinutes,
                 inputTranscriptionEnabled: true,
-                outputTranscriptionEnabled: true
-            )
+                outputTranscriptionEnabled: true,
+                activityDetection: activityDetection,
+                carAudioActivityDetection: carAudioActivityDetection
+            ),
+            profileID: resolvedProfileID
         )
     }
 }
@@ -116,13 +162,14 @@ private final class FakeTokenProvider: VoiceTokenProviding {
 @MainActor
 private final class FakeToolExecutor: VoiceToolExecuting {
     var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
+    private(set) var profileIDs: [String?] = []
     func executeTool(
         name: String,
         arguments: JSONValue,
         profileID: String?,
         taintMetadata: JSONValue
     ) async throws -> JSONValue {
-        _ = profileID
+        profileIDs.append(profileID)
         _ = taintMetadata
         return try await handler(name, arguments)
     }
@@ -132,15 +179,23 @@ private final class FakeToolExecutor: VoiceToolExecuting {
 private final class FakeTranscriptStore: VoiceTranscriptStoring {
     var error: Error?
     private(set) var saved: [[VoiceTranscriptEntry]] = []
-    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+    private(set) var savedProfileIDs: [String?] = []
+    func saveVoiceSession(
+        turns: [VoiceTranscriptEntry],
+        conversationID _: String?,
+        profileID: String?
+    ) async throws -> String {
         if let error { throw error }
         saved.append(turns)
+        savedProfileIDs.append(profileID)
         return "web_conv_test"
     }
 }
 
 private struct SampleError: LocalizedError {
-    var errorDescription: String? { "boom" }
+    var errorDescription: String? {
+        "boom"
+    }
 }
 
 // MARK: - Tests
@@ -166,7 +221,10 @@ final class VoiceSessionViewModelTests: XCTestCase {
 
     private func makeModel(
         permissionGranted: Bool = true,
-        timeout: Duration? = nil
+        timeout: Duration? = nil,
+        connectionTimeout: Duration = .seconds(30),
+        profileID: String? = nil,
+        diagnostics: VoiceConnectionDiagnostics = VoiceConnectionDiagnostics(sink: { _, _, _ in })
     ) -> VoiceSessionViewModel {
         VoiceSessionViewModel(
             tokenProvider: tokenProvider,
@@ -174,9 +232,11 @@ final class VoiceSessionViewModelTests: XCTestCase {
             transcriptStore: store,
             audio: audio,
             permission: FakePermission(granted: permissionGranted),
-            profileID: nil,
+            profileID: profileID,
             sessionFactory: { [session] in session! },
             sessionTimeoutOverride: timeout,
+            connectionTimeout: connectionTimeout,
+            diagnostics: diagnostics,
             reportError: { [weak self] error in self?.reportedErrors.append(error) }
         )
     }
@@ -201,6 +261,76 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .permissionDenied)
         XCTAssertFalse(session.connected)
         XCTAssertFalse(audio.started)
+    }
+
+    func testStartupDiagnosticsCarryOneAttemptThroughFailure() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        session.connectError = NSError(domain: NSPOSIXErrorDomain, code: 57)
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        XCTAssertEqual(recorder.records.map { $0.0 }, ["permission_start", "token_start", "token_received", "audio_start", "audio_ready", "vad_selected", "failed"])
+        XCTAssertEqual(Set(recorder.records.compactMap { $0.1["attempt_id"] }).count, 1)
+        let failure = try XCTUnwrap(recorder.records.last)
+        XCTAssertTrue(failure.2)
+        XCTAssertEqual(failure.1["stage"], "setup")
+        XCTAssertEqual(failure.1["error_code"], "57")
+    }
+
+    func testMissingSetupAcknowledgementTimesOutAndReportsStage() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(connectionTimeout: .milliseconds(20), diagnostics: recorder.diagnostics)
+        await model.start()
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(model.phase, .failed("Voice connection timed out. Please try again."))
+        XCTAssertTrue(session.closed)
+        XCTAssertTrue(audio.stopped)
+        XCTAssertEqual(recorder.records.last?.1["stage"], "setup")
+        XCTAssertEqual(reportedErrors.count, 1)
+    }
+
+    func testSetupCompleteCancelsConnectionDeadline() async throws {
+        let model = makeModel()
+        await model.start()
+        let deadline = try XCTUnwrap(model.connectionTimeoutTask)
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+        XCTAssertTrue(deadline.isCancelled)
+        XCTAssertNil(model.connectionTimeoutTask)
+        model.end()
+    }
+
+    func testTokenWaitTimesOutWithoutStartingAudioAfterLateResponse() async throws {
+        var continuation: CheckedContinuation<Void, Never>?
+        tokenProvider.beforeFetch = {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(connectionTimeout: .milliseconds(20), diagnostics: recorder.diagnostics)
+        let start = Task { await model.start() }
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(recorder.records.last?.1["stage"], "token")
+        XCTAssertEqual(recorder.records.last?.1["failure_kind"], "startup_timeout")
+        continuation?.resume()
+        await start.value
+        XCTAssertFalse(audio.started)
+        XCTAssertFalse(session.connected)
+    }
+
+    func testLateAudioActivationDoesNotReportReadyAfterTimeout() async throws {
+        var continuation: CheckedContinuation<Void, Never>?
+        audio.beforeStart = {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(connectionTimeout: .milliseconds(20), diagnostics: recorder.diagnostics)
+        let start = Task { await model.start() }
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(recorder.records.last?.1["stage"], "audio")
+        continuation?.resume()
+        await start.value
+        XCTAssertFalse(recorder.records.contains { $0.0 == "audio_ready" })
+        XCTAssertTrue(audio.stopped)
+        XCTAssertFalse(session.connected)
     }
 
     func testTokenFetchFailureReportsAndFails() async {
@@ -231,7 +361,29 @@ final class VoiceSessionViewModelTests: XCTestCase {
             .failed("Live microphone input is disabled in the iOS Simulator. Set FA_ALLOW_SIMULATOR_MIC=1 to try the simulator microphone.")
         )
         XCTAssertEqual(reportedErrors.count, 1)
-        XCTAssertTrue(session.connected)
+        XCTAssertFalse(session.connected)
+    }
+
+    func testAudioIsRunningBeforeOpeningStreamingConnection() async {
+        var wasRunningAtConnect = false
+        session.onConnect = { wasRunningAtConnect = self.audio.started }
+        let model = makeModel()
+
+        await model.start()
+
+        XCTAssertTrue(wasRunningAtConnect)
+        model.end()
+    }
+
+    func testEndBeforeScheduledStartDoesNotOpenMicrophoneOrConnection() async {
+        let model = makeModel()
+        model.end()
+
+        await model.start()
+
+        XCTAssertEqual(model.phase, .finished)
+        XCTAssertFalse(audio.started)
+        XCTAssertFalse(session.connected)
     }
 
     func testHappyPathConnectsThenActivatesOnSetupComplete() async throws {
@@ -304,6 +456,85 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertFalse(model.isAssistantSpeaking)
     }
 
+    func testCarAudioRouteConnectsWithCarAudioActivityDetection() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        tokenProvider.carAudioActivityDetection = VoiceActivityDetectionConfig(
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            prefixPaddingMs: 300
+        )
+        audio.routeSnapshot = VoiceAudioRouteSnapshot(
+            inputs: ["CarAudio"],
+            outputs: ["CarAudio"],
+            isCarAudio: true,
+            voiceProcessingEnabled: true
+        )
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+
+        XCTAssertEqual(session.connectedActivityDetection, tokenProvider.carAudioActivityDetection)
+        let ready = try XCTUnwrap(recorder.records.first { $0.0 == "audio_ready" })
+        XCTAssertEqual(ready.1["route_inputs"], "CarAudio")
+        XCTAssertEqual(ready.1["voice_processing_enabled"], "true")
+        let selected = try XCTUnwrap(recorder.records.first { $0.0 == "vad_selected" })
+        XCTAssertEqual(selected.1["vad_profile"], "car_audio")
+        XCTAssertEqual(selected.1["vad_startOfSpeechSensitivity"], "START_SENSITIVITY_LOW")
+        XCTAssertEqual(selected.1["vad_prefixPaddingMs"], "300")
+        XCTAssertFalse(selected.2)
+    }
+
+    func testOtherRoutesConnectWithDefaultActivityDetection() async throws {
+        tokenProvider.activityDetection = VoiceActivityDetectionConfig(silenceDurationMs: 800)
+        tokenProvider.carAudioActivityDetection = VoiceActivityDetectionConfig(startOfSpeechSensitivity: "LOW")
+        let model = makeModel()
+        await model.start()
+        XCTAssertEqual(session.connectedActivityDetection, tokenProvider.activityDetection)
+    }
+
+    func testUnusableActivityDetectionIsRecordedAsFailure() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        tokenProvider.activityDetection = VoiceActivityDetectionConfig(
+            automatic: false,
+            startOfSpeechSensitivity: "SOMETIMES"
+        )
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+
+        let invalid = recorder.records.filter { $0.0 == "vad_config_invalid" }
+        XCTAssertEqual(invalid.map { $0.1["issue"] }, ["manual_detection_unsupported", "unknown_start_sensitivity"])
+        XCTAssertTrue(invalid.allSatisfy { $0.2 })
+        XCTAssertTrue(session.connected)
+    }
+
+    func testInterruptionsAreRecordedAndSummarised() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        session.emit(.audio(Data([0x01])))
+        try await waitUntil { model.isAssistantSpeaking }
+        session.emit(.interrupted)
+        try await waitUntil { self.audio.flushCount == 1 }
+
+        let interrupted = try XCTUnwrap(recorder.records.first { $0.0 == "interrupted" })
+        XCTAssertEqual(interrupted.1["interruption_index"], "1")
+        XCTAssertEqual(interrupted.1["assistant_was_speaking"], "true")
+        XCTAssertNotNil(interrupted.1["assistant_speech_ms"])
+
+        model.end()
+        XCTAssertEqual(recorder.records.last?.0, "ended")
+        XCTAssertEqual(recorder.records.last?.1["interruption_count"], "1")
+    }
+
+    func testAudioDiagnosticsReachTheConnectionLane() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        _ = makeModel(diagnostics: recorder.diagnostics)
+        audio.onDiagnostic?("voice_processing_failed", ["route_inputs": "CarAudio"], SampleError())
+
+        let record = try XCTUnwrap(recorder.records.last)
+        XCTAssertEqual(record.0, "voice_processing_failed")
+        XCTAssertEqual(record.1["route_inputs"], "CarAudio")
+        XCTAssertTrue(record.2)
+    }
+
     func testTranscriptionAccumulates() async throws {
         let model = makeModel()
         await model.start()
@@ -326,6 +557,77 @@ final class VoiceSessionViewModelTests: XCTestCase {
             session.sentToolResponses.first?.first?.response,
             .object(["result": .object(["ok": .bool(true)])])
         )
+    }
+
+    func testToolCallsRecordTimingThroughToTheNextSpeech() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        toolExecutor.handler = { _, _ in .object(["result": .string("27C")]) }
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+
+        session.emit(.toolCall([GeminiFunctionCall(
+            id: "c1",
+            name: "call_tool",
+            args: .object(["name": .string("ha_call_read_tool"), "arguments_json": .string(#"{"entity": "pool"}"#)])
+        )]))
+        try await waitUntil { recorder.records.contains { $0.0 == "tool_results_sent" } }
+        session.emit(.toolCall([GeminiFunctionCall(
+            id: "c2",
+            name: "create_automation",
+            args: .object(["name": .string("Medication reminder")])
+        )]))
+        try await waitUntil { recorder.records.filter { $0.0 == "tool_results_sent" }.count == 2 }
+        session.emit(.audio(Data([0x01])))
+        try await waitUntil { recorder.records.contains { $0.0 == "audio_after_tool_results" } }
+
+        let received = recorder.records.filter { $0.0 == "tool_call_received" }
+        XCTAssertEqual(received.map { $0.1["queued_behind_batch"] }, ["false", "false"])
+        XCTAssertEqual(received.first?.1["tools"], "call_tool:ha_call_read_tool")
+        XCTAssertNil(received.first?.1["since_tool_results_ms"])
+        XCTAssertEqual(received.last?.1["tools"], "create_automation")
+        XCTAssertNotNil(received.last?.1["since_tool_results_ms"])
+        let recorded = String(describing: recorder.records)
+        XCTAssertFalse(recorded.contains("pool") || recorded.contains("Medication"), "arguments stay out of telemetry")
+        let sent = try XCTUnwrap(recorder.records.first { $0.0 == "tool_results_sent" })
+        XCTAssertEqual(sent.1["error_count"], "0")
+        XCTAssertNotNil(sent.1["execution_ms"])
+        XCTAssertNotNil(recorder.records.last { $0.0 == "audio_after_tool_results" }?.1["silence_ms"])
+    }
+
+    func testFailedToolResponseSendFailsTheSessionVisibly() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        session.sendToolResponsesError = NSError(domain: NSPOSIXErrorDomain, code: 57)
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { model.isTerminal }
+
+        let failure = try XCTUnwrap(recorder.records.first { $0.0 == "tool_results_send_failed" })
+        XCTAssertTrue(failure.2)
+        XCTAssertEqual(failure.1["error_code"], "57")
+        XCTAssertEqual(reportedErrors.count, 1)
+        guard case .failed = model.phase else { return XCTFail("expected failed, got \(model.phase)") }
+    }
+
+    func testHangingUpDuringToolResponseSendIsNotAFailure() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        session.sendToolResponsesError = CancellationError()
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        session.beforeSendToolResponses = { model.end() }
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { model.isTerminal }
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(model.phase, .finished)
+        XCTAssertFalse(recorder.records.contains { $0.0 == "tool_results_send_failed" })
+        XCTAssertTrue(reportedErrors.isEmpty)
     }
 
     func testCapturedAudioIsForwardedInOrder() async throws {
@@ -420,6 +722,52 @@ final class VoiceSessionViewModelTests: XCTestCase {
         try await waitUntil { self.store.saved.isEmpty == false }
         XCTAssertEqual(store.saved.count, 1)
         XCTAssertEqual(store.saved.first?.map(\.text), ["hi", "hello"])
+    }
+
+    /// The saved transcript is filed under the profile the backend resolved, not
+    /// the one that was asked for. History is read back filtered by profile, so a
+    /// transcript saved under the wrong one is a conversation the assistant cannot
+    /// load when the user continues it in text.
+    func testTranscriptIsPersistedUnderTheResolvedProfile() async throws {
+        tokenProvider.resolvedProfileID = "default_assistant"
+        let model = makeModel(profileID: "retired_profile")
+        await model.start()
+        XCTAssertEqual(tokenProvider.requestedProfileIDs, ["retired_profile"])
+        session.emit(.inputTranscription("hi"))
+        try await waitUntil { model.transcript.entries.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.savedProfileIDs, ["default_assistant"])
+    }
+
+    /// A server that predates `profile_id` reports none. It resolves the requested
+    /// profile the same way we asked for it, so that is what the save reports —
+    /// and a nil throughout leaves the backend to record its own default.
+    func testTranscriptFallsBackToRequestedProfileWhenServerReportsNone() async throws {
+        tokenProvider.resolvedProfileID = nil
+        let model = makeModel(profileID: "engineer")
+        await model.start()
+        session.emit(.inputTranscription("hi"))
+        try await waitUntil { model.transcript.entries.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.savedProfileIDs, ["engineer"])
+    }
+
+    /// Tool calls run against the resolved profile too, so a session's tools and
+    /// its persisted history agree with the prompt the token carried.
+    func testToolCallsUseTheResolvedProfile() async throws {
+        tokenProvider.resolvedProfileID = "default_assistant"
+        let model = makeModel(profileID: "retired_profile")
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "1", name: "get_notes", args: .object([:]))]))
+        try await waitUntil { self.toolExecutor.profileIDs.isEmpty == false }
+        XCTAssertEqual(toolExecutor.profileIDs, ["default_assistant"])
     }
 
     func testEmptyTranscriptIsNotPersisted() async {

@@ -111,6 +111,262 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_1", "web_conv_2"])
     }
 
+    func testSearchConversationsPagesThroughEveryMatch() async throws {
+        var offsets: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/conversations")
+            let queryItems = Self.queryItems(from: request)
+            XCTAssertEqual(queryItems["q"], "passport renewal")
+            XCTAssertEqual(queryItems["interface_type"], "web")
+            let offset = queryItems["offset"] ?? ""
+            offsets.append(offset)
+            let conversationID = offset == "0" ? "web_conv_passport" : "web_conv_old_passport"
+            return .json(
+                """
+                {
+                  "conversations": [
+                    {
+                      "conversation_id": "\(conversationID)",
+                      "last_message": "Thanks!",
+                      "last_timestamp": "2026-06-08T12:00:00Z",
+                      "message_count": 6,
+                      "match_excerpt": "…book the passport renewal appointment…"
+                    }
+                  ],
+                  "count": 2
+                }
+                """
+            )
+        }
+
+        let conversations = try await makeClient().searchConversations(query: "passport renewal")
+
+        XCTAssertEqual(offsets, ["0", "1"])
+        XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_passport", "web_conv_old_passport"])
+        XCTAssertEqual(conversations.first?.matchExcerpt, "…book the passport renewal appointment…")
+    }
+
+    func testGetSharedConversationUsesScopedAuthenticatedEndpoint() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(
+                request.url?.path,
+                "/api/v1/shared-conversations/share-token_123/messages"
+            )
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
+            return .json(
+                """
+                {
+                  "conversation_id": "web_conv_shared",
+                  "messages": [
+                    {
+                      "internal_id": "shared-1",
+                      "role": "assistant",
+                      "content": "Shared answer",
+                      "timestamp": "2026-08-13T12:00:00Z",
+                      "attachments": [
+                        {
+                          "attachment_id": "attachment-1",
+                          "name": "photo.png",
+                          "mime_type": "image/png",
+                          "content_url": "/api/v1/shared-conversations/share-token_123/attachments/attachment-1"
+                        }
+                      ]
+                    }
+                  ],
+                  "count": 1,
+                  "total_messages": 1,
+                  "has_more_before": false,
+                  "has_more_after": false,
+                  "active_turns": []
+                }
+                """
+            )
+        }
+
+        let response = try await makeClient().getSharedConversationMessages(token: "share-token_123")
+
+        XCTAssertEqual(response.conversationID, "web_conv_shared")
+        XCTAssertEqual(response.messages.map(\.text), ["Shared answer"])
+        XCTAssertEqual(
+            response.messages.first?.attachments.first?.contentURL,
+            "/api/v1/shared-conversations/share-token_123/attachments/attachment-1"
+        )
+    }
+
+    func testGetSharedConversationPreservesUnavailableStatus() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"detail":"Shared conversation not found"}"#, statusCode: 404)
+        }
+
+        do {
+            _ = try await makeClient().getSharedConversationMessages(token: "revoked-token")
+            XCTFail("Expected a revoked share to throw")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 404)
+        }
+    }
+
+    func testSharedConversationTransientAuthFailureOffersRetry() async {
+        seedRefreshToken()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                throw URLError(.notConnectedToInternet)
+            }
+            return .json(#"{"detail":"expired"}"#, statusCode: 401)
+        }
+        let authManager = makeAuthManager()
+        let viewModel = SharedConversationViewModel(
+            authManager: authManager,
+            apiClient: ChatAPIClient(authManager: authManager)
+        )
+
+        await viewModel.load(token: "share-token")
+
+        guard case .failed = viewModel.loadState else {
+            return XCTFail("A transient refresh failure should remain retryable")
+        }
+    }
+
+    func testConversationShareControlsLoadRotateAndRevoke() async throws {
+        var methods: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(
+                request.url?.path,
+                "/api/v1/chat/conversations/web_conv_share/encoded/share"
+            )
+            XCTAssertTrue(request.url?.absoluteString.contains("web_conv_share%2Fencoded") == true)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
+            let method = request.httpMethod ?? ""
+            methods.append(method)
+            switch method {
+            case "GET":
+                return .json(#"{"active":false}"#)
+            case "POST":
+                return .json(#"{"share_url":"/shared/conversations/new-token"}"#)
+            case "DELETE":
+                return .json("", statusCode: 204)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let viewModel = ConversationShareViewModel(
+            apiClient: makeClient(),
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
+
+        await viewModel.loadStatus(conversationID: "web_conv_share/encoded")
+        XCTAssertEqual(viewModel.status, .inactive)
+
+        let url = await viewModel.createShare(conversationID: "web_conv_share/encoded")
+        XCTAssertEqual(url?.absoluteString, "https://assistant.example.test/shared/conversations/new-token")
+        XCTAssertEqual(viewModel.status, .active)
+
+        await viewModel.revokeShare(conversationID: "web_conv_share/encoded")
+        XCTAssertEqual(viewModel.status, .inactive)
+        XCTAssertEqual(methods, ["GET", "POST", "DELETE"])
+    }
+
+    func testConversationShareStatusFailureCanRetry() async {
+        var requestCount = 0
+        ChatMockBackendURLProtocol.respond { _ in
+            requestCount += 1
+            if requestCount == 1 {
+                return .json(#"{"detail":"temporarily unavailable"}"#, statusCode: 503)
+            }
+            return .json(#"{"active":true}"#)
+        }
+        let viewModel = ConversationShareViewModel(
+            apiClient: makeClient(),
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
+
+        await viewModel.loadStatus(conversationID: "web_conv_share")
+        XCTAssertEqual(viewModel.status, .failed)
+
+        await viewModel.loadStatus(conversationID: "web_conv_share")
+        XCTAssertEqual(viewModel.status, .active)
+    }
+
+    func testConversationShareMutationsLatchAuthRequiredWithoutRetry() async throws {
+        for method in ["POST", "DELETE"] {
+            resetStoredAuth()
+            KeychainHelper.save(key: "fa_api_token", string: apiToken)
+            UserDefaults.standard.set(
+                ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+                forKey: "fa_token_expiry"
+            )
+            let requestCount = AtomicCounter()
+            ChatMockBackendURLProtocol.respond { request in
+                XCTAssertEqual(request.httpMethod, method)
+                _ = requestCount.increment()
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            }
+            let authManager = makeAuthManager()
+            let viewModel = ConversationShareViewModel(
+                apiClient: ChatAPIClient(authManager: authManager),
+                errorReporter: ErrorReporter(spoolDirectory: nil)
+            )
+
+            if method == "POST" {
+                let url = await viewModel.createShare(conversationID: "web_conv_share")
+                XCTAssertNil(url)
+            } else {
+                await viewModel.revokeShare(conversationID: "web_conv_share")
+            }
+            XCTAssertEqual(requestCount.value, 1, "\(method) must not be replayed")
+            XCTAssertTrue(authManager.authRequired)
+            XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+            XCTAssertNil(viewModel.actionErrorMessage, "the dedicated re-auth flow replaces a sharing alert")
+        }
+    }
+
+    func testConversationShareAuthWallDoesNotClearCredentials() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Sign in</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+        let authManager = makeAuthManager()
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager)
+                .createConversationShare(conversationID: "web_conv_share")
+            XCTFail("Expected the edge auth wall to fail the mutation")
+        } catch ChatAPIError.authWall {
+            XCTAssertFalse(authManager.authRequired)
+            XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), apiToken)
+        }
+    }
+
+    func testConversationShareMutationPreservesConcurrentlyRotatedCredentials() async throws {
+        let requestCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
+            _ = requestCount.increment()
+            KeychainHelper.save(key: "fa_api_token", string: "concurrently-rotated-token")
+            return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+        }
+        let authManager = makeAuthManager()
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager)
+                .createConversationShare(conversationID: "web_conv_share")
+            XCTFail("Expected the stale mutation to fail")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 401)
+            XCTAssertEqual(requestCount.value, 1)
+            XCTAssertFalse(authManager.authRequired)
+            XCTAssertEqual(
+                KeychainHelper.readString(key: "fa_api_token"),
+                "concurrently-rotated-token"
+            )
+        }
+    }
+
     func testProfilesDecodeDirectChatProfiles() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")
@@ -138,6 +394,115 @@ final class ChatAPIClientTests: XCTestCase {
 
         XCTAssertEqual(response.defaultProfileID, "default_assistant")
         XCTAssertEqual(response.profiles.first?.availableTools, ["notes"])
+        XCTAssertEqual(
+            response.profiles.first?.modelTiers,
+            [],
+            "A server that predates tier selection reports none, which reads as a pinned profile."
+        )
+        XCTAssertNil(response.profiles.first?.defaultModelTier)
+        XCTAssertEqual(response.profiles.first?.offersModelTierChoice, false)
+    }
+
+    func testProfilesDecodeSelectableModelTiers() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "profiles": [
+                    {
+                      "id": "default_assistant",
+                      "description": "Default",
+                      "llm_model": null,
+                      "available_tools": [],
+                      "enabled_mcp_servers": [],
+                      "delegation_only": false,
+                      "model_tiers": [
+                        {"id": "standard", "label": "Standard", "description": "Everyday requests"},
+                        {"id": "deep", "label": "Deep", "description": null},
+                        {"id": "frontier", "label": "Max"}
+                      ],
+                      "default_model_tier": "standard"
+                    },
+                    {
+                      "id": "media_analyst",
+                      "description": "Pinned",
+                      "llm_model": "gemini-test",
+                      "available_tools": [],
+                      "enabled_mcp_servers": [],
+                      "delegation_only": true,
+                      "model_tiers": [],
+                      "default_model_tier": null
+                    }
+                  ],
+                  "default_profile_id": "default_assistant"
+                }
+                """
+            )
+        }
+
+        let profiles = try await makeClient().listProfiles().profiles
+
+        XCTAssertEqual(
+            profiles.first?.modelTiers.map(\.id),
+            ["standard", "deep", "frontier"],
+            "Tiers keep configuration order, which is the order the menu offers them in."
+        )
+        XCTAssertEqual(profiles.first?.modelTiers.map(\.label), ["Standard", "Deep", "Max"])
+        XCTAssertEqual(profiles.first?.modelTiers.first?.tierDescription, "Everyday requests")
+        XCTAssertNil(profiles.first?.modelTiers[1].tierDescription)
+        XCTAssertEqual(profiles.first?.defaultModelTier, "standard")
+        XCTAssertEqual(profiles.first?.offersModelTierChoice, true)
+        XCTAssertEqual(
+            profiles.last?.offersModelTierChoice,
+            false,
+            "A profile pinned to one model offers no intelligence control."
+        )
+    }
+
+    func testStartTurnOmitsModelTierWhenTheUserChoseNone() async throws {
+        var payloadKeys: Set<String> = []
+        ChatMockBackendURLProtocol.respond { request in
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+            payloadKeys = Set(payload.keys)
+            return .json(
+                #"{"turn_id":"turn-default","conversation_id":"web_conv_tier","first_seq":0}"#
+            )
+        }
+
+        _ = try await makeClient().startTurn(
+            turnID: "turn-default",
+            prompt: "Hi",
+            conversationID: "web_conv_tier",
+            profileID: "default_assistant",
+            attachments: []
+        )
+
+        XCTAssertFalse(
+            payloadKeys.contains("model_tier"),
+            "No selection must leave the key off entirely so the backend applies its own default."
+        )
+    }
+
+    func testStartTurnSendsSelectedModelTier() async throws {
+        var sentTier: String?
+        ChatMockBackendURLProtocol.respond { request in
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+            sentTier = payload["model_tier"] as? String
+            return .json(
+                #"{"turn_id":"turn-deep","conversation_id":"web_conv_tier","first_seq":0}"#
+            )
+        }
+
+        _ = try await makeClient().startTurn(
+            turnID: "turn-deep",
+            prompt: "Think hard",
+            conversationID: "web_conv_tier",
+            profileID: "default_assistant",
+            attachments: [],
+            modelTier: "deep"
+        )
+
+        XCTAssertEqual(sentTier, "deep")
     }
 
     func testStartTurnSendsWebPayloadAndSubscribeDecodesSSE() async throws {
@@ -229,6 +594,128 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(streamQueryItems["ack_seq"], "6")
     }
 
+    func testConversationStreamDetectsMarkupWithJSONContentType() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("\n <html><body>Sign in</body></html>")
+        }
+
+        do {
+            _ = try await makeClient().subscribeToTurn(
+                conversationID: "web_conv_auth_wall",
+                fromSeq: 0,
+                ackSeq: nil
+            )
+            XCTFail("Expected streamed markup to fail before returning a stream")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsMarkupWithJSONContentType() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("\n <html><body>Sign in</body></html>")
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected streamed markup to fail before returning a stream")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testConversationStreamDetectsMarkupWithSSEContentTypeDuringIteration() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().subscribeToTurn(
+            conversationID: "web_conv_auth_wall",
+            fromSeq: 0,
+            ackSeq: nil
+        )
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected SSE-labelled markup to fail during iteration")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsMarkupWithSSEContentTypeDuringIteration() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected SSE-labelled markup to fail during iteration")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamSurfacesHeartbeatAsControlEvent() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("event: heartbeat\ndata: {}\n\n")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        var events: [ChatActivityStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events, [.control])
+    }
+
+    func testActivityStreamDistinguishesConversationActivity() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text(
+                "event: conversation_activity\n"
+                    + "data: {\"conversation_id\":\"conv-1\",\"reason\":\"turn_started\"}\n\n"
+            )
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        var events: [ChatActivityStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(
+            events,
+            [.activity(ChatConversationActivity(conversationID: "conv-1", reason: "turn_started"))]
+        )
+    }
+
+    func testConversationStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("<html><body>Access denied</body></html>", statusCode: 403)
+        }
+
+        do {
+            _ = try await makeClient().connectEvents(conversationID: "web_conv_auth_wall")
+            XCTFail("Expected non-success streamed markup to be detected as an auth wall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("<html><body>Access denied</body></html>", statusCode: 401)
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected non-success streamed markup to be detected as an auth wall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
     func testStartTurnAlreadyCompleteReportsFlag() async throws {
         var sawStreamRequest = false
         ChatMockBackendURLProtocol.respond { request in
@@ -254,6 +741,35 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertTrue(start.incomplete)
         // The caller reloads history instead of subscribing, so no stream opens.
         XCTAssertFalse(sawStreamRequest)
+    }
+
+    func testStartTurnConflictCarriesRunningTurnID() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "detail": {
+                    "message": "This conversation already has a running turn.",
+                    "active_turn_id": "turn-already-running"
+                  }
+                }
+                """,
+                statusCode: 409
+            )
+        }
+
+        do {
+            _ = try await makeClient().startTurn(
+                turnID: "turn-rival",
+                prompt: "Change direction",
+                conversationID: "web_conv_conflict",
+                profileID: "default_assistant",
+                attachments: []
+            )
+            XCTFail("startTurn should expose the running turn from a 409 response")
+        } catch ChatAPIError.turnAlreadyRunning(let activeTurnID) {
+            XCTAssertEqual(activeTurnID, "turn-already-running")
+        }
     }
 
     func testCancelTurnPostsConversationID() async throws {
@@ -728,6 +1244,179 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testHTMLResponseSurfacesAuthWallInsteadOfDecodeError() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><head><title>Just a moment...</title></head><body></body></html>",
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listProfiles()
+            XCTFail("Expected an HTML login page to throw authWall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+            XCTAssertEqual(error.errorDescription?.contains("authentication wall"), true)
+        }
+    }
+
+    func testHTMLServerErrorRemainsADegradedServerFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Service unavailable</body></html>",
+                statusCode: 503,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listProfiles()
+            XCTFail("Expected a server error")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 503)
+        }
+    }
+
+    func testHTMLStreamServerErrorRemainsADegradedServerFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Gateway unavailable</body></html>",
+                statusCode: 503,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected a server error")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 503)
+        }
+    }
+
+    func testMarkupBodyWithJSONContentTypeSurfacesAuthWall() async throws {
+        // A followed redirect can deliver the wall's markup under any content
+        // type; a body starting with "<" is still detected.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "\n  <html><body>Sign in</body></html>",
+                headers: ["Content-Type": "application/json"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listConversations()
+            XCTFail("Expected HTML markup in the body to throw authWall")
+        } catch ChatAPIError.authWall {}
+    }
+
+    func testAttachmentDownloadAcceptsNonJSONBodies() async throws {
+        // An attachment body is the payload: an HTML/XML/SVG download must not
+        // be mistaken for an auth wall, so downloads keep status-only checking.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+                headers: ["Content-Type": "image/svg+xml"]
+            )
+        }
+
+        let (data, contentType) = try await makeClient().downloadAttachment(path: "/api/attachments/att-1")
+
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>")
+        XCTAssertEqual(contentType, "image/svg+xml")
+    }
+
+    func testHTTPResponseReadsUseAuthWallChokepointsOrExplicitExemptions() throws {
+        let projectDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let productionDirectory = projectDirectory.appendingPathComponent("FamilyAssistant")
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: productionDirectory,
+                includingPropertiesForKeys: nil
+            )
+        )
+        var rawResponseReadCount = 0
+
+        for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+            let lines = try String(contentsOf: fileURL, encoding: .utf8)
+                .components(separatedBy: .newlines)
+            for (index, line) in lines.enumerated()
+                where line.contains(".data(for:") || line.contains(".bytes(for:")
+            {
+                rawResponseReadCount += 1
+                let marker = lines[..<index]
+                    .reversed()
+                    .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                XCTAssertTrue(
+                    marker?.contains("auth-wall-") == true,
+                    "Raw response read must use a reviewed auth-wall marker: \(fileURL.lastPathComponent):\(index + 1)"
+                )
+            }
+        }
+
+        XCTAssertEqual(
+            rawResponseReadCount,
+            5,
+            "New raw response reads must route through dataExpectingJSON or receive explicit review."
+        )
+    }
+
+    /// Every SSE chunk the mock delivers is terminated with a blank line, even
+    /// when the fixture that produced it stops after its `data:` line.
+    ///
+    /// `SSEParser` dispatches an event on `\n\n` and otherwise only at the
+    /// end-of-stream `flush()`, which runs on a clean EOF and not on cancellation
+    /// or failure. An unframed fixture therefore made delivery depend on whether
+    /// the stream happened to close cleanly before anything cancelled it — and
+    /// the follow loop cancels and restarts streams constantly, so the same event
+    /// survived on a fast machine and vanished on a loaded CI runner. Framing at
+    /// the mock's byte boundary means no fixture can reintroduce that race by
+    /// being written a line short.
+    func testMockFramesUnterminatedSSEBodies() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text(
+                """
+                event: turn_started
+                data: {"turn_id":"turn-unframed","seq":7}
+                """
+            )
+        }
+
+        let request = try await makeAuthManager().authorizedRequest(
+            url: URL(string: "\(serverURL)/api/v1/chat/conversations/web_conv_unframed/stream")!,
+            method: "GET"
+        )
+        let (data, _) = try await URLSession.shared.data(for: request)
+
+        XCTAssertEqual(
+            String(decoding: data, as: UTF8.self),
+            """
+            event: turn_started
+            data: {"turn_id":"turn-unframed","seq":7}
+
+
+            """
+        )
+    }
+
+    /// An empty SSE body stays empty: framing must not invent a stray blank line
+    /// for a response that carries no event at all (a held stream's opening
+    /// chunk, or one finished without a tail).
+    func testMockLeavesEmptySSEBodiesEmpty() async throws {
+        ChatMockBackendURLProtocol.respond { _ in .text("") }
+
+        let request = try await makeAuthManager().authorizedRequest(
+            url: URL(string: "\(serverURL)/api/v1/chat/conversations/web_conv_empty/stream")!,
+            method: "GET"
+        )
+        let (data, _) = try await URLSession.shared.data(for: request)
+
+        XCTAssertTrue(data.isEmpty)
+    }
+
     private func makeClient() -> ChatAPIClient {
         ChatAPIClient(authManager: makeAuthManager())
     }
@@ -848,6 +1537,36 @@ final class ChatMockBackendURLProtocol: URLProtocol {
     private var stopped = false
     private var activeHangingStream: HangingStreamObservation?
 
+    /// Frame an SSE chunk the way a real server does: terminate its last event
+    /// with a blank line.
+    ///
+    /// `SSEParser` dispatches an event only when it sees `\n\n`. A chunk that
+    /// ends after its final `data:` line therefore sits in the parser's buffer
+    /// and reaches the client only through the end-of-stream `flush()` — which
+    /// runs on a *clean* EOF and not when the stream is cancelled or fails. The
+    /// follow loop cancels and restarts streams routinely, so an unframed mock
+    /// event is delivered or silently dropped depending on scheduling: fast
+    /// machines win the race, loaded CI runners lose it.
+    ///
+    /// Framing every SSE chunk here, at the one place mock bytes reach the URL
+    /// loading system, means a mock event is dispatched when it arrives. No test
+    /// can depend on the EOF-flush race by writing its fixture a line short.
+    private func framedSSE(_ data: Data, for response: ChatMockResponse) -> Data {
+        guard response.headers["Content-Type"] == "text/event-stream",
+              var body = String(data: data, encoding: .utf8),
+              !body.isEmpty
+        else {
+            return data
+        }
+        while body.hasSuffix("\n") {
+            body.removeLast()
+        }
+        guard !body.isEmpty else {
+            return Data()
+        }
+        return Data((body + "\n\n").utf8)
+    }
+
     override func startLoading() {
         guard let handler = Self.lock.withLock({ Self.handler }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
@@ -861,8 +1580,9 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                 // Hold the request open after the initial chunk so a turn can be
                 // observed mid-flight. Completion is callback-driven so held SSE
                 // requests do not occupy worker threads while they are idle.
-                if !response.data.isEmpty {
-                    client?.urlProtocol(self, didLoad: response.data)
+                let initial = framedSSE(response.data, for: response)
+                if !initial.isEmpty {
+                    client?.urlProtocol(self, didLoad: initial)
                 }
                 let observationID = controller.observeCompletion { [weak self] result in
                     guard let self else { return }
@@ -870,8 +1590,9 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                         return
                     }
                     if result.finished {
-                        if !result.data.isEmpty {
-                            self.client?.urlProtocol(self, didLoad: result.data)
+                        let tail = self.framedSSE(result.data, for: response)
+                        if !tail.isEmpty {
+                            self.client?.urlProtocol(self, didLoad: tail)
                         }
                         self.client?.urlProtocolDidFinishLoading(self)
                     } else {
@@ -893,7 +1614,7 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                 }
                 return
             }
-            client?.urlProtocol(self, didLoad: response.data)
+            client?.urlProtocol(self, didLoad: framedSSE(response.data, for: response))
             if response.dropsConnectionAfterData {
                 // Simulate a connection that streamed some bytes and then dropped
                 // mid-turn (backgrounding, network change, proxy idle timeout).
@@ -1014,9 +1735,13 @@ struct ChatMockResponse {
     /// An SSE response that delivers `initial` and then stays open until
     /// `controller` is finished or the request is cancelled, so a turn can be
     /// held in flight while the test drives other interactions.
-    static func hangingStream(_ initial: String, controller: HangingStream) -> ChatMockResponse {
+    static func hangingStream(
+        _ initial: String,
+        statusCode: Int = 200,
+        controller: HangingStream
+    ) -> ChatMockResponse {
         ChatMockResponse(
-            statusCode: 200,
+            statusCode: statusCode,
             data: Data(initial.utf8),
             headers: ["Content-Type": "text/event-stream"],
             hangingStream: controller

@@ -34,6 +34,7 @@ def test_upgrade_tolerates_create_all_schema(tmp_path: Path) -> None:
         # then stamped at the head that predates this PR's migrations.
         metadata.create_all(engine)
         config = Config(str(_ALEMBIC_INI))
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
         with engine.begin() as conn:
             config.attributes["connection"] = conn
             command.stamp(config, _PRIOR_HEAD)

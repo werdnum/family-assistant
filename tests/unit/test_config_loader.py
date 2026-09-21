@@ -12,6 +12,12 @@ These tests verify the configuration loading hierarchy:
 
 from __future__ import annotations
 
+import ast
+import copy
+import functools
+import inspect
+import json
+import logging
 import os
 import subprocess
 import sys
@@ -20,11 +26,15 @@ from unittest import mock
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
+from family_assistant import config_loader
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
+    PROFILE_OVERRIDABLE_PROCESSING_KEYS,
+    PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS,
     USER_IDENTITIES_FILE_ENV_VAR,
+    _log_config,  # noqa: PLC2701 - testing startup logging redaction helper directly
     apply_calendar_env_vars,
     apply_env_var_overrides,
     apply_user_identity_file,
@@ -36,18 +46,76 @@ from family_assistant.config_loader import (
     resolve_service_profile,
     set_nested_value,
 )
-from family_assistant.config_models import AppConfig, ProcessingConfig
+from family_assistant.config_models import (
+    AppConfig,
+    ModelTierConfig,
+    ProcessingConfig,
+    RetryModelConfig,
+    ServiceProfile,
+)
 from family_assistant.config_sources import (
     DeepMergedYamlSource,
     deep_merge_dicts,
     load_yaml_file,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.model_tiers import validate_profile_model_tier
+from family_assistant.security.taint import (
+    SinkClass,
+    SourceTrustTier,
+    TaintAdjudicateCell,
+    TaintPolicyOutcome,
+)
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@functools.cache
+def _env_vars_read_by_config_loader() -> frozenset[str]:
+    """Every environment variable name `config_loader` looks up.
+
+    The names are read out of the module source -- string literals and
+    module-level string constants passed to `os.getenv` / `os.environ.get`, or
+    tested with `in os.environ` -- plus the mapped ones, which are looked up
+    through a loop variable. Deriving them keeps a newly added lookup isolated
+    without anyone remembering to list it here.
+    """
+    names = {mapping.env_var for mapping in ENV_VAR_MAPPINGS}
+    for node in ast.walk(ast.parse(inspect.getsource(config_loader))):
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in {
+            "os.getenv",
+            "os.environ.get",
+        }:
+            name_node = node.args[0] if node.args else None
+        elif isinstance(node, ast.Compare) and any(
+            ast.unparse(comparator) == "os.environ" for comparator in node.comparators
+        ):
+            name_node = node.left
+        else:
+            continue
+        if isinstance(name_node, ast.Constant) and isinstance(name_node.value, str):
+            names.add(name_node.value)
+        elif isinstance(name_node, ast.Name):
+            value = getattr(config_loader, name_node.id, None)
+            if isinstance(value, str):
+                names.add(value)
+    return frozenset(names)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove ambient configuration variables before each test.
+
+    `load_config` gives the environment the last word, so a variable exported by
+    the dev container (`DATABASE_URL`) or pulled from a `.env` file by an
+    import-time `load_dotenv()` in a dependency would override what a test
+    configures. Tests that exercise an override set it themselves.
+    """
+    for name in _env_vars_read_by_config_loader():
+        monkeypatch.delenv(name, raising=False)
 
 
 class TestDeepMergeDicts:
@@ -483,15 +551,16 @@ class TestAppConfigBackwardCompat:
     def test_no_args_gives_field_defaults(self) -> None:
         """AppConfig() with no args produces field defaults only."""
         config = AppConfig()
-        assert config.model == "gemini/gemini-3.1-pro-preview"
+        assert config.model == "gemini/gemini-3.8-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
         assert config.telegram_token is None
 
     def test_init_override(self) -> None:
         """AppConfig(field=value) overrides field defaults."""
-        config = AppConfig(telegram_token="test-token")
-        assert config.telegram_token == "test-token"
-        assert config.model == "gemini/gemini-3.1-pro-preview"
+        config = AppConfig(telegram_token=SecretStr("test-token"))
+        assert config.telegram_token is not None
+        assert config.telegram_token.get_secret_value() == "test-token"
+        assert config.model == "gemini/gemini-3.8-flash"
 
     def test_model_validate(self) -> None:
         """AppConfig.model_validate({...}) works as before."""
@@ -515,6 +584,23 @@ class TestApplyEnvVarOverrides:
         with mock.patch.dict(os.environ, {"LLM_MODEL": "new-model"}, clear=False):
             apply_env_var_overrides(config)
         assert config["model"] == "new-model"
+
+    def test_applies_metrics_env_vars(self) -> None:
+        """The metrics exporter is configured entirely from the environment."""
+        config: dict[str, Any] = {}
+        with mock.patch.dict(
+            os.environ,
+            {
+                "METRICS_ENABLED": "true",
+                "METRICS_PORT": "9191",
+                "METRICS_BIND_HOST": "0.0.0.0",
+            },
+            clear=False,
+        ):
+            apply_env_var_overrides(config)
+        assert config["metrics_enabled"] is True
+        assert config["metrics_port"] == 9191
+        assert config["metrics_bind_host"] == "0.0.0.0"
 
     def test_applies_nested_env_var(self) -> None:
         """Test applying a nested environment variable."""
@@ -895,7 +981,7 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3.6-flash"},
+                    "primary": {"provider": "google", "model": "gemini-3.8-flash"},
                     "fallback": {"provider": "openai", "model": "gpt-5.5"},
                 },
             },
@@ -917,7 +1003,7 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3.6-flash"},
+                    "primary": {"provider": "google", "model": "gemini-3.8-flash"},
                 },
             },
             "tools_config": {},
@@ -939,7 +1025,7 @@ class TestResolveServiceProfile:
     def test_profile_without_model_inherits_retry_config(self) -> None:
         """A profile declaring no model keeps the inherited default retry chain."""
         default_retry = {
-            "primary": {"provider": "google", "model": "gemini-3.6-flash"},
+            "primary": {"provider": "google", "model": "gemini-3.8-flash"},
         }
         default_settings: dict[str, Any] = {
             "processing_config": {"timezone": "UTC", "retry_config": default_retry},
@@ -953,6 +1039,180 @@ class TestResolveServiceProfile:
         }
         result = resolve_service_profile(profile_def, default_settings, {})
         assert result["processing_config"]["retry_config"] == default_retry
+
+    def test_model_tier_is_overridable_by_a_profile(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"model_tier": "deep"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] == "deep"
+
+    def test_declared_tier_drops_the_inherited_chain_and_model(self) -> None:
+        """A tier is what the profile runs on, so an inherited model cannot win."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "provider": "google",
+                "llm_model": "gemini-3.8-flash",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3.8-flash"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"model_tier": "deep"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] == "deep"
+        assert result["processing_config"]["retry_config"] is None
+        assert result["processing_config"]["llm_model"] is None
+        assert result["processing_config"]["provider"] is None
+
+    def test_declared_inline_model_drops_the_inherited_tier(self) -> None:
+        """`assistant.py` builds from the tier, so it would win over the model."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "provider": "anthropic",
+                "llm_model": "claude-opus-5",
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["llm_model"] == "claude-opus-5"
+
+    def test_declared_retry_chain_drops_the_inherited_tier(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        own_retry = {"primary": {"provider": "openai", "model": "gpt-5.6-luna"}}
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"retry_config": own_retry},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["retry_config"] == own_retry
+
+    def test_declaring_a_tier_and_an_inline_model_together_is_an_error(self) -> None:
+        """Both cannot be what the profile runs on, so neither is chosen for it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "model_tier": "deep",
+                "llm_model": "claude-opus-5",
+            },
+        }
+
+        with pytest.raises(ValueError, match="either a tier or an inline model"):
+            resolve_service_profile(profile_def, default_settings, {})
+
+    def test_allowed_model_tiers_are_replaced_not_merged(self) -> None:
+        """An eligibility list must narrow, so a merge could only widen it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep", "frontier"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "allowed_model_tiers": ["standard"],
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] == ["standard"]
+
+    def test_inherited_allowed_model_tiers_drop_with_an_inline_model(self) -> None:
+        """Tier eligibility means nothing to a profile pinned to one model."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"llm_model": "claude-opus-5"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] is None
+
+    def test_inherited_auto_model_tiers_drop_with_an_inline_model(self) -> None:
+        """Both eligibility lists follow the same rule, not just the first."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+            "auto_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"llm_model": "claude-opus-5"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["auto_model_tiers"] is None
+
+    def test_auto_model_tiers_are_replaced_not_merged(self) -> None:
+        """The tiers a model may select on its own must narrow, never widen."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "auto_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "auto_model_tiers": ["standard"],
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["auto_model_tiers"] == ["standard"]
 
     def test_profile_taint_policy_overrides_are_preserved(self) -> None:
         """Profile-level runtime taint policy must survive profile resolution."""
@@ -977,6 +1237,55 @@ class TestResolveServiceProfile:
         result = resolve_service_profile(profile_def, default_settings, {})
 
         assert result["taint_policy"] == profile_def["taint_policy"]
+
+    def test_structured_adjudicate_cell_survives_profile_resolution(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "max_iterations": 10},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "taint_policy": {
+                "matrix_overrides": {
+                    "unknown_external": {
+                        "sandbox_network": {
+                            "outcome": "adjudicate",
+                            "verdict_floor": "confirm",
+                            "fallback": "deny",
+                        }
+                    }
+                }
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["taint_policy"] == profile_def["taint_policy"]
+
+    def test_app_config_parses_structured_adjudicate_cell(self) -> None:
+        config = AppConfig.model_validate({
+            "taint_policy": {
+                "matrix_overrides": {
+                    "unknown_external": {
+                        "sandbox_network": {
+                            "outcome": "adjudicate",
+                            "verdict_floor": "confirm",
+                            "fallback": "deny",
+                        }
+                    }
+                }
+            }
+        })
+
+        cell = config.taint_policy.matrix_overrides[SourceTrustTier.UNKNOWN_EXTERNAL][
+            SinkClass.SANDBOX_NETWORK
+        ]
+        assert isinstance(cell, TaintAdjudicateCell)
+        assert cell.outcome is TaintPolicyOutcome.ADJUDICATE
+        assert cell.verdict_floor is TaintPolicyOutcome.CONFIRM
+        assert cell.fallback is TaintPolicyOutcome.DENY
 
     def test_profile_without_processing_config_inherits_timezone(self) -> None:
         """Profile without processing_config inherits timezone from defaults."""
@@ -1291,6 +1600,80 @@ class TestResolveServiceProfile:
         result = resolve_service_profile(profile_def, default_settings, {})
         assert result["remote_a2a"] == remote_a2a_config
 
+    def test_a_remote_profile_inherits_no_tier_eligibility_list(self) -> None:
+        """An operator's default eligibility must not make a remote unbootable.
+
+        `validate_profile_model_tier` refuses any eligibility list on a profile
+        with no `model_tier`, and a remote profile has none by construction --
+        so an inherited list would fail startup for every remote profile in a
+        deployment whose defaults mention tiers at all.
+        """
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+            "auto_model_tiers": ["standard"],
+        }
+        profile_def = {
+            "id": "remote_agent",
+            "remote_a2a": {
+                "agent_url": "https://agent.example.com/a2a",
+                "auth": {"type": "bearer", "token_env": "AGENT_TOKEN"},
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] is None
+        assert result["auto_model_tiers"] is None
+        assert (
+            validate_profile_model_tier(
+                ServiceProfile.model_validate(result),
+                {"standard": ModelTierConfig(chain=[RetryModelConfig(model="m")])},
+            )
+            is None
+        )
+
+    def test_a_profile_naming_a_model_inherits_no_auto_routing(self) -> None:
+        """An inherited routing policy means nothing without an inherited tier.
+
+        The profile's own model displaces the defaults block's tier, so the
+        policy that qualified it goes too: Auto would otherwise run a classifier
+        before every turn to choose between tiers this profile does not use.
+        """
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "model_tier": "standard",
+                "model_selection": "auto",
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "auto_model_tiers": ["standard"],
+            "auto_routing_guidance": "Prefer standard.",
+        }
+        profile_def = {
+            "id": "pinned_profile",
+            "processing_config": {"llm_model": "some-model"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["model_selection"] == "explicit"
+        assert result["auto_model_tiers"] is None
+        assert result["auto_routing_guidance"] is None
+        assert (
+            validate_profile_model_tier(
+                ServiceProfile.model_validate(result),
+                {"standard": ModelTierConfig(chain=[RetryModelConfig(model="m")])},
+            )
+            is None
+        )
+
     def test_remote_a2a_absent_when_not_in_profile(self) -> None:
         """Test that remote_a2a is not added when not in profile definition."""
         default_settings: dict[str, Any] = {
@@ -1355,27 +1738,14 @@ class TestLoadConfig:
         config_file = tmp_path / "nonexistent.yaml"
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        # Clear relevant env vars
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
-
-        assert config.model == "gemini/gemini-3.1-pro-preview"
+        assert config.model == "gemini/gemini-3.8-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
     def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:
@@ -1391,24 +1761,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert config.model == "defaults-model"
         assert config.server_url == "http://defaults.example.com"
@@ -1428,29 +1786,19 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert "embedding_dimensions" not in config.model_fields_set
         assert config.embedding_dimensions == 1536
 
-    def test_embedding_dimensions_env_in_fields_set(self, tmp_path: Path) -> None:
+    def test_embedding_dimensions_env_in_fields_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """An explicit EMBEDDING_DIMENSIONS env var marks the field as set."""
         defaults_file = tmp_path / "defaults.yaml"
         defaults_file.write_text(yaml.dump({}))
@@ -1458,25 +1806,14 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-        clean_env["EMBEDDING_DIMENSIONS"] = "256"
+        monkeypatch.setenv("EMBEDDING_DIMENSIONS", "256")
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert "embedding_dimensions" in config.model_fields_set
         assert config.embedding_dimensions == 256
@@ -1490,55 +1827,19 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert "embedding_dimensions" in config.model_fields_set
         assert config.embedding_dimensions == 768
 
-    def test_shipped_defaults_allow_markdown_attachments(self, tmp_path: Path) -> None:
-        """Shipped defaults must match native chat's Markdown attachment support."""
-        config_file = tmp_path / "nonexistent_config.yaml"
-        prompts_file = tmp_path / "nonexistent_prompts.yaml"
-
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path="defaults.yaml",
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
-
-        assert "text/markdown" in config.attachment_config.allowed_mime_types
-
-    def test_load_config_applies_user_identities_file(self, tmp_path: Path) -> None:
+    def test_load_config_applies_user_identities_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test loading user identity overlays from a configured file."""
         defaults_file = tmp_path / "defaults.yaml"
         defaults_file.write_text(yaml.dump({}))
@@ -1567,26 +1868,14 @@ class TestLoadConfig:
             })
         )
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-            USER_IDENTITIES_FILE_ENV_VAR,
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-        clean_env[USER_IDENTITIES_FILE_ENV_VAR] = str(identities_file)
+        monkeypatch.setenv(USER_IDENTITIES_FILE_ENV_VAR, str(identities_file))
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert len(config.users) == 1
         assert config.users[0].telegram.user_ids == {123}
@@ -1612,24 +1901,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         # config.yaml should override defaults.yaml for model
         assert config.model == "operator-model"
@@ -1638,31 +1915,22 @@ class TestLoadConfig:
         # database_url should come from defaults.yaml (not overridden)
         assert config.database_url == "sqlite:///defaults.db"
 
-    def test_env_vars_override_yaml(self, tmp_path: Path) -> None:
+    def test_env_vars_override_yaml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that environment variables override YAML config."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump({"model": "yaml-model"}))
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-        clean_env["LLM_MODEL"] = "env-model"
+        monkeypatch.setenv("LLM_MODEL", "env-model")
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert config.model == "env-model"
 
@@ -1705,24 +1973,12 @@ class TestLoadConfig:
         )
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.tools_policy is not None
@@ -1808,24 +2064,12 @@ class TestLoadConfig:
         )
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.tools_policy is not None
@@ -1904,24 +2148,12 @@ class TestLoadConfig:
         )
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.id == "custom_profile"
@@ -2008,23 +2240,11 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile_ids = {p.id for p in config.service_profiles}
         # test_profile from config.yaml is added alongside defaults
@@ -2042,6 +2262,10 @@ class TestLoadConfig:
         assert k8s_profile.remote_a2a.auth.type == "bearer"
         assert k8s_profile.remote_a2a.auth.token_env == "K8S_AGENT_TOKEN"
         assert k8s_profile.remote_a2a.timeout_seconds == 60.0
+        # The remote agent chooses its own model, so nothing model-related is
+        # inherited from default_profile_settings into a remote profile.
+        assert k8s_profile.processing_config.model_tier is None
+        assert k8s_profile.allowed_model_tiers is None
 
     def test_profile_inherits_timezone_from_defaults(self, tmp_path: Path) -> None:
         """Regression: profile without explicit timezone inherits from defaults.
@@ -2067,24 +2291,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert len(config.service_profiles) == 1
         assert (
@@ -2116,24 +2328,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.processing_config.timezone == "Australia/Sydney"
@@ -2163,24 +2363,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert (
             config.service_profiles[0].processing_config.timezone == "America/New_York"
@@ -2208,24 +2396,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile_ids = {p.id for p in config.service_profiles}
         assert profile_ids == {"default_a", "default_b", "custom_c"}
@@ -2256,24 +2432,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile_ids = {p.id for p in config.service_profiles}
         assert profile_ids == {"shared", "other"}
@@ -2327,24 +2491,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         reminder = next(p for p in config.service_profiles if p.id == "reminder")
         # Operator override applied
@@ -2375,24 +2527,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         # Empty list triggers resolve_all_service_profiles to create a
         # single fallback profile, but the defaults are NOT preserved.
@@ -2406,21 +2546,7 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with (
-            mock.patch.dict(os.environ, clean_env, clear=True),
-            pytest.raises(ValidationError),
-        ):
+        with pytest.raises(ValidationError):
             load_config(
                 config_file_path=str(config_file),
                 prompts_file_path=str(prompts_file),
@@ -2453,24 +2579,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         servers = config.mcp_config.mcpServers
         assert "time" in servers
@@ -2506,3 +2620,1016 @@ class TestEnvVarMappingsComplete:
         mapped_env_vars = {m.env_var for m in ENV_VAR_MAPPINGS}
         for secret in secret_env_vars:
             assert secret in mapped_env_vars, f"Secret {secret} not mapped"
+
+
+def test_every_processing_config_field_is_accounted_for() -> None:
+    """A ProcessingConfig field in neither set is silently dropped from profiles.
+
+    `resolve_service_profile` copies profile overrides across by an explicit key
+    list. A field missing from it parses and validates on the profile, then never
+    reaches the resolved config — so the profile runs with the inherited value
+    while the YAML says otherwise. For a field that gates behaviour, that fails
+    open silently, which is exactly what this project's no-silent-failures rule
+    exists to prevent.
+    """
+    unaccounted = (
+        set(ProcessingConfig.model_fields)
+        - set(PROFILE_OVERRIDABLE_PROCESSING_KEYS)
+        - PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS
+    )
+
+    assert not unaccounted, (
+        f"ProcessingConfig field(s) {sorted(unaccounted)} are neither profile-"
+        "overridable nor specially handled, so setting them on a profile in "
+        "defaults.yaml or config.yaml would be silently ignored. Add them to "
+        "PROFILE_OVERRIDABLE_PROCESSING_KEYS, or to "
+        "PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS if a dedicated code path "
+        "already applies them."
+    )
+
+
+def test_shipped_telephone_profile_keeps_its_greeting() -> None:
+    """A profile-level greeting must survive resolution.
+
+    `telephone_external` is the one shipped profile that sets
+    `greeting_wav_path`, and it reached `None` for as long as the field was
+    missing from the overridable key list — external callers got no greeting,
+    with nothing anywhere reporting that the configured path had been dropped.
+    This is the concrete case the completeness test above generalises.
+    """
+    config = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "telephone_external")
+
+    assert profile.processing_config is not None
+    assert profile.processing_config.greeting_wav_path == (
+        "resources/greeting_external.wav"
+    )
+
+
+def test_every_service_profile_field_is_accounted_for() -> None:
+    """A top-level ServiceProfile field also needs explicit copying.
+
+    `resolve_service_profile` handles top-level keys one `if` at a time, the same
+    trap as the processing_config key list: a field nothing copies is accepted by
+    validation and then dropped. `excluded_global_tools` withholds tools that
+    `global_tools_policy` grants to every profile, so dropping that one would
+    silently restore access a profile deliberately gave up.
+    """
+    handled = {
+        # Copied or merged by name in resolve_service_profile.
+        "processing_config",
+        "tools_config",
+        "tools_policy",
+        "taint_policy",
+        "chat_id_to_name_map",
+        "slash_commands",
+        "visibility_grants",
+        "excluded_global_tools",
+        "remote_a2a",
+        "allowed_model_tiers",
+        "auto_model_tiers",
+        "auto_routing_guidance",
+        # Set from the profile definition directly rather than merged.
+        "id",
+        "description",
+        # Injected by the operator-policy layer, never from a profile block.
+        "operator_tools_policy",
+    }
+
+    unaccounted = set(ServiceProfile.model_fields) - handled
+
+    assert not unaccounted, (
+        f"ServiceProfile field(s) {sorted(unaccounted)} are not copied by "
+        "resolve_service_profile, so setting them on a profile would be "
+        "silently ignored. Add explicit handling and list them here."
+    )
+
+
+def _loaded_with_operator_config(tmp_path: Path, operator_yaml: str) -> AppConfig:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(operator_yaml)
+    return load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+    """The resolved `default_assistant`, as startup would accept it.
+
+    The tier validation is part of the assertion: a merge that resolves the
+    selection correctly and leaves the shipped tier-eligibility list behind
+    passes every field check below and then refuses to boot.
+    """
+    config = _loaded_with_operator_config(tmp_path, operator_yaml)
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config is not None
+    validate_profile_model_tier(profile, config.model_tiers)
+    return profile.processing_config
+
+
+def test_operator_model_override_drops_the_shipped_retry_chain(
+    tmp_path: Path,
+) -> None:
+    """An operator naming a model without a chain means "run this model".
+
+    `assistant.py` prefers `retry_config` over `provider`/`llm_model`, so a chain
+    left behind by the shipped profile silently wins and the operator's choice
+    never reaches the API. `resolve_service_profile` already applies this rule to
+    a chain inherited from `default_profile_settings`, but it can only ask whether
+    the key is present — and once a shipped profile carries its own chain, it
+    always is.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n',
+    )
+
+    assert processing_config.provider == "anthropic"
+    assert processing_config.llm_model == "claude-sonnet-5"
+    assert processing_config.retry_config is None
+
+
+def test_operator_supplied_retry_chain_is_kept(tmp_path: Path) -> None:
+    """An operator who wants a fallback alongside their model gets one."""
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
+        '        fallback: {provider: "google", model: "gemini-3.8-flash"}\n',
+    )
+
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.provider == "anthropic"
+
+
+def test_unrelated_operator_override_keeps_the_shipped_model_selection(
+    tmp_path: Path,
+) -> None:
+    """Only a model selection displaces the shipped one; other overrides must not."""
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      max_iterations: 7\n",
+    )
+
+    assert processing_config.max_iterations == 7
+    assert processing_config.model_tier == "standard"
+
+
+def test_explicit_null_retry_config_with_a_model_drops_the_shipped_chain(
+    tmp_path: Path,
+) -> None:
+    """`retry_config: null` is asking for no chain, not declaring one.
+
+    The presence check that protects an operator-supplied chain treated a null
+    value as a declaration, so the shipped chain survived and `assistant.py`
+    preferred it over the model the operator selected — the same silent override
+    the presence check exists to prevent.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        "      retry_config: null\n",
+    )
+
+    assert processing_config.provider == "anthropic"
+    assert processing_config.llm_model == "claude-sonnet-5"
+    assert processing_config.retry_config is None
+
+
+def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None:
+    """`retry_config: null` with no model reads as "no chain of my own".
+
+    The merged definition can only carry presence, and an absent key means
+    inherit — so this says nothing about which model the profile runs on and
+    leaves the shipped selection in place. Turning a shipped chain off while
+    keeping the shipped model has no expression today; naming the model
+    alongside the null does it.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config: null\n",
+    )
+
+    assert processing_config.model_tier == "standard"
+
+
+def test_operator_model_override_drops_the_shipped_model_tier(
+    tmp_path: Path,
+) -> None:
+    """A shipped tier would otherwise win over the model the operator named.
+
+    `assistant.py` builds the client from the tier when one is set, and the
+    merged definition carrying both is a startup error besides — so provenance
+    has to resolve this where the two layers are still separate.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n',
+    )
+
+    assert processing_config.model_tier is None
+    assert processing_config.llm_model == "claude-sonnet-5"
+
+
+def test_operator_retry_chain_drops_the_shipped_model_tier(tmp_path: Path) -> None:
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    assert processing_config.model_tier is None
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.model == "claude-sonnet-5"
+
+
+def test_operator_model_tier_drops_a_shipped_inline_model(tmp_path: Path) -> None:
+    """The reverse direction: the operator's tier wins over the shipped model.
+
+    `artist` ships `google`/`gemini-3.8-flash` inline. Left in place, the
+    merged definition would name both kinds of selection, which is refused.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "artist"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "artist")
+    processing_config = profile.processing_config
+    assert processing_config.model_tier == "deep"
+    assert processing_config.llm_model is None
+    assert processing_config.provider is None
+    assert processing_config.retry_config is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_retry_chain_drops_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """A superseded shipped tier takes the shipped eligibility list with it.
+
+    `default_assistant` ships both `model_tier` and `allowed_model_tiers`. The
+    list survived the merge by ID and read as the operator's own, so the merged
+    profile named eligible tiers with no tier to qualify, and
+    `validate_profile_model_tier` refused to boot.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_tier is None
+    assert profile.allowed_model_tiers is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_override_drops_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """The same for an inline model, on the other profile that ships a list."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "complex_tasks"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-opus-5"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "complex_tasks")
+    assert profile.processing_config.model_tier is None
+    assert profile.processing_config.llm_model == "claude-opus-5"
+    assert profile.allowed_model_tiers is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_tier_keeps_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """An operator's own tier supersedes nothing the list qualifies.
+
+    The shipped list still describes which tiers the profile may be run on, and
+    the tier the operator named is one of them.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_tier == "deep"
+    assert profile.allowed_model_tiers == ["standard", "deep", "frontier"]
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_eligibility_list_beside_an_inline_model_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Only the shipped list goes; one the operator stated stays and fails.
+
+    Naming eligible tiers for a profile that runs on one inline model is a
+    misconfiguration, and it is the operator's to fix -- so it is refused by
+    name rather than resolved away.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        '    allowed_model_tiers: ["standard", "deep"]\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.allowed_model_tiers == ["standard", "deep"]
+
+    with pytest.raises(
+        ValueError, match="sets allowed_model_tiers without a model_tier"
+    ):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
+def test_operator_retry_chain_drops_the_shipped_auto_routing(tmp_path: Path) -> None:
+    """A superseded shipped tier takes the routing policy that qualified it.
+
+    `default_assistant` ships `model_selection: auto` and the guidance the
+    classifier routes by. Both survived the merge by ID and read as the
+    operator's own, so the merged profile asked Auto to choose a tier for a
+    profile that no longer had one, and `validate_profile_model_tier` refused to
+    boot.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_selection == "explicit"
+    assert profile.auto_routing_guidance is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_tier_keeps_the_shipped_auto_routing(tmp_path: Path) -> None:
+    """An operator's own tier supersedes nothing the routing policy qualifies.
+
+    The profile still has a tier, so Auto still has a decision to make and the
+    shipped guidance still describes where its threshold sits.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_selection == "auto"
+    assert profile.auto_model_tiers == ["standard", "deep"]
+    assert profile.auto_routing_guidance is not None
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_stated_auto_beside_an_inline_model_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Only the shipped policy goes; one the operator stated stays and fails.
+
+    Asking Auto to route a profile pinned to one inline model is a
+    misconfiguration, and it is the operator's to fix -- so it is refused by
+    name rather than resolved away.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        '      model_selection: "auto"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_selection == "auto"
+
+    with pytest.raises(
+        ValueError, match="sets model_selection 'auto' without a model_tier"
+    ):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
+def _default_settings_and_heir(
+    config: AppConfig,
+) -> tuple[ProcessingConfig, ProcessingConfig]:
+    """The default settings plus one profile that selects no model of its own.
+
+    `email_intake` declares neither a tier nor an inline model, so whatever the
+    defaults block ends up selecting is what it runs on.
+    """
+    heir = next(p for p in config.service_profiles if p.id == "email_intake")
+    assert heir.processing_config is not None
+    return config.default_profile_settings.processing_config, heir.processing_config
+
+
+def test_operator_default_settings_chain_drops_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """An operator retry chain in `default_profile_settings` still loads.
+
+    The block reaches resolution already deep-merged, so the shipped
+    `model_tier` sat alongside the operator's chain: the config named both kinds
+    of selection and startup was refused outright. Provenance decides it here
+    the same way it does for a service profile.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        "    retry_config:\n"
+        '      primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
+        '      fallback: {provider: "google", model: "gemini-3.8-flash"}\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier is None
+    assert defaults.retry_config is not None
+    assert defaults.retry_config.primary.model == "claude-sonnet-5"
+    assert heir.model_tier is None
+    assert heir.retry_config is not None
+    assert heir.retry_config.fallback is not None
+    assert heir.retry_config.fallback.model == "gemini-3.8-flash"
+
+
+def test_operator_default_settings_model_drops_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """The same for an inline model, which the shipped tier would win over."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    provider: "anthropic"\n'
+        '    llm_model: "claude-sonnet-5"\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier is None
+    assert defaults.llm_model == "claude-sonnet-5"
+    assert heir.model_tier is None
+    assert heir.provider == "anthropic"
+    assert heir.llm_model == "claude-sonnet-5"
+
+
+def test_operator_default_settings_tier_replaces_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """A tier of the operator's own is a plain override, not a supersession."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        'default_profile_settings:\n  processing_config:\n    model_tier: "deep"\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier == "deep"
+    assert heir.model_tier == "deep"
+
+
+def test_null_retry_config_in_default_settings_keeps_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """`retry_config: null` asks for no chain and says nothing about tiers."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n  processing_config:\n    retry_config: null\n",
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier == "standard"
+    assert defaults.retry_config is None
+    assert heir.model_tier == "standard"
+
+
+def test_operator_default_model_drops_the_shipped_default_auto_routing(
+    tmp_path: Path,
+) -> None:
+    """The defaults block's routing policy goes with its tier as well.
+
+    The shipped block selects `explicit` today, so this states the rule rather
+    than the current file: every profile that names no model of its own inherits
+    this block, and a routing policy left behind by a tier the operator
+    superseded would ask Auto to choose for all of them.
+    """
+    defaults_file = tmp_path / "defaults.yaml"
+    defaults_file.write_text(
+        yaml.dump({
+            "model_tiers": {"standard": {"chain": [{"model": "tier-model"}]}},
+            "default_profile_settings": {
+                "processing_config": {
+                    "model_tier": "standard",
+                    "model_selection": "auto",
+                },
+                "auto_model_tiers": ["standard"],
+                "auto_routing_guidance": "Prefer standard.",
+            },
+            "service_profiles": [
+                {"id": "heir", "description": "Selects no model of its own"}
+            ],
+        })
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    llm_model: "claude-sonnet-5"\n'
+    )
+
+    config = load_config(
+        defaults_file_path=str(defaults_file),
+        config_file_path=str(config_file),
+        load_dotenv_file=False,
+    )
+
+    defaults = config.default_profile_settings
+    assert defaults.processing_config.model_selection == "explicit"
+    assert defaults.auto_model_tiers is None
+    assert defaults.auto_routing_guidance is None
+
+    heir = next(p for p in config.service_profiles if p.id == "heir")
+    assert heir.processing_config.model_selection == "explicit"
+    assert heir.processing_config.llm_model == "claude-sonnet-5"
+    assert validate_profile_model_tier(heir, config.model_tiers) is None
+
+
+def test_default_settings_declaring_both_selections_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Provenance resolves layers, not a single block naming both kinds."""
+    with pytest.raises(
+        ValueError, match="default_profile_settings declares model_tier"
+    ):
+        _loaded_with_operator_config(
+            tmp_path,
+            "default_profile_settings:\n"
+            "  processing_config:\n"
+            '    model_tier: "deep"\n'
+            '    llm_model: "claude-sonnet-5"\n',
+        )
+
+
+_REMOTE_PROFILE_YAML = (
+    "service_profiles:\n"
+    '  - id: "k8s_agent"\n'
+    '    description: "Remote Kubernetes agent"\n'
+    "    remote_a2a:\n"
+    '      agent_url: "http://k8s-agent:9000/a2a"\n'
+)
+
+
+def test_remote_profile_inherits_no_model_selection(tmp_path: Path) -> None:
+    """A remote profile names no model because the remote agent chooses it.
+
+    Inheriting the defaults block's `model_tier` made every ordinary remote
+    profile fail `validate_profile_model_tier` at startup, which refuses a tier
+    on a remote profile — so the whole application stopped booting.
+    """
+    config = _loaded_with_operator_config(tmp_path, _REMOTE_PROFILE_YAML)
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.remote_a2a is not None
+    assert profile.processing_config.model_tier is None
+    assert profile.allowed_model_tiers is None
+    assert profile.processing_config.llm_model is None
+    assert profile.processing_config.retry_config is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_remote_profile_declaring_a_tier_is_still_refused(tmp_path: Path) -> None:
+    """Only the inherited tier goes; one the profile named stays and fails."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "k8s_agent"\n'
+        '    description: "Remote Kubernetes agent"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n'
+        "    remote_a2a:\n"
+        '      agent_url: "http://k8s-agent:9000/a2a"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.model_tier == "deep"
+
+    with pytest.raises(ValueError, match="is a remote A2A profile and cannot use"):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
+def test_remote_profile_inherits_no_operator_default_model(tmp_path: Path) -> None:
+    """An operator's inline default is as inapplicable to it as the tier was."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    provider: "anthropic"\n'
+        '    llm_model: "claude-sonnet-5"\n' + _REMOTE_PROFILE_YAML,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.provider is None
+    assert profile.processing_config.llm_model is None
+
+
+def test_remote_profile_inherits_no_auto_routing(tmp_path: Path) -> None:
+    """A remote agent runs no routing policy of ours.
+
+    An inherited `model_selection: auto` would ask the classifier to choose a
+    tier for a profile that has none by construction, which
+    `validate_profile_model_tier` refuses -- so every remote profile in a
+    deployment whose defaults route would fail startup.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    model_selection: "auto"\n'
+        '  auto_model_tiers: ["standard"]\n'
+        '  auto_routing_guidance: "Prefer standard."\n' + _REMOTE_PROFILE_YAML,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.model_selection == "explicit"
+    assert profile.auto_model_tiers is None
+    assert profile.auto_routing_guidance is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+class TestStartupConfigRedaction:
+    """Regression tests for startup configuration redaction in load_config and _log_config."""
+
+    def test_startup_log_redacts_mcp_config_env_vars_with_sentinel_brave_api_key(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """MCP env variables expanded at startup are redacted in startup logs."""
+        mcp_file = tmp_path / "mcp_servers.json"
+        mcp_file.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "brave": {
+                        "command": "brave-search-mcp-server",
+                        "args": ["--transport", "stdio"],
+                        "env": {
+                            "BRAVE_API_KEY": "$BRAVE_API_KEY",
+                            "AUTHORIZATION": "Bearer ${BRAVE_AUTH_TOKEN}",
+                        },
+                    }
+                }
+            })
+        )
+        monkeypatch.setenv("BRAVE_API_KEY", "sentinel-brave-secret-key-98765")
+        monkeypatch.setenv("BRAVE_AUTH_TOKEN", "sentinel-brave-auth-token-43210")
+        monkeypatch.setenv("MCP_CONFIG_PATH", str(mcp_file))
+
+        with caplog.at_level(logging.INFO, logger="family_assistant.config_loader"):
+            config = load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(tmp_path / "nonexistent_config.yaml"),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        # Ensure secrets are not present in logs
+        assert "sentinel-brave-secret-key-98765" not in caplog.text
+        assert "sentinel-brave-auth-token-43210" not in caplog.text
+
+        # Ensure key names are diagnostically visible with [REDACTED] markers
+        assert "BRAVE_API_KEY" in caplog.text
+        assert "AUTHORIZATION" in caplog.text
+        assert '"BRAVE_API_KEY": "[REDACTED]"' in caplog.text
+        assert '"AUTHORIZATION": "[REDACTED]"' in caplog.text
+
+        # Verify the actual loaded config has the real expanded credentials
+        brave_env = config.mcp_config.mcpServers["brave"].env
+        assert brave_env["BRAVE_API_KEY"] == "sentinel-brave-secret-key-98765"
+        assert brave_env["AUTHORIZATION"] == "Bearer sentinel-brave-auth-token-43210"
+
+    def test_startup_log_redacts_yaml_and_config_model_credentials(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Declared credential fields and embedded DSN passwords in YAML are redacted."""
+        config_yaml = """
+telegram_token: "secret-bot-token-1234"
+openai_api_key: "sk-proj-supersecretkey5678"
+database_url: "postgresql+asyncpg://app_user:db-secret-password-999@db.internal:5432/appdb"
+calendar_config:
+  caldav:
+    username: "caluser"
+    password: "caldav-secret-password"
+    calendar_urls:
+      - "https://cal.example.com/dav"
+pwa_config:
+  vapid_public_key: "pub-key-123"
+  vapid_private_key: "vapid-secret-private-key"
+  vapid_contact_email: "admin@example.com"
+apns:
+  team_id: "TEAM123"
+  key_id: "KEY123"
+  auth_key: "apns-auth-key-secret"
+  bundle_id: "com.example.app"
+google_integration:
+  oauth_client_id: "client-id-xyz"
+  oauth_client_secret: "google-secret-client-secret"
+  credential_encryption_key: "encryption-key-secret"
+mqtt_config:
+  broker_host: "mqtt.internal"
+  password: "mqtt-secret-password"
+keychute_config:
+  token: "keychute-secret-token"
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_yaml)
+
+        with caplog.at_level(logging.INFO, logger="family_assistant.config_loader"):
+            config = load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(config_file),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        # None of the secret values must appear in the logs
+        for secret in (
+            "secret-bot-token-1234",
+            "sk-proj-supersecretkey5678",
+            "db-secret-password-999",
+            "caldav-secret-password",
+            "vapid-secret-private-key",
+            "apns-auth-key-secret",
+            "google-secret-client-secret",
+            "encryption-key-secret",
+            "mqtt-secret-password",
+            "keychute-secret-token",
+        ):
+            assert secret not in caplog.text, f"Secret {secret} leaked in logs!"
+
+        # Key names and non-secret metadata must remain visible
+        assert "telegram_token" in caplog.text
+        assert "openai_api_key" in caplog.text
+        assert "database_url" in caplog.text
+        assert "vapid_private_key" in caplog.text
+        assert "auth_key" in caplog.text
+        assert "oauth_client_secret" in caplog.text
+        assert "credential_encryption_key" in caplog.text
+        assert "mqtt_config" in caplog.text
+        assert "keychute_config" in caplog.text
+
+        # DSN password is redacted
+        assert (
+            "postgresql+asyncpg://app_user:[REDACTED]@db.internal:5432/appdb"
+            in caplog.text
+        )
+        # SecretStr fields are masked
+        assert '"telegram_token": "**********"' in caplog.text
+        assert '"openai_api_key": "**********"' in caplog.text
+
+        # Real values remain intact on the validated AppConfig model
+        assert config.telegram_token is not None
+        assert config.telegram_token.get_secret_value() == "secret-bot-token-1234"
+        assert config.openai_api_key is not None
+        assert config.openai_api_key.get_secret_value() == "sk-proj-supersecretkey5678"
+
+    def test_startup_log_validation_failure_omits_config_dump_and_does_not_leak_secrets(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Validation failures omit whole-config dump and do not leak any secrets."""
+        mcp_file = tmp_path / "mcp_servers.json"
+        mcp_file.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "brave": {
+                        "command": "brave-search-mcp-server",
+                        "env": {
+                            "BRAVE_API_KEY": "$BRAVE_API_KEY",
+                        },
+                    }
+                }
+            })
+        )
+        monkeypatch.setenv("BRAVE_API_KEY", "sentinel-failure-mcp-secret-key")
+        monkeypatch.setenv("MCP_CONFIG_PATH", str(mcp_file))
+        monkeypatch.setenv("TIMEZONE", "Invalid/Timezone")
+        monkeypatch.setenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://user:fail-dsn-password@db.internal:5432/faildb",
+        )
+        monkeypatch.setenv("TELEGRAM_TOKEN", "sentinel-fail-telegram-secret")
+        monkeypatch.setenv("OPENAI_API_KEY", "sentinel-fail-openai-secret")
+
+        with (
+            caplog.at_level(logging.INFO, logger="family_assistant.config_loader"),
+            pytest.raises(ValidationError),
+        ):
+            load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(tmp_path / "nonexistent_config.yaml"),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        # Whole-config dump must NOT be logged on validation failure
+        assert "Final configuration (excluding secrets):" not in caplog.text
+        # Validation failure error must be logged
+        assert "Configuration validation failed:" in caplog.text
+
+        # Verify no secrets were leaked into the logs
+        assert "sentinel-failure-mcp-secret-key" not in caplog.text
+        assert "fail-dsn-password" not in caplog.text
+        assert "sentinel-fail-telegram-secret" not in caplog.text
+        assert "sentinel-fail-openai-secret" not in caplog.text
+
+    def test_log_config_does_not_mutate_input_data(self) -> None:
+        """_log_config must not mutate the configuration dictionary passed to it."""
+        raw_config: dict[str, Any] = {
+            "database_url": "postgresql+asyncpg://user:password123@host:5432/db",
+            "mcp_config": {
+                "mcpServers": {
+                    "custom": {
+                        "command": "run.sh",
+                        "env": {
+                            "API_KEY": "secret-key-val",
+                            "AUTH_TOKEN": "token-val",
+                        },
+                    }
+                }
+            },
+            "service_profiles": [
+                {
+                    "id": "profile1",
+                    "processing_config": {
+                        "home_assistant_token": SecretStr("ha-token-secret"),
+                    },
+                }
+            ],
+        }
+        original_snapshot = copy.deepcopy(raw_config)
+
+        _log_config(raw_config)
+
+        assert raw_config == original_snapshot
+
+    def test_startup_log_broad_nested_credentials(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Broad nested credentials across service profiles, camera, and webhook are redacted."""
+        config_yaml = """
+service_profiles:
+  - id: "camera_profile"
+    description: "Camera analyst"
+    processing_config:
+      home_assistant_token: "ha-secret-token-nested"
+      camera_config:
+        backend: "reolink"
+        cameras_config:
+          front_door:
+            host: "192.168.1.100"
+            username: "admin"
+            password: "cam-password-secret-123"
+event_system:
+  enabled: true
+  sources:
+    webhook:
+      enabled: true
+      secrets:
+        source1: "webhook-secret-key-abc"
+ucp_config:
+  signing_private_key: "ucp-private-signing-key-secret"
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_yaml)
+
+        with caplog.at_level(logging.INFO, logger="family_assistant.config_loader"):
+            load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(config_file),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        for secret in (
+            "ha-secret-token-nested",
+            "cam-password-secret-123",
+            "webhook-secret-key-abc",
+            "ucp-private-signing-key-secret",
+        ):
+            assert secret not in caplog.text, f"Secret {secret} leaked in logs!"
+
+        assert "front_door" in caplog.text
+        assert "webhook" in caplog.text
+        assert "signing_private_key" in caplog.text
+
+
+def test_a_profile_overriding_model_selection_actually_gets_it(tmp_path: Path) -> None:
+    """A gate that fails open silently is what the key list exists to prevent.
+
+    `model_selection` decides whether a classifier runs before every turn on
+    the profile, so a value that parsed and was then dropped would leave an
+    operator's "do not route this one" with no effect at all.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_selection: "explicit"\n',
+    )
+
+    assert processing_config.model_selection == "explicit"
+
+
+def test_a_profile_replaces_the_inherited_routing_guidance(tmp_path: Path) -> None:
+    """Guidance describes one agent's threshold; merging two describes neither."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        '  auto_routing_guidance: "Everything is easy."\n'
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        '    auto_routing_guidance: "Reach for deep when evidence conflicts."\n'
+        '  - id: "email_intake"\n',
+    )
+
+    assistant = next(p for p in config.service_profiles if p.id == "default_assistant")
+    inheritor = next(p for p in config.service_profiles if p.id == "email_intake")
+    assert assistant.auto_routing_guidance == "Reach for deep when evidence conflicts."
+    assert inheritor.auto_routing_guidance == "Everything is easy."
+
+
+def test_routing_switched_on_without_a_classifier_is_a_startup_error() -> None:
+    """Otherwise the omission surfaces as errors that look like a provider outage."""
+    with pytest.raises(ValidationError, match="names no model"):
+        AppConfig.model_validate({
+            "model_routing": {"mode": "active", "classifier": {"provider": "google"}}
+        })
+
+
+def test_routing_left_off_needs_no_classifier() -> None:
+    """A deployment that never routes should not have to configure a router."""
+    config = AppConfig.model_validate({"model_routing": {"mode": "off"}})
+
+    assert config.model_routing.classifier.model is None

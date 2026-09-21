@@ -24,7 +24,9 @@ The evaluation walks the design's conditions IN ORDER (first failure wins,
    governed tool is policy-allowed, the *fully merged effective* taint policy —
    queried through the same :class:`TaintPolicyEvaluator` the runtime uses —
    yields at least ``confirm`` at the ``unknown_external`` tier for each of the
-   floor sink classes. Validating the real evaluator (not a re-derived
+   floor sink classes. An ``adjudicate`` cell satisfies that requirement only
+   when its reviewer verdict floor is at least ``confirm``. Validating the real
+   evaluator (not a re-derived
    approximation) is deliberate: a full ``matrix:`` replacement that the runtime
    honors must be caught here too. When the requirement is waived
    (``require_taint_enforcement: false``) the floor is skipped entirely and the
@@ -213,14 +215,27 @@ def _profile_floor_reason(
     a floor sink below confirm is caught.
     """
     for sink_class in _FLOOR_SINK_CLASSES:
-        outcome = merged_policy_evaluator.evaluate(
+        evaluation = merged_policy_evaluator.evaluate(
             state=state, sink_class=sink_class
-        ).requested_outcome
-        if outcome not in _FLOOR_SATISFYING_OUTCOMES:
+        )
+        outcome = evaluation.requested_outcome
+        adjudicate_floor_satisfies = (
+            outcome is TaintPolicyOutcome.ADJUDICATE
+            and evaluation.verdict_floor in _FLOOR_SATISFYING_OUTCOMES
+        )
+        if outcome not in _FLOOR_SATISFYING_OUTCOMES and not adjudicate_floor_satisfies:
+            outcome_description = f"'{outcome.value}'"
+            if outcome is TaintPolicyOutcome.ADJUDICATE:
+                floor = evaluation.verdict_floor
+                floor_description = floor.value if floor is not None else "allow"
+                outcome_description += (
+                    f" with reviewer verdict floor '{floor_description}'"
+                )
             return (
                 f"{spec.display_name} integration is disabled: taint floor not met "
                 f"for profile '{profile_id}' — sink '{sink_class.value}' resolves to "
-                f"'{outcome.value}' (below 'confirm') at the unknown_external tier. "
+                f"{outcome_description} (below 'confirm') at the "
+                "unknown_external tier. "
                 "Raise it to confirm via taint_policy.matrix_overrides / "
                 "operator_minimum, or set "
                 f"{spec.config_attr}.require_taint_enforcement: false to accept the "
@@ -233,9 +248,12 @@ def _taint_floor_reason(
     spec: OAuthProviderSpec,
     config: AppConfig,
     integration: OAuthIntegrationConfig,
-    governed_tool_names: frozenset[str],
+    floor_tool_names: frozenset[str],
 ) -> str | None:
     """Return a taint-floor violation reason, or None when the floor holds.
+
+    ``floor_tool_names`` are the tools that reach provider data; every profile
+    allowing any of them must meet the floor.
 
     Skips the check entirely when ``require_taint_enforcement`` is False.
     """
@@ -250,7 +268,7 @@ def _taint_floor_reason(
             f"{spec.config_attr}.require_taint_enforcement: false to accept the risk."
         )
 
-    governed_descriptors = _governed_descriptors(governed_tool_names)
+    governed_descriptors = _governed_descriptors(floor_tool_names)
     state = _floor_state(spec)
     for profile in config.service_profiles:
         if not _profile_allows_any_governed_tool(
@@ -319,6 +337,7 @@ def evaluate_oauth_integration_state(
     *,
     auth_enabled: bool,
     tool_required_scopes: Mapping[str, frozenset[str]],
+    shared_tool_required_scopes: Mapping[str, frozenset[str]],
 ) -> OAuthIntegrationState:
     """Evaluate whether the provider's integration is enabled for this deployment.
 
@@ -331,6 +350,11 @@ def evaluate_oauth_integration_state(
         tool_required_scopes: Map of governed tool name to the scopes that must
             be configured for it to register (supplied by the caller so this
             module carries no per-provider tool knowledge).
+        shared_tool_required_scopes: Map of tool name to the scopes under which
+            a tool that is *not* the provider's own reaches provider data (the
+            calendar tools read Google calendars). These tools register with or
+            without the integration, so they are never filtered, but a profile
+            that allows one is held to the taint floor like a governed tool.
 
     Returns:
         An :class:`OAuthIntegrationState` with the first unmet condition's
@@ -358,7 +382,7 @@ def evaluate_oauth_integration_state(
 
     # 2. Encryption key well-formed.
     try:
-        CredentialEncryption(integration.credential_encryption_key)
+        CredentialEncryption(integration.credential_encryption_key.get_secret_value())
     except CredentialEncryptionError as exc:
         return disabled(f"{spec.display_name} integration is disabled: {exc}")
 
@@ -394,7 +418,10 @@ def evaluate_oauth_integration_state(
         )
 
     # 5. Taint floor (unless waived).
-    floor_reason = _taint_floor_reason(spec, config, integration, governed_tool_names)
+    floor_tool_names = governed_tool_names | _enabled_tool_names(
+        integration, shared_tool_required_scopes
+    )
+    floor_reason = _taint_floor_reason(spec, config, integration, floor_tool_names)
     if floor_reason is not None:
         return disabled(floor_reason)
 

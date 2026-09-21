@@ -6,9 +6,10 @@ from zoneinfo import ZoneInfo
 
 import aiomqtt
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, MQTTConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.mqtt import (
     MQTT_TOOLS_DEFINITION,
     mqtt_publish_tool,
@@ -25,7 +26,7 @@ def _make_exec_context(mqtt_config: MQTTConfig) -> ToolExecutionContext:
         interface_type="test",
         timezone=ZoneInfo("UTC"),
         turn_id=None,
-        db_context=MagicMock(spec=DatabaseContext),
+        db_context=MagicMock(spec=Database),
         processing_service=mock_processing_service,
         clock=None,
         home_assistant_client=None,
@@ -44,7 +45,7 @@ def exec_context() -> ToolExecutionContext:
             broker_host="mqtt.local",
             broker_port=1883,
             username="testuser",
-            password="testpass",
+            password=SecretStr("testpass"),
         )
     )
 
@@ -177,7 +178,7 @@ async def test_mqtt_publish_no_processing_service() -> None:
         interface_type="test",
         timezone=ZoneInfo("UTC"),
         turn_id=None,
-        db_context=MagicMock(spec=DatabaseContext),
+        db_context=MagicMock(spec=Database),
         processing_service=None,
         clock=None,
         home_assistant_client=None,

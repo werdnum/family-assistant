@@ -29,7 +29,8 @@ from family_assistant.storage.base import (
 
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.conversation_shares import conversation_shares_table
+from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.error_logs import error_logs_table
@@ -41,6 +42,12 @@ from family_assistant.storage.events import (
     recent_events_table,
 )
 from family_assistant.storage.ios_push_token import ios_push_tokens_table
+from family_assistant.storage.memory_change_log import memory_change_log_table
+from family_assistant.storage.memory_review import (
+    memory_contribution_state_table,
+    memory_review_watermarks_table,
+)
+from family_assistant.storage.memory_store import memory_store_table
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.oauth_connections import (
@@ -187,11 +194,17 @@ async def _run_alembic_command(
     args_repr = ", ".join(map(repr, args))
     logger.info(f"Preparing to run Alembic command: {command_name}({args_repr})")
 
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
 
         def sync_command_wrapper(sync_conn: Connection) -> None:
             """Wrapper to run alembic commands with an existing connection."""
             logger.info(f"[sync] Setting connection for Alembic: {sync_conn!r}")
+            if sync_conn.dialect.name == "postgresql":
+                # The outer transaction owns the commit for both this setting
+                # and Alembic's work. SET LOCAL exempts migrations from the
+                # application's query ceiling without leaking the exemption
+                # when the connection returns to the pool.
+                sync_conn.exec_driver_sql("SET LOCAL statement_timeout = 0")
             config.attributes["connection"] = sync_conn
             logger.info(f"[sync] Executing: {command_name}({args_repr})")
             try:
@@ -228,9 +241,9 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
     if VECTOR_STORAGE_ENABLED:
         logger.info("Initializing vector DB components...")
         try:
-            # Use DatabaseContext which handles its own retry logic for execution
-            async with DatabaseContext(engine=engine) as vector_init_context:
-                await vector_init_context.vector.init_db()
+            # Use Database which handles its own retry logic for execution
+            vector_init_context = Database(engine=engine)
+            await vector_init_context.vector.init_db()
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
             logger.exception(
@@ -268,6 +281,21 @@ def _is_transient_db_error(exc: BaseException) -> bool:
     return isinstance(exc, (TimeoutError, ConnectionError))
 
 
+async def _initialize_db_once(engine: AsyncEngine) -> None:
+    alembic_cfg = _get_alembic_config(engine)
+    has_version_table = await _is_alembic_managed(engine)
+    if has_version_table:
+        await _log_current_revision(engine)
+        await _run_alembic_command(engine, alembic_cfg, "upgrade", "head")
+        return
+
+    logger.info("New DB: creating schema, stamping with Alembic head...")
+    await _create_initial_schema(engine)
+    await _run_alembic_command(engine, alembic_cfg, "ensure_version")
+    await _run_alembic_command(engine, alembic_cfg, "stamp", "head")
+    await _initialize_vector_storage(engine)
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """
     Initializes the database with robust retry logic.
@@ -287,19 +315,7 @@ async def init_db(engine: AsyncEngine) -> None:
             logger.info(
                 f"Checking database state (attempt {attempt + 1}/{max_retries})..."
             )
-            alembic_cfg = _get_alembic_config(engine)
-            has_version_table = await _is_alembic_managed(engine)
-
-            if has_version_table:
-                await _log_current_revision(engine)
-                await _run_alembic_command(engine, alembic_cfg, "upgrade", "head")
-            else:
-                logger.info("New DB: creating schema, stamping with Alembic head...")
-                await _create_initial_schema(engine)
-                await _run_alembic_command(engine, alembic_cfg, "ensure_version")
-                await _run_alembic_command(engine, alembic_cfg, "stamp", "head")
-                await _initialize_vector_storage(engine)
-
+            await _initialize_db_once(engine)
             logger.info("Database initialization successful.")
             return
 
@@ -334,19 +350,23 @@ async def init_db(engine: AsyncEngine) -> None:
 # Re-export functions and tables from specific modules to maintain the facade
 # Define __all__ AFTER all functions/variables it references are defined.
 __all__ = [
-    "DatabaseContext",  # Export the new context manager
+    "Database",
     # Enums
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
     "confirmation_requests_table",
+    "conversation_shares_table",
     "create_engine_with_sqlite_optimizations",
     "delegation_runs_table",
     "error_logs_table",
     "event_listeners_table",
-    "get_db_context",
     "init_db",  # Now defined above
     "ios_push_tokens_table",
+    "memory_change_log_table",
+    "memory_contribution_state_table",
+    "memory_review_watermarks_table",
+    "memory_store_table",
     "message_history_table",
     "metadata",
     # Tables - still exported for direct use

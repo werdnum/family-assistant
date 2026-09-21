@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use import (
     BrowserSession,
     close_browser_session,
@@ -51,10 +52,10 @@ _skip_no_internet = pytest.mark.skipif(
 async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
     """Create a GoogleGenAIClient instance for testing."""
     api_key = os.getenv("GEMINI_API_KEY", "dummy_key")
-    # Use gemini-3.6-flash with explicit enable_computer_use flag
+    # Use gemini-3.8-flash with explicit enable_computer_use flag
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-3.6-flash",
+        model="gemini-3.8-flash",
         enable_url_context=False,
         enable_google_search=False,
         enable_computer_use=True,
@@ -66,7 +67,14 @@ async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
 @pytest.fixture
 def mock_exec_context() -> ToolExecutionContext:
     """Create a mock ToolExecutionContext for testing."""
-    return MagicMock(spec=ToolExecutionContext, conversation_id="test-conversation")
+    # A bare mock would hand the browser chokepoint a mock batch to await; a
+    # context outside any tool-call batch has neither field set.
+    return MagicMock(
+        spec=ToolExecutionContext,
+        conversation_id="test-conversation",
+        tool_call_id=None,
+        tool_call_batch=None,
+    )
 
 
 @pytest.fixture
@@ -232,7 +240,7 @@ async def test_real_gemini_computer_use_protocol() -> None:
     api_key = os.environ["GEMINI_API_KEY"]
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-3.6-flash",
+        model="gemini-3.8-flash",
         enable_computer_use=True,
     )
 
@@ -395,7 +403,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                 "description": "Browser test profile with computer use",
                 "processing_config": {
                     "provider": "google",
-                    "llm_model": "gemini-3.6-flash",
+                    "llm_model": "gemini-3.8-flash",
                     "enable_computer_use": True,
                     "max_iterations": 15,
                     "prompts": {
@@ -451,7 +459,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         "telegram_token": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini-3.6-flash",
+        "model": "gemini-3.8-flash",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
         "server_url": "http://localhost:8000",
@@ -476,46 +484,48 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         processing_service = assistant.default_processing_service
 
         # Create a database context for the test
-        async with get_db_context(engine=db_engine) as db_context:
-            # Process the user's request through the full stack
-            # The ProcessingService will handle the LLM → tool → result loop
-            (
-                turn_messages,
-                reasoning_info,
-                attachment_ids,
-            ) = await processing_service.process_message(
-                db_context=db_context,
-                messages=[
-                    UserMessage(
-                        content=(
-                            "Navigate to https://example.com and tell me what the "
-                            "main heading (h1) on the page says. "
-                            "Use the browser tools to navigate there."
-                        ),
-                    )
-                ],
-                interface_type="test",
-                conversation_id="e2e-browser-test",
-                user_name="TestUser",
-                turn_id="turn-1",
-                chat_interface=None,
-            )
+        db_context = Database(engine=db_engine)
+        # Process the user's request through the full stack
+        # The ProcessingService will handle the LLM → tool → result loop
+        (
+            turn_messages,
+            reasoning_info,
+            attachment_ids,
+        ) = await processing_service.process_message(
+            db_context=db_context,
+            messages=[
+                UserMessage(
+                    content=(
+                        "Navigate to https://example.com and tell me what the "
+                        "main heading (h1) on the page says. "
+                        "Use the browser tools to navigate there."
+                    ),
+                )
+            ],
+            interface_type="test",
+            conversation_id="e2e-browser-test",
+            user_name="TestUser",
+            turn_id="turn-1",
+            chat_interface=None,
+            llm_client=processing_service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
+        )
 
-            # Find the final assistant response
-            final_response = None
-            for msg in reversed(turn_messages):
-                if isinstance(msg, AssistantMessage) and msg.content:
-                    final_response = msg.content
-                    break
+        # Find the final assistant response
+        final_response = None
+        for msg in reversed(turn_messages):
+            if isinstance(msg, AssistantMessage) and msg.content:
+                final_response = msg.content
+                break
 
-            logger.info(f"Final response: {final_response}")
-            logger.info(f"Total messages in turn: {len(turn_messages)}")
+        logger.info(f"Final response: {final_response}")
+        logger.info(f"Total messages in turn: {len(turn_messages)}")
 
-            # Verify the task was completed - response should mention "Example Domain"
-            assert final_response is not None, "No final assistant response received"
-            assert "Example Domain" in final_response, (
-                f"Expected 'Example Domain' in response, got: {final_response}"
-            )
+        # Verify the task was completed - response should mention "Example Domain"
+        assert final_response is not None, "No final assistant response received"
+        assert "Example Domain" in final_response, (
+            f"Expected 'Example Domain' in response, got: {final_response}"
+        )
 
     finally:
         # Cleanup: close any browser sessions
@@ -560,7 +570,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                 "description": "Screenshot test profile with computer use",
                 "processing_config": {
                     "provider": "google",
-                    "llm_model": "gemini-3.6-flash",
+                    "llm_model": "gemini-3.8-flash",
                     "enable_computer_use": True,
                     "max_iterations": 10,
                     "prompts": {
@@ -615,7 +625,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
         "telegram_token": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini-3.6-flash",
+        "model": "gemini-3.8-flash",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
         "server_url": "http://localhost:8000",
@@ -637,54 +647,56 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
         assert assistant.default_processing_service is not None
         processing_service = assistant.default_processing_service
 
-        async with get_db_context(engine=db_engine) as db_context:
-            # User asks to take a screenshot of a website
-            (
-                turn_messages,
-                reasoning_info,
-                attachment_ids,
-            ) = await processing_service.process_message(
-                db_context=db_context,
-                messages=[
-                    UserMessage(
-                        content=(
-                            "Please take a screenshot of https://example.com. "
-                            "Navigate to the website and capture what you see."
-                        ),
-                    )
-                ],
-                interface_type="test",
-                conversation_id="screenshot-test",
-                user_name="TestUser",
-                turn_id="turn-1",
-                chat_interface=None,
-            )
+        db_context = Database(engine=db_engine)
+        # User asks to take a screenshot of a website
+        (
+            turn_messages,
+            reasoning_info,
+            attachment_ids,
+        ) = await processing_service.process_message(
+            db_context=db_context,
+            messages=[
+                UserMessage(
+                    content=(
+                        "Please take a screenshot of https://example.com. "
+                        "Navigate to the website and capture what you see."
+                    ),
+                )
+            ],
+            interface_type="test",
+            conversation_id="screenshot-test",
+            user_name="TestUser",
+            turn_id="turn-1",
+            chat_interface=None,
+            llm_client=processing_service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
+        )
 
-            # Find the final assistant response
-            final_response = None
-            for msg in reversed(turn_messages):
-                if isinstance(msg, AssistantMessage) and msg.content:
-                    final_response = msg.content
-                    break
+        # Find the final assistant response
+        final_response = None
+        for msg in reversed(turn_messages):
+            if isinstance(msg, AssistantMessage) and msg.content:
+                final_response = msg.content
+                break
 
-            logger.info(f"Final response: {final_response}")
-            logger.info(f"Attachment IDs: {attachment_ids}")
-            logger.info(f"Total messages in turn: {len(turn_messages)}")
+        logger.info(f"Final response: {final_response}")
+        logger.info(f"Attachment IDs: {attachment_ids}")
+        logger.info(f"Total messages in turn: {len(turn_messages)}")
 
-            # Verify screenshot was taken
-            # The attachment_ids list should contain the screenshot attachment
-            assert final_response is not None, "No final assistant response received"
+        # Verify screenshot was taken
+        # The attachment_ids list should contain the screenshot attachment
+        assert final_response is not None, "No final assistant response received"
 
-            # The response should indicate the screenshot was taken
-            # and there should be at least one attachment (the screenshot)
-            assert attachment_ids is not None and len(attachment_ids) > 0, (
-                f"Expected screenshot attachment(s), got: {attachment_ids}. "
-                f"Response: {final_response}"
-            )
+        # The response should indicate the screenshot was taken
+        # and there should be at least one attachment (the screenshot)
+        assert attachment_ids is not None and len(attachment_ids) > 0, (
+            f"Expected screenshot attachment(s), got: {attachment_ids}. "
+            f"Response: {final_response}"
+        )
 
-            logger.info(
-                f"Screenshot test passed: {len(attachment_ids)} attachment(s) captured"
-            )
+        logger.info(
+            f"Screenshot test passed: {len(attachment_ids)} attachment(s) captured"
+        )
 
     finally:
         cleanup_context = MagicMock(

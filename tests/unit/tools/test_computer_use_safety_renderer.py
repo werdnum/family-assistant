@@ -2,8 +2,8 @@
 
 The confirmation prompt is the sole safeguard before a safety-flagged browser
 action runs, so the user must always see which action they are approving, the
-model's explanation, and the complete executable payload — with over-length
-payloads refused rather than truncated.
+model's explanation, and the complete executable payload, rendered in full at
+any length.
 """
 
 from __future__ import annotations
@@ -14,9 +14,8 @@ import pytest
 
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import (
-    CONFIRMATION_VALUE_MAX_CHARS,
     TOOL_CONFIRMATION_RENDERERS,
-    confirmation_payload_block_reason,
+    confirmation_arguments_block_reason,
 )
 
 if TYPE_CHECKING:
@@ -82,39 +81,21 @@ async def test_renderer_handles_missing_safety_decision() -> None:
     assert "https://example.com" in prompt
 
 
-def test_block_reason_refuses_over_length_type_text() -> None:
-    reason = confirmation_payload_block_reason(
-        "type",
-        {"text": "x" * (CONFIRMATION_VALUE_MAX_CHARS + 1)},
+def test_long_computer_use_arguments_are_not_blocked() -> None:
+    # Typed text and URLs are rendered in full; whether they can be displayed
+    # is decided by the interface delivering the prompt (see
+    # docs/design/confirmation-prompt-capacity.md).
+    assert confirmation_arguments_block_reason("type", {"text": "x" * 20_000}) is None
+    assert (
+        confirmation_arguments_block_reason(
+            "navigate", {"url": "https://example.com/?q=" + "x" * 20_000}
+        )
+        is None
     )
-    assert reason is not None
-    assert "smaller pieces" in reason
 
 
-def test_block_reason_refuses_over_length_navigate_url() -> None:
-    reason = confirmation_payload_block_reason(
-        "navigate",
-        {"url": "https://example.com/?q=" + "x" * CONFIRMATION_VALUE_MAX_CHARS},
-    )
-    assert reason is not None
-    assert "'url'" in reason
-
-
-def test_block_reason_ignores_safety_decision_metadata() -> None:
-    # The safety_decision blob is display-only metadata, not executed payload.
-    reason = confirmation_payload_block_reason(
-        "click",
-        {
-            "x": 1,
-            "y": 2,
-            "safety_decision": {"explanation": "e" * 5000},
-        },
-    )
-    assert reason is None
-
-
-def test_block_reason_allows_reviewable_arguments() -> None:
-    reason = confirmation_payload_block_reason(
+def test_block_reason_allows_ordinary_arguments() -> None:
+    reason = confirmation_arguments_block_reason(
         "type",
         {"text": "hello world"},
     )

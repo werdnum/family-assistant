@@ -106,6 +106,7 @@ export interface GeminiLiveSessionConfig {
 export interface GeminiLiveTranscriptionConfig {
   input_enabled: boolean;
   output_enabled: boolean;
+  language_codes: string[];
 }
 
 /**
@@ -150,6 +151,7 @@ export interface GeminiLiveConfig {
   session: GeminiLiveSessionConfig;
   transcription: GeminiLiveTranscriptionConfig;
   vad: GeminiLiveVADConfig;
+  car_audio_vad: GeminiLiveVADConfig;
   affective_dialog: GeminiLiveAffectiveDialogConfig;
   proactivity: GeminiLiveProactivityConfig;
   thinking: GeminiLiveThinkingConfig;

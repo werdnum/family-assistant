@@ -20,6 +20,28 @@ web UI.
 
 ## How It Works
 
+### Apple Watch targets
+
+`FamilyAssistantWatch` is a watchOS 10+ app embedded in the iOS app; its
+`FamilyAssistantWatchComplications` extension provides the voice launcher. Select the shared
+`FamilyAssistantWatch` scheme to run it on a watch simulator or device. Install the watchOS platform
+in Xcode first (`xcodebuild -downloadPlatform watchOS`).
+
+Both targets use automatic signing. When changing the iOS bundle identifier, also update the watch
+and complication bundle identifiers and `WKCompanionAppBundleIdentifier` in the watch Info.plist.
+The shipped identifiers are `dev.andrewgarrett.assistant.watchkitapp` and
+`dev.andrewgarrett.assistant.watchkitapp.complications`.
+
+The watch shares native auth, backend API and voice-session sources with iOS; both targets use
+`URLSessionGeminiLiveSocket` for voice. The watch uses its own Keychain credentials and asynchronous
+audio activation. Setup uses WatchConnectivity to request a separate credential pair through the
+signed-in iPhone; deploy the backend with `POST /api/auth/watch-credentials` before distributing
+this client. No shared Keychain, App Groups or additional portal capabilities are required. The
+phone's refresh token is used only with the backend, never transferred to the watch. See
+[watchOS design](../../docs/design/watchos-voice.md) and
+[user setup](../../docs/user/interfaces.md#apple-watch). Check microphone capture, speaker or
+Bluetooth playback, sign-in and calling without the phone on a physical watch before release.
+
 ### Authentication Flow
 
 The app uses a PKCE-based auth flow to securely obtain API credentials:
@@ -55,9 +77,11 @@ chat behavior rather than matching every pixel:
 - Markdown rendering via Swift Markdown plus native `AttributedString`
 - Tool-call cards and grouped completed tools
 - Pending approval banner and inline approve/reject actions
-- Image, PDF, plain text, and Markdown uploads up to 100 MB
+- Camera capture and image, PDF, plain text, and Markdown uploads up to 100 MB
 - Authenticated attachment previews/downloads
 - Live message update SSE connection and notification/deep-link routing
+- Native read-only shared-conversation transcripts opened from
+  `https://assistant.andrewgarrett.dev/shared/conversations/<token>` Universal Links
 - Stop-generating and reload/error recovery paths
 
 The native chat client calls these existing authenticated endpoints:
@@ -65,6 +89,8 @@ The native chat client calls these existing authenticated endpoints:
 ```http
 GET /api/v1/chat/conversations?interface_type=web
 GET /api/v1/chat/conversations/{conversation_id}/messages
+GET /api/v1/shared-conversations/{token}/messages
+GET /api/v1/shared-conversations/{token}/attachments/{attachment_id}
 GET /api/v1/profiles
 POST /api/v1/chat/turns
 GET /api/v1/chat/conversations/{conversation_id}/stream?from_seq=<n>&follow=<bool>
@@ -74,6 +100,11 @@ POST /api/attachments/upload
 DELETE /api/attachments/{attachment_id}
 GET /api/attachments/{attachment_id}
 ```
+
+The app target claims `applinks:assistant.andrewgarrett.dev`. The server's
+`/.well-known/apple-app-site-association` response associates the production Team ID and bundle ID
+with app-auth callbacks and shared-conversation links. Self-hosted builds must override
+`APPLE_TEAM_ID` and `APPLE_BUNDLE_ID` and add their own hostname to the app entitlement.
 
 Confirmation actions sent by the iOS app include `"approving_interface": "ios"` while the backend
 continues to default older web/APNs callers to `"web"`.
@@ -182,7 +213,49 @@ or backend change is required. `FamilyAssistantAppShortcuts` registers Siri phra
 - **Open Chat** — `openAppWhenRun`; foregrounds the Chat tab and can auto-send a message.
 
 If the user is signed out, intents throw a "sign in" error rather than attempting interactive login.
-See [docs/design/ios-app-intents.md](../../docs/design/ios-app-intents.md) for the full design.
+
+### Intents extension (SiriKit calling)
+
+`FamilyAssistantIntents` is an Intents app extension embedded in the app, bundle identifier
+`dev.andrewgarrett.assistant.intents`. Its `Info.plist` declares `INStartCallIntent` in
+`NSExtension` → `NSExtensionAttributes` → `IntentsSupported`, which is what makes Siri treat the app
+as a call provider; the App Intents above cannot do that, because SiriKit's calling domain is
+reached only through this extension point. `FamilyAssistantIntents.entitlements` carries
+`com.apple.developer.siri`, so a device build needs the Siri capability on the extension's App ID as
+well as the app's, and automatic signing needs a provisioning profile for both.
+
+The extension declares and resolves only: it answers `.continueInApp`, and the app issues the
+CallKit transaction. Do not move `CXCallController` or `CXProvider` into it — those calls fail
+`unentitled` from an extension. `AssistantCallHandle` in `CallShared/` is compiled into both targets
+so the resolution rule and the handle string have one definition.
+
+**CallKit requires the VoIP background mode.** The app's `Info.plist` declares `UIBackgroundModes` =
+`audio` **and** `voip`. There is no CallKit capability in the Developer portal and no CallKit
+entitlement to add: the `voip` entry is the only thing that marks the process as a calling app, so
+iOS gates the CallKit APIs on it. Apple states the requirement for calling apps in
+[Preparing your app to be the default calling app](https://developer.apple.com/documentation/callkit/preparing-your-app-to-be-the-default-calling-app)
+("The `Info.plist` file has the `UIBackgroundModes` property array and contains an entry with the
+string `voip`"), and `CXErrorCodeMissingVoIPBackgroundMode` exists in `CXError.h` for the same
+reason.
+
+Drop `voip` and nothing fails at build or launch. `CXCallController.request` fails at runtime, on a
+device, with `CXErrorDomainRequestTransaction` code 1 —
+`CXErrorCodeRequestTransactionErrorUnentitled`, surfaced as "The operation couldn't be completed.
+(com.apple.CallKit.error.requesttransaction error 1.)" — because that domain has no dedicated
+missing-background-mode code. `VoiceCallRequestCenterTests` asserts both modes are in the built
+bundle so this is caught in CI instead. Note that declaring `voip` brings the app within App Store
+Review Guideline 2.5.4, which reserves background modes for their intended purposes.
+
+Every SiriKit intent listed in `IntentsSupported` needs at least one registered example phrase in
+every language the app ships, or App Store Connect answers the upload with
+`ITMS-90626: Invalid Siri Support`. The phrases live in
+`FamilyAssistant/en.lproj/AppIntentVocabulary.plist` — a resource of the **app** target, not the
+extension's, and inside a language `.lproj` directory — as an `IntentPhrases` array whose entries
+pair an `IntentName` with an `IntentExamples` array. Adding an intent to the extension, or a
+language to the app, means adding a matching entry or a localized copy of the file. Siri also shows
+these phrases in the Siri Guide, so they should be things that actually work: the assistant answers
+to one name, so only `Call Family Assistant` and its variants belong here. See
+[docs/design/ios-app-intents.md](../../docs/design/ios-app-intents.md) for the full design.
 
 ### Home Screen Quick Actions
 
@@ -250,6 +323,51 @@ FamilyAssistant/
 - **PhotosUI** - Native image picker
 - **UniformTypeIdentifiers** - Attachment MIME/type validation
 - **Swift Markdown 0.8.0** - GitHub-flavored Markdown parsing support
+
+## Privacy Manifest
+
+`FamilyAssistant/PrivacyInfo.xcprivacy` ships in the app bundle as a resource of the
+`FamilyAssistant` target. App Store submission requires it, and it feeds both the App Store privacy
+"nutrition label" and the Xcode privacy report.
+
+It declares no tracking and no tracking domains: the app carries no analytics, attribution or ad
+SDKs, and Swift Markdown is the only third-party package.
+
+Collected data types, all marked linked-to-identity (every request carries an account API token) and
+all for App Functionality only:
+
+| Declared type         | Source                                                      |
+| --------------------- | ----------------------------------------------------------- |
+| Photos or Videos      | Image attachments captured or picked in native Chat         |
+| Audio Data            | Voice mode streams microphone frames to the Gemini Live API |
+| Other User Content    | Chat messages, notes, PDF/text/Markdown attachments         |
+| User ID               | The account behind the API token                            |
+| Device ID             | APNs device token and the `fa_installation_id` UUID         |
+| Crash Data            | Uncaught `NSException` reports, with stack symbols          |
+| Other Diagnostic Data | The telemetry lane, plus app version, build and OS version  |
+
+Audio is the one type that leaves the device for somewhere other than the Family Assistant server:
+`Voice/GeminiLiveClient.swift` opens its `wss://` session straight to Google's Generative Language
+endpoint using a backend-minted ephemeral token, so the frames do not transit the server.
+
+Required-reason API declarations:
+
+- `NSPrivacyAccessedAPICategoryUserDefaults` — `CA92.1`, for `UserDefaults` values only this app
+  reads (notification toggle, stored device token, installation ID, persisted chat selections).
+- `NSPrivacyAccessedAPICategoryFileTimestamp` — `C617.1`, the in-container reason, for the
+  `.creationDateKey` sort that trims the error reporter's spool directory. Not `DDA9.1`, which
+  covers displaying timestamps to the person using the device and forbids sending them off-device;
+  the trim neither displays nor transmits them.
+
+Two changes oblige an update here. Sending a new kind of data off-device means a new
+`NSPrivacyCollectedDataTypes` entry and a matching answer in App Store Connect. Reaching for a
+required-reason API — disk space, system boot time, active keyboards, or file timestamps outside the
+app container — means a new `NSPrivacyAccessedAPITypes` entry, or the build is rejected at upload.
+
+Note that `device_name` in the push-token payload is not a declared data type: with a deployment
+target of iOS 17 and no user-assigned-device-name entitlement, `UIDevice.current.name` returns a
+generic model string rather than a personal one. Adding that entitlement would make it personal data
+and would require declaring Contact Info → Name.
 
 ## Building from Command Line
 

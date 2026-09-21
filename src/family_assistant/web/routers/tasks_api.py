@@ -4,7 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.web.dependencies import get_db
 
 tasks_api_router = APIRouter()
@@ -14,6 +15,7 @@ class TaskModel(BaseModel):
     id: int
     task_id: str
     task_type: str
+    priority: str
     payload: dict | None = None
     status: str
     created_at: datetime
@@ -33,7 +35,7 @@ class TaskListResponse(BaseModel):
 
 @tasks_api_router.get("/")
 async def list_tasks(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     task_type: str | None = None,
     date_from: datetime | None = None,
@@ -52,9 +54,12 @@ async def list_tasks(
     )
     task_models = []
     for task in tasks:
+        # The lane reaches the UI by name rather than as the stored integer,
+        # which means nothing to a reader of the task list.
+        row = {**task, "priority": TaskPriority(task["priority"]).label}
         # basedpyright complains about 'error' key vs 'error_message' field even with alias
         # so we use type: ignore to bypass the unpacking check
-        task_models.append(TaskModel(**task))  # type: ignore[reportCallIssue]
+        task_models.append(TaskModel(**row))  # type: ignore[reportCallIssue]
     return TaskListResponse(tasks=task_models)
 
 
@@ -63,7 +68,7 @@ async def list_tasks(
 )
 async def retry_task(
     internal_task_id: int,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Manually retry a task."""
     success = await db_context.tasks.manually_retry(internal_task_id)
@@ -79,7 +84,7 @@ async def retry_task(
 )
 async def cancel_task(
     internal_task_id: int,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Cancel a pending task."""
     success = await db_context.tasks.cancel_task(internal_task_id)

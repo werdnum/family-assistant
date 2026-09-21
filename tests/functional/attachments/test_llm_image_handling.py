@@ -27,8 +27,9 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment
+from tests.mocks.mock_llm import last_real_message
 
 
 class MockLLMClient:
@@ -93,16 +94,16 @@ async def test_image_handling_with_real_db(
         filename = "test_image.jpg"
 
         # Use a database context for registration
-        async with DatabaseContext(engine=db_engine) as db_context:
-            metadata = await registry.register_user_attachment(
-                db_context=db_context,
-                content=image_content,
-                filename=filename,
-                mime_type="image/jpeg",
-                description="Test Image",
-                user_id="test_user",
-                conversation_id=conversation_id,
-            )
+        db_context = Database(engine=db_engine)
+        metadata = await registry.register_user_attachment(
+            db_context=db_context,
+            content=image_content,
+            filename=filename,
+            mime_type="image/jpeg",
+            description="Test Image",
+            user_id="test_user",
+            conversation_id=conversation_id,
+        )
 
         assert metadata.attachment_id is not None
 
@@ -152,23 +153,23 @@ async def test_image_handling_with_real_db(
         ]
 
         # Use a database context for the interaction
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="telegram",
-                conversation_id=conversation_id,
-                # ast-grep-ignore: no-dict-any - trigger content parts have mixed external message types
-                trigger_content_parts=trigger_content,  # type: ignore
-                trigger_interface_message_id="msg_123",
-                user_name="TestUser",
-                trigger_attachments=trigger_attachments,
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="telegram",
+            conversation_id=conversation_id,
+            # ast-grep-ignore: no-dict-any - trigger content parts have mixed external message types
+            trigger_content_parts=trigger_content,  # type: ignore
+            trigger_interface_message_id="msg_123",
+            user_name="TestUser",
+            trigger_attachments=trigger_attachments,
+        )
 
         # 5. Verify what the LLM received
         assert len(mock_llm.captured_messages) > 0
 
         # Find the user message (should be the last one)
-        last_message = mock_llm.captured_messages[-1]
+        last_message = last_real_message(mock_llm.captured_messages)
         assert isinstance(last_message, UserMessage)
 
         # Inspect content parts

@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import logging
 import os  # Import os for environment variable resolution
+import random
+import time
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
     TypedDict,
+    cast,
 )  # Added Tuple
 
 import anyio
+import jsonschema
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -21,6 +27,19 @@ from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.ss
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
+from family_assistant.config_inspection import redact_sensitive_text
+from family_assistant.tools.argument_schema import check_parameter_schema
+from family_assistant.tools.attachment_utils import process_attachment_arguments
+from family_assistant.tools.infrastructure import translate_attachment_schemas_for_llm
+from family_assistant.tools.mcp_attachments import (
+    AttachmentParameter,
+    ParameterOverride,
+    apply_parameter_overrides,
+    attachment_parameters_only,
+    materialised_attachment_arguments,
+    normalise_attachment_arguments,
+    normalize_parameter_overrides,
+)
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     build_tool_descriptor,
@@ -56,13 +75,115 @@ MCP_SERVER_STATUS_CONNECTED = "connected"
 MCP_SERVER_STATUS_FAILED = "failed"
 MCP_SERVER_STATUS_CANCELLED = "cancelled"
 
+# Reconnect pacing defaults. The first retry after a server drops is immediate
+# (the next health check cycle); each further attempt without the server being
+# seen healthy doubles the wait, up to half an hour.
+DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS = 30.0
+DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS = 30 * 60.0
+
+# 2**63 seconds already dwarfs any sane cap; clamping the exponent keeps a
+# long-lived process from overflowing the float multiplication below.
+_MAX_BACKOFF_EXPONENT = 63
+
+
+def reconnect_backoff_delay(
+    attempts: int,
+    *,
+    base_seconds: float,
+    max_seconds: float,
+) -> float:
+    """Truncated exponential backoff with equal jitter.
+
+    ``attempts`` counts reconnect attempts made since the server was last seen
+    healthy. Half of each interval is fixed and half is random, so the wait
+    always grows with the attempt count while staying decorrelated from the
+    other servers' schedules (and from other instances talking to the same
+    remote endpoint).
+    """
+    if attempts < 1:
+        return 0.0
+    exponent = min(attempts - 1, _MAX_BACKOFF_EXPONENT)
+    ceiling = min(max_seconds, base_seconds * float(2**exponent))
+    return random.uniform(ceiling / 2, ceiling)
+
+
+# MCP transports report a lost connection as a grab bag of exception types, so
+# the message text is most of what we have to go on.
+_CONNECTION_ERROR_PHRASES = (
+    "connection",
+    "closed",
+    "reset",
+    "broken pipe",
+    "eof",
+    "disconnected",
+    "not connected",
+)
+
+
+def _is_connection_error(error: Exception, *, include_timeouts: bool = False) -> bool:
+    """Whether ``error`` looks like the transport went away rather than the server misbehaving.
+
+    Timeouts are opt-in: a health check that times out may just be talking to a
+    slow server, while a tool call that times out has already burned the
+    caller's patience and is worth a reconnect.
+    """
+    if isinstance(error, anyio.ClosedResourceError):
+        return True
+    error_str = str(error).lower()
+    phrases = (
+        (*_CONNECTION_ERROR_PHRASES, "timeout")
+        if include_timeouts
+        else _CONNECTION_ERROR_PHRASES
+    )
+    return any(phrase in error_str for phrase in phrases)
+
+
+@dataclass
+class _ReconnectBackoff:
+    """Per-server retry pacing for the health check loop.
+
+    ``attempts`` is reset only by a passing health check, not by a successful
+    reconnect: a server that accepts a connection and then drops it again is
+    just as much in need of pacing as one that refuses outright.
+    """
+
+    attempts: int = 0
+    next_attempt_at: float = 0.0
+
+
+def _array_parameter_names(definition: ToolDefinition | None) -> frozenset[str]:
+    """Which of a tool's parameters the overlay decided hold a list.
+
+    The overlay already resolved that from the server's schema -- through
+    unions and ``$ref``s -- so execution reads its answer rather than guessing
+    again from the value it was handed.
+    """
+    if definition is None:
+        return frozenset()
+    properties = (
+        definition.get("function", {}).get("parameters", {}).get("properties", {})
+    )
+    return frozenset(
+        name
+        for name, schema in properties.items()
+        if isinstance(schema, dict) and schema.get("type") == "array"
+    )
+
 
 class MCPServerStatus(TypedDict):
     """Diagnostic snapshot describing one MCP server's connection state.
 
     Used by ``MCPToolsProvider.get_server_statuses`` and surfaced through
-    the engineer-profile ``get_mcp_server_status`` tool. Token-bearing
-    config fields are intentionally omitted.
+    the engineer-profile ``get_mcp_server_status`` tool. The ``token`` config
+    field is intentionally omitted, and ``url`` and ``args`` are passed through
+    the shared value-shape redaction, which covers an endpoint's userinfo
+    password and credential query parameters.
+
+    Credentials belong in ``env`` (stdio) or the ``token`` field (remote); both
+    are redacted in dumps, ``env`` values whole. A credential placed
+    outside that supported path — ``args: ["--token", "secret"]``, say — is not
+    guaranteed to be redacted here, and an operator who puts one there accepts
+    that. See the MCP section of ``docs/operations/CONFIGURATION_REFERENCE.md``.
     """
 
     status: str
@@ -73,6 +194,8 @@ class MCPServerStatus(TypedDict):
     session_active: bool
     tool_count: int
     tools: list[str]
+    reconnect_attempts: int
+    next_reconnect_in_seconds: float | None
 
 
 class MCPToolsProvider:
@@ -88,10 +211,25 @@ class MCPToolsProvider:
         mcp_server_configs: Mapping[str, MCPServerConfig],
         initialization_timeout_seconds: int = 60,  # Default 1 minute
         health_check_interval_seconds: int = 30,  # Default 30 seconds
+        reconnect_backoff_base_seconds: float = DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS,
+        reconnect_backoff_max_seconds: float = DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS,
     ) -> None:
         self._mcp_server_configs = dict(mcp_server_configs)
+        # Validated here so a malformed block fails at startup rather than at
+        # the first tool call that would have used it.
+        self._parameter_overrides: dict[
+            str, dict[str, dict[str, ParameterOverride]]
+        ] = {
+            server_id: normalize_parameter_overrides(config.get("parameter_overrides"))
+            for server_id, config in self._mcp_server_configs.items()
+        }
         self._initialization_timeout_seconds = initialization_timeout_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
+        self._reconnect_backoff_base_seconds = reconnect_backoff_base_seconds
+        self._reconnect_backoff_max_seconds = reconnect_backoff_max_seconds
+        self._reconnect_backoff: dict[str, _ReconnectBackoff] = {
+            server_id: _ReconnectBackoff() for server_id in self._mcp_server_configs
+        }
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[ToolDefinition] = []
@@ -109,6 +247,8 @@ class MCPToolsProvider:
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. "
             f"Initialization timeout: {self._initialization_timeout_seconds}s. "
             f"Health check interval: {self._health_check_interval_seconds}s. "
+            f"Reconnect backoff: {self._reconnect_backoff_base_seconds}s base, "
+            f"{self._reconnect_backoff_max_seconds}s max. "
             f"Initialization pending."
         )
 
@@ -122,8 +262,10 @@ class MCPToolsProvider:
 
         Returns a mapping of ``server_id`` to an ``MCPServerStatus`` describing
         the current connection state, transport, configured connection
-        details (no tokens), session activity, and the tools currently
-        provided by that server.
+        details (no tokens; credentials embedded in the URL or in stdio
+        arguments are redacted), session activity, the tools currently
+        provided by that server, and where the server sits in the reconnect
+        backoff schedule.
 
         Designed to be called by engineer-profile diagnostic tools without
         requiring any further reconnection or I/O.
@@ -137,17 +279,33 @@ class MCPToolsProvider:
             tools_by_server.setdefault(server_id, []).append(tool_name)
 
         snapshot: dict[str, MCPServerStatus] = {}
+        now = time.monotonic()
         for server_id, config in self._mcp_server_configs.items():
             tools = sorted(tools_by_server.get(server_id, []))
+            backoff = self._reconnect_backoff[server_id]
+            configured_url = config.get("url")
             snapshot[server_id] = MCPServerStatus(
                 status=self._server_statuses.get(server_id, MCP_SERVER_STATUS_PENDING),
                 transport=config.get("transport", "stdio"),
                 command=config.get("command"),
-                args=list(config.get("args", []) or []),
-                url=config.get("url"),
+                args=[
+                    redact_sensitive_text(arg) if isinstance(arg, str) else arg
+                    for arg in (config.get("args", []) or [])
+                ],
+                url=(
+                    redact_sensitive_text(configured_url)
+                    if isinstance(configured_url, str)
+                    else configured_url
+                ),
                 session_active=server_id in self._sessions,
                 tool_count=len(tools),
                 tools=tools,
+                reconnect_attempts=backoff.attempts,
+                next_reconnect_in_seconds=(
+                    round(max(0.0, backoff.next_attempt_at - now), 1)
+                    if backoff.attempts
+                    else None
+                ),
             )
         return snapshot
 
@@ -193,12 +351,29 @@ class MCPToolsProvider:
 
         return descriptors
 
+    async def _list_all_tools(self, session: ClientSession) -> list[Any]:
+        """Read a server's complete tool list, following pagination cursors.
+
+        ``tools/list`` is paginated, so the first page alone is not the
+        server's answer: reconciling against it would treat everything past
+        that page as withdrawn.
+        """
+        tools: list[Any] = []
+        cursor: str | None = None
+        while True:
+            response = await session.list_tools(cursor=cursor)
+            tools.extend(response.tools)
+            cursor = response.nextCursor
+            if cursor is None:
+                return tools
+
     async def _log_mcp_initialization_progress(
         self, stop_event: asyncio.Event, start_time: float
     ) -> None:
         """Logs progress during MCP tool initialization."""
         logger.debug("MCP initialization logging task started.")
-        try:
+
+        async def log_until_stopped() -> None:
             while not stop_event.is_set():
                 try:
                     # Wait for 10 seconds or until stop_event is set
@@ -228,6 +403,9 @@ class MCPToolsProvider:
                         )
                 except asyncio.CancelledError:  # If logging_task itself is cancelled
                     raise
+
+        try:
+            await log_until_stopped()
         except asyncio.CancelledError:
             logger.debug("MCP initialization logging task cancelled.")
         except Exception as e:
@@ -250,9 +428,7 @@ class MCPToolsProvider:
         """Connects to a single MCP server, discovers tools, and returns results."""
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
         discovered_tools = []
-        discovered_descriptors = []
         tool_map = {}
-        session = None
         exit_stack = contextlib.AsyncExitStack()
 
         transport_type = server_conf.get("transport", "stdio").lower()
@@ -317,7 +493,13 @@ class MCPToolsProvider:
         logger.info(
             f"Attempting connection and discovery for MCP server '{server_id}' using '{transport_type}' transport..."
         )
-        try:
+
+        async def connect_and_discover() -> tuple[
+            ClientSession | None,
+            list[ToolDefinition],
+            list[ToolDescriptor],
+            dict[str, str],
+        ]:
             # --- Transport and Session Creation ---
             if transport_type == "stdio":
                 if not command:
@@ -411,12 +593,13 @@ class MCPToolsProvider:
                 f"Initialized session with MCP server '{server_id}' ({transport_type}). Status: {self._server_statuses[server_id]}."
             )
 
-            response = await session.list_tools()
-            server_tools = response.tools
+            server_tools = await self._list_all_tools(session)
             logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
 
             # Format MCP tools to OpenAI dict format (sanitization moved to LLM layer)
-            sanitized_tools = self._format_mcp_definitions_to_dicts(server_tools)
+            sanitized_tools = self._format_mcp_definitions_to_dicts(
+                server_tools, server_id
+            )
             discovered_tools.extend(sanitized_tools)
 
             for tool_def in sanitized_tools:  # Iterate sanitized definitions
@@ -439,6 +622,8 @@ class MCPToolsProvider:
 
             return session, discovered_tools, discovered_descriptors, tool_map
 
+        try:
+            return await connect_and_discover()
         except Exception as e:
             logger.exception(
                 f"Failed connection/discovery for MCP server '{server_id}': {e}"
@@ -468,7 +653,6 @@ class MCPToolsProvider:
         self._server_statuses = {
             sid: MCP_SERVER_STATUS_PENDING for sid in self._mcp_server_configs
         }
-        all_tool_names = set()  # To detect duplicates across servers
 
         # --- Create connection tasks ---
         connection_tasks = [
@@ -581,31 +765,14 @@ class MCPToolsProvider:
                     session,
                     discovered_tools,
                     descriptors_for_server,
-                    tool_map_for_server,
+                    _tool_map_for_server,
                 ) = res_item
                 if session:
                     # Status should be CONNECTED from _connect_and_discover_mcp
                     self._sessions[server_id] = session
-
-                    # Check for duplicates before adding
-                    for tool_def, descriptor in zip(
-                        discovered_tools, descriptors_for_server, strict=False
-                    ):
-                        tool_name = descriptor.name
-                        if tool_name:
-                            if tool_name in all_tool_names:
-                                logger.warning(
-                                    f"Duplicate tool name '{tool_name}' found on server '{server_id}'. "
-                                    f"It will be ignored from this server. Previous source: '{self._tool_map.get(tool_name)}'."
-                                )
-                                # Remove from tool_map_for_server to prevent overwriting
-                                tool_map_for_server.pop(tool_name, None)
-                            else:
-                                all_tool_names.add(tool_name)
-                                self._definitions.append(tool_def)
-                                self._descriptors.append(descriptor)
-
-                    self._tool_map.update(tool_map_for_server)
+                    self._register_server_tools(
+                        server_id, discovered_tools, descriptors_for_server
+                    )
                 else:
                     logger.warning(
                         f"Connection/discovery for MCP server '{server_id}' completed but yielded no active session. Result: {res_item}"
@@ -645,16 +812,32 @@ class MCPToolsProvider:
             self._health_check_task = asyncio.create_task(self._health_check_loop())
             logger.info("Started MCP server health check task")
 
+    def _attachment_parameters_for_tool(
+        self, server_id: str, tool_name: str
+    ) -> dict[str, AttachmentParameter]:
+        """Return the attachment parameters configured for one tool."""
+        return attachment_parameters_only(
+            self._parameter_overrides.get(server_id, {}).get(tool_name, {})
+        )
+
     def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
         self,
-        definitions: list[Any],  # MCP list_tools returns list of Tool objects
+        definitions: Sequence[Any],  # MCP list_tools returns Tool objects
+        server_id: str,
     ) -> list[ToolDefinition]:
         """
         Accepts a list of MCP Tool objects.
         Converts MCP Tool objects to OpenAI-like dictionary format.
         Sanitization (removing unsupported formats) is handled by the LLM client layer.
+
+        The server's ``parameter_overrides`` block is applied here: an
+        attachment parameter is marked ``type: attachment``, so the definitions
+        this provider holds carry the same internal shape as a local tool's and
+        the LLM-facing translation applies to both alike, and a dropped
+        parameter is removed.
         """
+        parameter_overrides = self._parameter_overrides.get(server_id, {})
         formatted_defs = []
         for tool in definitions:  # Iterate MCP Tool objects
             try:
@@ -668,11 +851,22 @@ class MCPToolsProvider:
                         "description": (
                             tool.description
                         ),  # Assuming these attributes exist
-                        "parameters": tool.inputSchema,
+                        # Deep-copied because the overlay below rewrites the
+                        # schema, and the MCP Tool object it came from is reused
+                        # by descriptor building and the refresh comparison.
+                        "parameters": copy.deepcopy(tool.inputSchema),
                     },
                 }
                 # --- Sanitization logic removed from here ---
                 # The 'format' field might still be present in the 'parameters' dict
+
+                tool_overrides = parameter_overrides.get(tool.name)
+                if tool_overrides:
+                    apply_parameter_overrides(
+                        cast("ToolDefinition", tool_dict),
+                        tool_overrides,
+                        server_id=server_id,
+                    )
 
                 formatted_defs.append(tool_dict)  # Add the formatted dict
             except Exception as e:
@@ -680,15 +874,26 @@ class MCPToolsProvider:
                     f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}"
                 )
 
+        # Outside the per-tool guard on purpose: a schema no validator can
+        # check is a defect the model cannot work around, and it fails the
+        # server's discovery here rather than a call in a voice session.
+        for formatted in formatted_defs:
+            check_parameter_schema(formatted["function"].get("parameters", {}))
         return formatted_defs
 
     async def get_tool_definitions(
         self,
     ) -> list[ToolDefinition]:
-        """Returns the aggregated and sanitized tool definitions from all connected servers."""
+        """Returns the aggregated and sanitized tool definitions from all connected servers.
+
+        Attachment-typed parameters are translated to their LLM-facing form
+        (a string holding an attachment UUID) here, the same way
+        ``LocalToolsProvider`` does it, while ``self._definitions`` keeps the
+        internal ``type: attachment`` that execution needs.
+        """
         if not self._initialized:
             await self.initialize()
-        return self._definitions
+        return translate_attachment_schemas_for_llm(self._definitions)
 
     @property
     def descriptors_version(self) -> int:
@@ -728,111 +933,315 @@ class MCPToolsProvider:
             f"Starting health check loop with interval {self._health_check_interval_seconds}s"
         )
 
+        async def run_health_check_iteration() -> bool:
+            # Wait for the interval
+            await asyncio.sleep(self._health_check_interval_seconds)
+
+            if not self._health_check_enabled:
+                return False
+
+            # Collect servers needing retry before health checks run,
+            # so servers that fail health check below aren't retried twice
+            servers_to_retry = [
+                server_id
+                for server_id, status in self._server_statuses.items()
+                if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
+            ]
+
+            await self._run_health_checks()
+            await self._retry_disconnected_servers(servers_to_retry)
+            return True
+
         while self._health_check_enabled:
             try:
-                # Wait for the interval
-                await asyncio.sleep(self._health_check_interval_seconds)
-
-                if not self._health_check_enabled:
-                    break
-
-                # Collect servers needing retry before health checks run,
-                # so servers that fail health check below aren't retried twice
-                servers_to_retry = [
-                    server_id
-                    for server_id, status in self._server_statuses.items()
-                    if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
-                ]
-
-                # Check each connected server
-                for server_id, session in list(self._sessions.items()):
-                    if not self._health_check_enabled:
-                        break
-
-                    try:
-                        # Simple health check - list tools to verify connection
-                        # Using a short timeout to avoid blocking too long
-                        await asyncio.wait_for(session.list_tools(), timeout=5.0)
-                        logger.debug(f"Health check passed for server '{server_id}'")
-
-                    except TimeoutError:
-                        logger.warning(f"Health check timeout for server '{server_id}'")
-                        # Don't reconnect on timeout - server might just be slow
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Health check failed for server '{server_id}': {e}"
-                        )
-
-                        # Check if it's a connection error
-                        error_str = str(e).lower()
-                        is_connection_error = any(
-                            phrase in error_str
-                            for phrase in [
-                                "connection",
-                                "closed",
-                                "reset",
-                                "broken pipe",
-                                "eof",
-                                "disconnected",
-                                "not connected",
-                            ]
-                        )
-
-                        if is_connection_error:
-                            logger.info(
-                                f"Detected connection issue for server '{server_id}', attempting reconnection..."
-                            )
-                            self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
-
-                            # Try to reconnect
-                            reconnected = await self._reconnect_server(server_id)
-                            if reconnected:
-                                logger.info(
-                                    f"Successfully reconnected server '{server_id}' during health check"
-                                )
-                            else:
-                                logger.error(
-                                    f"Failed to reconnect server '{server_id}' during health check"
-                                )
-
-                # Retry servers that were failed/cancelled before this cycle started
-                for server_id in servers_to_retry:
-                    if not self._health_check_enabled:
-                        break
-
-                    logger.info(
-                        f"Retrying previously {self._server_statuses[server_id]} server '{server_id}'..."
-                    )
-                    reconnected = await self._reconnect_server(server_id)
-                    if reconnected:
-                        logger.info(
-                            f"Successfully connected previously failed server '{server_id}'"
-                        )
-                    else:
-                        logger.warning(
-                            f"Retry failed for server '{server_id}', will try again next cycle"
-                        )
-
+                should_continue = await run_health_check_iteration()
             except asyncio.CancelledError:
                 logger.info("Health check loop cancelled")
                 break
             except Exception as e:
                 logger.exception(f"Unexpected error in health check loop: {e}")
                 # Continue the loop despite errors
+                continue
+
+            if not should_continue:
+                break
 
         logger.info("Health check loop stopped")
+
+    async def _run_health_checks(self) -> None:
+        """Ping every live session, reconnecting the ones that have died.
+
+        A passing check is the only thing that clears a server's reconnect
+        backoff: a successful reconnect proves the endpoint accepted one
+        connection, whereas surviving a full interval proves it is usable.
+        """
+        for server_id, session in list(self._sessions.items()):
+            if not self._health_check_enabled:
+                return
+
+            try:
+                # Simple health check - list tools to verify connection
+                # Using a short timeout to avoid blocking too long
+                server_tools = await asyncio.wait_for(
+                    self._list_all_tools(session), timeout=5.0
+                )
+            except TimeoutError:
+                logger.warning(f"Health check timeout for server '{server_id}'")
+                # Don't reconnect on timeout - server might just be slow
+            except Exception as e:
+                logger.warning(f"Health check failed for server '{server_id}': {e}")
+                if not _is_connection_error(e):
+                    continue
+
+                logger.info(
+                    f"Detected connection issue for server '{server_id}', dropping session"
+                )
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                # Drop the dead session even if the backoff window defers the
+                # reconnect, so it isn't pinged again on every later cycle.
+                await self._teardown_server(server_id)
+                await self._attempt_scheduled_reconnect(
+                    server_id, reason="health check"
+                )
+            else:
+                logger.debug(f"Health check passed for server '{server_id}'")
+                self._reset_reconnect_backoff(server_id)
+                try:
+                    self._refresh_server_tools(server_id, server_tools)
+                except jsonschema.SchemaError as exc:
+                    # The same defect that fails discovery at startup, arriving
+                    # mid-life. The server's cached tools cannot stay callable
+                    # against a schema nobody can check, and one bad server
+                    # must not starve the checks and retries queued behind it.
+                    logger.error(
+                        "MCP server '%s' now reports a tool with an invalid "
+                        "parameter schema (%s); dropping its tools until it "
+                        "reports a checkable list",
+                        server_id,
+                        exc.message,
+                    )
+                    self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                    await self._teardown_server(server_id)
+
+    async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
+        """Reconnect failed/cancelled servers whose backoff window has elapsed."""
+        for server_id in server_ids:
+            if not self._health_check_enabled:
+                return
+            await self._attempt_scheduled_reconnect(
+                server_id, reason=f"previously {self._server_statuses[server_id]}"
+            )
+
+    async def _attempt_scheduled_reconnect(
+        self, server_id: str, *, reason: str
+    ) -> bool:
+        """Reconnect ``server_id`` unless it is still inside its backoff window.
+
+        Every attempt extends the window, whether or not it succeeded; only a
+        subsequent passing health check resets it. Returns whether a
+        reconnection actually happened, so a deferred attempt and a failed one
+        both report ``False``.
+        """
+        backoff = self._reconnect_backoff[server_id]
+        now = time.monotonic()
+        if now < backoff.next_attempt_at:
+            logger.debug(
+                "Deferring reconnect of MCP server '%s' (%s): backing off for another "
+                "%.0fs after %d attempt(s)",
+                server_id,
+                reason,
+                backoff.next_attempt_at - now,
+                backoff.attempts,
+            )
+            return False
+
+        logger.info(
+            "Reconnect attempt %d for MCP server '%s' (%s)",
+            backoff.attempts + 1,
+            server_id,
+            reason,
+        )
+        reconnected = await self._reconnect_server(server_id)
+
+        backoff.attempts += 1
+        delay = reconnect_backoff_delay(
+            backoff.attempts,
+            base_seconds=self._reconnect_backoff_base_seconds,
+            max_seconds=self._reconnect_backoff_max_seconds,
+        )
+        backoff.next_attempt_at = time.monotonic() + delay
+        if reconnected:
+            logger.info(
+                "Successfully reconnected MCP server '%s' on attempt %d",
+                server_id,
+                backoff.attempts,
+            )
+        else:
+            logger.warning(
+                "Reconnect attempt %d for MCP server '%s' failed; next attempt in ~%.0fs",
+                backoff.attempts,
+                server_id,
+                delay,
+            )
+        return reconnected
+
+    def _reset_reconnect_backoff(self, server_id: str) -> None:
+        """Forget a server's retry history after it has been seen healthy."""
+        backoff = self._reconnect_backoff[server_id]
+        if backoff.attempts:
+            logger.info(
+                "MCP server '%s' is healthy again; clearing reconnect backoff "
+                "after %d attempt(s)",
+                server_id,
+                backoff.attempts,
+            )
+        backoff.attempts = 0
+        backoff.next_attempt_at = 0.0
 
     async def reconnect_server(self, server_id: str) -> bool:
         """Public wrapper around the internal reconnect routine.
 
         Used by diagnostic tools (e.g. the engineer profile's
         ``reconnect_mcp_server``) so callers don't have to reach into a
-        private method.
+        private method. An operator asking for a reconnect knows something the
+        backoff schedule doesn't, so this ignores the current window and, on
+        success, clears it.
         """
         if server_id not in self._mcp_server_configs:
             raise KeyError(server_id)
-        return await self._reconnect_server(server_id)
+        reconnected = await self._reconnect_server(server_id)
+        if reconnected:
+            self._reset_reconnect_backoff(server_id)
+        return reconnected
+
+    def _registered_descriptors(self, server_id: str) -> list[ToolDescriptor]:
+        """Return the descriptors currently registered on behalf of a server."""
+        return [
+            descriptor
+            for descriptor in self._descriptors
+            if descriptor.mcp_server_id == server_id
+        ]
+
+    def _unregister_server_tools(self, server_id: str) -> None:
+        """Forget the tools a server provided, leaving its session untouched."""
+        tools_to_remove = {
+            name for name, sid in self._tool_map.items() if sid == server_id
+        }
+        for tool_name in tools_to_remove:
+            del self._tool_map[tool_name]
+
+        self._definitions = [
+            d
+            for d in self._definitions
+            if d.get("function", {}).get("name") not in tools_to_remove
+        ]
+        self._descriptors = [
+            descriptor
+            for descriptor in self._descriptors
+            if descriptor.mcp_server_id != server_id
+        ]
+
+    def _register_server_tools(
+        self,
+        server_id: str,
+        definitions: Sequence[ToolDefinition],
+        descriptors: Sequence[ToolDescriptor],
+    ) -> None:
+        """Register a server's discovered tools, skipping names already taken.
+
+        Callers unregister the server's previous tools first, so a name still
+        in the map belongs to a different server and keeps its owner.
+        """
+        for definition, descriptor in zip(definitions, descriptors, strict=False):
+            tool_name = descriptor.name
+            if tool_name in self._tool_map:
+                logger.warning(
+                    "Skipping duplicate tool '%s' from server '%s' "
+                    "(already provided by '%s')",
+                    tool_name,
+                    server_id,
+                    self._tool_map[tool_name],
+                )
+                continue
+            self._definitions.append(definition)
+            self._descriptors.append(descriptor)
+            self._tool_map[tool_name] = server_id
+
+    def _refresh_server_tools(
+        self, server_id: str, server_tools: Sequence[Any]
+    ) -> None:
+        """Reconcile a server's cached tools with what it just reported.
+
+        A server that answered the initial ``list_tools`` with the wrong list —
+        most damagingly an empty one — would otherwise keep it for the life of
+        the process: the connection is healthy, so nothing reconnects it, and
+        nothing else re-reads its tools. The health check already asks for that
+        list, so it is also what keeps the cache honest.
+        """
+        definitions = self._format_mcp_definitions_to_dicts(server_tools, server_id)
+        descriptors = self._build_mcp_descriptors(
+            server_id=server_id,
+            definitions=definitions,
+            discovered_tools=server_tools,
+        )
+        # Compare what registration would produce, not the raw report, so a
+        # name another server owns doesn't look like a change on every cycle.
+        # Descriptors rather than definitions, because the annotation-derived
+        # tags that drive policy matching live only on the descriptor: a tool
+        # that keeps its schema but stops being read-only has changed. Keyed by
+        # name rather than ordered, so a server that shuffles its list is not a
+        # change either.
+        prospective = self._prospective_registration(server_id, descriptors)
+        previous = {
+            descriptor.name: descriptor
+            for descriptor in self._registered_descriptors(server_id)
+        }
+        if prospective == previous:
+            return
+
+        self._unregister_server_tools(server_id)
+        self._register_server_tools(server_id, definitions, descriptors)
+        self._bump_descriptors_version()
+        logger.info(
+            "MCP server '%s' reported a changed tool list on health check: "
+            "now %d tool(s) (added: %s; removed: %s)",
+            server_id,
+            len(prospective),
+            ", ".join(sorted(prospective.keys() - previous.keys())) or "none",
+            ", ".join(sorted(previous.keys() - prospective.keys())) or "none",
+        )
+
+    def _prospective_registration(
+        self, server_id: str, descriptors: Sequence[ToolDescriptor]
+    ) -> dict[str, ToolDescriptor]:
+        """The descriptors ``_register_server_tools`` would keep, keyed by name.
+
+        Mirrors registration's two rules — a name another server owns stays
+        with that server, and the first of a repeated name wins — so that
+        comparing against it never reports a change registration can't make.
+        """
+        prospective: dict[str, ToolDescriptor] = {}
+        for descriptor in descriptors:
+            if self._tool_map.get(descriptor.name) not in {None, server_id}:
+                continue
+            prospective.setdefault(descriptor.name, descriptor)
+        return prospective
+
+    async def _teardown_server(self, server_id: str) -> None:
+        """Drop a server's session and unregister the tools it provided."""
+        # Close existing session and connection if any
+        if server_id in self._sessions:
+            try:
+                # Remove from sessions to prevent reuse during reconnection
+                self._sessions.pop(server_id)
+                # Close the context managers for this server
+                await self._close_server_connections(server_id)
+            except Exception as e:
+                logger.warning(f"Error removing old session for '{server_id}': {e}")
+
+        self._unregister_server_tools(server_id)
+        # The descriptor set shrank; nothing here puts it back.
+        self._bump_descriptors_version()
 
     async def _reconnect_server(self, server_id: str) -> bool:
         """Attempts to reconnect a single MCP server."""
@@ -844,39 +1253,10 @@ class MCPToolsProvider:
             logger.error(f"No configuration found for server '{server_id}'")
             return False
 
-        # Close existing session and connection if any
-        if server_id in self._sessions:
-            try:
-                # Remove from sessions to prevent reuse during reconnection
-                self._sessions.pop(server_id)
-                # Close the context managers for this server
-                await self._close_server_connections(server_id)
-            except Exception as e:
-                logger.warning(f"Error removing old session for '{server_id}': {e}")
-
-        # Remove tools from this server from the tool map
-        tools_to_remove = [
-            name for name, sid in self._tool_map.items() if sid == server_id
-        ]
-        for tool_name in tools_to_remove:
-            del self._tool_map[tool_name]
-
-        # Remove definitions from this server
-        self._definitions = [
-            d
-            for d in self._definitions
-            if d.get("function", {}).get("name") not in tools_to_remove
-        ]
-        self._descriptors = [
-            descriptor
-            for descriptor in self._descriptors
-            if descriptor.mcp_server_id != server_id
-        ]
-        # The descriptor set shrank; a failed reconnect below leaves it that way.
-        self._bump_descriptors_version()
+        await self._teardown_server(server_id)
 
         # Attempt reconnection
-        try:
+        async def reconnect() -> bool:
             # Call the existing connection method
             (
                 session,
@@ -887,22 +1267,9 @@ class MCPToolsProvider:
 
             if session:
                 self._sessions[server_id] = session
-                for tool_def, descriptor in zip(
-                    discovered_tools, discovered_descriptors, strict=False
-                ):
-                    tool_name = descriptor.name
-                    if tool_name in self._tool_map:
-                        logger.warning(
-                            "Skipping duplicate tool '%s' from reconnected server '%s' "
-                            "(already provided by '%s')",
-                            tool_name,
-                            server_id,
-                            self._tool_map[tool_name],
-                        )
-                        continue
-                    self._definitions.append(tool_def)
-                    self._descriptors.append(descriptor)
-                    self._tool_map[tool_name] = server_id
+                self._register_server_tools(
+                    server_id, discovered_tools, discovered_descriptors
+                )
                 self._bump_descriptors_version()
                 logger.info(
                     f"Successfully reconnected MCP server '{server_id}' with {len(discovered_tools)} tools"
@@ -912,6 +1279,8 @@ class MCPToolsProvider:
                 logger.error(f"Failed to reconnect MCP server '{server_id}'")
                 return False
 
+        try:
+            return await reconnect()
         except Exception as e:
             logger.exception(f"Error reconnecting MCP server '{server_id}': {e}")
             self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
@@ -945,10 +1314,75 @@ class MCPToolsProvider:
             f"Executing MCP tool '{name}' on server '{server_id}' with args: {arguments}"
         )
 
+        attachment_parameters = self._attachment_parameters_for_tool(server_id, name)
+        if not attachment_parameters:
+            return await self._call_tool_with_reconnect(
+                name, arguments, server_id, session
+            )
+
+        try:
+            resolved = await self._resolve_attachment_arguments(
+                name, server_id, arguments, context
+            )
+            async with materialised_attachment_arguments(
+                resolved, attachment_parameters
+            ) as materialised:
+                return await self._call_tool_with_reconnect(
+                    name, materialised, server_id, session
+                )
+        except ValueError as e:
+            # Both resolution and materialisation refuse an argument that is not
+            # an attachment, and neither has sent anything to the server yet.
+            logger.error(f"Attachment processing failed for MCP tool '{name}': {e}")
+            return f"Error: {e!s}"
+
+    async def _resolve_attachment_arguments(
+        self,
+        name: str,
+        server_id: str,
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+    ) -> dict[str, Any]:
+        """Resolve attachment UUIDs in ``arguments`` to attachment objects.
+
+        Uses the internal definition (the one carrying ``type: attachment``),
+        so the same ownership and access checks every other provider's
+        attachment parameters go through apply here too.
+        """
+        definition = next(
+            (
+                candidate
+                for candidate in self._definitions
+                if candidate.get("function", {}).get("name") == name
+            ),
+            None,
+        )
+        arguments = normalise_attachment_arguments(
+            arguments,
+            self._attachment_parameters_for_tool(server_id, name),
+            array_parameters=_array_parameter_names(definition),
+        )
+        return await process_attachment_arguments(arguments, context, definition)
+
+    async def _call_tool_with_reconnect(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+        arguments: dict[str, Any],
+        server_id: str,
+        session: ClientSession,
+    ) -> str:
+        """Call an MCP tool, reconnecting once if the transport went away."""
+        active = session
         # Try to execute the tool, with one reconnection attempt on failure
         for attempt in range(2):
-            try:
-                mcp_result = await session.call_tool(name=name, arguments=arguments)
+
+            async def call_tool_result(active_session: ClientSession) -> str:
+                mcp_result = await active_session.call_tool(
+                    name=name, arguments=arguments
+                )
 
                 # Process MCP result content
                 response_parts = []
@@ -975,6 +1409,8 @@ class MCPToolsProvider:
                     )
                     return result_str
 
+            try:
+                return await call_tool_result(active)
             except Exception as e:
                 if attempt == 0:
                     # First attempt failed, try to reconnect
@@ -983,35 +1419,14 @@ class MCPToolsProvider:
                         f"Attempting to reconnect..."
                     )
 
-                    # Check if this looks like a connection error
-                    error_str = str(e).lower()
-                    is_connection_error = any(
-                        phrase in error_str
-                        for phrase in [
-                            "connection",
-                            "closed",
-                            "reset",
-                            "broken pipe",
-                            "eof",
-                            "timeout",
-                            "disconnected",
-                            "not connected",
-                        ]
-                    )
-
-                    # Explicitly check for AnyIO ClosedResourceError which may not have a descriptive message
-                    if not is_connection_error and isinstance(
-                        e, anyio.ClosedResourceError
-                    ):
-                        is_connection_error = True
-
-                    if is_connection_error:
+                    if _is_connection_error(e, include_timeouts=True):
                         # Try to reconnect
                         reconnected = await self._reconnect_server(server_id)
                         if reconnected:
                             # Update session reference after reconnection
-                            session = self._sessions.get(server_id)
-                            if session:
+                            reconnected_session = self._sessions.get(server_id)
+                            if reconnected_session:
+                                active = reconnected_session
                                 logger.info(
                                     f"Retrying tool '{name}' after successful reconnection..."
                                 )

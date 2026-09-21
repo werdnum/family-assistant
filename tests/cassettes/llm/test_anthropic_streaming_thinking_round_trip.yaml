@@ -1,0 +1,314 @@
+interactions:
+  - request:
+      body: '{"max_tokens":16000,"messages":[{"role":"user","content":"A tank holds 4200 litres. It drains at 17 litres per minute for 42 minutes, then is refilled at 23 litres per minute for 31 minutes. Work out the final volume, using the calculate tool for the arithmetic."}],"model":"claude-sonnet-5","output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized"},"tool_choice":{"type":"auto"},"tools":[{"name":"get_weather","description":"Get current weather for a location","input_schema":{"type":"object","properties":{"location":{"type":"string","description":"The city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature unit"}},"required":["location"]}},{"name":"calculate","description":"Perform mathematical calculations","input_schema":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '950'
+        content-type:
+          - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAAA3RU23LiOBD9FZUeByfjawiumgdsCGEWSGJMGLO1Rcm2sIVlyUgymEnx71v2hmR2
+          tvZJUp9zulutbr3BkqeYQhcmFNUpvpGcMaxuHKhBkkIXljLb6obhpwmzVPbcX4/WVugN0XcrVFCD
+          6lzhloWlRBmGGhSctgYkJZEKsZaTcKYwU9D98+3KVzlhBWFZ6+G6deEUMIxToDg4cVEAlQteZzlQ
+          OZEACaLyEiuSgErwmOISSIUrEJ+79RbMsAIlBlIhocCJqFaHQVlTRSpKEqQIZ9IFRh8oUmIJbBNk
+          5Igl6Bu2BhBLgWm9Q5bxAVm3YMFPYAoSxICsY6mIqhVufUsMYpQUgDDFu1hckIwwRAFuKoGlJJy5
+          wDZ1HZSE1V0gUNFuY2nglJMkB/hQIyqBbQwGt1CDkmQMqVq0NRpz7vu88HxvGA1JNXwVBRVV3tOL
+          8HGXPrDx8emJrpvX3WRxOGbx0BnVp1BlyWLw8liP9WI5GB+XP3cBc/r85I/qnT8NbesB9x6W03xN
+          yLyJ+8v99DkymzxdB3T2Y3GMS4emvm48DT3ffww4WjsCrR22Ji/6wpw6c3PVbHwjj8zoPAsDsglX
+          KtrPzxtfbxY/x2a09/abMjrP9y/LkW/S1V2wurOeN8335vA14PO0yuMBFsnK7J2TzaGY7r3HwyCK
+          FY3KyvNsiSxvcpxY3r1w+DhLeuZq01dx6S0KFY77RTM/RVUix8PN/ZKGTpTsVocZf5osYvrQOOOm
+          svdiNsn98hBsjjQo/hgG+nScL3vPA3MTHkbNrOBk1Mwy+6tnByR7EPfR8OXbN3jRPnuTc7qtJb5O
+          QHuut7rxIierxQ/rsJLF7nEXhHzwGlgp1CBDZatLEE1qilQnZFWtoPsGP1sBurDrhRtg9L/YJugB
+          0/piGfCitUqKRUt/TyElAicKXi5/aVAqXm0FRrJz8UtyHSDxocYswdBlNaXvxhQrRKi82upuNN23
+          f7LaKl5gJqF7Zw/a0EmOt4nA3Xxs/83Qr7jAKP0/7KrtblvluMQC0a1T/pf/iRr57+hFg7xWv5ru
+          rd9Mn9d6+/g0PtimcdGgxOJIErxVpK0mbP+fFIn2iQjbYdHWaZthDl2YUR4jCi+XvwEAAP//AwDt
+          +XDXAAUAAA==
+      headers:
+        CF-RAY:
+          - a2481a21bedfdbc1-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 01 Aug 2026 21:58:06 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '5000000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '5000000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-08-01T21:58:04Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '1000000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '1000000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-08-01T21:58:05Z'
+        anthropic-ratelimit-requests-limit:
+          - '5000'
+        anthropic-ratelimit-requests-remaining:
+          - '4999'
+        anthropic-ratelimit-requests-reset:
+          - '2026-08-01T21:58:04Z'
+        anthropic-ratelimit-tokens-limit:
+          - '6000000'
+        anthropic-ratelimit-tokens-remaining:
+          - '6000000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-08-01T21:58:04Z'
+        cf-cache-status:
+          - DYNAMIC
+        request-id:
+          - req_011Cdcn3tA8DxDSsVTbFp2hy
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        traceresponse:
+          - 00-db3e91e59270697209afc6028d294cfc-31acee411fcfd6a9-01
+        vary:
+          - Accept-Encoding
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: '{"max_tokens":16000,"messages":[{"role":"user","content":"A tank holds 4200 litres. It drains at 17 litres per minute for 42 minutes, then is refilled at 23 litres per minute for 31 minutes. Work out the final volume, using the calculate tool for the arithmetic."},{"role":"assistant","content":[{"signature":"EooCCokBCBAYAipAVrklrph+0kTHfdFnEvOOlWxVfGNqvgbA5DuwTtgcN9QHuE0kS9EvSzfRn57owCDufCIT43Fe+FSIhWiiMxb7SjIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0N2I5M2UxZC1hY2YyLTRiZTUtYjMyZC0xNzE2YjBjZmYyMjQSDC2lU6RU63PZxJxq/RoMdphb9ercU2+ycZqkIjBHq9YbtlYmpBB4sa3BGvG3B8r5oEgc+2UZ7tbmBNktTE7kxMwYpcsEAZ8SlT5YcfUqLoOGNblFx5Exp4jrLGhCmqRZvlRkKAR0IEhS+P92ZTqDxLkoiDxLg4/B4RigFr8YAQ==","thinking":"I need to work through this arithmetic problem step by step. Let me start with the multiplications: 17 times 42 gives 714, and 23 times 31 gives 713. Now I can substitute these back into the original expression: 4200 minus 714 plus 713, which equals 4199.","type":"thinking"},{"type":"tool_use","id":"toolu_01QsGUNX3qUskfHfRTo9VR3d","name":"calculate","input":{"expression":"4200 - 17*42 + 23*31"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01QsGUNX3qUskfHfRTo9VR3d","content":"714"}]}],"model":"claude-sonnet-5","output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized"},"tool_choice":{"type":"auto"},"tools":[{"name":"get_weather","description":"Get current weather for a location","input_schema":{"type":"object","properties":{"location":{"type":"string","description":"The city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature unit"}},"required":["location"]}},{"name":"calculate","description":"Perform mathematical calculations","input_schema":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]}}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '1888'
+        content-type:
+          - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
+      method: POST
+      uri: https://api.anthropic.com/v1/messages
+    response:
+      body:
+        string: !!binary |
+          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
+      headers:
+        CF-RAY:
+          - a2481a3139a0dbc1-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 01 Aug 2026 21:58:21 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '5000000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '5000000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-08-01T21:58:07Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '1000000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '1000000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-08-01T21:58:21Z'
+        anthropic-ratelimit-requests-limit:
+          - '5000'
+        anthropic-ratelimit-requests-remaining:
+          - '4999'
+        anthropic-ratelimit-requests-reset:
+          - '2026-08-01T21:58:06Z'
+        anthropic-ratelimit-tokens-limit:
+          - '6000000'
+        anthropic-ratelimit-tokens-remaining:
+          - '6000000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-08-01T21:58:07Z'
+        cf-cache-status:
+          - DYNAMIC
+        request-id:
+          - req_011Cdcn44bBnS2UoQnm8WLMQ
+        server-timing:
+          - x-originResponse;dur=15572
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        traceresponse:
+          - 00-77b908b4c379245ebe7cc12ca3a99cc7-59717c07e1d1b6fd-01
+        vary:
+          - Accept-Encoding
+      status:
+        code: 200
+        message: OK
+version: 1

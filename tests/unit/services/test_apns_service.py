@@ -20,7 +20,7 @@ from family_assistant.services.apns import (
     load_apns_auth_key,
 )
 from family_assistant.services.notifier import NotificationMetadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 
 def _make_p8_key() -> str:
@@ -37,10 +37,10 @@ AUTH_KEY = _make_p8_key()
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    """Provides an entered DatabaseContext for APNs tests."""
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        yield db_ctx
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
+    """Provides an entered Database for APNs tests."""
+    db_ctx = Database(engine=db_engine)
+    yield db_ctx
 
 
 def _service(handler: object, **kwargs: object) -> APNsService:
@@ -65,7 +65,7 @@ async def test_disabled_when_unconfigured() -> None:
 
 @pytest.mark.asyncio
 async def test_sends_alert_with_expected_headers_and_payload(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """A configured token receives an alert push with the correct APNs headers."""
     await db_context.ios_push_tokens.upsert(
@@ -98,7 +98,7 @@ async def test_sends_alert_with_expected_headers_and_payload(
 
 @pytest.mark.asyncio
 async def test_metadata_sets_category_and_custom_fields(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Notification metadata becomes aps.category plus top-level custom userInfo keys."""
     await db_context.ios_push_tokens.upsert(
@@ -130,7 +130,7 @@ async def test_metadata_sets_category_and_custom_fields(
 
 @pytest.mark.asyncio
 async def test_signs_provider_token_with_team_and_key(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """The Authorization bearer is an ES256 JWT carrying the team id and key id."""
     await db_context.ios_push_tokens.upsert(
@@ -157,7 +157,7 @@ async def test_signs_provider_token_with_team_and_key(
 
 
 @pytest.mark.asyncio
-async def test_unregistered_token_is_deleted(db_context: DatabaseContext) -> None:
+async def test_unregistered_token_is_deleted(db_context: Database) -> None:
     """A 410 Unregistered response prunes the device token."""
     await db_context.ios_push_tokens.upsert(
         user_identifier="user-1", device_token="dead", environment="production"
@@ -172,7 +172,7 @@ async def test_unregistered_token_is_deleted(db_context: DatabaseContext) -> Non
 
 
 @pytest.mark.asyncio
-async def test_topic_mismatch_keeps_token(db_context: DatabaseContext) -> None:
+async def test_topic_mismatch_keeps_token(db_context: Database) -> None:
     """A DeviceTokenNotForTopic (bundle-id misconfig) must not prune a valid token."""
     await db_context.ios_push_tokens.upsert(
         user_identifier="user-1", device_token="tok", environment="production"
@@ -189,7 +189,7 @@ async def test_topic_mismatch_keeps_token(db_context: DatabaseContext) -> None:
 
 @pytest.mark.asyncio
 async def test_bad_device_token_retries_other_environment(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """A BadDeviceToken on production succeeds on sandbox and updates the stored environment."""
     await db_context.ios_push_tokens.upsert(
@@ -210,7 +210,7 @@ async def test_bad_device_token_retries_other_environment(
 
 @pytest.mark.asyncio
 async def test_bad_device_token_in_both_environments_deletes(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """A BadDeviceToken in both environments prunes the token."""
     await db_context.ios_push_tokens.upsert(
@@ -227,7 +227,7 @@ async def test_bad_device_token_in_both_environments_deletes(
 
 @pytest.mark.asyncio
 async def test_bad_device_token_keeps_token_on_transient_retry_failure(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """A transient failure on the environment retry must not delete a valid token."""
     await db_context.ios_push_tokens.upsert(
@@ -250,7 +250,7 @@ async def test_bad_device_token_keeps_token_on_transient_retry_failure(
 
 @pytest.mark.asyncio
 async def test_expired_provider_token_refreshes_and_retries(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """A 403 ExpiredProviderToken triggers a JWT refresh and a successful retry."""
     await db_context.ios_push_tokens.upsert(
@@ -277,7 +277,7 @@ async def test_expired_provider_token_refreshes_and_retries(
 
 
 @pytest.mark.asyncio
-async def test_no_tokens_is_noop(db_context: DatabaseContext) -> None:
+async def test_no_tokens_is_noop(db_context: Database) -> None:
     """Sending to a user with no tokens does not raise or call the transport."""
     called = False
 

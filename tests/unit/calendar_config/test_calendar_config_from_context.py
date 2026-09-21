@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import (
     CalendarConfig,
@@ -64,7 +64,7 @@ async def test_calendar_config_from_provider() -> None:
     )
 
     # Create execution context
-    mock_db_context = MagicMock(spec=DatabaseContext)
+    mock_db_context = MagicMock(spec=Database)
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -130,7 +130,7 @@ async def test_calendar_tool_without_config() -> None:
     )
 
     # Create execution context
-    mock_db_context = MagicMock(spec=DatabaseContext)
+    mock_db_context = MagicMock(spec=Database)
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -214,7 +214,7 @@ async def test_calendar_config_preference() -> None:
     )
 
     # Create execution context
-    mock_db_context = MagicMock(spec=DatabaseContext)
+    mock_db_context = MagicMock(spec=Database)
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",

@@ -5,7 +5,7 @@ Handles storage for the event listener system.
 import logging
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import (
     JSON,
@@ -26,7 +26,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
 from family_assistant.storage.base import metadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor
 from family_assistant.storage.types import (
     ActionConfig,
     EventListenerDict,
@@ -35,6 +35,10 @@ from family_assistant.storage.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Event type a spawned worker reports its own completion with, matched by the
+# one-time listener spawn_worker arms for it.
+WORKER_COMPLETION_EVENT_TYPE: Final = "worker_completion"
 
 
 # Enum types for the event system
@@ -111,6 +115,16 @@ event_listeners_table = Table(
         nullable=False,
         server_default=func.now(),  # pylint: disable=not-callable
     ),
+    # Definition record: the authoring turn's taint stamp, a hash over this
+    # definition's executable fields, and how the creation left its gate. A
+    # firing resolves it to decide whether the definition renders as trusted
+    # intent; a hash mismatch voids it and fails closed. See
+    # docs/design/executable-definition-taint.md.
+    Column(
+        "definition_record",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    ),
     # Rate limiting fields
     Column("daily_executions", Integer, nullable=False, server_default="0"),
     Column("daily_reset_at", DateTime(timezone=True), nullable=True),
@@ -158,7 +172,7 @@ recent_events_table = Table(
 
 
 async def create_event_listener(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     name: str,
     source_id: str,
     match_conditions: MatchConditions,
@@ -188,7 +202,7 @@ async def create_event_listener(
 
 
 async def get_event_listeners(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     conversation_id: str,
     source_id: str | None = None,
     enabled: bool | None = None,
@@ -202,7 +216,7 @@ async def get_event_listeners(
 
 
 async def get_event_listener_by_id(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
 ) -> EventListenerDict | None:
@@ -214,7 +228,7 @@ async def get_event_listener_by_id(
 
 
 async def update_event_listener_enabled(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
     enabled: bool,
@@ -228,7 +242,7 @@ async def update_event_listener_enabled(
 
 
 async def delete_event_listener(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
 ) -> bool:
@@ -243,7 +257,7 @@ async def delete_event_listener(
 
 
 async def store_event(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     source_id: str,
     # ast-grep-ignore: no-dict-any - event data has varying keys per event source type
     event_data: dict[str, Any],
@@ -260,7 +274,7 @@ async def store_event(
 
 
 async def query_recent_events(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     source_id: str | None = None,
     hours: int = 24,
     limit: int = 100,
@@ -274,7 +288,7 @@ async def query_recent_events(
 
 
 async def cleanup_old_events(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     retention_hours: int = 48,
 ) -> int:
     """Clean up events older than retention period."""
@@ -287,7 +301,7 @@ async def cleanup_old_events(
 
 
 async def check_and_update_rate_limit(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
 ) -> tuple[bool, str | None]:

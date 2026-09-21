@@ -8,6 +8,9 @@ available while a reply is being generated.
 Find the bot contact in Telegram — whoever set up the assistant will tell you its name — and send
 messages as you would to a person.
 
+- **Rich formatting and tables:** responses support full standard Markdown including headers,
+  bold/italic, bulleted/numbered lists, inline code/code blocks, and formatted tables with column
+  alignments.
 - **Slash commands** switch the assistant into a specialised mode for a request, for example
   `/browse` for complex web tasks. See [slash-commands.md](slash-commands.md).
 - **Reply to a message** using Telegram's reply feature when you're following up on something
@@ -16,7 +19,9 @@ messages as you would to a person.
 - **Send photos and files** directly in a message, with your question as the caption. A whole album
   is treated as one message, so you get one answer covering all the photos.
 - **Follow up mid-reply:** if you send another message while the assistant is still working, it
-  folds that into the response it's already preparing.
+  folds that into the response it's already preparing. A slash command is the exception: it needs a
+  request of its own, so the assistant asks you to wait for the current one to finish or
+  `/interrupt` it.
 - **`/interrupt`** stops the request currently being processed in that chat.
 - **Confirmations** arrive as inline **✅ Confirm** and **❌ Cancel** buttons. See
   [confirmations-and-safety.md](confirmations-and-safety.md).
@@ -39,8 +44,31 @@ conversations are easy to switch between.
 ![Collapsed Tool Calls](../../screenshots/desktop/chat-tool-calls-collapsed.png) *Completed tool
 calls stay collapsed while keeping the details available*
 
+A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
+messages** to bring in older ones, as many times as you need to reach the start.
+
 Reopening an existing conversation resumes it under the profile it started in, so follow-ups keep
 their context. Starting a new chat uses whichever profile you last picked.
+
+Switching profile part-way through a conversation starts a fresh chat in the new profile, so each
+profile's context stays separate — but anything you have already typed comes with you, so you can
+draft a message and then decide who should handle it. If the chat is still empty, switching just
+changes the profile and keeps you where you are.
+
+**Share a conversation.** Open a conversation that already has messages and select the share icon in
+the chat header. The web app copies a link to a read-only transcript; the iOS app opens its share
+sheet so you can choose where to send it. The recipient must sign in as an authorized Family
+Assistant user, and the conversation does not appear in their history list. On iPhone or iPad with
+the Family Assistant app installed, links from `assistant.andrewgarrett.dev` open the transcript in
+a native read-only view; pull down to refresh it. Selecting share again replaces the old link;
+select the stop-sharing icon to make the current link unavailable. The transcript reflects messages
+added after the link was created when the recipient refreshes it. Tool calls appear as collapsed
+groups, the same way they do in your own chat; the recipient can expand a group to see what the
+assistant ran and what came back.
+
+Treat the link as private within your household. It is meant to stop another authorized user from
+casually browsing your history, not to protect a conversation from someone who obtains the link and
+deliberately tries to access it.
 
 **Stop or steer a running reply.** While the assistant is generating, the chat box doubles as a
 steering box:
@@ -51,6 +79,19 @@ steering box:
 
 This is the web equivalent of Telegram's `/interrupt` and mid-reply follow-ups. Native iOS Chat has
 the same controls.
+
+### Voice
+
+The **Voice** page holds a spoken conversation with the assistant. It shows a running transcript of
+what you said, what it replied, and the tools it ran along the way.
+
+A voice conversation starts with the assistant's everyday tools ready to use. Anything beyond those
+— running a scene at home, generating an image, working with your scripts and automations — it picks
+up as it needs it: you will see it look a tool up and then run it, which shows in the transcript as
+`search_tools` followed by `call_tool`. Nothing is out of reach that would be reachable in chat, but
+that extra step means an occasional short pause before the assistant acts on an unusual request. The
+exception is anything that would normally ask you to approve it first: a voice conversation has no
+way to show you an approval prompt, so the assistant will ask you to do those in chat instead.
 
 ### Pages
 
@@ -77,6 +118,11 @@ The menu is grouped into **Information**, **Operations**, and **Settings**:
 - **History** — past conversations across Telegram, web, and email, with filtering.
 
   ![History Page](../../screenshots/desktop/history.png)
+
+  Each message has a **Message Details** panel you can expand to see which mode answered, how many
+  tokens the turn used, and — for models that report it — a **Thinking Summary** of the reasoning
+  behind the reply. Not every model publishes a summary, so the panel only appears when one was
+  recorded.
 
 - **Tasks** — background and scheduled work, with the option to retry a failed task.
 
@@ -108,8 +154,11 @@ The native app signs you in securely and opens on five tabs: **Chat**, **Voice**
 under More open the corresponding pages in-app. Each tab remembers where you were.
 
 **Chat** shares the same conversation history as the browser. It streams replies, supports stopping
-and steering, switches profiles (picking a profile starts a fresh conversation in it; reopening an
-older conversation resumes its original profile), renders Markdown and tool calls, handles
+and steering, switches profiles (picking a profile starts a fresh conversation in it, carrying over
+anything you have typed and attached; on a chat that is still empty it switches in place; reopening
+an older conversation resumes its original profile), picks an intelligence level for the next
+message where the assistant offers a choice of them (see
+[intelligence-levels.md](intelligence-levels.md)), renders Markdown and tool calls, handles
 approve/reject confirmations, and uploads images, PDFs, plain text, and Markdown up to 100 MB. Very
 long messages render a section at a time behind a **Show more** control.
 
@@ -119,17 +168,53 @@ beside the composer. The Photos share sheet does not list Family Assistant — c
 paste it, use the composer's photo button, or share from Files. Long-pressing the app icon offers
 **New Chat** and **Voice** quick actions.
 
-**Voice** asks for microphone permission and shows a level meter while capturing audio.
+**Voice** asks for microphone permission and shows a level meter while capturing audio. A call runs
+under the profile currently picked in Chat, and when it ends the transcript is saved as its own
+conversation in that profile — so opening it in Chat picks the conversation up where the call left
+off. Calls placed by Siri work the same way.
+
+If voice cannot connect on your iPhone or Apple Watch, tell the assistant approximately when you
+tried and which device you used. The app sends connection-stage diagnostics automatically so the
+failure can be investigated without connecting your device to a computer. These diagnostics exclude
+audio, transcripts, instructions, tool arguments, and credentials. If delivery fails, queued reports
+are retried when you next open voice mode or relaunch the app. Connection startup times out after 30
+seconds instead of waiting indefinitely.
+
+### Apple Watch
+
+Install Family Assistant from the Watch app on your iPhone (watchOS 10 or later). Open the watch app
+and tap **Set up with iPhone** while your paired iPhone is nearby and signed in to Family Assistant.
+There is no server address or password to enter on the watch. If setup cannot connect, open Family
+Assistant on the iPhone and try again.
+
+After setup, voice works over whatever connection the watch has: its own Wi-Fi or cellular when your
+iPhone is away, or the paired iPhone's connection when it is nearby. If sign-in expires, use **Set
+up with iPhone** again. Signing out or changing accounts on the phone clears the watch's sign-in
+when the devices next exchange updates; this is not immediate while disconnected. You can also
+revoke the watch's credentials in API token settings.
+
+Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
+the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
+app ends the session. Watch voice conversations are not saved to your chat history.
+
+To start from your watch face, edit the face, choose a complication slot, and select **Family
+Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed
+in. It supports circular, corner, inline and rectangular slots, depending on the face.
+
+### Other native iOS features
 
 **Notes** lets you search, read, create, edit, and delete notes, including whether a note is
-included in the assistant's system prompt.
+included in the assistant's context automatically.
 
 **Connection indicator:** a small indicator in the Chat toolbar shows the live-update state and
 offers the right fix in one tap — *degraded* (updates lagging, tap to reconnect), *offline* (tap to
 reconnect), or *sign-in required* (tap to sign in). Background sync problems surface there rather
 than as pop-up dialogs; if the conversation list itself can't refresh, a small "Couldn't refresh —
 last updated …" note appears at the top of the list. A failed send shows a **Retry** button on the
-message itself; retrying is safe and never sends twice.
+message itself; retrying is safe and never sends twice. If Chat says **"authentication wall
+detected"**, open your Family Assistant web address in Safari and complete any sign-in page, then
+return to the app and tap the connection indicator to reconnect. If Safari cannot reach the sign-in
+page either, check your connection and contact the person who manages Family Assistant.
 
 **More** gathers Events, History, Automations, Tools, and a **Settings** screen with notification
 controls and sign-out.
@@ -149,8 +234,29 @@ be signed in first.
 - **"Add a note to Family Assistant"** — create a note by title and content.
 - **"Open Family Assistant chat"** — open on the Chat tab, optionally starting a new conversation
   with a message.
+- **"Call Family Assistant"** — start a spoken conversation, handled as a call. See **Hands-free and
+  in the car** below.
 
 These also appear as building blocks in Shortcuts, so you can combine them with other automations.
+
+### Hands-free and in the car
+
+Say **"Hey Siri, call Family Assistant"** to start a voice conversation without touching your phone.
+It works with the app closed, as long as you have signed in at least once since the phone was last
+restarted.
+
+With the phone locked, the assistant answers only when the phone is connected to CarPlay — being
+plugged into the car is what stands in for unlocking it. Otherwise, unlock the phone first; a call
+from a locked phone away from the car shows up briefly and then fails. The same rule applies to
+**"Ask Family Assistant…"**, which asks you to unlock rather than answering from a locked phone. An
+ordinary Bluetooth car connection is not enough.
+
+The conversation runs as a call, so it appears on the lock screen and on a CarPlay screen the way a
+phone call does. Mute and hang up with the usual call controls, or end it from the app. An incoming
+phone call takes over the audio and ends the assistant conversation.
+
+The same tools are available as in any voice conversation, so anything that would normally ask you
+to approve it first cannot run — start those from Chat instead.
 
 ## Messaging other people in your household
 
@@ -165,7 +271,9 @@ clearly. When the request originated somewhere less trusted — a forwarded emai
 to approve the message first. See [confirmations-and-safety.md](confirmations-and-safety.md).
 
 This only reaches people set up as users of your Family Assistant — it isn't a way to send ordinary
-SMS or email to arbitrary contacts.
+SMS or email to arbitrary contacts. The assistant can only message someone in a conversation they
+have already used to talk to it, so a new household member needs to message the assistant once
+before anyone can have a message passed to them.
 
 ## Push notifications
 
@@ -203,6 +311,29 @@ status of a delegation reference at any time.
 
 Delegations can also be continued, so a specialist keeps its earlier context — useful for a
 follow-up question to a previous research delegation.
+
+Files travel with a delegation in both directions. A photo, PDF or spreadsheet from your
+conversation can be handed to the specialist to work on, and any file it produces — a chart, a
+converted document — comes back attached to the reply in the conversation, ready to open or
+download. This works the same way whether the specialist runs here or on another agent elsewhere.
+Very large files are the exception: if one is too big to hand over, the assistant tells you rather
+than quietly leaving it out.
+
+Sometimes a delegation is reported as failed and then turns out to have worked after all: the
+specialist runs elsewhere, and it can keep going — or finish — after the assistant has given up
+waiting on it. When that happens the result is delivered to you later, in the same conversation, and
+says that the task failed earlier and finished after all, so it makes sense even if you never saw
+the failure notice. If a specialist reports that it finished but returns nothing at all, that is
+treated as a failure rather than an empty answer.
+
+A delegation the assistant stops waiting on is asked to stop, but it may not have: until the
+specialist confirms it, the assistant will tell you the run timed out and that cancellation was
+requested, rather than that it was cancelled.
+
+If the follow-up can't be delivered on the channel you asked from — a result too long for the chat
+app to accept, say — the assistant is told so and sends you something that does fit, such as a
+shorter summary or a note it saved with the full text. The complete result is kept in the
+conversation either way, so you can ask for any part of it.
 
 This is separate from spawned worker tasks, which are isolated coding or computing jobs identified
 by worker task IDs.

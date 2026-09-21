@@ -12,13 +12,15 @@ from family_assistant.config_models import ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.types import (
+    ToolAttachment,
     ToolExecutionContext,
     ToolResult,
 )
@@ -76,104 +78,103 @@ async def test_large_tool_result_auto_attachment(
         clock=SystemClock(),
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # 1. Test large string result
-        large_content = "A" * (20 * 1024 + 100)
-        mock_tools_provider.execute_tool.return_value = large_content
+    db = Database(engine=db_engine)
+    # 1. Test large string result
+    large_content = "A" * (20 * 1024 + 100)
+    mock_tools_provider.execute_tool.return_value = large_content
 
-        tool_call = ToolCallItem(
-            id="call_1",
-            type="function",
-            function=ToolCallFunction(name="large_tool", arguments={}),
-        )
+    tool_call = ToolCallItem(
+        id="call_1",
+        type="function",
+        function=ToolCallFunction(name="large_tool", arguments={}),
+    )
 
-        result = await service.tool_executor.execute(
-            tool_call,
-            interface_type="test",
-            conversation_id="conv_1",
-            user_name="test_user",
-            turn_id="turn_1",
-            db_context=db,
-            chat_interface=None,
-        )
+    result = await service.tool_executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_1",
+        user_name="test_user",
+        turn_id="turn_1",
+        db_context=db,
+        chat_interface=None,
+    )
 
-        assert result.llm_message.content is not None
-        assert "was too large and was saved as attachment" in result.llm_message.content
-        assert "read_text_attachment" in result.llm_message.content
-        assert result.auto_attachment_ids is not None
-        assert len(result.auto_attachment_ids) == 1
-        att_id = result.auto_attachment_ids[0]
+    assert result.llm_message.content is not None
+    assert "was too large and was saved as attachment" in result.llm_message.content
+    assert "read_text_attachment" in result.llm_message.content
+    assert not result.auto_attachment_ids
+    assert result.large_result_attachment_ids is not None
+    assert len(result.large_result_attachment_ids) == 1
+    att_id = result.large_result_attachment_ids[0]
 
-        # Verify attachment content
-        saved_content = await attachment_registry.get_attachment_content(
-            db, att_id, acting_user_id=None
-        )
-        assert saved_content is not None
-        assert saved_content.decode("utf-8") == large_content
+    # Verify attachment content
+    saved_content = await attachment_registry.get_attachment_content(
+        db, att_id, acting_user_id=None
+    )
+    assert saved_content is not None
+    assert saved_content.decode("utf-8") == large_content
 
-        # 2. Test large JSON result
-        large_json_obj = {"data": "B" * (20 * 1024)}
-        large_json_str = json.dumps(large_json_obj)
-        mock_tools_provider.execute_tool.return_value = large_json_str
+    # 2. Test large JSON result
+    large_json_obj = {"data": "B" * (20 * 1024)}
+    large_json_str = json.dumps(large_json_obj)
+    mock_tools_provider.execute_tool.return_value = large_json_str
 
-        tool_call = ToolCallItem(
-            id="call_2",
-            type="function",
-            function=ToolCallFunction(name="json_tool", arguments={}),
-        )
+    tool_call = ToolCallItem(
+        id="call_2",
+        type="function",
+        function=ToolCallFunction(name="json_tool", arguments={}),
+    )
 
-        result = await service.tool_executor.execute(
-            tool_call,
-            interface_type="test",
-            conversation_id="conv_1",
-            user_name="test_user",
-            turn_id="turn_2",
-            db_context=db,
-            chat_interface=None,
-        )
+    result = await service.tool_executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_1",
+        user_name="test_user",
+        turn_id="turn_2",
+        db_context=db,
+        chat_interface=None,
+    )
 
-        assert result.llm_message.content is not None
-        assert "jq_query" in result.llm_message.content
-        assert result.auto_attachment_ids is not None
-        att_id = result.auto_attachment_ids[0]
-        metadata = await attachment_registry.get_attachment(
-            db, att_id, acting_user_id=None
-        )
-        assert metadata is not None
-        assert metadata.mime_type == "application/json"
+    assert result.llm_message.content is not None
+    assert "jq_query" in result.llm_message.content
+    assert not result.auto_attachment_ids
+    assert result.large_result_attachment_ids is not None
+    att_id = result.large_result_attachment_ids[0]
+    metadata = await attachment_registry.get_attachment(db, att_id, acting_user_id=None)
+    assert metadata is not None
+    assert metadata.mime_type == "application/json"
 
-        # 3. Test read_text_attachment is EXEMPT from auto-conversion
-        # Even if it returns large content, it should NOT be converted to an attachment
-        # because the user explicitly requested to read that content
-        large_read_result = "C" * (20 * 1024 + 100)
-        mock_tools_provider.execute_tool.return_value = large_read_result
+    # 3. Test read_text_attachment is EXEMPT from auto-conversion
+    # Even if it returns large content, it should NOT be converted to an attachment
+    # because the user explicitly requested to read that content
+    large_read_result = "C" * (20 * 1024 + 100)
+    mock_tools_provider.execute_tool.return_value = large_read_result
 
-        tool_call = ToolCallItem(
-            id="call_3",
-            type="function",
-            function=ToolCallFunction(
-                name="read_text_attachment", arguments={"attachment_id": "some-id"}
-            ),
-        )
+    tool_call = ToolCallItem(
+        id="call_3",
+        type="function",
+        function=ToolCallFunction(
+            name="read_text_attachment", arguments={"attachment_id": "some-id"}
+        ),
+    )
 
-        result = await service.tool_executor.execute(
-            tool_call,
-            interface_type="test",
-            conversation_id="conv_1",
-            user_name="test_user",
-            turn_id="turn_3",
-            db_context=db,
-            chat_interface=None,
-        )
+    result = await service.tool_executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_1",
+        user_name="test_user",
+        turn_id="turn_3",
+        db_context=db,
+        chat_interface=None,
+    )
 
-        assert result.llm_message.content is not None
-        # read_text_attachment should NOT be converted to attachment
-        assert "was too large" not in result.llm_message.content
-        assert (
-            result.auto_attachment_ids is None or len(result.auto_attachment_ids) == 0
-        )
-        # The original content should be preserved
-        assert large_read_result == result.llm_message.content
+    assert result.llm_message.content is not None
+    # read_text_attachment should NOT be converted to attachment
+    assert "was too large" not in result.llm_message.content
+    assert not result.auto_attachment_ids
+    assert not result.large_result_attachment_ids
+    # The original content should be preserved
+    assert large_read_result == result.llm_message.content
 
 
 @pytest.mark.asyncio
@@ -187,52 +188,50 @@ async def test_read_text_attachment_tool(
         storage_path=str(storage_path), db_engine=db_engine, config=None
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create a text attachment manually
-        text_content = "Line 1\nLine 2\nTarget Line\nLine 4"
-        reg_metadata = await attachment_registry.store_and_register_tool_attachment(
-            file_content=text_content.encode("utf-8"),
-            filename="test.txt",
-            content_type="text/plain",
-            tool_name="test",
-            description="test",
-            conversation_id="conv_1",
-        )
-        text_att_id = reg_metadata.attachment_id
+    db = Database(engine=db_engine)
+    # Create a text attachment manually
+    text_content = "Line 1\nLine 2\nTarget Line\nLine 4"
+    reg_metadata = await attachment_registry.store_and_register_tool_attachment(
+        file_content=text_content.encode("utf-8"),
+        filename="test.txt",
+        content_type="text/plain",
+        tool_name="test",
+        description="test",
+        conversation_id="conv_1",
+    )
+    text_att_id = reg_metadata.attachment_id
 
-        exec_ctx = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="conv_1",
-            user_name="test",
-            turn_id=None,
-            db_context=db,
-            processing_service=None,
-            clock=SystemClock(),
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=attachment_registry,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    exec_ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conv_1",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=SystemClock(),
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Test grep
-        read_result = await read_text_attachment_tool(
-            exec_ctx, text_att_id, grep="Target"
-        )
-        assert read_result.text is not None
-        assert "Target Line" in read_result.text
-        assert "Line 1" not in read_result.text
+    # Test grep
+    read_result = await read_text_attachment_tool(exec_ctx, text_att_id, grep="Target")
+    assert read_result.text is not None
+    assert "Target Line" in read_result.text
+    assert "Line 1" not in read_result.text
 
-        # Test offset/limit
-        read_result = await read_text_attachment_tool(
-            exec_ctx, text_att_id, offset=1, limit=1
-        )
-        assert read_result.text is not None
-        assert "Line 2" in read_result.text
-        assert "Line 1" not in read_result.text
-        assert "Target Line" not in read_result.text
+    # Test offset/limit
+    read_result = await read_text_attachment_tool(
+        exec_ctx, text_att_id, offset=1, limit=1
+    )
+    assert read_result.text is not None
+    assert "Line 2" in read_result.text
+    assert "Line 1" not in read_result.text
+    assert "Target Line" not in read_result.text
 
 
 @pytest.mark.asyncio
@@ -244,43 +243,43 @@ async def test_script_attachment_read(db_engine: AsyncEngine, tmp_path: Path) ->
         storage_path=str(storage_path), db_engine=db_engine, config=None
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create a text attachment
-        text_content = "Hello from script attachment!"
-        reg_metadata = await attachment_registry.store_and_register_tool_attachment(
-            file_content=text_content.encode("utf-8"),
-            filename="hello.txt",
-            content_type="text/plain",
-            tool_name="test",
-            description="test",
-            conversation_id="conv_script",
-        )
-        att_id = reg_metadata.attachment_id
+    db = Database(engine=db_engine)
+    # Create a text attachment
+    text_content = "Hello from script attachment!"
+    reg_metadata = await attachment_registry.store_and_register_tool_attachment(
+        file_content=text_content.encode("utf-8"),
+        filename="hello.txt",
+        content_type="text/plain",
+        tool_name="test",
+        description="test",
+        conversation_id="conv_script",
+    )
+    att_id = reg_metadata.attachment_id
 
-        exec_ctx = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="conv_script",
-            user_name="test",
-            turn_id=None,
-            db_context=db,
-            processing_service=None,
-            clock=SystemClock(),
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=attachment_registry,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    exec_ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conv_script",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=SystemClock(),
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        script = f"""
+    script = f"""
 content = attachment_read('{att_id}')
 content
 """
-        result = await execute_script_tool(exec_ctx, script)
-        assert result.text is not None
-        assert text_content in result.text
+    result = await execute_script_tool(exec_ctx, script)
+    assert result.text is not None
+    assert text_content in result.text
 
 
 @pytest.mark.asyncio
@@ -307,59 +306,57 @@ async def test_script_attachment_read_same_transaction(
         storage_path=str(storage_path), db_engine=db_engine, config=None
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create attachment WITHIN the transaction (passing db_context)
-        # This simulates what happens during tool processing
-        text_content = "Content created in same transaction"
-        reg_metadata = await attachment_registry.store_and_register_tool_attachment(
-            file_content=text_content.encode("utf-8"),
-            filename="same_txn.txt",
-            content_type="text/plain",
-            tool_name="test",
-            description="test",
-            conversation_id="conv_same_txn",
-            db_context=db,  # KEY: Use same transaction
-        )
-        att_id = reg_metadata.attachment_id
+    db = Database(engine=db_engine)
+    # Create attachment WITHIN the transaction (passing db_context)
+    # This simulates what happens during tool processing
+    text_content = "Content created in same transaction"
+    reg_metadata = await attachment_registry.store_and_register_tool_attachment(
+        file_content=text_content.encode("utf-8"),
+        filename="same_txn.txt",
+        content_type="text/plain",
+        tool_name="test",
+        description="test",
+        conversation_id="conv_same_txn",
+        db_context=db,  # KEY: Use same transaction
+    )
+    att_id = reg_metadata.attachment_id
 
-        # Verify the attachment exists in this transaction
-        metadata = await attachment_registry.get_attachment(
-            db, att_id, acting_user_id=None
-        )
-        assert metadata is not None, "Attachment should exist in same transaction"
+    # Verify the attachment exists in this transaction
+    metadata = await attachment_registry.get_attachment(db, att_id, acting_user_id=None)
+    assert metadata is not None, "Attachment should exist in same transaction"
 
-        exec_ctx = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="conv_same_txn",
-            user_name="test",
-            turn_id=None,
-            db_context=db,
-            processing_service=None,
-            clock=SystemClock(),
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=attachment_registry,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    exec_ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conv_same_txn",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=SystemClock(),
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Try to read the attachment from a script
-        # This should work but currently fails due to transaction isolation
-        script = f"""
+    # Try to read the attachment from a script
+    # This should work but currently fails due to transaction isolation
+    script = f"""
 content = attachment_read('{att_id}')
 content
 """
-        result = await execute_script_tool(exec_ctx, script)
-        assert result.text is not None
+    result = await execute_script_tool(exec_ctx, script)
+    assert result.text is not None
 
-        # The bug: attachment_read() opens a NEW connection that can't see
-        # the uncommitted attachment, so it returns None
-        assert "Content created in same transaction" in result.text, (
-            f"Script should be able to read attachment created in same transaction. "
-            f"Got: {result.text}"
-        )
+    # The bug: attachment_read() opens a NEW connection that can't see
+    # the uncommitted attachment, so it returns None
+    assert "Content created in same transaction" in result.text, (
+        f"Script should be able to read attachment created in same transaction. "
+        f"Got: {result.text}"
+    )
 
 
 @pytest.mark.asyncio
@@ -367,6 +364,137 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
     db_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     """Done-event attachment enrichment should use the active transaction."""
+    storage_path = tmp_path / "attachments"
+    storage_path.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(storage_path),
+        db_engine=db_engine,
+        config={
+            "max_file_size": 100 * 1024 * 1024,
+            "max_multimodal_size": 20 * 1024 * 1024,
+        },
+    )
+
+    service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone=ZoneInfo("UTC"),
+        max_history_messages=10,
+        history_max_age_hours=1.0,
+        tools_config=ToolsConfig(),
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        id="test-profile",
+    )
+
+    app_config = Mock()
+    app_config.attachment_selection_threshold = 5
+    app_config.max_response_attachments = 3
+    app_config.attachment_config = Mock()
+    app_config.attachment_config.large_tool_result_threshold_kb = 20
+
+    llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (
+                lambda kwargs: (
+                    not any(
+                        getattr(message, "role", None) == "tool"
+                        for message in kwargs["messages"]
+                    )
+                ),
+                LLMOutput(
+                    content=None,
+                    tool_calls=[
+                        ToolCallItem(
+                            id="call_large_result",
+                            type="function",
+                            function=ToolCallFunction(
+                                name="read_error_logs", arguments="{}"
+                            ),
+                        )
+                    ],
+                ),
+            ),
+            (
+                lambda kwargs: any(
+                    getattr(message, "role", None) == "tool"
+                    for message in kwargs["messages"]
+                ),
+                LLMOutput(content="final answer"),
+            ),
+        ]
+    )
+
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.get_tool_definitions.return_value = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_error_logs",
+                "description": "Read error logs.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    mock_tools_provider.execute_tool.return_value = ToolResult(
+        text="log excerpt",
+        attachments=[
+            ToolAttachment(
+                content=b"E" * 1024,
+                mime_type="text/plain",
+                description="Error log excerpt",
+            )
+        ],
+    )
+
+    service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=mock_tools_provider,
+        service_config=service_config,
+        context_providers=[],
+        server_url="http://localhost:8000",
+        app_config=app_config,
+        attachment_registry=attachment_registry,
+        clock=SystemClock(),
+    )
+
+    done_event = None
+    db = Database(engine=db_engine)
+    async for event, _message in service.llm_loop.run_stream(
+        db_context=db,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="show me the logs"),
+        ],
+        interface_type="test",
+        conversation_id="conv_stream_same_txn",
+        user_name="test_user",
+        turn_id="turn_stream_same_txn",
+        chat_interface=None,
+        processing_service=service,
+    ):
+        if event.type == "done":
+            done_event = event
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    attachment_ids = done_event.metadata.get("attachment_ids")
+    assert attachment_ids is not None
+    assert len(attachment_ids) == 1
+
+    attachments = done_event.metadata.get("attachments")
+    assert attachments is not None
+    assert len(attachments) == 1
+    assert attachments[0]["id"] == attachment_ids[0]
+    assert attachments[0]["mime_type"] == "text/plain"
+    assert attachments[0]["name"] == "Error log excerpt"
+
+
+@pytest.mark.asyncio
+async def test_large_result_attachment_not_sent_with_response(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """Auto-converted large results are working data, not response attachments."""
     storage_path = tmp_path / "attachments"
     storage_path.mkdir()
     attachment_registry = AttachmentRegistry(
@@ -451,35 +579,35 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
     )
 
     done_event = None
-    async with DatabaseContext(engine=db_engine) as db:
-        async for event, _message in service.llm_loop.run_stream(
-            db_context=db,
-            messages=[
-                SystemMessage(content="system"),
-                UserMessage(content="show me the logs"),
-            ],
-            interface_type="test",
-            conversation_id="conv_stream_same_txn",
-            user_name="test_user",
-            turn_id="turn_stream_same_txn",
-            chat_interface=None,
-            processing_service=service,
-        ):
-            if event.type == "done":
-                done_event = event
+    tool_result_content = ""
+    db = Database(engine=db_engine)
+    async for event, _message in service.llm_loop.run_stream(
+        db_context=db,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="show me the logs"),
+        ],
+        interface_type="test",
+        conversation_id="conv_large_not_attached",
+        user_name="test_user",
+        turn_id="turn_large_not_attached",
+        chat_interface=None,
+        processing_service=service,
+    ):
+        if event.type == "tool_result":
+            tool_result_content = event.tool_result or ""
+        if event.type == "done":
+            done_event = event
+
+    # The model still learns the attachment ID so it can query the content.
+    assert "was too large and was saved as attachment" in tool_result_content
 
     assert done_event is not None
     assert done_event.metadata is not None
-    attachment_ids = done_event.metadata.get("attachment_ids")
-    assert attachment_ids is not None
-    assert len(attachment_ids) == 1
-
-    attachments = done_event.metadata.get("attachments")
-    assert attachments is not None
-    assert len(attachments) == 1
-    assert attachments[0]["id"] == attachment_ids[0]
-    assert attachments[0]["mime_type"] == "text/plain"
-    assert attachments[0]["name"] == "Large output from read_error_logs"
+    assert done_event.metadata.get("attachment_ids") is None
+    assert done_event.metadata.get("attachments") is None
 
 
 @pytest.mark.asyncio
@@ -532,37 +660,38 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
         clock=SystemClock(),
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        large_data = {
-            "entries": [{"key": f"item_{i}", "value": "x" * 100} for i in range(200)]
-        }
-        mock_tools_provider.execute_tool.return_value = ToolResult(data=large_data)
+    db = Database(engine=db_engine)
+    large_data = {
+        "entries": [{"key": f"item_{i}", "value": "x" * 100} for i in range(200)]
+    }
+    mock_tools_provider.execute_tool.return_value = ToolResult(data=large_data)
 
-        tool_call = ToolCallItem(
-            id="call_data_1",
-            type="function",
-            function=ToolCallFunction(name="data_tool", arguments={}),
-        )
+    tool_call = ToolCallItem(
+        id="call_data_1",
+        type="function",
+        function=ToolCallFunction(name="data_tool", arguments={}),
+    )
 
-        result = await service.tool_executor.execute(
-            tool_call,
-            interface_type="test",
-            conversation_id="conv_data_1",
-            user_name="test_user",
-            turn_id="turn_data_1",
-            db_context=db,
-            chat_interface=None,
-        )
+    result = await service.tool_executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_data_1",
+        user_name="test_user",
+        turn_id="turn_data_1",
+        db_context=db,
+        chat_interface=None,
+    )
 
-        assert result.llm_message.content is not None
-        assert "was too large and was saved as attachment" in result.llm_message.content
-        assert result.auto_attachment_ids is not None
-        assert len(result.auto_attachment_ids) == 1
-        att_id = result.auto_attachment_ids[0]
+    assert result.llm_message.content is not None
+    assert "was too large and was saved as attachment" in result.llm_message.content
+    assert not result.auto_attachment_ids
+    assert result.large_result_attachment_ids is not None
+    assert len(result.large_result_attachment_ids) == 1
+    att_id = result.large_result_attachment_ids[0]
 
-        saved_content = await attachment_registry.get_attachment_content(
-            db, att_id, acting_user_id=None
-        )
-        assert saved_content is not None
-        saved_json = json.loads(saved_content.decode("utf-8"))
-        assert saved_json == large_data
+    saved_content = await attachment_registry.get_attachment_content(
+        db, att_id, acting_user_id=None
+    )
+    assert saved_content is not None
+    saved_json = json.loads(saved_content.decode("utf-8"))
+    assert saved_json == large_data

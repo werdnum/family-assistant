@@ -66,48 +66,43 @@ class PDFTextExtractor:
         # If it has significant setup cost and is stateless, consider instantiating it once per processor instance.
         md_converter = MarkItDown()
 
+        async def convert_pdf(item: IndexableContent) -> None:
+            assert item.ref is not None
+            markdown_text_result = await asyncio.to_thread(
+                md_converter.convert, item.ref
+            )
+            markdown_content = (
+                markdown_text_result.text_content if markdown_text_result else None
+            )
+            if not markdown_content:
+                logger.warning(
+                    f"markitdown converted PDF '{item.metadata.get('original_filename', item.ref)}' to empty content."
+                )
+                return
+
+            new_metadata: ExtractionMetadata = {"extraction_method": "markitdown"}
+            new_metadata.update(item.metadata)  # type: ignore
+            output_items.append(
+                IndexableContent(
+                    content=markdown_content,
+                    embedding_type="extracted_markdown_content",
+                    mime_type="text/markdown",
+                    source_processor=self.name,
+                    metadata=cast("IndexableContentMetadata", new_metadata),
+                    ref=None,
+                )
+            )
+            logger.info(
+                f"Successfully converted PDF '{item.metadata.get('original_filename', item.ref)}' to Markdown."
+            )
+
         for item in current_items:
             if item.mime_type == "application/pdf" and item.ref:
                 logger.info(
                     f"PDFTextExtractor processing PDF: {item.ref} for document_id: {getattr(original_document, 'id', 'Unknown') if original_document else 'Unknown'}"
                 )
                 try:
-                    # Run blocking markitdown conversion in a thread
-                    # Use the convert method of the instantiated object
-                    markdown_text_result = await asyncio.to_thread(
-                        md_converter.convert, item.ref
-                    )
-                    # The convert method of MarkItDown (from scrape_mcp.py example) returns an object
-                    # with a text_content attribute.
-                    markdown_content = (
-                        markdown_text_result.text_content
-                        if markdown_text_result
-                        else None
-                    )
-
-                    if markdown_content:
-                        new_metadata: ExtractionMetadata = {
-                            "extraction_method": "markitdown"
-                        }
-                        new_metadata.update(item.metadata)  # type: ignore
-                        output_items.append(
-                            IndexableContent(
-                                content=markdown_content,
-                                embedding_type="extracted_markdown_content",
-                                mime_type="text/markdown",
-                                source_processor=self.name,
-                                metadata=cast("IndexableContentMetadata", new_metadata),
-                                ref=None,
-                            )
-                        )
-                        logger.info(
-                            f"Successfully converted PDF '{item.metadata.get('original_filename', item.ref)}' to Markdown."
-                        )
-                    else:
-                        logger.warning(
-                            f"markitdown converted PDF '{item.metadata.get('original_filename', item.ref)}' to empty content."
-                        )
-
+                    await convert_pdf(item)
                 except Exception as e:
                     logger.exception(
                         f"Error converting PDF '{item.metadata.get('original_filename', item.ref)}' with markitdown: {e}"

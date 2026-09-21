@@ -1,0 +1,30 @@
+id: no-raw-create-async-engine
+language: python
+severity: error
+message: "Create engines via create_engine_with_sqlite_optimizations(), not create_async_engine()"
+note: |
+  Every application and test engine must come from the one factory in
+  family_assistant.storage.base:
+
+    from family_assistant.storage.base import create_engine_with_sqlite_optimizations
+
+    engine = create_engine_with_sqlite_optimizations(url)          # production
+    engine = create_engine_with_sqlite_optimizations(url, instrument=True)  # tests
+
+  The factory is what applies the pool class, the SQLite PRAGMAs and reset
+  policy, the URL normalization, and (opt-in) the transaction-duration and
+  connection-leak instrumentation. An engine built with a raw
+  create_async_engine() call silently gets SQLAlchemy's defaults instead, so a
+  test using one is not exercising the configuration production runs — the
+  pool/serialization behaviour this project's transactional design depends on
+  is exactly what goes untested.
+
+  Admin engines that exist only to CREATE/DROP a test database (AUTOCOMMIT,
+  never used for application queries) are the legitimate exception; exempt them
+  inline:
+    # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE DATABASE
+rule:
+  any:
+    - pattern: create_async_engine($$$)
+    - pattern: $MODULE.create_async_engine($$$)
+

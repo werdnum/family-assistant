@@ -14,8 +14,10 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.llm.request_buffer import get_request_buffer
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
+from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools.types import ToolDefinition
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 
@@ -58,6 +60,15 @@ class LLMRequestExport(BaseModel):
     # ast-grep-ignore: no-dict-any - LLM response structure varies by provider (OpenAI/Anthropic/Google formats differ)
     response: dict[str, Any] | None = None
     error: str | None = None
+    provider: str | None = None
+    resolved_model_id: str | None = None
+    streaming: bool = False
+    time_to_first_output_ms: float | None = None
+    finish_reason: str | None = None
+    response_id: str | None = None
+    usage: MessageReasoningInfo | None = None
+    request_payload_chars: int | None = None
+    request_attachment_chars: int | None = None
 
 
 class MessageHistoryExport(BaseModel):
@@ -70,12 +81,38 @@ class MessageHistoryExport(BaseModel):
     interface_type: str
 
 
+class PromptCacheProfileUsage(BaseModel):
+    """Prompt-token buckets for one processing profile over the export window."""
+
+    processing_profile_id: str | None
+    assistant_messages: int
+    prompt_tokens: int
+    cached_prompt_tokens: int
+    cache_write_tokens: int
+
+
+class PromptCacheSummary(BaseModel):
+    """Prompt-cache token usage, broken down by processing profile.
+
+    Reported as raw buckets rather than a hit rate because the two are not
+    comparable across providers: Anthropic's ``prompt_tokens`` excludes the
+    cached and cache-write tokens, while OpenAI's and Google's includes them
+    (see ``MessageReasoningInfo``). Grouping by profile is what makes the numbers
+    interpretable -- a profile is pinned to one provider -- so the reader can
+    apply the right arithmetic instead of being handed an average of two
+    different definitions.
+    """
+
+    by_profile: list[PromptCacheProfileUsage]
+
+
 class ExportSummary(BaseModel):
     """Summary of exported data counts."""
 
     error_count: int
     llm_request_count: int
     message_count: int
+    prompt_cache: PromptCacheSummary
 
 
 class DiagnosticsExportResponse(BaseModel):
@@ -111,6 +148,8 @@ class TaintAuditDiagnostics(BaseModel):
     by_sink_class: list[DiagnosticCount]
     by_requested_outcome: list[DiagnosticCount]
     by_effective_outcome: list[DiagnosticCount]
+    by_review_verdict: list[DiagnosticCount]
+    by_review_status: list[DiagnosticCount]
     by_tool: list[DiagnosticCount]
     source_type_occurrences: list[DiagnosticCount]
     source_tier_occurrences: list[DiagnosticCount]
@@ -183,6 +222,43 @@ def _diagnostic_counts(counter: Counter[str | None]) -> list[DiagnosticCount]:
     ]
 
 
+def _llm_request_detail_lines(req: LLMRequestExport) -> list[str]:
+    """Render the timing and identity of one call for the paste-friendly export.
+
+    This export is what gets pasted into a bug report, so it carries the same
+    facts as the JSON one: which model actually served the call, where the time
+    went, and the ids needed to take the question to the provider.
+    """
+    lines: list[str] = []
+
+    served_by = req.resolved_model_id
+    if served_by and served_by != req.model_id:
+        lines.append(f"**Served by**: {served_by}")
+
+    timing = [f"{req.duration_ms:.0f}ms total"]
+    if req.time_to_first_output_ms is not None:
+        timing.append(f"{req.time_to_first_output_ms:.0f}ms to first output")
+    if req.request_payload_chars is not None:
+        timing.append(f"{req.request_payload_chars} request chars")
+    if req.request_attachment_chars:
+        timing.append(f"up to {req.request_attachment_chars} attachment chars")
+    lines.append(f"**Timing**: {', '.join(timing)}")
+
+    call = [req.provider or "unknown provider"]
+    call.append("streaming" if req.streaming else "non-streaming")
+    if req.finish_reason:
+        call.append(f"finished {req.finish_reason}")
+    if req.response_id:
+        call.append(f"provider id {req.response_id}")
+    lines.append(f"**Call**: {', '.join(call)}")
+
+    if req.usage:
+        usage = ", ".join(f"{key}={value}" for key, value in sorted(req.usage.items()))
+        lines.append(f"**Usage**: {usage}")
+
+    return lines
+
+
 def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
     """Format the diagnostic export as markdown."""
     lines = [
@@ -228,6 +304,7 @@ def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
                 f"### [{req.timestamp}] {status} {req.model_id} ({req.duration_ms:.0f}ms)"
             )
             lines.append(f"**Request ID**: {req.request_id}")
+            lines.extend(_llm_request_detail_lines(req))
 
             # Summarize messages
             lines.append(f"**Messages**: {len(req.messages)} message(s)")
@@ -277,15 +354,78 @@ def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
         lines.append("_No messages in time window_")
 
     lines.append("")
+    lines.append("## Prompt Cache (whole window, by profile)")
+    if data.summary.prompt_cache.by_profile:
+        lines.append("| Profile | Requests | Prompt | Cached | Cache writes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: |")
+        for usage in data.summary.prompt_cache.by_profile:
+            lines.append(
+                f"| {usage.processing_profile_id or '(none)'} "
+                f"| {usage.assistant_messages} "
+                f"| {usage.prompt_tokens} "
+                f"| {usage.cached_prompt_tokens} "
+                f"| {usage.cache_write_tokens} |"
+            )
+    else:
+        lines.append("_No token usage recorded in time window_")
+
+    lines.append("")
     lines.append("---")
     lines.append("Generated with Family Assistant Diagnostics Export")
 
     return "\n".join(lines)
 
 
+def _summarize_prompt_cache(
+    message_rows: dict[tuple[str, str], list[MessageHistoryRow]],
+) -> PromptCacheSummary:
+    """Total the prompt-token buckets per processing profile.
+
+    Messages without usage stats (user, tool, and any assistant row written
+    before the provider reported usage) contribute nothing.
+    """
+    totals: dict[str | None, PromptCacheProfileUsage] = {}
+
+    for messages in message_rows.values():
+        for msg in messages:
+            # Already deserialized by _process_message_row_as_dict; a str here
+            # would mean the repository stopped doing that, and silently
+            # reporting zeroes would hide it from the very summary meant to
+            # measure cache behaviour.
+            reasoning_info = msg.get("reasoning_info")
+            if reasoning_info is None or "prompt_tokens" not in reasoning_info:
+                continue
+
+            profile_id = msg.get("processing_profile_id")
+            entry = totals.setdefault(
+                profile_id,
+                PromptCacheProfileUsage(
+                    processing_profile_id=profile_id,
+                    assistant_messages=0,
+                    prompt_tokens=0,
+                    cached_prompt_tokens=0,
+                    cache_write_tokens=0,
+                ),
+            )
+            entry.assistant_messages += 1
+            entry.prompt_tokens += int(reasoning_info.get("prompt_tokens") or 0)
+            entry.cached_prompt_tokens += int(
+                reasoning_info.get("cached_prompt_tokens") or 0
+            )
+            entry.cache_write_tokens += int(
+                reasoning_info.get("cache_write_tokens") or 0
+            )
+
+    return PromptCacheSummary(
+        by_profile=sorted(
+            totals.values(), key=lambda usage: usage.prompt_tokens, reverse=True
+        )
+    )
+
+
 @diagnostics_api_router.get("/export", response_model=None)
 async def export_diagnostics(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     _: Annotated[dict, Depends(get_diagnostics_reader)],
     minutes: Annotated[int, Query(ge=1, le=120)] = 30,
     max_errors: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -319,7 +459,7 @@ async def export_diagnostics(
     system_info = SystemInfo(
         python_version=sys.version.split()[0],
         platform=platform.platform(),
-        database_type=db_context.engine.dialect.name,
+        database_type=db_context.dialect_name,
     )
 
     # Get error logs
@@ -353,6 +493,15 @@ async def export_diagnostics(
             tool_choice=record.tool_choice,
             response=record.response,
             error=record.error,
+            provider=record.provider,
+            resolved_model_id=record.resolved_model_id,
+            streaming=record.streaming,
+            time_to_first_output_ms=record.time_to_first_output_ms,
+            finish_reason=record.finish_reason,
+            response_id=record.response_id,
+            usage=record.usage,
+            request_payload_chars=record.request_payload_chars,
+            request_attachment_chars=record.request_attachment_chars,
         )
         for record in llm_records
     ]
@@ -402,6 +551,9 @@ async def export_diagnostics(
             error_count=len(error_logs),
             llm_request_count=len(llm_requests),
             message_count=len(all_messages),
+            # Computed over every message in the window, not the truncated
+            # export list, so the totals do not silently depend on max_messages.
+            prompt_cache=_summarize_prompt_cache(message_rows),
         ),
     )
 
@@ -416,7 +568,7 @@ async def export_diagnostics(
 
 @diagnostics_api_router.get("/taint-audit")
 async def get_taint_diagnostics(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     _: Annotated[dict, Depends(get_diagnostics_reader)],
     days: Annotated[int, Query(ge=1, le=90)] = 7,
     max_events: Annotated[int, Query(ge=1, le=50000)] = 10000,
@@ -445,6 +597,8 @@ async def get_taint_diagnostics(
     sink_class_counts: Counter[str | None] = Counter()
     requested_outcome_counts: Counter[str | None] = Counter()
     effective_outcome_counts: Counter[str | None] = Counter()
+    review_verdict_counts: Counter[str | None] = Counter()
+    review_status_counts: Counter[str | None] = Counter()
     tool_counts: Counter[str | None] = Counter()
     source_type_counts: Counter[str | None] = Counter()
     source_tier_counts: Counter[str | None] = Counter()
@@ -456,6 +610,8 @@ async def get_taint_diagnostics(
         sink_class_counts[event["sink_class"]] += 1
         requested_outcome_counts[event["requested_outcome"]] += 1
         effective_outcome_counts[event["effective_outcome"]] += 1
+        review_verdict_counts[event["review_verdict"]] += 1
+        review_status_counts[event["review_status"]] += 1
         tool_counts[event["tool_name"]] += 1
         for source in event["sources_json"]:
             source_type_counts[source["source_type"]] += 1
@@ -515,6 +671,8 @@ async def get_taint_diagnostics(
             by_sink_class=_diagnostic_counts(sink_class_counts),
             by_requested_outcome=_diagnostic_counts(requested_outcome_counts),
             by_effective_outcome=_diagnostic_counts(effective_outcome_counts),
+            by_review_verdict=_diagnostic_counts(review_verdict_counts),
+            by_review_status=_diagnostic_counts(review_status_counts),
             by_tool=_diagnostic_counts(tool_counts),
             source_type_occurrences=_diagnostic_counts(source_type_counts),
             source_tier_occurrences=_diagnostic_counts(source_tier_counts),

@@ -3,10 +3,8 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
-  useComposer,
-  useComposerRuntime,
-  useMessage,
-  useThread,
+  useAui,
+  useAuiState,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -21,7 +19,7 @@ import {
   StickyNoteIcon,
   SquareIcon,
 } from 'lucide-react';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -36,31 +34,10 @@ import { useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { MarkdownText } from './MarkdownText';
+import { useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
 import { TooltipIconButton } from './TooltipIconButton';
-
-// API endpoints
-const PROFILES_API_ENDPOINT = '/api/v1/profiles';
-
-// Profile context for mapping profile IDs to descriptions
-interface Profile {
-  id: string;
-  description: string;
-}
-
-interface ProfilesContextType {
-  profiles: Record<string, Profile>;
-  isLoading: boolean;
-  error: string | null;
-}
-
-const ProfilesContext = createContext<ProfilesContextType>({
-  profiles: {},
-  isLoading: true,
-  error: null,
-});
-
-const useProfiles = () => useContext(ProfilesContext);
+import type { MessageReasoningInfo } from './types';
 
 const messageContentComponents = {
   Text: MarkdownText,
@@ -72,63 +49,22 @@ const messageContentComponents = {
   },
 };
 
-// ProfilesProvider component to fetch and provide profiles data
-const ProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchProfiles = async () => {
-      try {
-        const response = await fetch(PROFILES_API_ENDPOINT);
-        if (response.ok) {
-          const data = await response.json();
-          const profilesMap: Record<string, Profile> = {};
-          data.profiles.forEach((profile: { id: string; description?: string }) => {
-            profilesMap[profile.id] = {
-              id: profile.id,
-              description: profile.description || profile.id,
-            };
-          });
-          setProfiles(profilesMap);
-          setError(null);
-        } else {
-          setError(`Failed to fetch profiles: ${response.status}`);
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        setError(`Error fetching profiles: ${errorMessage}`);
-        console.error('Error fetching profiles:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchProfiles();
-  }, []);
-
-  return (
-    <ProfilesContext.Provider value={{ profiles, isLoading, error }}>
-      {children}
-    </ProfilesContext.Provider>
-  );
-};
-
 export const Thread: React.FC = () => {
-  return (
-    <ProfilesProvider>
-      <ThreadContent />
-    </ProfilesProvider>
-  );
+  return <ThreadContent />;
 };
 
 const ThreadContent: React.FC = () => {
+  const viewportRef = useRef<HTMLDivElement>(null);
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0">
+      <ThreadPrimitive.Viewport
+        ref={viewportRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0"
+      >
         <div className="pb-6">
           <ThreadWelcome />
+
+          <ThreadLoadOlderMessages viewportRef={viewportRef} />
 
           <ThreadPrimitive.Messages
             components={{
@@ -153,6 +89,69 @@ const ThreadContent: React.FC = () => {
         <Composer />
       </div>
     </ThreadPrimitive.Root>
+  );
+};
+
+const ThreadLoadOlderMessages: React.FC<{
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+}> = ({ viewportRef }) => {
+  const controls = useChatControls();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const messageCount = useAuiState((s) => s.thread.messages.length);
+  // Older messages arrive above the reader, which would push what they were
+  // looking at down the page. Remember the distance from the bottom when they
+  // ask, and restore it once the longer thread renders.
+  const pendingAnchorRef = useRef<{ messageCount: number; fromBottom: number } | null>(null);
+  const status = controls?.olderMessagesStatus;
+
+  useLayoutEffect(() => {
+    const anchor = pendingAnchorRef.current;
+    const viewport = viewportRef.current;
+    if (!anchor || !viewport) {
+      return;
+    }
+    if (messageCount !== anchor.messageCount) {
+      pendingAnchorRef.current = null;
+      viewport.scrollTop = viewport.scrollHeight - anchor.fromBottom;
+    } else if (status === 'failed') {
+      pendingAnchorRef.current = null;
+    }
+  }, [messageCount, status, viewportRef]);
+
+  if (!controls?.hasOlderMessages) {
+    return null;
+  }
+
+  const handleClick = () => {
+    const viewport = viewportRef.current;
+    if (viewport) {
+      pendingAnchorRef.current = {
+        messageCount,
+        fromBottom: viewport.scrollHeight - viewport.scrollTop,
+      };
+    }
+    controls.loadOlderMessages();
+  };
+
+  return (
+    <div className="flex justify-center pt-4">
+      <Button
+        variant="outline"
+        size="sm"
+        className="rounded-full text-muted-foreground"
+        onClick={handleClick}
+        disabled={isRunning || status === 'loading'}
+      >
+        {status === 'loading' ? (
+          <Loader2Icon size={14} className="animate-spin" />
+        ) : (
+          <ArrowUpIcon size={14} />
+        )}
+        {status === 'failed'
+          ? "Couldn't load earlier messages. Try again"
+          : 'Load earlier messages'}
+      </Button>
+    </div>
   );
 };
 
@@ -254,8 +253,11 @@ const ThreadWelcomeSuggestions: React.FC = () => {
   );
 };
 
-// Transient steer failure, shown just above the composer (the composer keeps
-// its text so the user can retry). Rendered only while a turn is running.
+// A steer that failed or could not be confirmed, shown just above the composer
+// (which keeps its text so the user can retry). Deliberately NOT gated on the
+// turn still running: a turn whose stream gave up reports back here with the
+// text it could not confirm, and that has to stay readable after the turn ends.
+// Cleared when the user sends, steers again, or switches conversation.
 const SteerError: React.FC = () => {
   const controls = useChatControls();
   if (!controls?.steerError) {
@@ -269,8 +271,8 @@ const SteerError: React.FC = () => {
 };
 
 const Composer: React.FC = () => {
-  const isRunning = useThread((t) => t.isRunning);
-  const composerRuntime = useComposerRuntime();
+  const aui = useAui();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   const controls = useChatControls();
   const [steering, setSteering] = useState(false);
 
@@ -281,7 +283,7 @@ const Composer: React.FC = () => {
     if (!controls || steering) {
       return;
     }
-    const text = composerRuntime.getState().text.trim();
+    const text = aui.composer.getState().text.trim();
     if (!text) {
       return;
     }
@@ -290,8 +292,8 @@ const Composer: React.FC = () => {
       const result = await controls.submitSteer(text);
       // Clear on success, but only if the user hasn't typed something new while
       // the steer was in flight (don't clobber a fresh edit).
-      if (result !== 'error' && composerRuntime.getState().text.trim() === text) {
-        composerRuntime.setText('');
+      if (result !== 'error' && aui.composer.getState().text.trim() === text) {
+        aui.composer.setText('');
       }
     } finally {
       setSteering(false);
@@ -312,9 +314,7 @@ const Composer: React.FC = () => {
 
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
-      <ThreadPrimitive.If running>
-        <SteerError />
-      </ThreadPrimitive.If>
+      <SteerError />
       {/* Steering sends text only, so attachments can't ride along on a steer.
           Hide the attachment UI while a turn runs to avoid a picked file being
           silently ignored by the steer and then sent with the next message. */}
@@ -345,14 +345,13 @@ interface ComposerActionProps {
 }
 
 const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) => {
-  // Check if any attachments are currently uploading
-  const hasUploadingAttachments = useComposer((state) => {
-    const attachments = state.attachments || [];
-    return attachments.some((att) => att.status?.type === 'running');
-  });
+  // The composer refuses to send while it is already sending, which is the
+  // window in which attachments upload. Reading that rather than attachment
+  // status keeps the button honest whatever an attachment adapter reports.
+  const isSending = useAuiState((s) => !s.composer.canSend && !s.composer.isEmpty);
   // While running, the single action button steers when there's text to send
   // and stops the turn when the composer is empty.
-  const hasText = useComposer((state) => state.text.trim().length > 0);
+  const hasText = useAuiState((s) => s.composer.text.trim().length > 0);
 
   return (
     <>
@@ -360,14 +359,14 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
         <ComposerPrimitive.Send asChild>
           {/* @ts-expect-error - TooltipIconButton JSX component */}
           <TooltipIconButton
-            tooltip={hasUploadingAttachments ? 'Uploading attachments...' : 'Send message'}
+            tooltip={isSending ? 'Sending...' : 'Send message'}
             variant="default"
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"
             data-testid="send-button"
-            disabled={hasUploadingAttachments}
+            disabled={isSending}
           >
-            {hasUploadingAttachments ? (
+            {isSending ? (
               <Loader2Icon size={16} className="animate-spin" />
             ) : (
               <ArrowUpIcon size={16} />
@@ -482,8 +481,8 @@ export function hasCopyableAssistantContent(content: unknown): boolean {
 }
 
 const AssistantMessage: React.FC = () => {
-  const message = useMessage();
-  const { profiles, error } = useProfiles();
+  const message = useAuiState((s) => s.message);
+  const { profilesById, tierLabels, error } = useProfiles();
 
   // Check if message is loading by checking for our special marker
   // The assistant-ui library might not pass through our custom isLoading property
@@ -492,9 +491,19 @@ const AssistantMessage: React.FC = () => {
     message.content.length > 0 &&
     message.content[0]?.text === LOADING_MARKER;
 
-  // Get profile info for this message
-  const profileId = (message as { processing_profile_id?: string })?.processing_profile_id;
-  const profile = profileId ? profiles[profileId] : null;
+  // Which profile answered and what served the turn. assistant-ui reconstructs
+  // each message from the fields it knows, so ours arrive in metadata.custom.
+  const custom = (message?.metadata?.custom ?? {}) as {
+    processing_profile_id?: string;
+    reasoning_info?: MessageReasoningInfo;
+  };
+  const profileId = custom.processing_profile_id;
+  const profile = profileId ? profilesById[profileId] : null;
+  const reasoningInfo = custom.reasoning_info;
+  const tierId = reasoningInfo?.model_tier;
+  // The label comes from the configured tiers; an id with no configured label
+  // (a tier removed since the turn ran) still names what served the turn.
+  const tierLabel = tierId ? (tierLabels[tierId] ?? tierId) : null;
   const hasCopyableContent = hasCopyableAssistantContent(message?.content);
 
   return (
@@ -535,6 +544,21 @@ const AssistantMessage: React.FC = () => {
                 title={`Profile unavailable: ${error}`}
               >
                 Profile Error
+              </Badge>
+            )}
+            {tierLabel && (
+              <Badge
+                variant="secondary"
+                className="text-[10px] px-1.5 py-0 mb-1 ml-1 font-normal"
+                data-testid="model-tier-badge"
+                title={
+                  reasoningInfo?.model ? `${tierLabel} · ${reasoningInfo.model}` : `${tierLabel}`
+                }
+              >
+                {tierLabel}
+                {reasoningInfo?.model_tier_source === 'user' && (
+                  <span className="ml-1 opacity-60">chosen</span>
+                )}
               </Badge>
             )}
             <div className="relative">

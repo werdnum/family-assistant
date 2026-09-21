@@ -1,31 +1,29 @@
 interactions:
   - request:
-      body: '{"contents": [{"parts": [{"text": "What is 2 + 2? Provide the expression, result, and a brief explanation."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseSchema": {"description": "Math calculation result.", "properties": {"expression": {"title": "Expression", "type": "STRING"}, "result": {"title": "Result", "type": "INTEGER"}, "explanation": {"title": "Explanation", "type": "STRING"}}, "property_ordering": ["expression", "result", "explanation"], "required": ["expression", "result", "explanation"], "title": "MathResult", "type": "OBJECT"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      body: '{"contents": [{"parts": [{"text": "What is 2 + 2? Provide the expression, result, and a brief explanation."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": {"description": "Math calculation result.", "properties": {"expression": {"title": "Expression", "type": "string"}, "result": {"title": "Result", "type": "integer"}, "explanation": {"title": "Explanation", "type": "string"}}, "required": ["expression", "result", "explanation"], "title": "MathResult", "type": "object"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
       headers:
         Content-Type:
           - application/json
         user-agent:
-          - google-genai-sdk/1.56.0 gl-python/3.13.9
+          - google-genai-sdk/2.18.1 gl-python/3.13.12
         x-goog-api-client:
-          - google-genai-sdk/1.56.0 gl-python/3.13.9
+          - google-genai-sdk/2.18.1 gl-python/3.13.12
       method: post
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"expression\\\": \\\"2 + 2\\\",\\n  \\\"result\\\": 4,\\n  \\\"explanation\\\": \\\"The sum of two and two is four.\\\"\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 20,\n    \"candidatesTokenCount\": 37,\n    \"totalTokenCount\": 57,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 20\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"9gy3afnWIZbc28oPyv-fiQg\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"expression\\\": \\\"2 + 2\\\",\\n  \\\"result\\\": 4,\\n  \\\"explanation\\\": \\\"The sum of two and two is four.\\\"\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 20,\n    \"candidatesTokenCount\": 37,\n    \"totalTokenCount\": 57,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 20\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"H16RauOaMZiNjrEP5cvziAM\"\n}\n"
       headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         Content-Encoding:
           - gzip
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Sun, 15 Mar 2026 19:48:06 GMT
+          - Fri, 28 Aug 2026 10:08:32 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=539
+          - gfet4t7; dur=493
         Transfer-Encoding:
           - chunked
         Vary:
@@ -36,6 +34,8 @@ interactions:
           - nosniff
         X-Frame-Options:
           - SAMEORIGIN
+        X-Gemini-Service-Tier:
+          - standard
         X-XSS-Protection:
           - '0'
       status:

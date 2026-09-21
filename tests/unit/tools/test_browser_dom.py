@@ -1,9 +1,10 @@
 """Unit tests for the semantic DOM browser tools.
 
 These tests cover the pure-Python helpers in :mod:`family_assistant.tools.browser_dom`:
-TOON rendering (via the ``toons`` library), query filtering, ref collection/resolution,
-load-state coercion, and ref-cache invalidation. The Playwright-driven tool
-implementations are exercised in :mod:`tests.functional.tools.test_browser_dom`.
+TOON rendering (via the ``toons`` library), query filtering, ref collection and
+syntax validation, ref stripping for superseded snapshots, and load-state
+coercion. The Playwright-driven tool implementations are exercised in
+:mod:`tests.functional.tools.test_browser_dom`.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ import toons
 from family_assistant.services.ucp import MerchantUCPProfile
 from family_assistant.tools import browser_dom
 from family_assistant.tools.browser_backend import (
-    LocalPlaywrightBackend,
     _coerce_load_state,  # noqa: PLC2701  # Testing private load-state narrowing helper
 )
 from family_assistant.tools.browser_dom import (
@@ -28,8 +28,9 @@ from family_assistant.tools.browser_dom import (
     _format_toon,  # noqa: PLC2701  # Testing private TOON renderer
     _format_ucp_hint,  # noqa: PLC2701  # Testing private UCP hint renderer
     _probe_ucp_support,  # noqa: PLC2701  # Testing private UCP probe + cache
-    _resolve_ref,  # noqa: PLC2701  # Testing private ref-cache lookup
+    _strip_refs,  # noqa: PLC2701  # Testing private ref-stripping helper
     _ucp_hint_on_url_change,  # noqa: PLC2701  # Testing private URL-change gating
+    _validate_ref,  # noqa: PLC2701  # Testing private ref syntax check
 )
 from family_assistant.tools.browser_session import BrowserSession
 
@@ -64,6 +65,7 @@ def _sample_snapshot() -> Snapshot:
         "title": "Example",
         "forms": 1,
         "elements": 4,
+        "next_ref": 5,
         "roots": [
             _heading_node("e1", "Welcome"),
             {
@@ -169,37 +171,56 @@ class TestAnyMatch:
 
 
 class TestCollectRefs:
-    """Collecting refs from a snapshot tree for the session cache."""
+    """Listing the refs a snapshot handed back."""
 
-    def test_returns_selector_for_every_node(self) -> None:
-        refs = _collect_refs(_sample_snapshot()["roots"])
-        assert refs == {
-            "e1": '[data-fa-ref="e1"]',
-            "e2": '[data-fa-ref="e2"]',
-            "e3": '[data-fa-ref="e3"]',
-            "e4": '[data-fa-ref="e4"]',
-        }
+    def test_returns_every_node_in_document_order(self) -> None:
+        assert _collect_refs(_sample_snapshot()["roots"]) == ["e1", "e2", "e3", "e4"]
 
     def test_handles_empty_children_list(self) -> None:
         node: SnapshotNode = {"ref": "e1", "role": "text", "name": "", "children": []}
-        assert _collect_refs([node]) == {"e1": '[data-fa-ref="e1"]'}
+        assert _collect_refs([node]) == ["e1"]
 
 
-class TestResolveRef:
-    """Ref resolution against the session cache."""
+class TestStripRefs:
+    """Refs are removed from a snapshot a later sibling has moved past."""
 
-    def test_returns_selector_when_ref_is_known(self) -> None:
-        backend = LocalPlaywrightBackend(BrowserSession())
-        backend.ref_cache["e7"] = '[data-fa-ref="e7"]'
-        assert _resolve_ref(backend, "e7") == '[data-fa-ref="e7"]'
+    def test_removes_ref_from_every_node_including_children(self) -> None:
+        stripped = _strip_refs(_sample_snapshot()["roots"])
+        assert all("ref" not in node for node in stripped)
+        form_children = stripped[1].get("children", [])
+        assert form_children
+        assert all("ref" not in child for child in form_children)
 
-    def test_raises_valueerror_with_known_refs_listed(self) -> None:
-        backend = LocalPlaywrightBackend(BrowserSession())
-        backend.ref_cache["e1"] = '[data-fa-ref="e1"]'
-        backend.ref_cache["e2"] = '[data-fa-ref="e2"]'
-        with pytest.raises(ValueError, match="Unknown ref 'e99'") as exc:
-            _resolve_ref(backend, "e99")
-        assert "e1" in str(exc.value)
+    def test_keeps_the_rest_of_each_node(self) -> None:
+        stripped = _strip_refs(_sample_snapshot()["roots"])
+        assert stripped[0]["role"] == "heading"
+        assert stripped[0]["name"] == "Welcome"
+
+    def test_leaves_the_original_tree_untouched(self) -> None:
+        roots = _sample_snapshot()["roots"]
+        _strip_refs(roots)
+        assert roots[0]["ref"] == "e1"
+
+    def test_renderer_omits_refs_when_asked(self) -> None:
+        parsed = toons.loads(_format_toon(_sample_snapshot(), with_refs=False))
+        assert all("ref" not in node for node in parsed["roots"])
+        assert parsed["roots"][0]["role"] == "heading"
+
+
+class TestValidateRef:
+    """Client-side ref checking is syntax only; the page decides the rest."""
+
+    def test_accepts_a_well_formed_ref(self) -> None:
+        assert _validate_ref("e12345") == "e12345"
+
+    @pytest.mark.parametrize("ref", ["", "12", "e", "eabc", "e12 ", "#e12", "e1.2"])
+    def test_rejects_anything_that_is_not_a_ref(self, ref: str) -> None:
+        with pytest.raises(ValueError, match="Invalid ref"):
+            _validate_ref(ref)
+
+    def test_accepts_a_ref_no_snapshot_has_issued(self) -> None:
+        """There is no client-side allowlist: staleness is the page's call."""
+        assert _validate_ref("e999999") == "e999999"
 
 
 class TestCoerceLoadState:
@@ -214,28 +235,15 @@ class TestCoerceLoadState:
             _coerce_load_state("commit")
 
 
-class TestBrowserSessionRefCache:
-    """Ref-cache invalidation contract.
+class TestBrowserSessionRefCounter:
+    """The conversation's ref counter, which makes a ref name one node."""
 
-    Navigation (or arbitrary in-page JS via ``browser_exec``) can stale refs;
-    the session is responsible for clearing them so the next snapshot starts
-    clean.
-    """
+    def test_is_seeded_within_the_documented_range(self) -> None:
+        assert 1_000 <= BrowserSession().next_ref < 1_000_000
 
-    def test_clear_refs_empties_the_cache(self) -> None:
-        session = BrowserSession()
-        session.ref_cache.update({
-            "e1": '[data-fa-ref="e1"]',
-            "e2": '[data-fa-ref="e2"]',
-        })
-        session.clear_refs()
-        assert session.ref_cache == {}
-
-    def test_clear_refs_is_idempotent(self) -> None:
-        session = BrowserSession()
-        session.clear_refs()
-        session.clear_refs()
-        assert session.ref_cache == {}
+    def test_two_sessions_almost_never_start_at_the_same_number(self) -> None:
+        seeds = {BrowserSession().next_ref for _ in range(50)}
+        assert len(seeds) > 40
 
 
 def _shopping_profile(origin: str) -> MerchantUCPProfile:

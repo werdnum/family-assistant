@@ -10,12 +10,27 @@ from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import select, update
 
 from family_assistant import task_worker as task_worker_module
+from family_assistant.config_models import ToolCallReviewConfig, ToolsConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+)
+from family_assistant.processing.types import (
+    ChatInteractionResult,
+    ChatInteractionStatus,
+)
+from family_assistant.security.definition_records import (
+    definition_content_hash,
+    script_definition_content,
+)
 from family_assistant.security.taint import (
+    SinkClass,
     SourceTrustTier,
     TaintMetadata,
     TaintSource,
@@ -30,10 +45,23 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
-from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.services.deferred_tool_confirmation import (
+    build_deferred_confirmation_callback,
+    create_deferred_tool_confirmation,
+)
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewer,
+    ToolCallReviewResponse,
+    ToolCallReviewVerdict,
+)
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     TaintTrackingToolsProvider,
 )
@@ -45,17 +73,26 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.services import delegate_to_service_tool
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolCallReviewAuthorization,
+    ToolConfirmationAuthorization,
+    ToolExecutionContext,
+    ToolResult,
+)
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm import LLMInterface
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.processing import ProcessingService
-    from family_assistant.tools import ToolExecutionContext
     from family_assistant.tools.types import ToolArguments, ToolDefinition
 
 TEST_TOOL_DEFINITION: ToolDefinition = {
@@ -69,6 +106,23 @@ TEST_TOOL_DEFINITION: ToolDefinition = {
                 "value": {"type": "string", "description": "Value to record."}
             },
             "required": ["value"],
+        },
+    },
+}
+
+DELEGATION_TOOL_DEFINITION: ToolDefinition = {
+    "type": "function",
+    "function": {
+        "name": "delegate_to_service",
+        "description": "Delegate a request to another profile.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target_service_id": {"type": "string"},
+                "user_request": {"type": "string"},
+                "confirm_delegation": {"type": "boolean"},
+            },
+            "required": ["target_service_id", "user_request"],
         },
     },
 }
@@ -107,6 +161,111 @@ class RecordingToolsProvider:
         return None
 
 
+class CountingReviewLLM:
+    """Reviewer LLM fake that records any unexpected structured invocation."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_structured[T: BaseModel](
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        del messages, response_model, max_retries
+        self.calls += 1
+        raise AssertionError("Durable review authorization must bypass the reviewer")
+
+
+class AllowingReviewLLM:
+    """Reviewer fake that records and allows nested calls requiring review."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_structured[T: BaseModel](
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        del messages
+        self.calls += 1
+        assert response_model is ToolCallReviewResponse
+        assert max_retries == 0
+        return cast(
+            "T",
+            ToolCallReviewResponse(
+                verdict=ToolCallReviewVerdict.ALLOW,
+                reason="The nested call is aligned with the request.",
+            ),
+        )
+
+
+class DelegationReplayToolsProvider:
+    """Descriptor provider that executes the real delegation tool."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self._descriptor = ToolDescriptor(
+            name="delegate_to_service",
+            definition=DELEGATION_TOOL_DEFINITION,
+            tags=frozenset({ToolTag.DELEGATION, ToolTag.OUTPUT_UNSPECIFIED}),
+            origin="local",
+        )
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return [DELEGATION_TOOL_DEFINITION]
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        return [self._descriptor]
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        return self._descriptor if name == self._descriptor.name else None
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool provider protocol accepts arbitrary JSON arguments
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> ToolResult:
+        assert name == "delegate_to_service"
+        assert call_id is not None
+        self.calls += 1
+        return await delegate_to_service_tool(
+            exec_context=context,
+            target_service_id=cast("str", arguments["target_service_id"]),
+            user_request=cast("str", arguments["user_request"]),
+            confirm_delegation=cast("bool", arguments.get("confirm_delegation", False)),
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+class RecordingDelegationTarget:
+    """Synchronous target profile used by durable delegation replay."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.service_config = SimpleNamespace(
+            id="target-profile",
+            allowed_delegation_sources=None,
+            # Pinned to one model, so it admits no tier selection.
+            tier_eligibility=ModelTierEligibility(),
+        )
+
+    async def handle_chat_interaction(self, **_kwargs: object) -> ChatInteractionResult:
+        self.calls += 1
+        return ChatInteractionResult(
+            status=ChatInteractionStatus.SUCCESS,
+            text_reply="durably delegated",
+        )
+
+
 class RecordingDescriptorToolsProvider(RecordingToolsProvider):
     """Recording provider with policy descriptors."""
 
@@ -126,6 +285,43 @@ class RecordingDescriptorToolsProvider(RecordingToolsProvider):
         if name == self._descriptor.name:
             return self._descriptor
         return None
+
+
+class ReplayingConfirmationProvider(RecordingToolsProvider):
+    """Probe the approved callback twice with the same stored call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.outcome_kinds: list[str] = []
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - fake tool calls preserve arbitrary tool arguments
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        assert context.request_confirmation_callback is not None
+        assert call_id is not None
+        attempted_arguments = [
+            {**arguments, "value": "mismatched-payload"},
+            arguments,
+            arguments,
+        ]
+        for candidate_arguments in attempted_arguments:
+            outcome = await context.request_confirmation_callback(
+                interface_type=context.interface_type,
+                conversation_id=context.conversation_id,
+                turn_id=context.turn_id,
+                tool_name=name,
+                call_id=call_id,
+                tool_args=candidate_arguments,
+                timeout_seconds=1,
+                context=context,
+            )
+            self.outcome_kinds.append(outcome.kind)
+        return "replay probe complete"
 
 
 class FailingToolsProvider(RecordingToolsProvider):
@@ -278,7 +474,7 @@ class FailingChatInterface(RecordingChatInterface):
 
 
 class UndeliveredChatInterface(RecordingChatInterface):
-    """Fake chat interface that reports send failure with no exception."""
+    """Fake chat interface whose sends are refused."""
 
     async def send_message(
         self,
@@ -289,7 +485,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> str | None:
+    ) -> str:
         await super().send_message(
             conversation_id=conversation_id,
             text=text,
@@ -299,7 +495,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
             on_behalf_of_user_id=on_behalf_of_user_id,
             taint_metadata=taint_metadata,
         )
-        return None
+        raise ChatDeliveryError("the interface refused the message", transient=True)
 
 
 class BlockingChatInterface(RecordingChatInterface):
@@ -352,8 +548,10 @@ def _processing_service(
         visibility_grants=None,
         default_note_visibility_labels=None,
         required_note_visibility_labels=None,
+        required_note_read_labels=None,
         allowed_note_visibility_labels=None,
         allow_wake_llm=True,
+        memory_read=False,
         note_registry=None,
     )
     service = SimpleNamespace(
@@ -366,14 +564,15 @@ def _processing_service(
         credential_resolvers=credential_resolvers,
         api_backend=api_backend,
         processing_services_registry=None,
+        # The client a tool that calls a model would use. Nothing here does,
+        # but the worker reads it when it builds an execution context.
+        llm_client=None,
     )
     return cast("ProcessingService", service)
 
 
 def _confirmation_service(db_engine: AsyncEngine) -> ConfirmationService:
-    return ConfirmationService(
-        db_context_factory=lambda: DatabaseContext(engine=db_engine)
-    )
+    return ConfirmationService(db=Database(engine=db_engine))
 
 
 async def _create_source_message(
@@ -381,16 +580,16 @@ async def _create_source_message(
     *,
     processing_profile_id: str = "test-profile",
 ) -> int:
-    async with DatabaseContext(engine=db_engine) as db:
-        internal_id = await db.message_history.add_message(
-            UserMessage(content="Please run the confirmed tool."),
-            interface_type="web",
-            conversation_id="web-conversation-1",
-            interface_message_id="web-message-1",
-            timestamp=datetime_now_utc(),
-            processing_profile_id=processing_profile_id,
-            user_id="user-1",
-        )
+    db = Database(engine=db_engine)
+    internal_id = await db.message_history.add_message(
+        UserMessage(content="Please run the confirmed tool."),
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        interface_message_id="web-message-1",
+        timestamp=datetime_now_utc(),
+        processing_profile_id=processing_profile_id,
+        user_id="user-1",
+    )
     assert internal_id is not None
     return internal_id
 
@@ -403,25 +602,34 @@ async def _create_request(
     db_engine: AsyncEngine,
     *,
     source_message_internal_id: int | None,
+    tool_name: str = "record_tool",
+    tool_call_id: str = "call-record-tool",
+    confirmation_prompt: str = "Run record_tool with value payload",
     tool_args: ToolArguments | None = None,
     origin_interface_type: str | None = None,
     origin_conversation_id: str | None = None,
     taint_state_json: TaintMetadata | None = None,
+    sink_class: str | None = None,
+    static_policy_reason: str | None = None,
+    taint_policy_reason: str | None = None,
 ) -> str:
     resolved_tool_args: ToolArguments = (
         tool_args if tool_args is not None else {"value": "payload"}
     )
     request = await _confirmation_service(db_engine).create_request(
         target_user_id="user-1",
-        tool_name="record_tool",
+        tool_name=tool_name,
         tool_args=resolved_tool_args,
-        tool_call_id="call-record-tool",
+        tool_call_id=tool_call_id,
         source_message_internal_id=source_message_internal_id,
-        confirmation_prompt="Run record_tool with value payload",
+        confirmation_prompt=confirmation_prompt,
         expires_at=datetime_now_utc() + timedelta(hours=1),
         origin_interface_type=origin_interface_type,
         origin_conversation_id=origin_conversation_id,
         taint_state_json=taint_state_json,
+        sink_class=sink_class,
+        static_policy_reason=static_policy_reason,
+        taint_policy_reason=taint_policy_reason,
     )
     return request["id"]
 
@@ -490,12 +698,12 @@ async def _run_worker_until_task_finishes(
 
 
 async def _task_status(db_engine: AsyncEngine, task_id: str) -> tuple[str, str | None]:
-    async with DatabaseContext(engine=db_engine) as db:
-        row = await db.fetch_one(
-            select(tasks_table.c.status, tasks_table.c.error).where(
-                tasks_table.c.task_id == task_id
-            )
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(tasks_table.c.status, tasks_table.c.error).where(
+            tasks_table.c.task_id == task_id
         )
+    )
     assert row is not None
     return str(row["status"]), cast("str | None", row["error"])
 
@@ -550,6 +758,334 @@ async def test_approved_confirmation_task_executes_stored_tool(
             "web-message-1",
         )
     ]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_deferred_review_confirmation_persists_call_authorization(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="automation",
+        conversation_id="automation-1",
+        user_name="Automation Owner",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tool_call_review_authorization=ToolCallReviewAuthorization(
+            tool_name="record_tool",
+            call_id="reviewed-call",
+            tool_args={"value": "reviewed-payload"},
+            sink_class=SinkClass.ARTIFACT_WRITE.value,
+            static_policy_reason="Static review requested confirmation.",
+            taint_policy_reason="Unknown external content reached an artifact write.",
+        ),
+    )
+
+    outcome = await create_deferred_tool_confirmation(
+        context=context,
+        tool_name="record_tool",
+        call_id="reviewed-call",
+        tool_args={"value": "reviewed-payload"},
+        timeout_seconds=60,
+        target_user_id="user-1",
+        source_prefix="Automation requested approval.",
+    )
+
+    assert outcome.kind == "completed"
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert len(pending) == 1
+    request = pending[0]
+    assert request["sink_class"] == SinkClass.ARTIFACT_WRITE.value
+    assert request["static_policy_reason"] == ("Static review requested confirmation.")
+    assert request["taint_policy_reason"] == (
+        "Unknown external content reached an artifact write."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_mutation", ["changed", "deleted"])
+async def test_stored_script_confirmation_replays_pinned_inline_invocation(
+    db_engine: AsyncEngine,
+    stored_mutation: str,
+) -> None:
+    original_source = "prefix + value"
+    replacement_source = 'prefix + "replacement"'
+    stored_name = "durable-review-script"
+    initial_arguments: ToolArguments = {
+        "name": stored_name,
+        "globals": {"prefix": "approved:", "value": "superseded"},
+        "parameters": {"value": "original"},
+    }
+    expected_arguments: ToolArguments = {
+        "script": original_source,
+        "globals": {"prefix": "approved:", "value": "original"},
+    }
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name=stored_name,
+        description="Durable confirmation source pinning",
+        script_code=original_source,
+        parameters_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        },
+        definition_human_direct=True,
+    )
+    execute_script_registration = next(
+        registration
+        for registration in LOCAL_TOOL_REGISTRATIONS
+        if registration.name == "execute_script"
+    )
+    initial_policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(
+            registrations=[execute_script_registration]
+        ),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.CONFIRM)
+        ),
+    )
+    initial_service = _processing_service(initial_policy_provider)
+    context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        user_name="Automation Owner",
+        user_id="user-1",
+        turn_id=None,
+        db_context=db,
+        processing_service=initial_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=initial_policy_provider,
+        processing_profile_id="test-profile",
+        request_confirmation_callback=build_deferred_confirmation_callback(
+            target_user_id="user-1",
+            source_prefix="Automation requested approval.",
+            missing_owner_message=lambda tool_name: (
+                f"No owner is available to approve {tool_name}."
+            ),
+        ),
+    )
+
+    result = await initial_policy_provider.execute_tool(
+        "execute_script",
+        initial_arguments,
+        context,
+        "stored-script-call",
+    )
+
+    result_text = result.get_text() if isinstance(result, ToolResult) else result
+    assert "Waiting on the user to approve" in result_text
+
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert len(pending) == 1
+    request = pending[0]
+    assert request["tool_name"] == "execute_script"
+    assert request["tool_args_json"] == expected_arguments
+    assert original_source in request["confirmation_prompt"]
+    assert "approved:" in request["confirmation_prompt"]
+    assert "original" in request["confirmation_prompt"]
+    assert "superseded" not in request["confirmation_prompt"]
+
+    if stored_mutation == "changed":
+        await db.scripts.save(
+            name=stored_name,
+            description="Replacement that was never approved",
+            script_code=replacement_source,
+            definition_human_direct=True,
+        )
+    else:
+        assert stored_mutation == "deleted"
+        assert await db.scripts.delete(stored_name)
+
+    task_id = await _approve_request(db_engine, str(request["id"]))
+    replay_policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(
+            registrations=[execute_script_registration]
+        ),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(
+                            names=["execute_script"],
+                            argument_equals={"script": original_source},
+                        ),
+                        decision=ToolPolicyDecision.CONFIRM,
+                        priority=20,
+                        description="Inline scripts require current confirmation.",
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(
+                            names=["execute_script"],
+                            argument_equals={"name": stored_name},
+                        ),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=10,
+                        description="Named script lookup is allowed.",
+                    ),
+                ],
+            )
+        ),
+    )
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(replay_policy_provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert len(chat_interface.messages) == 1
+    assert "Script result: approved:original" in chat_interface.messages[0][1]
+    assert replacement_source not in chat_interface.messages[0][1]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("authorization_consumed", "expected_nested_reviews"),
+    [(False, 0), (True, 1)],
+)
+async def test_generic_confirmation_authorizes_script_only_once(
+    db_engine: AsyncEngine,
+    authorization_consumed: bool,
+    expected_nested_reviews: int,
+) -> None:
+    source = 'record_tool(value="nested-effect")'
+    call_id = "generic-confirmed-script"
+    canonical_arguments: ToolArguments = {"script": source, "globals": {}}
+    execute_script_registration = next(
+        registration
+        for registration in LOCAL_TOOL_REGISTRATIONS
+        if registration.name == "execute_script"
+    )
+    recording_provider = RecordingDescriptorToolsProvider({
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.STATE_CHANGING,
+    })
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=CompositeToolsProvider([
+            LocalToolsProvider(registrations=[execute_script_registration]),
+            recording_provider,
+        ]),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["execute_script"]),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=20,
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(names=["record_tool"]),
+                        decision=ToolPolicyDecision.REVIEW,
+                        priority=20,
+                    ),
+                ],
+            )
+        ),
+    )
+    allowing_llm = AllowingReviewLLM()
+    provider = TaintTrackingToolsProvider(
+        policy_provider,
+        tool_call_reviewer=ToolCallReviewer(
+            cast("LLMInterface", allowing_llm),
+            ToolCallReviewConfig(),
+        ),
+        review_config=ToolCallReviewConfig(),
+    )
+    authorization = ToolConfirmationAuthorization(
+        tool_name="execute_script",
+        call_id=call_id,
+        tool_args=canonical_arguments,
+        consumed=authorization_consumed,
+    )
+    context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        user_name="Test User",
+        user_id="user-1",
+        turn_id=None,
+        db_context=Database(engine=db_engine),
+        processing_service=_processing_service(provider),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=provider,
+        tool_call_review_messages=[
+            UserMessage(
+                content="Run the confirmed script.",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
+        ],
+        tool_confirmation_authorization=authorization,
+    )
+
+    await provider.execute_tool(
+        "execute_script",
+        {"script": source},
+        context,
+        call_id,
+    )
+
+    assert authorization.consumed is True
+    assert allowing_llm.calls == expected_nested_reviews
+    assert recording_provider.calls == [
+        (
+            "record_tool",
+            {"value": "nested-effect"},
+            None,
+            "user-1",
+            "web",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_approved_confirmation_callback_rejects_mismatch_and_replay(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = ReplayingConfirmationProvider()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=RecordingChatInterface(),
+        task_id=task_id,
+    )
+
+    assert provider.outcome_kinds == ["rejected", "approved", "rejected"]
     assert await _task_status(db_engine, task_id) == ("done", None)
 
 
@@ -684,12 +1220,12 @@ async def test_confirmation_execution_failure_resolves_live_waiter(
     provider = TaintTrackingToolsProvider(wrapped_provider)
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(max_retries=0)
-        )
+    db = Database(engine=db_engine)
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task_id)
+        .values(max_retries=0)
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1097,13 +1633,14 @@ async def test_confirmation_task_skips_non_approved_request(
     provider = RecordingToolsProvider()
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.tasks.enqueue(
-            task_id=task_id,
-            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-            payload={"confirmation_request_id": request_id},
-            max_retries_override=0,
-        )
+    db = Database(engine=db_engine)
+    await db.tasks.enqueue(
+        task_id=task_id,
+        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        payload={"confirmation_request_id": request_id},
+        max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1125,6 +1662,8 @@ async def test_confirmation_task_fails_closed_when_current_policy_denies_tool(
     request_id = await _create_request(
         db_engine,
         source_message_internal_id=source_message_id,
+        sink_class=SinkClass.ARTIFACT_WRITE.value,
+        static_policy_reason="Previously reviewed under static policy.",
     )
     task_id = await _approve_request(db_engine, request_id)
     wrapped_provider = RecordingDescriptorToolsProvider({ToolTag.STATE_CHANGING})
@@ -1139,12 +1678,12 @@ async def test_confirmation_task_fails_closed_when_current_policy_denies_tool(
     )
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(max_retries=0)
-        )
+    db = Database(engine=db_engine)
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task_id)
+        .values(max_retries=0)
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1169,6 +1708,144 @@ async def test_confirmation_task_fails_closed_when_current_policy_denies_tool(
             "web-message-1",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_approved_review_confirmation_does_not_invoke_reviewer_twice(
+    db_engine: AsyncEngine,
+) -> None:
+    """The durable human approval reuses the exact call's persisted judgment."""
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+        tool_args={"value": "reviewed-payload"},
+        sink_class=SinkClass.ARTIFACT_WRITE.value,
+        static_policy_reason="Static review required human confirmation.",
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    wrapped_provider = RecordingDescriptorToolsProvider({ToolTag.STATE_CHANGING})
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=wrapped_provider,
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.REVIEW)
+        ),
+    )
+    review_llm = CountingReviewLLM()
+    reviewer = ToolCallReviewer(
+        cast("LLMInterface", review_llm),
+        ToolCallReviewConfig(),
+    )
+    provider = TaintTrackingToolsProvider(
+        policy_provider,
+        tool_call_reviewer=reviewer,
+        review_config=ToolCallReviewConfig(),
+    )
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert review_llm.calls == 0
+    assert wrapped_provider.calls == [
+        (
+            "record_tool",
+            {"value": "reviewed-payload"},
+            "call-record-tool",
+            "user-1",
+            "web",
+        )
+    ]
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "policy_decision",
+    [ToolPolicyDecision.REVIEW, ToolPolicyDecision.CONFIRM],
+)
+async def test_approved_delegate_confirmation_replays_exact_call_end_to_end(
+    db_engine: AsyncEngine,
+    policy_decision: ToolPolicyDecision,
+) -> None:
+    """An approved outer delegation also satisfies its internal confirmation."""
+    tool_args: ToolArguments = {
+        "target_service_id": "target-profile",
+        "user_request": "Handle this approved request.",
+        "confirm_delegation": True,
+    }
+    source_message_id = await _create_source_message(
+        db_engine,
+        processing_profile_id="source-profile",
+    )
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+        tool_name="delegate_to_service",
+        tool_call_id="approved-delegation-call",
+        confirmation_prompt="Delegate this exact request to target-profile",
+        tool_args=tool_args,
+        sink_class=SinkClass.SANDBOX_NETWORK.value,
+        static_policy_reason="Static review required human confirmation.",
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    wrapped_provider = DelegationReplayToolsProvider()
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=wrapped_provider,
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=policy_decision)
+        ),
+    )
+    review_llm = CountingReviewLLM()
+    provider = TaintTrackingToolsProvider(
+        policy_provider,
+        tool_call_reviewer=ToolCallReviewer(
+            cast("LLMInterface", review_llm),
+            ToolCallReviewConfig(),
+        ),
+        review_config=ToolCallReviewConfig(),
+        delegation_sink_classes={
+            "target-profile": SinkClass.SANDBOX_NETWORK,
+        },
+    )
+    target_service = RecordingDelegationTarget()
+    source_service = cast(
+        "SimpleNamespace",
+        _processing_service_with_registry(
+            provider=provider,
+            service_id="source-profile",
+            registry={"target-profile": target_service},
+        ),
+    )
+    source_service.service_config.tools_config = ToolsConfig(
+        async_delegation_enabled=False
+    )
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=cast("ProcessingService", source_service),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert review_llm.calls == 0
+    assert wrapped_provider.calls == 1
+    assert target_service.calls == 1
+    assert chat_interface.messages == [
+        (
+            "web-conversation-1",
+            "Approved action completed.\n\n"
+            "Tool: delegate_to_service\n\n"
+            "Result:\ndurably delegated",
+            "web-message-1",
+        )
+    ]
+    assert await _task_status(db_engine, task_id) == ("done", None)
 
 
 @pytest.mark.asyncio
@@ -1321,12 +1998,12 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
     )
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(max_retries=0)
-        )
+    db = Database(engine=db_engine)
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task_id)
+        .values(max_retries=0)
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1403,3 +2080,180 @@ async def test_context_failure_notifies_original_conversation_without_live_waite
     assert status == "failed"
     assert error is not None
     assert "secondary-profile" in error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dependency_mutation", ["changed", "deleted"])
+async def test_durable_script_confirmation_rejects_stale_named_dependency(
+    db_engine: AsyncEngine,
+    dependency_mutation: str,
+) -> None:
+    db = Database(engine=db_engine)
+    child_source = (
+        'add_or_update_note(title="Durable child effect", content="approved")'
+    )
+    await db.scripts.save(
+        name="durable-child",
+        description="Confirmed dependency",
+        script_code=child_source,
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    registrations = [
+        registration
+        for registration in LOCAL_TOOL_REGISTRATIONS
+        if registration.name in {"execute_script", "add_or_update_note"}
+    ]
+    provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=registrations),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["execute_script"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
+    )
+    context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        user_name="Automation Owner",
+        user_id="user-1",
+        turn_id=None,
+        db_context=db,
+        processing_service=_processing_service(provider),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=provider,
+        processing_profile_id="test-profile",
+        request_confirmation_callback=build_deferred_confirmation_callback(
+            target_user_id="user-1",
+            source_prefix="Automation requested approval.",
+            missing_owner_message=lambda tool_name: (
+                f"No owner available for {tool_name}."
+            ),
+        ),
+    )
+    result = await provider.execute_tool(
+        "execute_script",
+        {"script": 'execute_script(name="durable-child")'},
+        context,
+        "durable-closure-call",
+    )
+    result_text = result.get_text() if isinstance(result, ToolResult) else result
+    assert "Waiting on the user to approve" in result_text
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert len(pending) == 1
+    request = pending[0]
+    expected_content = script_definition_content(
+        name="durable-child",
+        description="Confirmed dependency",
+        script_code=child_source,
+        parameters_schema=None,
+    )
+    assert request["tool_args_json"] == {
+        "script": 'execute_script(name="durable-child")',
+        "globals": {},
+        "script_bindings": [
+            {
+                **expected_content,
+                "content_hash": definition_content_hash(expected_content),
+            }
+        ],
+    }
+
+    assert await db.scripts.delete("durable-child")
+    if dependency_mutation == "changed":
+        await db.scripts.save(
+            name="durable-child",
+            description="Unapproved replacement",
+            script_code='add_or_update_note(title="Durable child effect", content="replacement")',
+            definition_taint_state=TurnTaintState.empty(),
+        )
+    task_id = await _approve_request(db_engine, str(request["id"]))
+    chat_interface = RecordingChatInterface()
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert (
+        await db.notes.get_by_title(
+            "Durable child effect", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
+    )
+    assert len(chat_interface.messages) == 1
+    assert "durable-child" in chat_interface.messages[0][1]
+    assert "error" in chat_interface.messages[0][1].lower()
+
+
+@pytest.mark.asyncio
+async def test_old_script_confirmation_without_bindings_rejects_current_child(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="child",
+        description="Valid dependency absent from the old approval",
+        script_code='add_or_update_note(title="Old approval effect", content="unexpected")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=await _create_source_message(db_engine),
+        tool_name="execute_script",
+        tool_args={"script": 'execute_script(name="child")', "globals": {}},
+        confirmation_prompt="Run the parent script without dependency bindings",
+    )
+    provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(
+            registrations=[
+                registration
+                for registration in LOCAL_TOOL_REGISTRATIONS
+                if registration.name in {"execute_script", "add_or_update_note"}
+            ]
+        ),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["execute_script"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert (
+        await db.notes.get_by_title(
+            "Old approval effect", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
+    )
+    assert len(chat_interface.messages) == 1
+    assert "cancelled" in chat_interface.messages[0][1].lower()
+    assert "execute_script" in chat_interface.messages[0][1]
+    assert await _task_status(db_engine, task_id) == ("done", None)

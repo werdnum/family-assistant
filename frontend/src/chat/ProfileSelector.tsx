@@ -1,5 +1,5 @@
 import { Bot, Globe, Search, Settings } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import {
   Select,
@@ -8,19 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-export interface ServiceProfile {
-  id: string;
-  description: string;
-  llm_model?: string;
-  available_tools: string[];
-  enabled_mcp_servers: string[];
-}
-
-export interface ProfilesResponse {
-  profiles: ServiceProfile[];
-  default_profile_id: string;
-}
+import { type ServiceProfile, useProfiles } from './profilesContext';
 
 interface ProfileSelectorProps {
   selectedProfileId: string;
@@ -65,43 +53,19 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   disabled = false,
   onLoadingChange,
 }) => {
-  const [profiles, setProfiles] = useState<ServiceProfile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { profiles, defaultProfileId, isLoading: loading, error } = useProfiles();
 
   // Notify parent of loading state changes
   useEffect(() => {
     onLoadingChange?.(loading);
   }, [loading, onLoadingChange]);
 
+  // If no profile is selected and we have a default, use it.
   useEffect(() => {
-    const fetchProfiles = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        const response = await fetch('/api/v1/profiles');
-        if (!response.ok) {
-          throw new Error(`Failed to fetch profiles: ${response.statusText}`);
-        }
-
-        const data: ProfilesResponse = await response.json();
-        setProfiles(data.profiles);
-
-        // If no profile is selected and we have a default, use it
-        if (!selectedProfileId && data.default_profile_id) {
-          onProfileChange(data.default_profile_id);
-        }
-      } catch (err) {
-        console.error('Error fetching profiles:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load profiles');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProfiles();
-  }, [selectedProfileId, onProfileChange]);
+    if (!selectedProfileId && defaultProfileId) {
+      onProfileChange(defaultProfileId);
+    }
+  }, [selectedProfileId, defaultProfileId, onProfileChange]);
 
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
 
@@ -129,7 +93,11 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   return (
     <div className="flex items-center gap-2">
       <Select value={selectedProfileId} onValueChange={onProfileChange} disabled={disabled}>
-        <SelectTrigger className="w-auto min-w-[120px] h-8 text-sm">
+        <SelectTrigger
+          className="w-auto min-w-[120px] h-8 text-sm"
+          aria-label="Processing profile"
+          data-testid="profile-selector"
+        >
           <div className="flex items-center gap-2">
             {selectedProfile && getProfileIcon(selectedProfile.id)}
             <SelectValue>

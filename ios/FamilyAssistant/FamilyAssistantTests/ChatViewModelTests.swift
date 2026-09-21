@@ -43,6 +43,22 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.messages.isEmpty)
     }
 
+    func testResyncAuthWallShowsActionableInlineFeedback() {
+        let model = makeViewModel(conversationID: "web_conv_auth_wall")
+
+        model.presentResyncAuthWall(.authWall)
+
+        XCTAssertEqual(
+            model.threadInlineMessage,
+            "Server requires sign-in or is unreachable (authentication wall detected)."
+        )
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            model.threadInlineMessage
+        )
+    }
+
     func testLaunchRestoresRecentlyActiveConversation() {
         storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
 
@@ -610,6 +626,92 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: "selectedProfileId"), "research")
         XCTAssertNotEqual(model.conversationID, "web_conv_existing")
         XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+    }
+
+    func testProfileSwitchPreservesDraft() {
+        let model = makeViewModel(conversationID: "web_conv_existing")
+        model.draftText = "half-written question"
+
+        model.changeProfile(to: "research")
+
+        XCTAssertNotEqual(model.conversationID, "web_conv_existing")
+        XCTAssertEqual(
+            model.draftText,
+            "half-written question",
+            "Switching profile must not discard the message the user is composing."
+        )
+    }
+
+    func testProfileSwitchOnUnsentConversationKeepsSameConversation() {
+        // A launch draft: client-generated, nothing sent.
+        let model = makeViewModel(conversationID: nil)
+        let originalConversationID = model.conversationID
+        model.draftText = "half-written question"
+
+        model.changeProfile(to: "research")
+
+        XCTAssertEqual(model.selectedProfileID, "research")
+        XCTAssertEqual(
+            model.conversationID,
+            originalConversationID,
+            "An unsent conversation has no context to separate, so the profile switches in place."
+        )
+        XCTAssertEqual(model.draftText, "half-written question")
+    }
+
+    func testProfileSwitchOnLoadedConversationStartsNewConversation() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_loaded",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Plan my trip","timestamp":"2026-06-08T12:00:00Z","processing_profile_id":"default_assistant"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        await model.selectConversation("web_conv_loaded")
+        XCTAssertFalse(model.messages.isEmpty)
+        XCTAssertEqual(model.shareableConversationID, "web_conv_loaded")
+        model.draftText = "half-written question"
+
+        model.changeProfile(to: "research")
+
+        XCTAssertNil(model.shareableConversationID)
+        XCTAssertNotEqual(
+            model.conversationID,
+            "web_conv_loaded",
+            "A conversation holding turns still gets a fresh thread on a profile switch."
+        )
+        XCTAssertEqual(model.draftText, "half-written question")
+    }
+
+    func testStartNewConversationClearsDraft() {
+        let model = makeViewModel(conversationID: "web_conv_existing")
+        model.draftText = "text meant for the old thread"
+
+        model.startNewConversation()
+
+        XCTAssertEqual(
+            model.draftText,
+            "",
+            "Explicitly starting a new chat discards the previous thread's draft."
+        )
     }
 
     func testOpeningConversationAdoptsItsProfile() async throws {
@@ -1645,6 +1747,753 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.draftText, "retry as follow-up")
     }
 
+    func testNormalSendRecoversServerRunningTurnAndSteersIt() async throws {
+        let steerRequests = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_lost_handle/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_lost_handle",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":[{
+                        "turn_id":"turn-running-remotely",
+                        "started_at":"2026-08-01T23:25:26Z",
+                        "latest_seq":7,
+                        "status":"running"
+                      }]
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .json(#"{"detail":"must not start a rival turn"}"#, statusCode: 500)
+            case ("POST", "/api/v1/chat/turns/turn-running-remotely/steer"):
+                steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "focus on the new request")
+                XCTAssertEqual(payload["conversation_id"] as? String, "web_conv_lost_handle")
+                return .json(
+                    #"{"turn_id":"turn-running-remotely","conversation_id":"web_conv_lost_handle","accepted":true}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_lost_handle/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_lost_handle")
+        model.draftText = "focus on the new request"
+
+        await model.sendDraft()
+
+        XCTAssertEqual(turnStarts.value, 0)
+        XCTAssertEqual(steerRequests.value, 1)
+        XCTAssertTrue(model.isStreaming)
+        XCTAssertEqual(model.draftText, "")
+    }
+
+    func testRecoveredTurnFinishingBeforeSteerSendsPromptAsFollowUp() async throws {
+        let messageLookups = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_recovered_finished/messages"):
+                let lookup = messageLookups.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_recovered_finished",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":\(lookup == 1 ? "[{\"turn_id\":\"turn-finished-before-steer\",\"started_at\":\"2026-08-01T23:25:26Z\",\"latest_seq\":0,\"status\":\"running\"}]" : "[]")
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns/turn-finished-before-steer/steer"):
+                steerRequests.increment()
+                return .json(#"{"detail":"Turn is not running"}"#, statusCode: 409)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "send as a follow-up")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_recovered_finished","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_recovered_finished/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_recovered_finished")
+        model.draftText = "send as a follow-up"
+
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        XCTAssertEqual(steerRequests.value, 1)
+        XCTAssertGreaterThanOrEqual(messageLookups.value, 2)
+        XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
+        XCTAssertEqual(model.draftText, "")
+    }
+
+    /// The follow stream's catch-up reload is in flight (`isLoadingMessages`)
+    /// when the recovered turn's steer resolves `.finished`. `sendDraft` refuses
+    /// to send during a load, so the queued follow-up must be sent once the load
+    /// settles rather than stranding with the composer already cleared.
+    func testRecoveredSteerFinishingDuringCatchUpLoadSendsFollowUpAfterLoad() async throws {
+        let preflightLookups = AtomicCounter()
+        let fullLoads = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        let catchUpLoad = HangingStream()
+        let steer = HangingStream()
+        let conversationID = "web_conv_steer_finished_during_load"
+        let messagesBody: @Sendable (String) -> String = { activeTurns in
+            """
+            {
+              "conversation_id":"\(conversationID)",
+              "messages":[],
+              "count":0,
+              "total_messages":0,
+              "has_more_before":false,
+              "has_more_after":false,
+              "active_turns":\(activeTurns)
+            }
+            """
+        }
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                if Self.queryItems(from: request)["limit"] == "0" {
+                    guard fullLoads.increment() == 1 else {
+                        return .json(messagesBody("[]"))
+                    }
+                    return .hangingStream(messagesBody("[]"), controller: catchUpLoad)
+                }
+                guard preflightLookups.increment() == 1 else {
+                    return .json(messagesBody("[]"))
+                }
+                return .json(
+                    messagesBody(
+                        #"[{"turn_id":"turn-ends-during-load","started_at":"2026-08-01T23:25:26Z","latest_seq":0,"status":"running"}]"#
+                    )
+                )
+            case ("POST", "/api/v1/chat/turns/turn-ends-during-load/steer"):
+                steerRequests.increment()
+                return .hangingStream(#"{"detail":"Turn is not running"}"#, statusCode: 409, controller: steer)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "send after the load")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"\#(conversationID)","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: conversationID)
+        model.draftText = "send after the load"
+        let send = Task { await model.sendDraft() }
+        try await waitUntil {
+            steerRequests.value == 1 && fullLoads.value == 1 && model.isLoadingMessages
+        }
+
+        steer.finish()
+        await send.value
+        XCTAssertFalse(model.isStreaming)
+        // Let the drain scheduled when the reattached turn retired run against
+        // the still-loading model.
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+        XCTAssertEqual(turnStarts.value, 0)
+
+        catchUpLoad.finish()
+        try await waitUntil { turnStarts.value == 1 }
+        XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
+    }
+
+    /// Two full message loads overlap: the queued follow-up (and any send) must
+    /// wait for the LAST one, because each load replaces `messages` wholesale and
+    /// would discard a turn's optimistic bubbles started while it was in flight.
+    func testQueuedFollowUpWaitsForEveryOverlappingMessageLoad() async throws {
+        let preflightLookups = AtomicCounter()
+        let fullLoads = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        let conversationListRequests = AtomicCounter()
+        let firstLoad = HangingStream()
+        let secondLoad = HangingStream()
+        let steer = HangingStream()
+        let conversationID = "web_conv_steer_finished_overlapping_loads"
+        let messagesBody: @Sendable (String) -> String = { activeTurns in
+            """
+            {
+              "conversation_id":"\(conversationID)",
+              "messages":[],
+              "count":0,
+              "total_messages":0,
+              "has_more_before":false,
+              "has_more_after":false,
+              "active_turns":\(activeTurns)
+            }
+            """
+        }
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                if Self.queryItems(from: request)["limit"] == "0" {
+                    switch fullLoads.increment() {
+                    case 1:
+                        return .hangingStream(messagesBody("[]"), controller: firstLoad)
+                    case 2:
+                        return .hangingStream(messagesBody("[]"), controller: secondLoad)
+                    default:
+                        return .json(messagesBody("[]"))
+                    }
+                }
+                guard preflightLookups.increment() == 1 else {
+                    return .json(messagesBody("[]"))
+                }
+                return .json(
+                    messagesBody(
+                        #"[{"turn_id":"turn-ends-during-loads","started_at":"2026-08-01T23:25:26Z","latest_seq":0,"status":"running"}]"#
+                    )
+                )
+            case ("POST", "/api/v1/chat/turns/turn-ends-during-loads/steer"):
+                steerRequests.increment()
+                return .hangingStream(#"{"detail":"Turn is not running"}"#, statusCode: 409, controller: steer)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "send after both loads")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"\#(conversationID)","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                conversationListRequests.increment()
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: conversationID)
+        model.draftText = "send after both loads"
+        let send = Task { await model.sendDraft() }
+        try await waitUntil { steerRequests.value == 1 && fullLoads.value == 1 }
+        let overlappingLoad = Task { await model.loadMessages(userInitiated: false) }
+        try await waitUntil { fullLoads.value == 2 }
+
+        steer.finish()
+        await send.value
+        XCTAssertFalse(model.isStreaming)
+
+        // The catch-up load refreshes the conversation list once it returns.
+        let listRequestsBeforeFirstLoad = conversationListRequests.value
+        firstLoad.finish()
+        try await waitUntil { conversationListRequests.value > listRequestsBeforeFirstLoad }
+        for _ in 0..<5 {
+            await Task.yield()
+        }
+        XCTAssertTrue(model.isLoadingMessages)
+        XCTAssertEqual(turnStarts.value, 0)
+
+        secondLoad.finish()
+        await overlappingLoad.value
+        XCTAssertFalse(model.isLoadingMessages)
+        try await waitUntil { turnStarts.value == 1 }
+        XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
+    }
+
+    func testNormalSendPreflightPreservesDraftEditedDuringLookup() async throws {
+        let lookup = HangingStream()
+        let lookupRequests = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations/web_conv_edit_during_lookup/messages"):
+                lookupRequests.increment()
+                return .hangingStream(
+                    """
+                    {
+                      "conversation_id":"web_conv_edit_during_lookup",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":[]
+                    }
+                    """,
+                    controller: lookup
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .json(#"{"detail":"must not send stale text"}"#, statusCode: 500)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_edit_during_lookup")
+        model.draftText = "old draft"
+        let send = Task { await model.sendDraft() }
+        try await waitUntil { lookupRequests.value == 1 }
+
+        model.draftText = "newer draft"
+        lookup.finish()
+        await send.value
+
+        XCTAssertEqual(turnStarts.value, 0)
+        XCTAssertEqual(model.draftText, "newer draft")
+        XCTAssertTrue(model.messages.isEmpty)
+    }
+
+    func testTurnStartConflictRecoversRunningTurnAndSteersIt() async throws {
+        let messageLookups = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_recovery/messages"):
+                let lookup = messageLookups.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_conflict_recovery",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":\(lookup == 1 ? "[]" : "[{\"turn_id\":\"turn-won-race\",\"started_at\":\"2026-08-01T23:25:26Z\",\"latest_seq\":0,\"status\":\"running\"}]")
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .json(
+                    """
+                    {
+                      "detail": {
+                        "message": "This conversation already has a running turn.",
+                        "active_turn_id": "turn-won-race"
+                      }
+                    }
+                    """,
+                    statusCode: 409
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-race/steer"):
+                steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "use the newer constraints")
+                return .json(
+                    #"{"turn_id":"turn-won-race","conversation_id":"web_conv_conflict_recovery","accepted":true}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_recovery/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_recovery")
+        model.draftText = "use the newer constraints"
+
+        await model.sendDraft()
+        try await waitUntil { steerRequests.value == 1 }
+
+        XCTAssertGreaterThanOrEqual(messageLookups.value, 1)
+        XCTAssertEqual(turnStarts.value, 1)
+        XCTAssertEqual(steerRequests.value, 1)
+        XCTAssertTrue(model.isStreaming)
+        XCTAssertEqual(model.draftText, "")
+        XCTAssertFalse(
+            model.messages.contains { $0.role == .user && $0.text == "use the newer constraints" },
+            "The rejected rival send must not remain as an optimistic user bubble."
+        )
+    }
+
+    func testTurnStartConflictPreservesDraftTypedWhileRequestIsInFlight() async throws {
+        let startResponse = HangingStream()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_edit/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_conflict_edit",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":[]
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .hangingStream(
+                    """
+                    {
+                      "detail": {
+                        "message": "This conversation already has a running turn.",
+                        "active_turn_id": "turn-won-edit-race"
+                      }
+                    }
+                    """,
+                    statusCode: 409,
+                    controller: startResponse
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-edit-race/steer"):
+                steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "original prompt")
+                return .json(
+                    #"{"turn_id":"turn-won-edit-race","conversation_id":"web_conv_conflict_edit","accepted":true}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_edit/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_edit")
+        model.draftText = "original prompt"
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        model.draftText = "typed while the send was pending"
+        startResponse.finish()
+        try await waitUntil { steerRequests.value == 1 }
+
+        XCTAssertEqual(model.draftText, "typed while the send was pending")
+    }
+
+    func testTurnStartConflictSteerFailureRemovesOptimisticConversation() async throws {
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_steer_failure/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_conflict_steer_failure","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":[]}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"detail":{"message":"running","active_turn_id":"turn-won-failure-race"}}"#,
+                    statusCode: 409
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-failure-race/steer"):
+                steerRequests.increment()
+                return .json(#"{"detail":"steer rejected"}"#, statusCode: 400)
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_steer_failure/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_steer_failure")
+        model.draftText = "unsent prompt"
+
+        await model.sendDraft()
+        try await waitUntil {
+            steerRequests.value == 1 && model.draftText == "unsent prompt"
+        }
+
+        XCTAssertEqual(model.draftText, "unsent prompt")
+        XCTAssertFalse(
+            model.conversations.contains { $0.conversationID == "web_conv_conflict_steer_failure" },
+            "A prompt rejected as both a turn start and a steer must not leave a phantom conversation summary."
+        )
+    }
+
+    func testTurnStartConflictTransfersSteerQueuedWhileRequestIsInFlight() async throws {
+        let startResponse = HangingStream()
+        let firstSteerResponse = HangingStream()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/messages"):
+                let activeTurns = turnStarts.value == 0 ? "[]" :
+                    #"[{"turn_id":"turn-won-steer-race","status":"running","latest_seq":0,"started_at":"2026-01-01T00:00:00Z"}]"#
+                return .json(
+                    #"{"conversation_id":"web_conv_conflict_queued_steer","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":\#(activeTurns)}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .hangingStream(
+                    #"{"detail":{"message":"running","active_turn_id":"turn-won-steer-race"}}"#,
+                    statusCode: 409,
+                    controller: startResponse
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-steer-race/steer"):
+                let requestNumber = steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(
+                    payload["prompt"] as? String,
+                    requestNumber == 1 ? "original prompt" : "queued steer"
+                )
+                return .hangingStream(
+                    #"{"turn_id":"turn-won-steer-race","conversation_id":"web_conv_conflict_queued_steer","accepted":true}"#,
+                    controller: firstSteerResponse
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_queued_steer")
+        model.draftText = "original prompt"
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        model.draftText = "queued steer"
+        await model.sendSteerDraft()
+        XCTAssertEqual(steerRequests.value, 0)
+
+        startResponse.finish()
+        try await waitUntil { steerRequests.value == 1 }
+        await model.loadMessages()
+        XCTAssertTrue(model.isStreaming)
+        firstSteerResponse.finish()
+        try await waitUntil {
+            steerRequests.value == 2
+                && model.draftText.isEmpty
+                && self.privateStringArray("inFlightSteers", in: model).isEmpty
+        }
+
+        XCTAssertEqual(model.draftText, "")
+        XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
+    }
+
+    func testTurnStartConflictRecoversQueuedSteerWhenAdoptedTurnRetiresDuringTransfer() async throws {
+        try await assertTurnStartConflictRecoversQueuedSteerAfterRetirement(firstSteerAccepted: true)
+    }
+
+    func testTurnStartConflictRecoversRejectedSteersWhenAdoptedTurnRetiresDuringTransfer() async throws {
+        try await assertTurnStartConflictRecoversQueuedSteerAfterRetirement(firstSteerAccepted: false)
+    }
+
+    private func assertTurnStartConflictRecoversQueuedSteerAfterRetirement(
+        firstSteerAccepted: Bool
+    ) async throws {
+        let startResponse = HangingStream()
+        let firstSteerResponse = HangingStream()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_conflict_queued_steer","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":[]}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .hangingStream(
+                    #"{"detail":{"message":"running","active_turn_id":"turn-won-steer-race"}}"#,
+                    statusCode: 409,
+                    controller: startResponse
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-steer-race/steer"):
+                let requestNumber = steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(
+                    payload["prompt"] as? String,
+                    requestNumber == 1 ? "original prompt" : "queued steer"
+                )
+                return .hangingStream(
+                    #"{"turn_id":"turn-won-steer-race","conversation_id":"web_conv_conflict_queued_steer","accepted":true}"#,
+                    statusCode: firstSteerAccepted ? 200 : 400,
+                    controller: firstSteerResponse
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_queued_steer")
+        model.draftText = "original prompt"
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        model.draftText = "queued steer"
+        await model.sendSteerDraft()
+        XCTAssertEqual(steerRequests.value, 0)
+
+        let sendTask = try XCTUnwrap(model.sendTaskForTesting)
+        startResponse.finish()
+        try await waitUntil { steerRequests.value == 1 }
+        await model.loadMessages()
+        XCTAssertFalse(model.isStreaming)
+        firstSteerResponse.finish()
+        await sendTask.value
+
+        XCTAssertEqual(steerRequests.value, 1)
+        XCTAssertEqual(
+            model.draftText,
+            firstSteerAccepted ? "queued steer" : "queued steer\noriginal prompt"
+        )
+        XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
+        XCTAssertTrue(model.turnControlStateForTesting.pendingSteersByTurnID.isEmpty)
+    }
+
+    func testTurnStartConflictTransfersQueuedStopAndDropsQueuedSteer() async throws {
+        let startResponse = HangingStream()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        let cancelRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_stop/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_conflict_queued_stop","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":[]}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .hangingStream(
+                    #"{"detail":{"message":"running","active_turn_id":"turn-won-stop-race"}}"#,
+                    statusCode: 409,
+                    controller: startResponse
+                )
+            case ("POST", _) where path.hasSuffix("/steer"):
+                steerRequests.increment()
+                return .json(#"{"detail":"stop must win"}"#, statusCode: 500)
+            case ("POST", "/api/v1/chat/turns/turn-won-stop-race/cancel"):
+                cancelRequests.increment()
+                return .json(
+                    #"{"turn_id":"turn-won-stop-race","conversation_id":"web_conv_conflict_queued_stop","status":"cancelling","already_complete":false}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_stop/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_queued_stop")
+        model.draftText = "original prompt"
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        model.draftText = "queued steer"
+        await model.sendSteerDraft()
+        await model.stopTurn()
+        startResponse.finish()
+        try await waitUntil { cancelRequests.value == 1 }
+
+        XCTAssertEqual(steerRequests.value, 0)
+        XCTAssertEqual(model.draftText, "")
+        XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
+        XCTAssertFalse(
+            model.conversations.contains { $0.conversationID == "web_conv_conflict_queued_stop" },
+            "A rejected rival send must not leave a phantom summary when Stop wins recovery."
+        )
+    }
+
+    func testQueuedFollowUpPreflightPreservesNewerDraftAndRequeuesFollowUp() async throws {
+        let firstStream = HangingStream()
+        let queuedLookup = HangingStream()
+        let postedTurnID = AtomicString()
+        let messageLookups = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_queued_followup_edit/messages"):
+                let lookup = messageLookups.increment()
+                let response =
+                    #"{"conversation_id":"web_conv_queued_followup_edit","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":[]}"#
+                if lookup == 3 {
+                    return .hangingStream(response, controller: queuedLookup)
+                }
+                return .json(response)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_queued_followup_edit","first_seq":0}"#
+                )
+            case ("POST", _) where path.hasSuffix("/steer"):
+                return .json(
+                    #"{"turn_id":"\#(postedTurnID.value ?? "")","conversation_id":"web_conv_queued_followup_edit","accepted":true}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_queued_followup_edit/stream"):
+                return .hangingStream(
+                    "event: turn_started\ndata: {\"turn_id\":\"\(postedTurnID.value ?? "turn-queued-followup")\",\"seq\":0}\n\n",
+                    controller: firstStream
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_queued_followup_edit")
+        model.draftText = "initial prompt"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && postedTurnID.value != nil }
+
+        model.draftText = "queued follow-up"
+        await model.sendSteerDraft()
+        firstStream.finish(
+            appending:
+                "event: turn_ended\ndata: {\"turn_id\":\"\(postedTurnID.value ?? "")\",\"status\":\"complete\",\"seq\":1}\n\n"
+        )
+        try await waitUntil { messageLookups.value == 3 }
+
+        model.draftText = "newer visible draft"
+        queuedLookup.finish()
+        try await waitUntil {
+            self.privateStringArray("queuedFollowUpSteers", in: model).contains("queued follow-up")
+        }
+
+        XCTAssertEqual(turnStarts.value, 1)
+        XCTAssertEqual(model.draftText, "newer visible draft")
+    }
+
     func testSteerWithNoRunningTurnSendsComposerAsNormalMessage() async throws {
         // The main composer doubles as the steer input. When no turn is running,
         // tapping the action with composer text simply sends it as a normal new
@@ -1695,6 +2544,53 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(sentAttachmentCount.value, "1")
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(model.draftAttachments, [])
+    }
+
+    func testSteerFallbackEmitsDegradedToSendBreadcrumb() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations/web_conv_steer_fallback/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_steer_fallback",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":[]
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_steer_fallback","already_complete":true,"first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-steer-fallback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_steer_fallback",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "send this next"
+
+        await model.sendSteerDraft()
+        let reports = try await waitForSpooledReports(
+            component: "Chat.steerDegradedToSend",
+            in: spoolDirectory
+        )
+
+        XCTAssertEqual(reports.first?.extraData?["reason"], "no_running_server_turn")
     }
 
     func testStopTurnRetriesTurnRegistrationRace() async throws {
@@ -6158,10 +7054,15 @@ final class ChatViewModelTests: XCTestCase {
             cancelRequests: cancelRequests,
             spoolDirectory: spoolDirectory
         )
+        // The send loop applied `turn_started` (seq 0) while the subscription was
+        // live and writes that cursor back into the session as it unwinds, so the
+        // aftermath publishes 0 rather than the pre-suspend snapshot. What must
+        // hold is that the suspend hands the applied seq forward instead of
+        // clobbering it — a resume that lost it would refetch the whole turn.
         XCTAssertEqual(
             model.activeTurnSessionForTesting?.lastAppliedSeq,
-            cursorBefore,
-            "The resume cursor must survive the asynchronous suspend aftermath."
+            0,
+            "The resume cursor must carry the applied turn_started seq through the suspend aftermath."
         )
         XCTAssertTrue(
             model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? ""),
@@ -6472,13 +7373,16 @@ final class ChatViewModelTests: XCTestCase {
                 }
                 if method == "GET", path.hasSuffix("/messages") {
                     if foregrounded.value == 0 {
+                        let activeTurns = postedTurnID.value.map {
+                            "[{\"turn_id\":\"\($0)\",\"started_at\":\"2026-06-08T12:00:01Z\",\"latest_seq\":7,\"status\":\"running\"}]"
+                        } ?? "[]"
                         return .json(
                             """
                             {
                               "conversation_id":"web_conv_reattach_done",
                               "messages":[],"count":0,"total_messages":0,
                               "has_more_before":false,"has_more_after":false,
-                              "active_turns":[{"turn_id":"\(postedTurnID.value ?? "turn-done")","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                              "active_turns":\(activeTurns)
                             }
                             """
                         )
@@ -6988,6 +7892,39 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testFinalResyncListSnapshotUsesOneBoundedRecentPage() async {
+        let requestCount = AtomicCounter()
+        let nonInitialPageCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            guard request.httpMethod == "GET",
+                  request.url?.path == "/api/v1/chat/conversations"
+            else {
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+
+            requestCount.increment()
+            let offset = Self.queryItems(from: request)["offset"]
+            if offset != "0" {
+                nonInitialPageCount.increment()
+                return .json(#"{"conversations":[],"count":2}"#)
+            }
+            return .json(
+                #"{"conversations":[{"conversation_id":"web_conv_recent","last_message":"Recent","last_timestamp":"2026-08-08T07:00:00Z","message_count":1}],"count":2}"#
+            )
+        }
+
+        let model = makeViewModel(conversationID: nil)
+
+        await model.applyRecentListSnapshot()
+
+        XCTAssertEqual(requestCount.value, 1)
+        XCTAssertEqual(
+            nonInitialPageCount.value, 0,
+            "The post-handoff fallback must not continue into full-history pagination."
+        )
+        XCTAssertEqual(model.conversations.map(\.conversationID), ["web_conv_recent"])
+    }
+
     func testReachabilityRecoveryRunsFullCoalescedResync() async throws {
         // §4.4: an unsatisfied→satisfied recovery runs the SAME coalesced resync as
         // foreground — a full list snapshot fetch — not just a bare loop restart.
@@ -7128,6 +8065,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(assistantBubbleID.hasPrefix("local_"))
 
         let listBaseline = listFetches.value
+        let messagesBaseline = messagesFetches.value
         // A reachability recovery drives the full coalesced resync while the send is
         // still streaming.
         monitor.setSatisfied(false)
@@ -7139,7 +8077,7 @@ final class ChatViewModelTests: XCTestCase {
         // send is rendering into survives.
         XCTAssertEqual(
             messagesFetches.value,
-            0,
+            messagesBaseline,
             "applyMessagesSnapshot must no-op while a send is actively streaming."
         )
         XCTAssertTrue(
@@ -8481,7 +9419,7 @@ final class ChatViewModelTests: XCTestCase {
         let pasted = PastedChatImage(data: pngData, mimeType: "image/png", filenameExtension: "png")
 
         XCTAssertEqual(pasted.data, pngData)
-        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(pasted.mimeType))
+        XCTAssertTrue(ChatConstants.directPhotoPickerMIMETypes.contains(pasted.mimeType))
     }
 
     func testPastedImageTranscodesDecodableDataToJPEG() throws {
@@ -8492,11 +9430,20 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(pasted.mimeType, "image/jpeg")
         XCTAssertEqual(pasted.filenameExtension, "jpg")
         XCTAssertNotNil(UIImage(data: pasted.data))
-        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(pasted.mimeType))
+        XCTAssertTrue(ChatConstants.directPhotoPickerMIMETypes.contains(pasted.mimeType))
     }
 
     func testPastedImageTranscodeRejectsUndecodableData() {
         XCTAssertThrowsError(try PastedChatImage.transcodedToJPEG(data: Data("not an image".utf8)))
+    }
+
+    func testCapturedImageEncodesAsSupportedJPEG() throws {
+        let captured = try CapturedChatImage(image: solidImage(size: CGSize(width: 4, height: 4)))
+
+        XCTAssertEqual(captured.mimeType, "image/jpeg")
+        XCTAssertEqual(captured.filenameExtension, "jpg")
+        XCTAssertNotNil(UIImage(data: captured.data))
+        XCTAssertTrue(ChatConstants.directPhotoPickerMIMETypes.contains(captured.mimeType))
     }
 
     private func solidImage(size: CGSize) -> UIImage {
@@ -8831,7 +9778,7 @@ final class ChatViewModelTests: XCTestCase {
     func testPickedHEICPhotosAreAcceptedForJPEGUpload() {
         XCTAssertTrue(ChatConstants.allowedPhotoPickerMIMETypes.contains("image/heic"))
         XCTAssertTrue(ChatConstants.allowedPhotoPickerMIMETypes.contains("image/heif"))
-        XCTAssertFalse(ChatConstants.allowedAttachmentMIMETypes.contains("image/heic"))
+        XCTAssertFalse(ChatConstants.directPhotoPickerMIMETypes.contains("image/heic"))
         XCTAssertEqual(ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: "image/heic"), "image/jpeg")
         XCTAssertEqual(ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: "image/heif"), "image/jpeg")
         XCTAssertEqual(
@@ -9539,6 +10486,91 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotNil(model.conversationsLastRefreshedAt, "and stamps the last-refreshed time")
     }
 
+    func testAuthWallOnListRefreshCarriesActionableBannerMessage() async throws {
+        // An edge authentication wall answering the list endpoint must render its
+        // dedicated explanation on the list banner, not the generic
+        // "Couldn't refresh" text — and still never a modal or thread message.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(
+                    "<html><head><title>Just a moment...</title></head><body></body></html>",
+                    headers: ["Content-Type": "text/html; charset=utf-8"]
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            ChatAPIError.authWall.errorDescription,
+            "the banner carries the auth-wall explanation"
+        )
+        XCTAssertNil(model.errorMessage, "a list-refresh failure must not raise the modal")
+        XCTAssertNil(model.threadInlineMessage, "and must not use the thread-scoped banner")
+
+        // Recovery: a good refresh clears the message with the banner.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"conversations":[],"count":0}"#)
+        }
+        await model.refreshConversations()
+        XCTAssertFalse(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
+    func testGenericListRefreshFailureKeepsDefaultBannerMessage() async throws {
+        // Only the auth wall carries detail: a transport failure keeps nil so the
+        // banner shows its generic text.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
+    func testGenericListRefreshFailureClearsStaleAuthWallMessage() async throws {
+        let authWall = AtomicFlag(true)
+        ChatMockBackendURLProtocol.respond { request in
+            guard request.url?.path == "/api/v1/chat/conversations" else {
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+            if authWall.value {
+                return .json(
+                    "<html><body>Sign in</body></html>",
+                    headers: ["Content-Type": "text/html"]
+                )
+            }
+            return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            ChatAPIError.authWall.errorDescription
+        )
+
+        authWall.value = false
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
     func testConversationReturning404IsTreatedAsGone() async throws {
         // §4.5: a 404 on a per-conversation read means the conversation was deleted.
         // It is dropped from the held list and shown as gone inline, not surfaced as
@@ -9605,7 +10637,8 @@ final class ChatViewModelTests: XCTestCase {
             spoolDirectory: spoolDirectory
         )
 
-        await model.refreshConversations()
+        let initialSnapshotSucceeded = await model.applyListSnapshot()
+        XCTAssertFalse(initialSnapshotSucceeded, "The rate-limited authoritative snapshot failed.")
         XCTAssertNil(model.errorMessage, "a 429 advisory read must not modal")
 
         try await waitUntil(timeout: 4) {
@@ -9876,7 +10909,7 @@ final class ChatViewModelTests: XCTestCase {
         model.failedSends[turnID] = ChatViewModel.FailedSend(
             turnID: turnID, conversationID: "web_conv_retry_role",
             assistantMessageID: "local_assistant_role", prompt: "Original prompt",
-            attachments: [], profileID: "default", previousSummary: nil,
+            attachments: [], profileID: "default", modelTier: nil, previousSummary: nil,
             postAccepted: false, lastAppliedSeq: nil
         )
 
@@ -10035,6 +11068,7 @@ final class ChatViewModelTests: XCTestCase {
             prompt: "Hi",
             attachments: [],
             profileID: "default_assistant",
+            modelTier: nil,
             previousSummary: nil,
             postAccepted: true,
             lastAppliedSeq: nil
@@ -10993,6 +12027,396 @@ final class ChatViewModelTests: XCTestCase {
         })
     }
 
+    // MARK: - Intelligence (model tier) selection
+
+    private static func tieredProfile(
+        id: String = "default_assistant",
+        tiers: [ChatModelTier] = [
+            ChatModelTier(id: "standard", label: "Standard", tierDescription: "Everyday"),
+            ChatModelTier(id: "deep", label: "Deep", tierDescription: "Hard questions"),
+        ],
+        defaultTier: String? = "standard"
+    ) -> ChatProfile {
+        ChatProfile(
+            id: id,
+            description: "Profile \(id)",
+            llmModel: nil,
+            availableTools: [],
+            enabledMCPServers: [],
+            delegationOnly: false,
+            modelTiers: tiers,
+            defaultModelTier: defaultTier
+        )
+    }
+
+    /// A backend that accepts one turn, streams a trivial reply, and records the
+    /// `model_tier` of every turn it was sent. Returns the recorder.
+    private func respondRecordingModelTiers(conversationID: String) -> ModelTierRecorder {
+        let recorder = ModelTierRecorder()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                recorder.record(payload["model_tier"] as? String, forTurn: turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"\#(conversationID)","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                let turnID = recorder.latestTurnID ?? "turn-unknown"
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(turnID)","seq":0}
+
+                    event: text
+                    data: {"content":"Reply"}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(turnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"\(conversationID)",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        return recorder
+    }
+
+    func testSelectingTheProfileDefaultIsNoSelection() {
+        let model = makeViewModel(conversationID: "web_conv_tier_default")
+        model.profiles = [Self.tieredProfile()]
+
+        model.selectModelTier("deep", pinned: false)
+        XCTAssertEqual(model.modelTierChoice?.tierID, "deep")
+
+        model.selectModelTier("standard", pinned: false)
+
+        XCTAssertNil(
+            model.modelTierChoice,
+            "Choosing the profile's own default is choosing nothing, so nothing is sent."
+        )
+    }
+
+    func testSelectingATierTheProfileDoesNotOfferClearsTheChoice() {
+        let model = makeViewModel(conversationID: "web_conv_tier_unknown")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        model.selectModelTier("frontier", pinned: true)
+
+        XCTAssertNil(
+            model.modelTierChoice,
+            "A tier the active profile does not offer must never be sent."
+        )
+    }
+
+    func testModelTierChoiceIsSpentBySendAndOmittedFromTheNextTurn() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_one_shot")
+        let model = makeViewModel(conversationID: "web_conv_one_shot")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: false)
+
+        model.draftText = "Think hard"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["deep"])
+        XCTAssertNil(
+            model.modelTierChoice,
+            "An unpinned selection is spent by the send that carried it."
+        )
+
+        model.draftText = "And now an easy one"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(
+            recorder.tiers,
+            ["deep", nil],
+            "The following message runs at the profile's default, with no tier sent at all."
+        )
+    }
+
+    func testPinnedModelTierIsSentByEveryTurnOfTheConversation() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_pinned")
+        let model = makeViewModel(conversationID: "web_conv_pinned")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        model.draftText = "First"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.modelTierChoice, ChatViewModel.ModelTierChoice(tierID: "deep", pinned: true))
+
+        model.draftText = "Second"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["deep", "deep"])
+    }
+
+    func testIntelligenceControlIsUnavailableWhileATurnRuns() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_tier_streaming")
+        let model = makeViewModel(conversationID: "web_conv_tier_streaming")
+        model.profiles = [Self.tieredProfile()]
+
+        XCTAssertTrue(model.canSelectModelTier)
+
+        model.draftText = "First"
+        await model.sendDraft()
+
+        // Mid-turn the composer is the steer box: what the user sends next folds
+        // into the running turn at its frozen tier, so there is no message a
+        // selection made here could apply to.
+        XCTAssertTrue(model.isStreaming)
+        XCTAssertFalse(model.canSelectModelTier)
+
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertTrue(model.canSelectModelTier)
+        XCTAssertEqual(recorder.tiers, [nil])
+    }
+
+    func testIntelligenceControlIsUnavailableWithoutAChoiceToMake() {
+        let model = makeViewModel(conversationID: "web_conv_tier_pinned_profile")
+        model.profiles = [
+            Self.tieredProfile(
+                tiers: [ChatModelTier(id: "standard", label: "Standard", tierDescription: nil)],
+                defaultTier: "standard"
+            ),
+        ]
+
+        XCTAssertFalse(
+            model.canSelectModelTier,
+            "One tier is not a choice, so the control is hidden rather than shown dead."
+        )
+    }
+
+    func testChangingProfileClearsAPinnedModelTier() {
+        let model = makeViewModel(conversationID: "web_conv_tier_profile")
+        model.profiles = [Self.tieredProfile(), Self.tieredProfile(id: "engineer")]
+        model.selectModelTier("deep", pinned: true)
+
+        model.changeProfile(to: "engineer")
+
+        XCTAssertNil(
+            model.modelTierChoice,
+            "A spend decision belongs to the agent it was made for, not the next one."
+        )
+    }
+
+    func testStartingANewConversationClearsAPinnedModelTier() {
+        let model = makeViewModel(conversationID: "web_conv_tier_new")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        model.startNewConversation()
+
+        XCTAssertNil(model.modelTierChoice)
+    }
+
+    func testOpeningAnotherConversationClearsAPinnedModelTier() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path ?? "" {
+            case "/api/v1/chat/conversations/web_conv_other/messages":
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_other",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: "web_conv_tier_switch")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        await model.selectConversation("web_conv_other")
+
+        XCTAssertNil(model.modelTierChoice)
+    }
+
+    func testRetryingAFailedSendReissuesTheTierItWasSentAt() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_tier_retry")
+        let model = makeViewModel(conversationID: "web_conv_tier_retry")
+        model.profiles = [Self.tieredProfile()]
+        model.messages = [
+            ChatMessage(
+                id: "local_assistant_retry",
+                role: .assistant,
+                text: "",
+                createdAt: Date(),
+                toolCalls: [],
+                attachments: [],
+                isLoading: false,
+                status: .failed,
+                processingProfileID: "default_assistant",
+                errorTraceback: nil,
+                turnID: "turn-tier-retry"
+            ),
+        ]
+        model.failedSends["turn-tier-retry"] = ChatViewModel.FailedSend(
+            turnID: "turn-tier-retry",
+            conversationID: "web_conv_tier_retry",
+            assistantMessageID: "local_assistant_retry",
+            prompt: "Think hard",
+            attachments: [],
+            profileID: "default_assistant",
+            modelTier: "deep",
+            previousSummary: nil,
+            postAccepted: false,
+            lastAppliedSeq: nil
+        )
+        // The picker has since returned to the default: the retry must reissue
+        // what the user actually sent, not what is selected now.
+        XCTAssertNil(model.modelTierChoice)
+
+        await model.retryFailedSend(turnID: "turn-tier-retry")
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["deep"])
+    }
+
+    func testPersistedRepliesCarryTheTierTheyRanAt() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path ?? "" {
+            case "/api/v1/chat/conversations/web_conv_tier_history/messages":
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_tier_history",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi",
+                         "timestamp":"2026-09-06T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Deep reply",
+                         "timestamp":"2026-09-06T12:00:01Z",
+                         "reasoning_info":{"model":"gpt-test","model_tier":"deep",
+                                           "model_tier_source":"user","prompt_tokens":10}},
+                        {"internal_id":3,"role":"assistant","content":"Plain reply",
+                         "timestamp":"2026-09-06T12:00:02Z",
+                         "reasoning_info":{"model":"gpt-test","prompt_tokens":10}}
+                      ],
+                      "count":3,
+                      "total_messages":3,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: "web_conv_tier_history")
+
+        await model.loadMessages()
+
+        XCTAssertEqual(model.messages.map(\.modelTier), [nil, "deep", nil])
+        XCTAssertEqual(
+            model.messages.first { $0.modelTier == "deep" }?.modelTierSource,
+            "user",
+            "Who chose the tier is recorded separately from what ran."
+        )
+    }
+
+    func testGroupedTurnKeepsTheFinalReplyTier() {
+        let toolStep = ChatMessage(
+            id: "msg_1",
+            role: .assistant,
+            text: "",
+            createdAt: Date(),
+            toolCalls: [
+                ChatToolCall(
+                    id: "call_1",
+                    name: "search_notes",
+                    argumentsText: "{}",
+                    resultText: "ok",
+                    attachments: [],
+                    status: .complete
+                ),
+            ],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: "default_assistant",
+            errorTraceback: nil,
+            turnID: "turn-grouped",
+            modelTier: "deep",
+            modelTierSource: "user"
+        )
+        let reply = ChatMessage(
+            id: "msg_2",
+            role: .assistant,
+            text: "Answer",
+            createdAt: Date(),
+            toolCalls: [],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: "default_assistant",
+            errorTraceback: nil,
+            turnID: "turn-grouped",
+            modelTier: "deep",
+            modelTierSource: "user"
+        )
+
+        let grouped = ChatViewModel.groupToolCallTurns([toolStep, reply])
+
+        XCTAssertEqual(grouped.count, 2)
+        XCTAssertEqual(
+            grouped.last?.modelTier,
+            "deep",
+            "The bubble the badge renders on is the answer that ends the turn."
+        )
+    }
+
+    func testProfileTierLabelsSpanEveryLoadedProfile() {
+        let model = makeViewModel(conversationID: "web_conv_tier_labels")
+        model.profiles = [
+            Self.tieredProfile(),
+            Self.tieredProfile(
+                id: "complex_tasks",
+                tiers: [
+                    ChatModelTier(id: "deep", label: "Deep", tierDescription: nil),
+                    ChatModelTier(id: "frontier", label: "Max", tierDescription: nil),
+                ],
+                defaultTier: "deep"
+            ),
+        ]
+
+        XCTAssertEqual(
+            model.modelTierLabels,
+            ["standard": "Standard", "deep": "Deep", "frontier": "Max"],
+            "A past reply's tier is named even when its profile is not the selected one."
+        )
+    }
+
     private func privateStringArray(_ name: String, in model: ChatViewModel) -> [String] {
         for child in Mirror(reflecting: model).children where child.label == name {
             guard let value = child.value as? [String] else {
@@ -11094,5 +12518,26 @@ private final class AtomicStringList: @unchecked Sendable {
 
     var values: [String] {
         lock.withLock { stored }
+    }
+}
+
+/// Records the `model_tier` each turn was started with, off the URLProtocol
+/// loading thread.
+private final class ModelTierRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(turnID: String, tier: String?)] = []
+
+    func record(_ tier: String?, forTurn turnID: String) {
+        lock.withLock { recorded.append((turnID, tier)) }
+    }
+
+    /// The tier of each turn, in the order they were started. `nil` entries are
+    /// turns that sent no `model_tier` at all.
+    var tiers: [String?] {
+        lock.withLock { recorded.map(\.tier) }
+    }
+
+    var latestTurnID: String? {
+        lock.withLock { recorded.last?.turnID }
     }
 }

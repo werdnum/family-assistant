@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, timedelta
 
 import aiofiles
@@ -16,10 +17,15 @@ from family_assistant.llm.messages import (
     ContentPartDict,
     ImageUrlContentPart,
     LLMMessage,
+    MessageAttachmentMetadata,
     UserMessage,
 )
+from family_assistant.security.taint import (
+    TurnTaintState,
+    artifact_taint_sources,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolDefinition
 from family_assistant.utils.clock import Clock
 
@@ -32,13 +38,25 @@ class AttachmentSelectionError(RuntimeError):
     """Raised when attachment selection cannot be completed correctly."""
 
 
+@dataclass(frozen=True)
+class ProcessedContentParts:
+    """Injection messages built from content parts, and the attachments they carry.
+
+    The attachment list is what lets the caller name these attachments to the
+    model. Injection puts the bytes in front of it; without the ids alongside,
+    a profile handed an image can look at it but cannot pass it to any tool.
+    """
+
+    messages: list[LLMMessage]
+    attachments: list[MessageAttachmentMetadata]
+
+
 class AttachmentProcessor:
     """Handles attachment processing for the LLM interaction pipeline."""
 
     def __init__(
         self,
         attachment_registry: AttachmentRegistry | None,
-        llm_client: LLMInterface,
         app_config: AppConfig,
         clock: Clock,
     ) -> None:
@@ -47,23 +65,22 @@ class AttachmentProcessor:
 
         Args:
             attachment_registry: Registry for managing attachments (can be None if disabled).
-            llm_client: LLM client for generating responses.
             app_config: Application configuration.
             clock: Clock instance for time operations.
         """
         self.attachment_registry = attachment_registry
-        self.llm_client = llm_client
         self.app_config = app_config
         self.clock = clock
 
     async def process_content_parts(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         conversation_id: str,
         content_parts: list[ContentPartDict],
         *,
         acting_user_id: str | None,
-    ) -> list[LLMMessage]:
+        llm_client: LLMInterface,
+    ) -> ProcessedContentParts:
         """
         Process attachment content parts by fetching and injecting them as user messages.
 
@@ -76,11 +93,15 @@ class AttachmentProcessor:
             conversation_id: Current conversation ID for security validation
             content_parts: List of content parts that may contain attachment references
             acting_user_id: Acting user for owner-scoped attachment access.
+            llm_client: The client serving this run. The injection is built by
+                the provider adapter, so it has to be the adapter the run will
+                actually send to.
 
         Returns:
-            LLM injection messages created from attachment and image content parts.
+            The injection messages, and metadata for every attachment they carry.
         """
         injection_messages: list[LLMMessage] = []
+        injected_attachments: list[MessageAttachmentMetadata] = []
 
         for part in content_parts:
             if part.get("type") == "attachment":
@@ -116,10 +137,35 @@ class AttachmentProcessor:
                     attachment_id=attachment_id,
                     description=attachment_metadata.description or "Attachment",
                 )
-                injection_msg = self.llm_client.create_attachment_injection(
-                    tool_attachment
+                injection_msg = llm_client.create_attachment_injection(tool_attachment)
+                # The injected message *is* the attachment's content as the
+                # model sees it, so it has to carry the attachment's taint.
+                # Without this the turn reads as trusted no matter what the
+                # file's provenance says -- and a text/CSV/JSON attachment is
+                # injected as text, so its content reaches the model directly.
+                attachment_sources = artifact_taint_sources(
+                    attachment_metadata.metadata,
+                    source_id=attachment_id,
+                    reason="Attachment injected into the turn.",
                 )
+                if attachment_sources and injection_msg.taint_metadata is None:
+                    attachment_state = TurnTaintState.empty()
+                    for source in attachment_sources:
+                        attachment_state = attachment_state.add_source(source)
+                    injection_msg.taint_metadata = attachment_state.to_metadata()
                 injection_messages.append(injection_msg)
+                injected_attachments.append(
+                    MessageAttachmentMetadata(
+                        type="attachment_reference",
+                        attachment_id=attachment_id,
+                        mime_type=attachment_metadata.mime_type,
+                        description=attachment_metadata.description,
+                        filename=attachment_metadata.metadata.get(
+                            "original_filename", "attachment"
+                        ),
+                        size=attachment_metadata.size,
+                    )
+                )
                 logger.info(
                     "Processed attachment content part %s for LLM injection",
                     attachment_id,
@@ -138,11 +184,21 @@ class AttachmentProcessor:
                             ]
                         )
                     )
-        return injection_messages
+                    image_attachment_id = part.get("attachment_id")
+                    if image_attachment_id:
+                        injected_attachments.append(
+                            MessageAttachmentMetadata(
+                                type="attachment_reference",
+                                attachment_id=image_attachment_id,
+                            )
+                        )
+        return ProcessedContentParts(
+            messages=injection_messages, attachments=injected_attachments
+        )
 
     async def convert_urls_to_data_uris(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         content_parts: list[ContentPartDict],
         *,
         acting_user_id: str | None,
@@ -206,10 +262,14 @@ class AttachmentProcessor:
                     base64_data = base64.b64encode(file_bytes).decode("utf-8")
                     data_uri = f"data:{content_type};base64,{base64_data}"
 
-                    # Replace with data URI
+                    # Replace with a data URI, keeping the attachment's identity.
+                    # Inlining the bytes is what lets a provider read the file;
+                    # carrying the id alongside is what lets one that cannot read
+                    # it still name the file and hand it to a model that can.
                     converted_parts.append({
                         "type": "image_url",
                         "image_url": {"url": data_uri},
+                        "attachment_id": attachment_id,
                     })
                     logger.info(
                         "Converted attachment URL to data URI for attachment %s (type: %s)",
@@ -227,7 +287,7 @@ class AttachmentProcessor:
 
     async def convert_message_urls(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         *,
         acting_user_id: str | None,
@@ -272,8 +332,13 @@ class AttachmentProcessor:
                     for part_dict in converted_dicts
                 ]
 
-                # Create new UserMessage with converted content
-                converted_messages.append(UserMessage(content=converted_parts))
+                # model_copy rather than a fresh UserMessage: constructing one
+                # keeps only the content and silently drops every other field --
+                # taint_metadata, and is_turn_scaffolding, which four separate
+                # scans rely on to tell machinery from what the user said.
+                converted_messages.append(
+                    msg.model_copy(update={"content": converted_parts})
+                )
             else:
                 # Keep non-user messages and string-content messages as-is
                 converted_messages.append(msg)
@@ -282,7 +347,7 @@ class AttachmentProcessor:
 
     async def extract_conversation_context(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         conversation_id: str,
         max_age_hours: float,
         prompts: dict[str, str],
@@ -360,6 +425,7 @@ class AttachmentProcessor:
         original_query: str,
         *,
         acting_user_id: str | None,
+        llm_client: LLMInterface,
     ) -> list[str]:
         """
         Select the most relevant attachments to include in the response.
@@ -371,6 +437,8 @@ class AttachmentProcessor:
             pending_attachment_ids: List of available attachment IDs to choose from
             original_query: The original user query to evaluate relevance
             acting_user_id: Acting user; owned rows are surfaced only for a match.
+            llm_client: The client serving this run, so the selection is made by
+                the same model as the turn it belongs to.
 
         Returns:
             List of selected attachment IDs (up to max_response_attachments)
@@ -434,7 +502,7 @@ Call attach_to_response with your selected attachment IDs."""
         )
 
         try:
-            response = await self.llm_client.generate_response(
+            response = await llm_client.generate_response(
                 messages=selection_messages,
                 tools=selection_tools,
                 tool_choice="required",
@@ -519,7 +587,7 @@ Call attach_to_response with your selected attachment IDs."""
 
     async def handle_large_result(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         content: str,
         tool_name: str,
         conversation_id: str,
@@ -581,7 +649,7 @@ Call attach_to_response with your selected attachment IDs."""
         file_extension = get_file_extension_from_mime_type(mime_type)
         attachment_metadata: dict[str, object] = {
             "tool_call_id": call_id,
-            "auto_display": True,
+            "auto_display": False,
             "large_result_auto_convert": True,
         }
         if taint_metadata is not None:
@@ -624,6 +692,11 @@ Call attach_to_response with your selected attachment IDs."""
                 f"        print(line)\n"
                 f"```"
             )
+
+        hint += (
+            "\nThis attachment is working data: it is NOT shown to the user. "
+            f"If they asked for the file itself, call attach_to_response(attachment_ids=['{att_id}'])."
+        )
 
         new_content = f"Tool result from '{tool_name}' was too large and was saved as attachment {att_id}.{hint}"
         logger.info(

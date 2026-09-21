@@ -119,3 +119,35 @@ def test_mixed_local_and_mcp_descriptors_use_same_policy_engine() -> None:
     assert local_result.decision is ToolPolicyDecision.ALLOW
     assert mcp_result_with_confirm.decision is ToolPolicyDecision.CONFIRM
     assert mcp_result_without_confirm.decision is ToolPolicyDecision.DENY
+
+
+def test_review_tools_stay_advertised_without_confirmation_capability() -> None:
+    descriptor = next(
+        descriptor
+        for descriptor in LOCAL_TOOL_DESCRIPTORS
+        if descriptor.name == "delete_note"
+    )
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(
+            default_decision=ToolPolicyDecision.DENY,
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
+                    decision=ToolPolicyDecision.REVIEW,
+                    priority=20,
+                )
+            ],
+        )
+    )
+
+    advertised = engine.evaluate_for_advertisement(
+        descriptor,
+        can_confirm=False,
+    )
+    executable = engine.evaluate_for_execution(
+        descriptor,
+        can_confirm=False,
+    )
+
+    assert advertised.decision is ToolPolicyDecision.REVIEW
+    assert executable.decision is ToolPolicyDecision.REVIEW

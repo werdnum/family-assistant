@@ -124,6 +124,7 @@ jobs:
               - 'src/family_assistant/llm/**/*.py'
               - 'tests/integration/llm/**/*.py'
               - 'tests/integration/test_google_embedding.py'
+              - 'tests/integration/test_gemini_omni_video_generation.py'
               - 'tests/cassettes/llm/**'
               - 'tests/cassettes/gemini/**'
             ios:
@@ -158,7 +159,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build CI devcontainer image
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: .devcontainer/Dockerfile.ci
@@ -209,7 +210,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build main application image (verification + cache)
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile
@@ -259,7 +260,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build devcontainer image (verification + cache)
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: .devcontainer/Dockerfile
@@ -312,6 +313,7 @@ jobs:
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.frontend_source == 'true' ||
        needs.detect-changes.outputs.frontend_tests == 'true' ||
+       needs.detect-changes.outputs.dockerfile_changes == 'true' ||
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -355,6 +357,7 @@ jobs:
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.backend_tests_unit == 'true' ||
+       needs.detect-changes.outputs.dockerfile_changes == 'true' ||
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -441,6 +444,9 @@ jobs:
               )
 
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          # Also to stdout: the step summary is not in the job log, so a failure
+          # is otherwise unidentifiable without downloading the artifact.
+          print("\n".join(lines))
           PY
       - name: Upload backend test results (SQLite)
         uses: actions/upload-artifact@v7
@@ -456,6 +462,7 @@ jobs:
       needs.detect-changes.outputs.has_code_changes == 'true' &&
       (needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.backend_tests_unit == 'true' ||
+       needs.detect-changes.outputs.dockerfile_changes == 'true' ||
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -555,6 +562,9 @@ jobs:
               )
 
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          # Also to stdout: the step summary is not in the job log, so a failure
+          # is otherwise unidentifiable without downloading the artifact.
+          print("\n".join(lines))
           PY
       - name: Upload backend test results (PostgreSQL)
         uses: actions/upload-artifact@v7
@@ -573,6 +583,7 @@ jobs:
        needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.web_api == 'true' ||
        needs.detect-changes.outputs.backend_tests_playwright == 'true' ||
+       needs.detect-changes.outputs.dockerfile_changes == 'true' ||
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -643,6 +654,7 @@ jobs:
        needs.detect-changes.outputs.backend_source == 'true' ||
        needs.detect-changes.outputs.web_api == 'true' ||
        needs.detect-changes.outputs.backend_tests_playwright == 'true' ||
+       needs.detect-changes.outputs.dockerfile_changes == 'true' ||
        needs.detect-changes.outputs.ci_workflow == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -884,3 +896,4 @@ jobs:
           echo "✅ All tests passed or were skipped!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
+

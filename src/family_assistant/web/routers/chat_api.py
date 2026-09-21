@@ -1,16 +1,20 @@
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import logging
 import mimetypes
+import secrets
 import uuid
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from family_assistant.llm import ToolCallItem
@@ -24,10 +28,16 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+)
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.security.taint import (
     SourceTrustTier,
+    TaintMetadata,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
@@ -45,21 +55,28 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.deferred_tool_confirmation import (
+    DeferredConfirmationCallbackAdapter,
+)
 from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.conversation_shares import ConversationShare
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
+from family_assistant.tools.confirmation import append_review_reason_to_confirmation
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
+    ConversationTurnRunningError,
     OutOfBufferError,
     StreamEvent,
     TurnAlreadyExistsError,
     TurnRecord,
+    TurnStatus,
 )
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -95,13 +112,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
 
-# Strong references to fire-and-forget post-commit hub publishes (activity ping
-# + per-conversation message tickle) so the event loop doesn't garbage-collect
-# them before they run. Heterogeneous result types (publish -> StreamEvent,
-# publish_activity -> None), so the element type is Task[Any].
-_ACTIVITY_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
-
-
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
 
 
@@ -111,6 +121,21 @@ def _content_part_for_attachment(
     if mime_type.startswith("image/"):
         return image_url_content(content_url)
     return attachment_content(attachment_id)
+
+
+def _attachment_type_label(mime_type: str) -> str:
+    """Label a stored attachment for message history and client rendering.
+
+    The MIME type decides rather than the label the client sent: a client
+    labels what it recognises and falls back to something generic for the rest,
+    and a generic label is the one history reconstruction drops. Anything that
+    is not recognisable media is a document, the bucket that is kept, so a file
+    of a type no client has a case for still comes back on later turns.
+    """
+    for prefix in ("image/", "audio/", "video/"):
+        if mime_type.startswith(prefix):
+            return prefix.rstrip("/")
+    return "document"
 
 
 def _user_name_for_chat(current_user: Mapping[str, object]) -> str:
@@ -146,9 +171,8 @@ def _get_confirmation_service(request: Request) -> ConfirmationService:
     service = getattr(request.app.state, "confirmation_service", None)
     if isinstance(service, ConfirmationService):
         return service
-    service = ConfirmationService(
-        db_context_factory=lambda: get_db_context(request.app.state.database_engine)
-    )
+    engine = request.app.state.database_engine
+    service = ConfirmationService(db=Database(engine))
     request.app.state.confirmation_service = service
     return service
 
@@ -167,7 +191,7 @@ def _get_confirmation_result_waiters(
 async def _enrich_persisted_attachments(
     messages: list[MessageHistoryRow],
     *,
-    db_context: DatabaseContext,
+    db_context: Database,
     attachment_registry: "AttachmentRegistry",
     acting_user_id: str | None,
 ) -> None:
@@ -231,7 +255,7 @@ async def _process_user_attachments(
     payload: ChatPromptRequest,
     conversation_id: str,
     attachment_registry: "AttachmentRegistry",
-    db_context: DatabaseContext,
+    db_context: Database,
     user_id: str,
 ) -> tuple[list[ContentPartDict], list[MessageAttachmentMetadata] | None]:
     """
@@ -252,194 +276,200 @@ async def _process_user_attachments(
     if payload.attachments:
         trigger_attachments = []
         for attachment in payload.attachments:
-            # Handle images, videos, audio, and documents (PDFs)
-            attachment_type = attachment.get("type")
-            if attachment_type in {"image", "video", "audio", "document"}:
-                # Validate that content is present and not empty
-                content_data = attachment.get("content")
-                if not content_data:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Attachment content is required",
-                    )
-                if not content_data.strip():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Attachment content cannot be empty",
-                    )
-                # Handle attachment content - either URL reference or base64 data
-                try:
-                    # New flow: Handle URL references to uploaded attachments
-                    if content_data.startswith("/api/attachments/"):
-                        # Content is a URL reference to an already uploaded attachment
-                        # Extract attachment ID from URL like "/api/attachments/12345"
-                        attachment_id = content_data.split("/")[-1]
+            # Every attachment the client sends reaches the model: an image
+            # inline, anything else as an attachment reference the assistant
+            # can open with its attachment tools. The type the client declared
+            # is not consulted, so a client that has no case for a file's type
+            # cannot silently drop it from the turn.
+            # Validate that content is present and not empty
+            content_data = attachment.get("content")
+            if not content_data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Attachment content is required",
+                )
+            if not content_data.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Attachment content cannot be empty",
+                )
+            # Handle attachment content - either URL reference or base64 data
 
-                        # First try to atomically claim unlinked attachment for this conversation
-                        attachment_record: (
-                            AttachmentMetadata | None
-                        ) = await attachment_registry.claim_unlinked_attachment(
+            async def process_attachment(
+                current_attachment: ChatAttachmentRequest,
+                current_content_data: str,
+            ) -> None:
+                # New flow: Handle URL references to uploaded attachments
+                if current_content_data.startswith("/api/attachments/"):
+                    # Content is a URL reference to an already uploaded attachment
+                    # Extract attachment ID from URL like "/api/attachments/12345"
+                    attachment_id = current_content_data.rsplit("/", maxsplit=1)[-1]
+
+                    # First try to atomically claim unlinked attachment for this conversation
+                    attachment_record: (
+                        AttachmentMetadata | None
+                    ) = await attachment_registry.claim_unlinked_attachment(
+                        db_context=db_context,
+                        attachment_id=attachment_id,
+                        conversation_id=conversation_id,
+                        acting_user_id=user_id,
+                        required_source_id=user_id,
+                    )
+
+                    # If not claimed (already linked), get existing attachment record
+                    if not attachment_record:
+                        attachment_record = await attachment_registry.get_attachment(
                             db_context=db_context,
                             attachment_id=attachment_id,
-                            conversation_id=conversation_id,
                             acting_user_id=user_id,
-                            required_source_id=user_id,
                         )
 
-                        # If not claimed (already linked), get existing attachment record
-                        if not attachment_record:
-                            attachment_record = (
-                                await attachment_registry.get_attachment(
-                                    db_context=db_context,
-                                    attachment_id=attachment_id,
-                                    acting_user_id=user_id,
-                                )
-                            )
-
-                        if not attachment_record or not attachment_record.content_url:
-                            raise HTTPException(
-                                status_code=status.HTTP_404_NOT_FOUND,
-                                detail="Attachment not found or missing content URL",
-                            )
-                        if (
-                            attachment_record.source_id != user_id
-                            and attachment_record.conversation_id != conversation_id
-                        ):
-                            raise HTTPException(
-                                status_code=status.HTTP_404_NOT_FOUND,
-                                detail="Attachment not found",
-                            )
-
-                        trigger_content_parts.append(
-                            _content_part_for_attachment(
-                                attachment_record.attachment_id,
-                                attachment_record.content_url,
-                                attachment_record.mime_type,
-                            )
+                    if not attachment_record or not attachment_record.content_url:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Attachment not found or missing content URL",
+                        )
+                    if (
+                        attachment_record.source_id != user_id
+                        and attachment_record.conversation_id != conversation_id
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Attachment not found",
                         )
 
-                        # Store attachment metadata for message history
-                        trigger_attachments.append({
-                            "type": attachment.get("type", "image"),
-                            "attachment_id": attachment_record.attachment_id,
-                            "url": attachment_record.content_url,
-                            "content_url": attachment_record.content_url,
-                            "mime_type": attachment_record.mime_type,
-                            "description": attachment_record.description,
-                            "filename": attachment_record.metadata.get(
-                                "original_filename", "unknown"
-                            ),
-                            "size": attachment_record.size,
-                        })
+                    trigger_content_parts.append(
+                        _content_part_for_attachment(
+                            attachment_record.attachment_id,
+                            attachment_record.content_url,
+                            attachment_record.mime_type,
+                        )
+                    )
 
-                    else:
-                        # Legacy flow: Handle base64 data (for backwards compatibility)
-                        if content_data.startswith("data:"):
-                            # Extract MIME type and base64 data
-                            header, b64_data = content_data.split(",", 1)
-                            mime_type = header.split(":")[1].split(";")[0]
-                            content_bytes = base64.b64decode(b64_data)
-                            base_filename = attachment.get(
-                                "filename", f"upload_{uuid.uuid4().hex[:8]}"
-                            )
-                            # Ensure filename has correct extension based on MIME type
-                            ext = mimetypes.guess_extension(mime_type) or ""
-                            if ext and not base_filename.lower().endswith(ext):
-                                filename = f"{base_filename}{ext}"
-                            else:
-                                filename = base_filename
+                    # Store attachment metadata for message history
+                    trigger_attachments.append({
+                        "type": _attachment_type_label(attachment_record.mime_type),
+                        "attachment_id": attachment_record.attachment_id,
+                        "url": attachment_record.content_url,
+                        "content_url": attachment_record.content_url,
+                        "mime_type": attachment_record.mime_type,
+                        "description": attachment_record.description,
+                        "filename": attachment_record.metadata.get(
+                            "original_filename", "unknown"
+                        ),
+                        "size": attachment_record.size,
+                    })
+
+                else:
+                    # Legacy flow: Handle base64 data (for backwards compatibility)
+                    if current_content_data.startswith("data:"):
+                        # Extract MIME type and base64 data
+                        header, b64_data = current_content_data.split(",", 1)
+                        mime_type = header.split(":")[1].split(";")[0]
+                        content_bytes = base64.b64decode(b64_data)
+                        base_filename = current_attachment.get(
+                            "filename", f"upload_{uuid.uuid4().hex[:8]}"
+                        )
+                        # Ensure filename has correct extension based on MIME type
+                        ext = mimetypes.guess_extension(mime_type) or ""
+                        if ext and not base_filename.lower().endswith(ext):
+                            filename = f"{base_filename}{ext}"
                         else:
-                            # Assume direct base64 content
-                            content_bytes = base64.b64decode(content_data)
-                            # For security, don't trust client-provided filenames for MIME type
-                            # Instead, try to detect from content magic bytes or use safe default
-                            base_filename = attachment.get(
-                                "filename", f"upload_{uuid.uuid4().hex[:8]}"
-                            )
-
-                            # Basic content-based MIME type detection for common image formats
-                            # Check magic bytes at the beginning of the content
-                            if content_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-                                mime_type = "image/png"
-                            elif content_bytes.startswith(b"\xff\xd8\xff"):
-                                mime_type = "image/jpeg"
-                            elif content_bytes.startswith(b"GIF8"):
-                                mime_type = "image/gif"
-                            elif (
-                                content_bytes.startswith(b"RIFF")
-                                and b"WEBP" in content_bytes[:12]
-                            ):
-                                mime_type = "image/webp"
-                            elif content_bytes.startswith(b"BM"):
-                                mime_type = "image/bmp"
-                            else:
-                                # Unknown format, use safe generic type
-                                mime_type = "application/octet-stream"
-
-                            # Ensure filename has correct extension based on MIME type
-                            ext = mimetypes.guess_extension(mime_type) or ""
-                            if ext and not base_filename.lower().endswith(ext):
-                                filename = f"{base_filename}{ext}"
-                            else:
-                                filename = base_filename
-
-                        # Store attachment via AttachmentRegistry
-                        attachment_record = (
-                            await attachment_registry.register_user_attachment(
-                                db_context=db_context,
-                                content=content_bytes,
-                                filename=filename,
-                                mime_type=mime_type,
-                                conversation_id=conversation_id,
-                                message_id=None,  # Will be set when message is stored
-                                user_id=user_id,
-                                description=attachment.get(
-                                    "description", f"User uploaded: {filename}"
-                                ),
-                            )
+                            filename = base_filename
+                    else:
+                        # Assume direct base64 content
+                        content_bytes = base64.b64decode(current_content_data)
+                        # For security, don't trust client-provided filenames for MIME type
+                        # Instead, try to detect from content magic bytes or use safe default
+                        base_filename = current_attachment.get(
+                            "filename", f"upload_{uuid.uuid4().hex[:8]}"
                         )
 
-                        if not attachment_record.content_url:
-                            raise HTTPException(
-                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail="Failed to generate content URL for attachment",
-                            )
+                        # Basic content-based MIME type detection for common image formats
+                        # Check magic bytes at the beginning of the content
+                        if content_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                            mime_type = "image/png"
+                        elif content_bytes.startswith(b"\xff\xd8\xff"):
+                            mime_type = "image/jpeg"
+                        elif content_bytes.startswith(b"GIF8"):
+                            mime_type = "image/gif"
+                        elif (
+                            content_bytes.startswith(b"RIFF")
+                            and b"WEBP" in content_bytes[:12]
+                        ):
+                            mime_type = "image/webp"
+                        elif content_bytes.startswith(b"BM"):
+                            mime_type = "image/bmp"
+                        else:
+                            # Unknown format, use safe generic type
+                            mime_type = "application/octet-stream"
 
-                        trigger_content_parts.append(
-                            _content_part_for_attachment(
-                                attachment_record.attachment_id,
-                                attachment_record.content_url,
-                                attachment_record.mime_type,
-                            )
+                        # Ensure filename has correct extension based on MIME type
+                        ext = mimetypes.guess_extension(mime_type) or ""
+                        if ext and not base_filename.lower().endswith(ext):
+                            filename = f"{base_filename}{ext}"
+                        else:
+                            filename = base_filename
+
+                    # Store attachment via AttachmentRegistry
+                    attachment_record = (
+                        await attachment_registry.register_user_attachment(
+                            db_context=db_context,
+                            content=content_bytes,
+                            filename=filename,
+                            mime_type=mime_type,
+                            conversation_id=conversation_id,
+                            message_id=None,  # Will be set when message is stored
+                            user_id=user_id,
+                            description=current_attachment.get(
+                                "description", f"User uploaded: {filename}"
+                            ),
+                        )
+                    )
+
+                    if not attachment_record.content_url:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to generate content URL for attachment",
                         )
 
-                        # Store attachment metadata for message history with stable attachment_id
-                        trigger_attachments.append({
-                            "type": attachment.get("type", "image"),
-                            "attachment_id": attachment_record.attachment_id,
-                            "url": attachment_record.content_url,
-                            "content_url": attachment_record.content_url,
-                            "mime_type": attachment_record.mime_type,
-                            "description": attachment_record.description,
-                            "filename": filename,
-                            "size": attachment_record.size,
-                        })
+                    trigger_content_parts.append(
+                        _content_part_for_attachment(
+                            attachment_record.attachment_id,
+                            attachment_record.content_url,
+                            attachment_record.mime_type,
+                        )
+                    )
 
-                except (ValueError, binascii.Error) as e:
-                    # Invalid base64 or data URL format
-                    logger.error(f"Invalid attachment content: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid base64 attachment content: {e!s}",
-                    ) from e
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    logger.exception(f"Error processing user attachment: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Failed to process attachment",
-                    ) from e
+                    # Store attachment metadata for message history with stable attachment_id
+                    trigger_attachments.append({
+                        "type": _attachment_type_label(attachment_record.mime_type),
+                        "attachment_id": attachment_record.attachment_id,
+                        "url": attachment_record.content_url,
+                        "content_url": attachment_record.content_url,
+                        "mime_type": attachment_record.mime_type,
+                        "description": attachment_record.description,
+                        "filename": filename,
+                        "size": attachment_record.size,
+                    })
+
+            try:
+                await process_attachment(attachment, content_data)
+            except (ValueError, binascii.Error) as e:
+                # Invalid base64 or data URL format
+                logger.error(f"Invalid attachment content: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid base64 attachment content: {e!s}",
+                ) from e
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.exception(f"Error processing user attachment: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to process attachment",
+                ) from e
 
     return trigger_content_parts, trigger_attachments
 
@@ -451,6 +481,10 @@ class ConversationSummary(BaseModel):
     last_message: str = Field(..., description="Preview of the last message")
     last_timestamp: datetime = Field(..., description="Timestamp of the last message")
     message_count: int = Field(..., description="Total number of messages")
+    match_excerpt: str | None = Field(
+        None,
+        description="When the list was searched, a snippet of a message that matched",
+    )
 
 
 class ConversationListResponse(BaseModel):
@@ -533,6 +567,18 @@ class ConversationMessagesResponse(BaseModel):
     )
 
 
+class ConversationShareResponse(BaseModel):
+    """New active share link for a conversation."""
+
+    share_url: str
+
+
+class ConversationShareStatusResponse(BaseModel):
+    """Whether a conversation currently has an active share."""
+
+    active: bool
+
+
 class ActiveTurnInfo(BaseModel):
     """Snapshot of retained turn state surfaced via /messages and 410 responses."""
 
@@ -575,6 +621,15 @@ class ChatTurnRequest(BaseModel):
     )
     attachments: list["ChatAttachmentRequest"] | None = Field(
         default=None, description="User-supplied attachments"
+    )
+    model_tier: str | None = Field(
+        default=None,
+        description=(
+            "Optional model tier to run this turn on, from the profile's "
+            "model_tiers. Omit to use the profile's default. A tier the profile "
+            "does not accept is a 400, so the client can say which choice to "
+            "change rather than showing a generic failure."
+        ),
     )
 
 
@@ -658,6 +713,15 @@ class ChatTurnSteerRequest(BaseModel):
     prompt: str = Field(
         ..., description="Steering message to inject into the running turn"
     )
+    input_id: str | None = Field(
+        default=None,
+        description=(
+            "Client-generated identifier for this submission. The turn's echo of "
+            "the message carries it back on the ``user_input`` event, so a client "
+            "whose steer response was lost can tell whether the turn consumed "
+            "*its* message rather than an identical one from another client."
+        ),
+    )
 
 
 class ChatTurnSteerResponse(BaseModel):
@@ -667,6 +731,15 @@ class ChatTurnSteerResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     accepted: bool = Field(
         ..., description="True once the steering message was queued for injection"
+    )
+    queued_after_seq: int = Field(
+        ...,
+        description=(
+            "Seq of the conversation's most recent event when the steer was "
+            "queued (-1 if none). The turn's echo of this message is published "
+            "later, so it carries a strictly greater seq — a client replaying "
+            "the turn uses this to tell the echo from identical earlier input."
+        ),
     )
 
 
@@ -687,6 +760,182 @@ def _get_hub(request: Request) -> ConversationStreamHub:
     hub = ConversationStreamHub()
     request.app.state.conversation_stream_hub = hub
     return hub
+
+
+def _resolve_requested_model_tier(
+    service: ProcessingService,
+    model_tier: str | None,
+) -> ResolvedModelSelection:
+    """Admit a client's tier choice, or refuse the request with a 400.
+
+    An authenticated user's explicit selection is its own authorization, within
+    what the profile may be run on -- so the source is ``user`` rather than the
+    narrower ``model``. The refusal text names the eligible tiers, because the
+    client's remedy is to change the choice rather than to retry.
+    """
+    try:
+        return service.resolve_model_selection(
+            ModelSelectionRequest(tier=model_tier, source="user")
+            if model_tier is not None
+            else None
+        )
+    except ModelTierNotPermitted as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(refusal)
+        ) from refusal
+
+
+def _running_turn_conflict(
+    conversation_id: str, rejected_turn_id: str, running_turn: TurnRecord
+) -> HTTPException:
+    """Build the 409 that refuses a rival turn and names the running one.
+
+    Raised from three places — the early check in ``POST /turns``, the
+    authoritative one inside ``start_turn``, and the reservation taken by
+    ``POST /send_message`` — so the client sees one shape regardless of where
+    the rival lost, and regardless of which endpoint holds the conversation.
+
+    A running turn started by ``/send_message`` carries no mid-turn controller,
+    so steering it answers 409 and the client falls back to holding the prompt.
+    That is the intended outcome: a non-streaming turn is short-lived and has no
+    event stream to carry a steer echo, so its rivals wait rather than steer.
+    """
+    logger.info(
+        "Rejecting turn %s: conversation %s already has running turn %s.",
+        rejected_turn_id,
+        conversation_id,
+        running_turn.turn_id,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": (
+                "This conversation already has a running turn. Steer that "
+                "turn instead of starting a new one."
+            ),
+            "active_turn_id": running_turn.turn_id,
+            # Where that turn's events start in the hub buffer, so a client
+            # that lost its stream resubscribes to the running turn alone
+            # rather than replaying the whole conversation from seq 0.
+            "active_turn_first_seq": running_turn.first_seq,
+        },
+    )
+
+
+def _duplicate_turn_conflict(
+    conversation_id: str, turn_id: str, existing_turn: TurnRecord
+) -> HTTPException:
+    """Build the 409 that refuses a ``turn_id`` this process already finished.
+
+    ``POST /send_message`` is idempotent on ``turn_id`` via the persisted reply,
+    so a retry of a turn that produced one never reaches here. What does is a
+    retry of a turn that ended WITHOUT a reply (it failed, or it was a streaming
+    turn of the same id that failed): re-driving it under the same id would
+    collide with the finished record, so the client is told to retry under a new
+    one rather than being handed a misleading "a turn is running" conflict.
+    """
+    logger.info(
+        "Rejecting send_message turn %s in conversation %s: turn id already used "
+        "(status=%s).",
+        turn_id,
+        conversation_id,
+        existing_turn.status,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": (
+                "This turn id has already been used and produced no reply. "
+                "Retry with a new turn id."
+            ),
+            "turn_id": turn_id,
+            "turn_status": existing_turn.status,
+        },
+    )
+
+
+@dataclass(slots=True)
+class _NonStreamingTurnReservation:
+    """Mutable outcome handle for a ``/send_message`` hub reservation.
+
+    The turn is assumed to have failed until the endpoint says otherwise, so an
+    exception (or a return path that never reached the reply) ends the hub turn
+    with a terminal ``failed`` status rather than leaving it wedged at
+    ``running`` and blocking the conversation.
+    """
+
+    turn: TurnRecord
+    status: TurnStatus = "failed"
+    error: str | None = "An internal error occurred."
+
+    def mark_complete(self) -> None:
+        """Record that the turn produced a reply."""
+        self.status = "complete"
+        self.error = None
+
+
+@asynccontextmanager
+async def _reserve_non_streaming_turn(
+    hub: ConversationStreamHub,
+    conversation_id: str,
+    *,
+    turn_id: str,
+    user_id: str,
+) -> AsyncIterator[_NonStreamingTurnReservation]:
+    """Hold the one-turn-per-conversation reservation across a non-streaming send.
+
+    ``POST /send_message`` drives a full LLM loop over the same history as the
+    streaming path, so it must take the same reservation: two loops on one
+    conversation interleave their writes, and a turn that rebuilds history while
+    another's tool call is in flight answers that call with the "abandoned"
+    placeholder even though the real result is about to be written.
+
+    The record is created before any of the turn's work, ended with a terminal
+    status in a ``finally`` (so a failure or a client disconnect mid-turn
+    releases it), and then discarded — it exists only as the reservation, and
+    keeping it would burn its ``turn_id`` for retries.
+    """
+    try:
+        turn = await hub.start_turn(
+            conversation_id,
+            turn_id=turn_id,
+            user_id=user_id,
+            started_at=datetime.now(UTC),
+            reject_if_running=True,
+        )
+    except ConversationTurnRunningError as exc:
+        raise _running_turn_conflict(conversation_id, turn_id, exc.turn) from exc
+    except TurnAlreadyExistsError as exc:
+        if exc.turn.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+        if exc.turn.status == "running":
+            # A concurrent request carrying the same turn_id is still driving it.
+            raise _running_turn_conflict(conversation_id, turn_id, exc.turn) from exc
+        raise _duplicate_turn_conflict(conversation_id, turn_id, exc.turn) from exc
+
+    reservation = _NonStreamingTurnReservation(turn=turn)
+    try:
+        yield reservation
+    except asyncio.CancelledError:
+        # The client hung up (an App Intent timing out, say). The turn stopped
+        # where it stood; say so rather than reporting a failure.
+        reservation.status = "cancelled"
+        reservation.error = None
+        raise
+    finally:
+        # ``discard_turn`` sits in its own ``finally``: if ``end_turn`` is
+        # interrupted (it can await a contended lock while this task is being
+        # cancelled), the record must still be released or the conversation
+        # would refuse every later turn.
+        try:
+            await hub.end_turn(
+                conversation_id,
+                turn_id=turn_id,
+                status=reservation.status,
+                error=reservation.error,
+            )
+        finally:
+            await hub.discard_turn(conversation_id, turn_id)
 
 
 # Lifecycle/control frames that an ``event_types`` allow-list must never filter
@@ -716,7 +965,7 @@ def _should_emit(event_type: str, allowed_event_types: frozenset[str] | None) ->
 
 
 async def _existing_send_message_response(
-    db_context: DatabaseContext,
+    db_context: Database,
     conversation_id: str,
     turn_id: str,
 ) -> ChatMessageResponse | None:
@@ -922,10 +1171,10 @@ async def _ensure_user_owns_conversation(
         return raw_user_id
 
     # Persisted owners across ALL interface types.
-    async with get_db_context(request.app.state.database_engine) as db_context:
-        owners = await db_context.message_history.get_conversation_owner_ids(
-            conversation_id
-        )
+    db_context = Database(request.app.state.database_engine)
+    owners = await db_context.message_history.get_conversation_owner_ids(
+        conversation_id
+    )
     if not owners:
         # Brand-new / empty conversation: allowed for everyone, including the
         # subscribe path. The always-on live-update stream attaches to the
@@ -941,6 +1190,50 @@ async def _ensure_user_owns_conversation(
         # isolation. (Empty conversations are handled above.)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return raw_user_id
+
+
+async def _ensure_user_owns_persisted_conversation(
+    request: Request,
+    current_user: Mapping[str, object],
+    conversation_id: str,
+) -> str:
+    """Return the owner id for a non-empty conversation owned by the caller."""
+    user_id = await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    db_context = Database(request.app.state.database_engine)
+    if not await db_context.message_history.get_conversation_owner_ids(conversation_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return user_id
+
+
+def _share_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def _get_active_conversation_share(
+    request: Request,
+    db_context: Database,
+    token: str,
+) -> ConversationShare:
+    """Resolve an active token without revealing why an invalid share failed."""
+    if len(token) != 43:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    share = await db_context.conversation_shares.get_by_token_hash(
+        _share_token_hash(token)
+    )
+    if share is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    owners = await db_context.message_history.get_conversation_owner_ids(
+        share.conversation_id
+    )
+    resolver = get_user_identity_resolver(request)
+    if not owners or not _caller_is_sole_canonical_owner(
+        resolver, owners, share.owner_user_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return share
 
 
 # ----------------------------------------------------------------------- #
@@ -997,23 +1290,23 @@ async def api_chat_create_turn(
     # the database — the user message is the durable record of "this turn was
     # already started" — and return the existing identity instead of starting a
     # duplicate producer.
-    async with get_db_context(request.app.state.database_engine) as idem_db:
-        existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
-            payload.turn_id
-        )
-        # The user row is now written before the producer runs (so a pre-start
-        # Stop keeps the prompt durable), so its mere existence no longer implies
-        # the turn produced a reply. Check for a TERMINAL assistant row to tell a
-        # finished turn (reload shows the reply) from one interrupted by a
-        # crash/restart mid-turn — including one that crashed after an
-        # intermediate tool-calling row but before its final reply (those rows
-        # carry tool_calls and are not terminal). The client surfaces a recovery
-        # path for an interrupted turn instead of silently showing the prompt.
-        turn_has_terminal_reply = (
-            await idem_db.message_history.has_terminal_reply_for_turn(payload.turn_id)
-            if existing_user_row is not None
-            else False
-        )
+    idem_db = Database(request.app.state.database_engine)
+    existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
+        payload.turn_id
+    )
+    # The user row is now written before the producer runs (so a pre-start
+    # Stop keeps the prompt durable), so its mere existence no longer implies
+    # the turn produced a reply. Check for a TERMINAL assistant row to tell a
+    # finished turn (reload shows the reply) from one interrupted by a
+    # crash/restart mid-turn — including one that crashed after an
+    # intermediate tool-calling row but before its final reply (those rows
+    # carry tool_calls and are not terminal). The client surfaces a recovery
+    # path for an interrupted turn instead of silently showing the prompt.
+    turn_has_terminal_reply = (
+        await idem_db.message_history.has_terminal_reply_for_turn(payload.turn_id)
+        if existing_user_row is not None
+        else False
+    )
     if existing_user_row is not None:
         if (
             existing_user_row.get("conversation_id") != conversation_id
@@ -1027,6 +1320,34 @@ async def api_chat_create_turn(
             already_complete=True,
             incomplete=not turn_has_terminal_reply,
         )
+
+    # One turn at a time per conversation. A second turn started while the first
+    # is mid-tool overlaps two LLM loops on one history: they interleave their
+    # writes, and the new turn replays a tool call whose result the running turn
+    # has not written yet. Clients reach here by mistake, not by intent — the
+    # composer means to STEER a running turn, and falls back to a plain send only
+    # when it has lost track of the turn (e.g. across an app suspend). Hand back
+    # the turn id it lost so it can steer that instead of starting a rival turn.
+    #
+    # This is the early, cheap rejection: it spares the attachment upload work
+    # below in the common case. It is NOT the guarantee — the setup between here
+    # and ``start_turn`` awaits, so a rival POST can pass this check too. The
+    # authoritative check is ``reject_if_running`` on ``start_turn``, which runs
+    # under the same lock as the registration; both raise the same 409.
+    # Any running turn blocks, not just one whose raw user_id matches: ownership
+    # was already settled above (sole canonical owner), and one person reaching
+    # the conversation through two linked raw identities would otherwise slip a
+    # rival turn past this.
+    running_turn = next(
+        (
+            turn
+            for turn in hub.active_turns(conversation_id)
+            if turn.status == "running"
+        ),
+        None,
+    )
+    if running_turn is not None:
+        raise _running_turn_conflict(conversation_id, payload.turn_id, running_turn)
 
     # Resolve processing service profile.
     selected_processing_service: ProcessingService = default_processing_service
@@ -1044,32 +1365,39 @@ async def api_chat_create_turn(
         if candidate:
             selected_processing_service = candidate
 
+    # Resolved here rather than inside the producer: the producer's refusals
+    # can only reach the client as a stream error, and a tier the profile does
+    # not accept is an answer about the request itself.
+    resolved_model_selection = _resolve_requested_model_tier(
+        selected_processing_service, payload.model_tier
+    )
+
     # Process attachments (uses a short-lived DB context just for the upload
     # bookkeeping; the producer task gets its own context for streaming).
     trigger_content_parts: list[ContentPartDict] = [text_content(payload.prompt)]
     trigger_attachments: list[MessageAttachmentMetadata] | None = None
     if payload.attachments:
         attachment_registry = await get_attachment_registry(request)
-        async with get_db_context(request.app.state.database_engine) as setup_db:
-            # Reuse the existing helper from this module; it expects a
-            # ChatPromptRequest-shaped payload.
-            shim_payload = ChatPromptRequest(
-                prompt=payload.prompt,
-                conversation_id=conversation_id,
-                profile_id=payload.profile_id,
-                interface_type=interface_type,
-                attachments=payload.attachments,
-            )
-            (
-                trigger_content_parts,
-                trigger_attachments,
-            ) = await _process_user_attachments(
-                shim_payload,
-                conversation_id,
-                attachment_registry,
-                setup_db,
-                user_id,
-            )
+        setup_db = Database(request.app.state.database_engine)
+        # Reuse the existing helper from this module; it expects a
+        # ChatPromptRequest-shaped payload.
+        shim_payload = ChatPromptRequest(
+            prompt=payload.prompt,
+            conversation_id=conversation_id,
+            profile_id=payload.profile_id,
+            interface_type=interface_type,
+            attachments=payload.attachments,
+        )
+        (
+            trigger_content_parts,
+            trigger_attachments,
+        ) = await _process_user_attachments(
+            shim_payload,
+            conversation_id,
+            attachment_registry,
+            setup_db,
+            user_id,
+        )
 
     # Fetch the attachment registry without raising: the producer only needs
     # it to resolve attachment metadata for attach_to_response tool calls, so
@@ -1093,7 +1421,15 @@ async def api_chat_create_turn(
             user_id=user_id,
             started_at=datetime.now(UTC),
             mid_turn_controller=mid_turn_controller,
+            reject_if_running=True,
         )
+    except ConversationTurnRunningError as exc:
+        # A rival turn was admitted while this request did its setup (attachment
+        # processing awaits above). The hub refused registration under its lock,
+        # so exactly one of the two racing kickoffs proceeds.
+        raise _running_turn_conflict(
+            conversation_id, payload.turn_id, exc.turn
+        ) from exc
     except TurnAlreadyExistsError as exc:
         # Lost a race with another concurrent POST: treat it as idempotent. The
         # loser returns here WITHOUT inserting the user message (the winner does
@@ -1113,51 +1449,80 @@ async def api_chat_create_turn(
     # idempotent on turn_id, so it reuses this row instead of inserting a
     # duplicate. ``payload.prompt`` matches what the producer would store (the
     # first text part of the trigger content).
-    try:
-        async with get_db_context(request.app.state.database_engine) as user_msg_db:
-            await user_msg_db.message_history.add_message(
-                UserMessage(
-                    content=payload.prompt,
-                    taint_metadata=TurnTaintState.empty().to_metadata(),
-                ),
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                interface_message_id=f"temp_{payload.turn_id}",
-                turn_id=payload.turn_id,
-                timestamp=datetime.now(UTC),
-                user_id=user_id,
-                attachments=trigger_attachments,
-                processing_profile_id=selected_processing_service.service_config.id,
+    async def persist_user_message() -> tuple[
+        "TaintMetadata", "TaintMetadata", "TaintMetadata"
+    ]:
+        user_msg_db = Database(request.app.state.database_engine)
+        # Read the pre-turn history and context taint BEFORE the prompt is
+        # committed. Anything failing after that write strands the prompt: the
+        # retry carries the same turn_id, matches the durable idempotency branch
+        # above, and returns already_complete instead of running the turn.
+        # Taint-wise this ordering is also the conservative one — the prompt
+        # carries empty taint, so including it could only push an older (and
+        # possibly tainted) row out of the history window.
+        history_limit, history_max_age = (
+            selected_processing_service.context_preparer.get_history_limits(
+                interface_type
             )
-            history_limit, history_max_age = (
-                selected_processing_service.context_preparer.get_history_limits(
-                    interface_type
-                )
-            )
-            initial_history_messages = await user_msg_db.message_history.get_recent(
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                limit=history_limit,
-                max_age=history_max_age,
-                processing_profile_id=(selected_processing_service.service_config.id),
-                subconversation_id=None,
-                current_time=selected_processing_service.clock.now(),
-            )
-            initial_history_taint_metadata = merge_history_taint(
-                initial_history_messages
-            ).to_metadata()
-            initial_context_taint_state = TurnTaintState.empty()
+        )
+        initial_history_messages = await user_msg_db.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=history_limit,
+            max_age=history_max_age,
+            processing_profile_id=(selected_processing_service.service_config.id),
+            subconversation_id=None,
+            current_time=selected_processing_service.clock.now(),
+        )
+        initial_history_taint_metadata = merge_history_taint(
+            initial_history_messages
+        ).to_metadata()
+        initial_context_taint_state = TurnTaintState.empty()
+        # Gated exactly as the turn itself gates the context (see
+        # ProcessingService._prepare_turn_messages_for_llm): a profile that never
+        # receives the aggregated context was never exposed to its taint, and
+        # stamping it here anyway would make a web turn dirtier than the same
+        # profile's Telegram turn.
+        if selected_processing_service.service_config.include_aggregated_context:
             for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
                 initial_context_taint_state = initial_context_taint_state.add_source(
                     source
                 )
-            initial_context_taint_metadata = initial_context_taint_state.to_metadata()
-            initial_live_taint_state = TurnTaintState.from_metadata(
-                initial_history_taint_metadata
-            )
-            for source in initial_context_taint_state.sources:
-                initial_live_taint_state = initial_live_taint_state.add_source(source)
-            initial_live_taint_metadata = initial_live_taint_state.to_metadata()
+        initial_context_taint_metadata = initial_context_taint_state.to_metadata()
+        initial_live_taint_state = TurnTaintState.from_metadata(
+            initial_history_taint_metadata
+        )
+        for source in initial_context_taint_state.sources:
+            initial_live_taint_state = initial_live_taint_state.add_source(source)
+        initial_live_taint_metadata = initial_live_taint_state.to_metadata()
+
+        await user_msg_db.message_history.add_message(
+            UserMessage(
+                content=payload.prompt,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            ),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=f"temp_{payload.turn_id}",
+            turn_id=payload.turn_id,
+            timestamp=datetime.now(UTC),
+            user_id=user_id,
+            attachments=trigger_attachments,
+            processing_profile_id=selected_processing_service.service_config.id,
+        )
+
+        return (
+            initial_history_taint_metadata,
+            initial_context_taint_metadata,
+            initial_live_taint_metadata,
+        )
+
+    try:
+        (
+            initial_history_taint_metadata,
+            initial_context_taint_metadata,
+            initial_live_taint_metadata,
+        ) = await persist_user_message()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
@@ -1218,6 +1583,7 @@ async def api_chat_create_turn(
             initial_history_taint_metadata=initial_history_taint_metadata,
             initial_context_taint_metadata=initial_context_taint_metadata,
             mid_turn_input_provider=mid_turn_controller,
+            model_selection=resolved_model_selection,
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",
     )
@@ -1329,7 +1695,7 @@ async def api_chat_conversation_stream(
         # recorded on an *explicit* client ack — the ``ack_seq`` query param on
         # (re)subscribe or ``POST /v1/chat/ack`` after the client processes
         # turn_ended — never here on send.
-        try:
+        async def generate_events() -> AsyncGenerator[str]:
             # Flush the response head immediately with an initial heartbeat. An idle
             # ``follow=true`` stream's first real byte is otherwise the 30s heartbeat,
             # and the production front door (Envoy) does not forward the response
@@ -1408,13 +1774,20 @@ async def api_chat_conversation_stream(
                     and not _has_running_turn()
                 ):
                     return
+
+        events = generate_events()
+        try:
+            async for payload_text in events:
+                yield payload_text
         except asyncio.CancelledError:
             raise
         finally:
-            # Synchronous + lock-free so it still runs when the ASGI server
-            # cancels this generator on client disconnect (an await here would
-            # re-raise CancelledError and leak the subscriber queue).
-            hub.unsubscribe(conversation_id, handle.queue)
+            try:
+                await events.aclose()
+            finally:
+                # Synchronous + lock-free so it still runs when the ASGI server
+                # cancels this generator on client disconnect.
+                hub.unsubscribe(conversation_id, handle.queue)
 
     return StreamingResponse(
         event_generator(),
@@ -1458,7 +1831,7 @@ async def api_chat_activity_stream(
     handle = hub.subscribe_activity(raw_user_id)
 
     async def event_generator() -> AsyncGenerator[str]:
-        try:
+        async def generate_events() -> AsyncGenerator[str]:
             # Flush the response head immediately with an initial heartbeat so a
             # buffering front door forwards the headers to the client without waiting
             # for the first real heartbeat (see the follow-stream endpoint for the
@@ -1510,12 +1883,20 @@ async def api_chat_activity_stream(
                     "timestamp": activity.timestamp.isoformat(),
                 })
                 yield f"event: conversation_activity\ndata: {payload}\n\n"
+
+        events = generate_events()
+        try:
+            async for payload_text in events:
+                yield payload_text
         except asyncio.CancelledError:
             raise
         finally:
-            # Synchronous + lock-free so it still runs when the ASGI server
-            # cancels this generator on client disconnect.
-            hub.unsubscribe_activity(handle.queue)
+            try:
+                await events.aclose()
+            finally:
+                # Synchronous + lock-free so it still runs when the ASGI server
+                # cancels this generator on client disconnect.
+                hub.unsubscribe_activity(handle.queue)
 
     return StreamingResponse(
         event_generator(),
@@ -1629,8 +2010,8 @@ async def _reject_pending_confirmations_for_turn(
     """
     confirmation_service = _get_confirmation_service(request)
     try:
-        async with get_db_context(request.app.state.database_engine) as db:
-            user_row = await db.message_history.get_user_row_by_turn_id(turn_id)
+        db = Database(request.app.state.database_engine)
+        user_row = await db.message_history.get_user_row_by_turn_id(turn_id)
         if user_row is None:
             return
         source_internal_id = user_row["internal_id"]
@@ -1703,6 +2084,19 @@ async def api_chat_steer_turn(
     turn = hub.get_turn(payload.conversation_id, turn_id)
     if turn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if payload.input_id is not None and payload.input_id in turn.accepted_steer_inputs:
+        # A retry of a submission this turn already accepted, arriving after it
+        # finished. Answering 409 would send the client down the resend path and
+        # repeat an instruction the turn has already acted on. It gets the floor
+        # the original request was told, not the current head: the turn may have
+        # published this message's echo since, and a client replaying from the
+        # head would start after the very event it is waiting for.
+        return ChatTurnSteerResponse(
+            turn_id=turn_id,
+            conversation_id=payload.conversation_id,
+            accepted=True,
+            queued_after_seq=turn.accepted_steer_inputs[payload.input_id],
+        )
     controller = turn.mid_turn_controller
     if turn.status != "running" or not isinstance(controller, WebMidTurnController):
         raise HTTPException(
@@ -1710,16 +2104,49 @@ async def api_chat_steer_turn(
             detail="Turn is not running; start a new turn instead.",
         )
 
-    await controller.add_input(
+    # Read the stream head BEFORE queueing, so the floor is conservative: the
+    # echo of this message is published strictly after it, while every event
+    # already on the stream sits at or below it.
+    queued_after_seq = hub.latest_seq(payload.conversation_id)
+    queued = await controller.add_input(
         MidTurnUserInput(
             content=payload.prompt,
             user_name=_user_name_for_chat(current_user),
+            interface_message_id=payload.input_id,
         )
     )
+    if payload.input_id is not None and turn.status == "running":
+        # Recorded on the turn, which outlives the controller, so a retry that
+        # arrives after the turn ends is still recognised as already delivered.
+        # setdefault, not assignment: a retry the controller deduped must keep
+        # the floor its first attempt was given.
+        #
+        # Re-checked after the enqueue, because the producer can finish between
+        # the status check above and this point — the message then sits on a
+        # controller nobody will drain. Recording it anyway would have a later
+        # retry told "delivered" for something that will never be acted on;
+        # leaving it unrecorded lets that retry take the 409 that starts a new
+        # turn. This narrows the window rather than closing it: a turn can also
+        # be inside its final, tool-free iteration, past the drain but not yet
+        # ended. The client's un-echoed-steer recovery is the guarantee there,
+        # which is why an echo — not this 200 — is what settles a submission.
+        turn.accepted_steer_inputs.setdefault(payload.input_id, queued_after_seq)
+    if not queued:
+        # A retry that raced the turn rather than outliving it: the controller
+        # is still live and had already taken this submission. Answering 200
+        # without queueing it again is what the client is asking for — it is
+        # retrying because the first response was lost, not because it wants to
+        # say the same thing twice.
+        logger.info(
+            "Steer input %s already queued for turn %s; not queueing it again",
+            payload.input_id,
+            turn_id,
+        )
     return ChatTurnSteerResponse(
         turn_id=turn_id,
         conversation_id=payload.conversation_id,
         accepted=True,
+        queued_after_seq=queued_after_seq,
     )
 
 
@@ -1800,12 +2227,48 @@ class ToolConfirmationDetail(BaseModel):
     )
 
 
+class ModelTierSummary(BaseModel):
+    """One intelligence level a profile can be run at, as a client shows it."""
+
+    id: str = Field(..., description="Tier identifier, as sent in model_tier")
+    label: str = Field(
+        ..., description="User-facing name for the tier; falls back to its id"
+    )
+    description: str | None = Field(
+        None, description="One line on when this tier is worth its cost"
+    )
+
+
 class ServiceProfile(BaseModel):
     """Information about an available service profile."""
 
     id: str = Field(..., description="Profile identifier")
     description: str = Field(..., description="Profile description")
     llm_model: str | None = Field(None, description="LLM model used by this profile")
+    model_tiers: list[ModelTierSummary] = Field(
+        default_factory=list,
+        description=(
+            "Tiers this profile may be run at, in configured order. Empty for a "
+            "profile pinned to one model, which is how a client knows to offer "
+            "no intelligence control for it."
+        ),
+    )
+    default_model_tier: str | None = Field(
+        default=None,
+        description=(
+            "The tier used when the request names none. Null for a pinned profile."
+        ),
+    )
+    model_selection: Literal["explicit", "auto"] = Field(
+        default="explicit",
+        description=(
+            "Whether a request that names no tier runs on default_model_tier "
+            "('explicit') or has one chosen for it per request ('auto'). "
+            "Reports effective behaviour: a profile configured for Auto while "
+            "the deployment's routing is in shadow mode reads as 'explicit', "
+            "because that is what its requests do."
+        ),
+    )
     available_tools: list[str] = Field(
         default_factory=list, description="Available tools for this profile"
     )
@@ -1835,7 +2298,7 @@ async def api_chat_send_message(
     default_processing_service: Annotated[
         ProcessingService, Depends(get_processing_service)
     ],  # Renamed for clarity
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
 ) -> ChatMessageResponse:
     """
@@ -1853,10 +2316,12 @@ async def api_chat_send_message(
     # turn_id idempotency (minimal): the client may supply a UUID so a retried
     # /send_message returns the already-persisted reply instead of re-driving
     # the LLM and double-persisting. Mirrors /turns — in-memory hub fast path
-    # plus durable DB fallback — but without the hub turn lifecycle.
+    # plus durable DB fallback. The hub turn taken below is the reservation, not
+    # the idempotency record: it is discarded when the send ends, so a turn that
+    # produced a reply is recognised from the database rather than from memory.
     response_turn_id = payload.turn_id or str(uuid.uuid4())
+    hub = _get_hub(request)
     if payload.turn_id is not None:
-        hub = _get_hub(request)
         existing_turn = hub.get_turn(conversation_id, payload.turn_id)
         if existing_turn is not None and existing_turn.user_id != user_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -1905,230 +2370,222 @@ async def api_chat_send_message(
             f"API chat request (no profile_id specified). Using default profile: '{default_processing_service.service_config.id}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
         )
 
-    # Process user attachments if present
-    trigger_content_parts: list[ContentPartDict] = [
-        {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
-    ]
-    trigger_attachments: list[MessageAttachmentMetadata] | None = None
-
-    if payload.attachments:
-        # Only get attachment registry when we actually have attachments
-        attachment_registry = await get_attachment_registry(request)
-        trigger_content_parts, trigger_attachments = await _process_user_attachments(
-            payload,
-            conversation_id,
-            attachment_registry,
-            db_context,
-            current_user["user_identifier"],
-        )
-
-    # Determine interface type - default to "api" if not specified
-    interface_type = payload.interface_type or "api"
-
-    # Call the new centralized interaction handler
-    # user_name surfaces in the system prompt and message history, so derive it
-    # from the authenticated user rather than a generic placeholder.
-    user_name_for_api = _user_name_for_chat(current_user)
-
-    # Get chat_interfaces registry from app state for cross-interface messaging
-    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
-    confirmation_ui_managers = getattr(
-        request.app.state,
-        "confirmation_ui_managers",
-        None,
+    resolved_model_selection = _resolve_requested_model_tier(
+        selected_processing_service, payload.model_tier
     )
 
-    # Non-streaming callers (e.g. iOS App Intents / Siri) cannot wait on a live
-    # confirmation channel, so a tool needing approval records a durable pending
-    # confirmation the user can approve later from another client (the
-    # confirmation service push-notifies them). The deferred tool result tells
-    # the model the action is awaiting approval so the reply reflects that.
-    api_confirmation_service = _get_confirmation_service(request)
+    # One turn at a time per conversation: hold the same hub reservation the
+    # streaming path takes, so a non-streaming send (an iOS App Intent, Siri, or
+    # an API client) cannot drive a second LLM loop over a history a running turn
+    # is still writing to. Rivals in either direction get the same 409.
+    async with _reserve_non_streaming_turn(
+        hub, conversation_id, turn_id=response_turn_id, user_id=user_id
+    ) as reservation:
+        # Process user attachments if present
+        trigger_content_parts: list[ContentPartDict] = [
+            {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
+        ]
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None
 
-    async def api_confirmation_callback(
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
-        tool_args: dict[str, Any],
-        timeout_seconds: float,
-        context: ToolExecutionContext,
-    ) -> ConfirmationOutcome:
-        taint_state_json = (
-            context.taint_tracker.snapshot().to_metadata()
-            if context.taint_tracker is not None
-            else None
-        )
-        durable_request = await create_durable_confirmation(
-            confirmation_service=api_confirmation_service,
-            db_context=context.db_context,
-            target_user_id=current_user["user_identifier"],
-            tool_name=tool_name,
-            tool_call_id=call_id,
-            tool_args=tool_args,
-            confirmation_prompt=(
-                f"Do you want to execute '{tool_name}' with these parameters?"
-            ),
-            timeout_seconds=timeout_seconds,
-            turn_id=turn_id,
-            now=datetime.now(UTC),
-            processing_profile_id=context.processing_profile_id,
-            origin_interface_type=context.interface_type,
-            origin_conversation_id=context.conversation_id,
-            taint_state_json=taint_state_json,
-        )
-        return ConfirmationOutcome(
-            kind="completed",
-            result=(
-                f"I've requested your approval to run '{tool_name}' "
-                f"(request {durable_request['id']}). It hasn't run yet — approve it "
-                "from your pending confirmations to continue."
-            ),
-        )
-
-    result = await selected_processing_service.handle_chat_interaction(
-        db_context=db_context,
-        interface_type=interface_type,  # Use the interface_type from request or default "api"
-        conversation_id=conversation_id,
-        trigger_content_parts=trigger_content_parts,
-        trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
-        user_name=user_name_for_api,
-        user_id=current_user["user_identifier"],
-        replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
-        chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
-        chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
-        confirmation_ui_managers=confirmation_ui_managers,
-        request_confirmation_callback=api_confirmation_callback,
-        trigger_attachments=trigger_attachments,  # Pass attachment metadata
-        turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
-    )
-
-    final_reply_content = result.text_reply
-    final_assistant_message_internal_id = result.assistant_message_internal_id
-    _final_reasoning_info = result.reasoning_info  # Not used by API response
-    error_traceback = result.error_traceback
-    _response_attachment_ids = result.attachment_ids  # Not yet included in API response
-
-    if error_traceback:
-        logger.error(
-            f"Error processing API chat request for Conversation ID {conversation_id}: {error_traceback}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing request: {error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
-        )
-
-    if final_reply_content is None:
-        logger.error(
-            f"No final assistant reply content found for API chat. Conversation ID: {conversation_id}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Assistant did not provide a textual reply.",
-        )
-
-    # Fetch recent messages to get tool_calls if any
-    tool_calls_response = None
-    if final_assistant_message_internal_id:
-        # Get recent messages from this conversation
-        recent_messages = await db_context.message_history.get_recent(
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            limit=5,  # Get last few messages
-            max_age=timedelta(minutes=5),
-        )
-        # Find the most recent assistant message (repository returns typed LLMMessage objects)
-        # Note: Cannot match by internal_id since typed messages don't include database metadata
-        # Use the most recent AssistantMessage from the list
-        assistant_msg = next(
+        if payload.attachments:
+            # Only get attachment registry when we actually have attachments
+            attachment_registry = await get_attachment_registry(request)
             (
-                msg
-                for msg in reversed(recent_messages)
-                if isinstance(msg, AssistantMessage) and msg.tool_calls
-            ),
+                trigger_content_parts,
+                trigger_attachments,
+            ) = await _process_user_attachments(
+                payload,
+                conversation_id,
+                attachment_registry,
+                db_context,
+                current_user["user_identifier"],
+            )
+
+        # Determine interface type - default to "api" if not specified
+        interface_type = payload.interface_type or "api"
+
+        # Call the new centralized interaction handler
+        # user_name surfaces in the system prompt and message history, so derive it
+        # from the authenticated user rather than a generic placeholder.
+        user_name_for_api = _user_name_for_chat(current_user)
+
+        # Get chat_interfaces registry from app state for cross-interface messaging
+        chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+        confirmation_ui_managers = getattr(
+            request.app.state,
+            "confirmation_ui_managers",
             None,
         )
-        if assistant_msg and assistant_msg.tool_calls:
-            # Convert ToolCallItem objects to dicts for API response
-            tool_calls_response = []
-            for tc in assistant_msg.tool_calls:
-                if isinstance(tc, ToolCallItem):
-                    # Ensure arguments is a JSON string
-                    args = tc.function.arguments
-                    if not isinstance(args, str):
-                        args = json.dumps(args)
-                    tool_calls_response.append({
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": args,
-                        },
-                    })
-                elif isinstance(tc, dict):
-                    tool_calls_response.append(tc)
 
-    # This non-streaming path persists the reply but never published to the hub,
-    # so a second device of the same user with an open follow-stream wouldn't
-    # reload. Publish a content-free `message` event (the same nudge
-    # WebChatInterface uses) so open follow-streams refetch history.
-    # Nudge other clients once this request's writes commit. ``get_db`` runs the
-    # whole request inside one ``engine.begin()`` transaction that commits at
-    # request end, so both nudges must be scheduled from ``on_commit`` — emitting
-    # them now would have a follower refetch /messages (and the activity stream
-    # refetch the list) before the reply is visible, leaving them stale with no
-    # later event. Two nudges: a per-conversation ``message`` event so a client
-    # already following THIS thread reloads its history, and an account-global
-    # activity ping so the conversation surfaces/bumps in the owner's list on a
-    # second tab/device (this non-streaming path has no start_turn/end_turn
-    # lifecycle of its own).
-    send_hub = _get_hub(request)
-    activity_loop = asyncio.get_running_loop()
+        # Non-streaming callers (e.g. iOS App Intents / Siri) cannot wait on a live
+        # confirmation channel, so a tool needing approval records a durable pending
+        # confirmation the user can approve later from another client (the
+        # confirmation service push-notifies them). The deferred tool result tells
+        # the model the action is awaiting approval so the reply reflects that.
+        api_confirmation_service = _get_confirmation_service(request)
 
-    def _publish_send_nudges() -> None:
-        message_task = activity_loop.create_task(
-            send_hub.publish(
-                conversation_id,
-                "message",
-                turn_id=None,
-                payload={"conversation_id": conversation_id, "new_messages": True},
+        async def api_confirmation_callback(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
+            tool_args: dict[str, Any],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> ConfirmationOutcome:
+            taint_state_json = (
+                context.taint_tracker.snapshot().to_metadata()
+                if context.taint_tracker is not None
+                else None
             )
-        )
-        _ACTIVITY_PUBLISH_TASKS.add(message_task)
-        message_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
-
-        activity_task = activity_loop.create_task(
-            send_hub.publish_activity(
-                conversation_id, user_id=user_id, reason="message"
+            durable_request = await create_durable_confirmation(
+                confirmation_service=api_confirmation_service,
+                db_context=context.db_context,
+                target_user_id=current_user["user_identifier"],
+                tool_name=tool_name,
+                tool_call_id=call_id,
+                tool_args=tool_args,
+                confirmation_prompt=append_review_reason_to_confirmation(
+                    f"Do you want to execute '{tool_name}' with these parameters?",
+                    context,
+                ),
+                timeout_seconds=timeout_seconds,
+                turn_id=turn_id,
+                now=datetime.now(UTC),
+                processing_profile_id=context.processing_profile_id,
+                origin_interface_type=context.interface_type,
+                origin_conversation_id=context.conversation_id,
+                taint_state_json=taint_state_json,
+                tool_call_review_authorization=(context.tool_call_review_authorization),
             )
+            return ConfirmationOutcome(
+                kind="completed",
+                result=(
+                    f"I've requested your approval to run '{tool_name}' "
+                    f"(request {durable_request['id']}). It hasn't run yet — approve it "
+                    "from your pending confirmations to continue."
+                ),
+            )
+
+        result = await selected_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=interface_type,  # Use the interface_type from request or default "api"
+            conversation_id=conversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
+            user_name=user_name_for_api,
+            user_id=current_user["user_identifier"],
+            replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
+            chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
+            chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
+            confirmation_ui_managers=confirmation_ui_managers,
+            request_confirmation_callback=DeferredConfirmationCallbackAdapter(
+                api_confirmation_callback
+            ),
+            trigger_attachments=trigger_attachments,  # Pass attachment metadata
+            turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
+            model_selection=resolved_model_selection,
         )
-        _ACTIVITY_PUBLISH_TASKS.add(activity_task)
-        activity_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
 
-    db_context.on_commit(_publish_send_nudges)
+        final_reply_content = result.text_reply
+        final_assistant_message_internal_id = result.assistant_message_internal_id
+        _final_reasoning_info = result.reasoning_info  # Not used by API response
+        error_traceback = result.error_traceback
+        _response_attachment_ids = (
+            result.attachment_ids
+        )  # Not yet included in API response
 
-    return ChatMessageResponse(
-        reply=final_reply_content,  # Back to original field name
-        conversation_id=conversation_id,  # Return the used/generated conversation_id
-        turn_id=response_turn_id,  # Return the turn_id generated for the response model
-        attachments=trigger_attachments,  # Include processed attachments in response
-        tool_calls=tool_calls_response,  # Include tool calls if any
-    )
+        if error_traceback:
+            logger.error(
+                f"Error processing API chat request for Conversation ID {conversation_id}: {error_traceback}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing request: {error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
+            )
+
+        if final_reply_content is None:
+            logger.error(
+                f"No final assistant reply content found for API chat. Conversation ID: {conversation_id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Assistant did not provide a textual reply.",
+            )
+
+        # Fetch recent messages to get tool_calls if any
+        tool_calls_response = None
+        if final_assistant_message_internal_id:
+            # Get recent messages from this conversation
+            recent_messages = await db_context.message_history.get_recent(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                limit=5,  # Get last few messages
+                max_age=timedelta(minutes=5),
+            )
+            # Find the most recent assistant message (repository returns typed LLMMessage objects)
+            # Note: Cannot match by internal_id since typed messages don't include database metadata
+            # Use the most recent AssistantMessage from the list
+            assistant_msg = next(
+                (
+                    msg
+                    for msg in reversed(recent_messages)
+                    if isinstance(msg, AssistantMessage) and msg.tool_calls
+                ),
+                None,
+            )
+            if assistant_msg and assistant_msg.tool_calls:
+                # Convert ToolCallItem objects to dicts for API response
+                tool_calls_response = []
+                for tc in assistant_msg.tool_calls:
+                    if isinstance(tc, ToolCallItem):
+                        # Ensure arguments is a JSON string
+                        args = tc.function.arguments
+                        if not isinstance(args, str):
+                            args = json.dumps(args)
+                        tool_calls_response.append({
+                            "id": tc.id,
+                            "type": tc.type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": args,
+                            },
+                        })
+                    elif isinstance(tc, dict):
+                        tool_calls_response.append(tc)
+
+        # A follower of this conversation learns about the reply from the
+        # reservation's ``turn_ended``, published as the ``async with`` exits:
+        # the web and iOS follow-streams treat it exactly as they treat the
+        # content-free ``message`` nudge — refetch history, refresh the
+        # conversation list, ack the seq — and ``end_turn`` broadcasts the
+        # account-global activity ping alongside it. Publishing a ``message``
+        # nudge here as well would have every connected client fetch history and
+        # the conversation list twice per send.
+        reservation.mark_complete()
+        return ChatMessageResponse(
+            reply=final_reply_content,  # Back to original field name
+            conversation_id=conversation_id,  # Return the used/generated conversation_id
+            turn_id=response_turn_id,  # Return the turn_id generated for the response model
+            attachments=trigger_attachments,  # Include processed attachments in response
+            tool_calls=tool_calls_response,  # Include tool calls if any
+        )
 
 
 @chat_api_router.get("/v1/chat/conversations")
 async def get_conversations(
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     limit: int = 20,
     offset: int = 0,
     interface_type: str | None = None,
     conversation_id: str | None = None,
     date_from: str | None = None,  # Expected as YYYY-MM-DD string
     date_to: str | None = None,  # Expected as YYYY-MM-DD string
+    q: str | None = None,
 ) -> ConversationListResponse:
     """
     Get a list of chat conversations for the web interface.
@@ -2215,6 +2672,7 @@ async def get_conversations(
         date_to=date_to_dt,
         include_subconversations=False,
         owner_user_ids=owner_user_ids,
+        search_query=q,
     )
 
     conversations = [
@@ -2223,6 +2681,7 @@ async def get_conversations(
             last_message=summary["last_message"],
             last_timestamp=summary["last_timestamp"],
             message_count=summary["message_count"],
+            match_excerpt=summary["match_excerpt"],
         )
         for summary in summaries
     ]
@@ -2233,12 +2692,116 @@ async def get_conversations(
     )
 
 
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/share",
+)
+async def get_conversation_share_status(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ConversationShareStatusResponse:
+    """Return share status to the authenticated conversation owner."""
+    await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    share = await db_context.conversation_shares.get_by_conversation(conversation_id)
+    return ConversationShareStatusResponse(active=share is not None)
+
+
+@chat_api_router.post(
+    "/v1/chat/conversations/{conversation_id}/share",
+)
+async def create_conversation_share(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ConversationShareResponse:
+    """Rotate and return a read-only share link for the conversation owner."""
+    owner_user_id = await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    token = secrets.token_urlsafe(32)
+    await db_context.conversation_shares.rotate(
+        conversation_id, owner_user_id, _share_token_hash(token)
+    )
+    return ConversationShareResponse(share_url=f"/shared/conversations/{token}")
+
+
+@chat_api_router.delete(
+    "/v1/chat/conversations/{conversation_id}/share",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def revoke_conversation_share(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> Response:
+    """Revoke the active read-only share as the conversation owner."""
+    await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    await db_context.conversation_shares.revoke(conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _serialize_conversation_messages(
+    messages: list[MessageHistoryRow],
+) -> list[ConversationMessage]:
+    """Convert visible history rows to the public conversation message shape."""
+    response_messages: list[ConversationMessage] = []
+    for msg in messages:
+        if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
+            continue
+
+        tool_calls_dicts = None
+        msg_tool_calls = msg.get("tool_calls")
+        if msg_tool_calls:
+            tool_calls_dicts = []
+            for tool_call in msg_tool_calls:
+                if isinstance(tool_call, ToolCallItem):
+                    arguments = tool_call.function.arguments
+                    if not isinstance(arguments, str):
+                        arguments = json.dumps(arguments)
+                    tool_calls_dicts.append({
+                        "id": tool_call.id,
+                        "type": tool_call.type,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": arguments,
+                        },
+                    })
+                elif isinstance(tool_call, dict):
+                    tool_calls_dicts.append(tool_call)
+
+        response_messages.append(
+            ConversationMessage(
+                internal_id=msg["internal_id"],
+                turn_id=msg.get("turn_id"),
+                role=msg["role"],
+                content=msg.get("content"),
+                timestamp=msg["timestamp"],
+                tool_calls=tool_calls_dicts,
+                tool_call_id=msg.get("tool_call_id"),
+                error_traceback=msg.get("error_traceback"),
+                attachments=msg.get("attachments"),
+                processing_profile_id=msg.get("processing_profile_id"),
+                reasoning_info=msg.get("reasoning_info"),
+                metadata=None,
+            )
+        )
+    return response_messages
+
+
 @chat_api_router.get("/v1/chat/conversations/{conversation_id}/messages")
 async def get_conversation_messages(
     conversation_id: str,
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     attachment_registry: Annotated[
         "AttachmentRegistry", Depends(get_attachment_registry)
     ],
@@ -2334,55 +2897,7 @@ async def get_conversation_messages(
         acting_user_id=user_id,
     )
 
-    # Convert to response format
-    response_messages = []
-    for msg in messages:
-        # Skip messages with missing required fields
-        if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
-            continue
-
-        # Convert tool_calls from ToolCallItem objects to dicts for Pydantic
-        tool_calls_dicts = None
-        msg_tool_calls = msg.get("tool_calls")
-        if msg_tool_calls:
-            tool_calls_dicts = []
-            for tc in msg_tool_calls:
-                if isinstance(tc, ToolCallItem):
-                    # Convert ToolCallItem to dict
-                    # Ensure arguments is always a JSON string
-                    args = tc.function.arguments
-                    if not isinstance(args, str):
-                        args = json.dumps(args)
-                    tc_dict = {
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": args,
-                        },
-                    }
-                    # Note: provider_metadata is not included in API response
-                    tool_calls_dicts.append(tc_dict)
-                elif isinstance(tc, dict):
-                    # Already a dict, use as-is
-                    tool_calls_dicts.append(tc)
-
-        response_messages.append(
-            ConversationMessage(
-                internal_id=msg["internal_id"],
-                turn_id=msg.get("turn_id"),
-                role=msg["role"],
-                content=msg.get("content"),
-                timestamp=msg["timestamp"],
-                tool_calls=tool_calls_dicts,
-                tool_call_id=msg.get("tool_call_id"),
-                error_traceback=msg.get("error_traceback"),
-                attachments=msg.get("attachments"),
-                processing_profile_id=msg.get("processing_profile_id"),
-                reasoning_info=msg.get("reasoning_info"),
-                metadata=None,
-            )
-        )
+    response_messages = _serialize_conversation_messages(messages)
 
     # Get total message count for the conversation
     total_message_count = (
@@ -2415,6 +2930,130 @@ async def get_conversation_messages(
     )
 
 
+@chat_api_router.get(
+    "/v1/shared-conversations/{token}/messages",
+)
+async def get_shared_conversation_messages(
+    token: str,
+    request: Request,
+    _current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    attachment_registry: Annotated[
+        "AttachmentRegistry", Depends(get_attachment_registry)
+    ],
+) -> ConversationMessagesResponse:
+    """Return a read-only transcript to an authenticated share-link holder."""
+    share = await _get_active_conversation_share(request, db_context, token)
+    history_by_chat = await db_context.message_history.get_all_grouped(
+        interface_type=None,
+        conversation_id=share.conversation_id,
+        include_subconversations=False,
+    )
+    messages = [
+        message
+        for (
+            _interface_type,
+            conversation_id,
+        ), conversation_messages in history_by_chat.items()
+        if conversation_id == share.conversation_id
+        for message in conversation_messages
+    ]
+    messages.sort(
+        key=lambda message: message.get("timestamp", datetime.min.replace(tzinfo=UTC))
+    )
+    await _enrich_persisted_attachments(
+        messages,
+        db_context=db_context,
+        attachment_registry=attachment_registry,
+        acting_user_id=share.owner_user_id,
+    )
+    for message in messages:
+        for attachment in message.get("attachments") or []:
+            attachment_id = attachment.get("attachment_id")
+            if attachment_id:
+                shared_url = (
+                    f"/api/v1/shared-conversations/{token}/attachments/{attachment_id}"
+                )
+                attachment["content_url"] = shared_url
+                attachment["url"] = shared_url
+
+    response_messages = _serialize_conversation_messages(messages)
+    return ConversationMessagesResponse(
+        conversation_id=share.conversation_id,
+        messages=response_messages,
+        count=len(response_messages),
+        total_messages=len(response_messages),
+        has_more_before=False,
+        has_more_after=False,
+        latest_user_profile_id=None,
+        active_turns=[],
+    )
+
+
+@chat_api_router.get(
+    "/v1/shared-conversations/{token}/attachments/{attachment_id}",
+    response_class=FileResponse,
+)
+async def serve_shared_conversation_attachment(
+    token: str,
+    attachment_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    attachment_registry: Annotated[
+        "AttachmentRegistry", Depends(get_attachment_registry)
+    ],
+) -> FileResponse:
+    """Serve one attachment scoped to an active authenticated share link."""
+    try:
+        uuid.UUID(attachment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+
+    share = await _get_active_conversation_share(request, db_context, token)
+    attachment = await attachment_registry.get_attachment(
+        db_context,
+        attachment_id,
+        acting_user_id=share.owner_user_id,
+    )
+    if attachment is None or attachment.conversation_id != share.conversation_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    file_path = attachment_registry.get_attachment_path(
+        attachment_id,
+        stored_path=attachment.storage_path,
+        source_type=attachment.source_type,
+    )
+    if file_path is None or not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    background_tasks.add_task(
+        attachment_registry.update_access_time_background,
+        attachment_id,
+        acting_user_id=share.owner_user_id,
+    )
+    original_filename = attachment.metadata.get("original_filename")
+    filename = (
+        original_filename
+        if isinstance(original_filename, str) and original_filename
+        else file_path.name
+    )
+    return FileResponse(
+        path=str(file_path),
+        media_type=attachment_registry.get_content_type(file_path),
+        filename=filename,
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{attachment_id}"',
+            # See `_NOSNIFF` in attachments_api: an attachment is stored
+            # whatever its type, and the browser must not decide that type
+            # for itself on this origin.
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @chat_api_router.get("/v1/debug/test_stream")
 async def debug_test_stream() -> StreamingResponse:
     """Simple test endpoint to verify SSE streaming works."""
@@ -2441,12 +3080,43 @@ async def debug_test_stream() -> StreamingResponse:
     )
 
 
+def _resolve_voice_session_profile_id(
+    request: Request,
+    requested_profile_id: str | None,
+    default_processing_service: ProcessingService,
+) -> str:
+    """Return the profile a finished voice session is recorded against.
+
+    The client echoes back the ``profile_id`` the ephemeral-token endpoint
+    resolved for the session, so an omitted value means the same thing it means
+    there: the default profile. An id no profile answers to is rejected rather
+    than stored, because a stamp that matches no profile reads back as history
+    nothing can load.
+    """
+    if requested_profile_id is None:
+        return default_processing_service.service_config.id
+
+    registry = getattr(request.app.state, "processing_services", {})
+    candidate = registry.get(requested_profile_id)
+    if candidate is None or candidate.kind == "remote":
+        # A remote profile is refused live audio in the first place, so a session
+        # cannot have run under one.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Profile '{requested_profile_id}' cannot hold a voice session.",
+        )
+    return requested_profile_id
+
+
 @chat_api_router.post("/v1/chat/voice-sessions")
 async def api_chat_save_voice_session(
     payload: VoiceSessionRequest,
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
+    default_processing_service: Annotated[
+        ProcessingService, Depends(get_processing_service)
+    ],
 ) -> VoiceSessionResponse:
     """Persist a completed native-voice conversation as its own chat conversation.
 
@@ -2456,6 +3126,12 @@ async def api_chat_save_voice_session(
     conversation id (with the caller's ``user_id`` so the ownership predicate that
     gates the conversation list and reads recognizes them), so the session shows up
     in the conversation list and can be continued in text.
+
+    Every row is stamped with the profile the session ran under. History is read
+    back filtered by ``processing_profile_id``, so an unstamped transcript is not
+    merely mislabeled: a text follow-up loads none of it, and the client — having
+    no profile to adopt from the thread — falls back to whichever profile the user
+    last picked elsewhere.
     """
     raw_user_id = current_user.get("user_identifier")
     if not isinstance(raw_user_id, str) or not raw_user_id:
@@ -2466,6 +3142,10 @@ async def api_chat_save_voice_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A voice session must contain at least one turn.",
         )
+
+    profile_id = _resolve_voice_session_profile_id(
+        request, payload.profile_id, default_processing_service
+    )
 
     if payload.conversation_id:
         # A client-supplied id must already belong to the caller (or be unused).
@@ -2523,6 +3203,7 @@ async def api_chat_save_voice_session(
             timestamp=timestamp,
             turn_id=turn_id,
             user_id=raw_user_id,
+            processing_profile_id=profile_id,
         )
         saved += 1
 
@@ -2549,7 +3230,8 @@ async def confirm_tool_execution(
     """
     confirmation_service = _get_confirmation_service(request)
     confirmation_result_waiters = _get_confirmation_result_waiters(request)
-    try:
+
+    async def process_confirmation() -> str:
         if payload.approved:
             if confirmation_result_waiters.is_decision_only(payload.request_id):
                 await confirmation_service.approve_without_enqueueing_execution(
@@ -2574,6 +3256,10 @@ async def confirm_tool_execution(
             web_confirmation_manager.resolve_rejected(payload.request_id)
             confirmation_result_waiters.resolve_rejected(payload.request_id)
             message = "Tool execution rejected"
+        return message
+
+    try:
+        message = await process_confirmation()
         success = True
         logger.info(f"Confirmation {payload.request_id}: {message}")
     except (
@@ -2771,6 +3457,8 @@ async def get_available_profiles(
                 description = "Research specialist using advanced models for deep information gathering"
             elif profile_id == "research_max":
                 description = "Research specialist using the Deep Research Max tier for the most comprehensive multi-source investigations"
+            elif profile_id == "coder":
+                description = "Coding agent that writes and runs code in a sandbox to finish self-contained programming and computation tasks"
             elif profile_id == "event_handler":
                 description = (
                     "Automated event handler for script and system integration"
@@ -2778,6 +3466,7 @@ async def get_available_profiles(
             else:
                 description = f"AI assistant profile: {profile_id}"
 
+        eligibility = service_config.tier_eligibility
         profiles.append(
             ServiceProfile(
                 id=profile_id,
@@ -2785,6 +3474,24 @@ async def get_available_profiles(
                 llm_model=getattr(service_config, "llm_model", None),
                 available_tools=sorted(available_tools),
                 enabled_mcp_servers=sorted(enabled_mcp_servers),
+                # A user's explicit selection is bounded by what the profile may
+                # be run on, not by the narrower automatic list, so this is the
+                # whole selectable set.
+                model_tiers=[
+                    ModelTierSummary(
+                        id=option.id,
+                        label=option.label,
+                        description=option.description,
+                    )
+                    for option in eligibility.selectable
+                ],
+                default_model_tier=eligibility.default_tier,
+                # What this deployment will actually do, not what the profile
+                # asked for: a profile configured `auto` while routing is in
+                # shadow mode still runs every request on its configured tier,
+                # so advertising Auto would offer a control that changes
+                # nothing.
+                model_selection=service.effective_model_selection,
             )
         )
 

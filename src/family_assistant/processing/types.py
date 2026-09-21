@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.tools.types import (
     RequestConfirmationCallback as ToolRequestConfirmationCallback,
 )
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMStreamEvent
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
+    from family_assistant.security.taint import SinkClass
     from family_assistant.skills.registry import NoteRegistry
 
 logger = logging.getLogger(__name__)
@@ -70,16 +72,19 @@ class ToolExecutorConfig(Protocol):
     id: str
     tools_config: ToolsConfig
     visibility_grants: set[str] | None
+    required_note_read_labels: list[str] | None
     default_note_visibility_labels: list[str] | None
     required_note_visibility_labels: list[str] | None
     allowed_note_visibility_labels: list[str] | None
     allow_wake_llm: bool
+    memory_read: bool
     note_registry: NoteRegistry | None
 
 
 class LLMStreamingLoopConfig(Protocol):
     """Config surface required by LLMStreamingLoop."""
 
+    id: str
     max_iterations: int
     context_pruning_min_turns: int
     tools_config: ToolsConfig
@@ -176,6 +181,10 @@ class ToolExecutionResult:
     llm_message: ToolMessage
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
     explicit_attachment_ids: list[str] | None = None
+    # Oversized results auto-converted to attachments. Recorded for the model
+    # (which is told the IDs in the tool result) but never queued for display:
+    # from the user's perspective these are working data, not a deliverable.
+    large_result_attachment_ids: list[str] | None = None
 
     def apply_attachment_updates(self, pending_attachment_ids: list[str]) -> None:
         """Apply attachment queue updates from this tool result to pending IDs."""
@@ -226,18 +235,38 @@ class ProcessingServiceConfig:
     context_pruning_min_turns: int = 3
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
+    required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    # Whether this profile sees household memory notes. Fail-closed by default:
+    # see ProcessingConfig.memory_read.
+    memory_read: bool = False
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
+    # Whether the context providers' output reaches this profile at all. See
+    # ProcessingConfig.include_aggregated_context.
+    include_aggregated_context: bool = False
     # Submit-then-poll tuning for a pollable local profile (e.g. Deep
     # Research) delegated to via delegate_to_service. None means "use the
     # worker's module defaults" (mirrors RemoteServiceConfig's fields of the
     # same name, but optional here since most local profiles aren't pollable).
     poll_interval_seconds: float | None = None
     max_async_seconds: float | None = None
+    # The runtime-taint sink class a whole turn on this profile counts as. Set
+    # on a profile whose turn is itself a privileged operation (a sandbox that
+    # runs code), so reaching the profile at all is gated by the taint matrix.
+    taint_sink_class: SinkClass | None = None
+    # Which model tiers this profile may be run on, and by whom. The default is
+    # a profile pinned to an inline model, which admits no selection at all.
+    tier_eligibility: ModelTierEligibility = field(default_factory=ModelTierEligibility)
+    # Whether a run that named no tier takes the profile's default (`explicit`)
+    # or is routed by the Auto classifier (`auto`).
+    model_selection: Literal["explicit", "auto"] = "explicit"
+    # Where this profile's routing threshold sits, in the classifier's own
+    # words. Only read when model_selection is `auto`.
+    auto_routing_guidance: str | None = None
 
     def __post_init__(self) -> None:
         """Validate runtime invariants for processing config."""
@@ -269,3 +298,7 @@ class RemoteServiceConfig:
     # definitely returned (used by the reaper to recover a stuck NULL-id run
     # without racing an in-flight submit).
     timeout_seconds: float = 300.0
+    # A remote agent chooses its own model, so it is pinned by construction and
+    # admits no tier selection. Present so the delegation gate can ask any
+    # target the same question.
+    tier_eligibility: ModelTierEligibility = field(default_factory=ModelTierEligibility)

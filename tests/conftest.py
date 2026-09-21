@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import pathlib
@@ -11,7 +12,7 @@ import sys  # Import sys module
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo
@@ -25,6 +26,7 @@ import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
 import vcr
+from caldav.collection import Calendar
 
 # Try to import pgserver, but it's optional if TEST_DATABASE_URL is provided
 try:
@@ -49,7 +51,8 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
+from family_assistant.storage.instrumentation import get_instrumentation
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
 # Import vector storage init and context
@@ -60,7 +63,7 @@ from family_assistant.task_worker import (
 )
 from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app as fastapi_app
-from tests.helpers import find_free_port
+from tests.helpers import find_free_port, wait_for_condition
 from tests.integration.llm.vcr_helpers import llm_request_matcher
 from tests.mocks.telegram_test_server import TelegramTestServer
 
@@ -102,6 +105,10 @@ def attachment_registry_fixture(
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Add custom command line options for pytest."""
+    parser.addoption(
+        "--adaptive-nodeids-file",
+        help="Write selected nodeids and browser markers for the adaptive runner",
+    )
     parser.addoption(
         "--postgres",
         action="store_true",
@@ -174,6 +181,23 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
             metafunc.parametrize("db_engine", db_backends, indirect=True)
 
 
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Export the final selection without parsing pytest terminal output."""
+    output_file = session.config.getoption("--adaptive-nodeids-file")
+    if output_file:
+        pathlib.Path(output_file).write_text(
+            json.dumps({
+                "nodeids": [item.nodeid for item in session.items],
+                "playwright_nodeids": [
+                    item.nodeid
+                    for item in session.items
+                    if item.get_closest_marker("playwright") is not None
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     Modify test items after collection.
@@ -221,9 +245,93 @@ def reset_task_event() -> Generator[None]:
 # This fixture has been removed - tests should use db_engine directly
 
 
+# Under commit-as-you-go no transaction is parked open, so that one is a hard
+# invariant. See docs/design/db-commit-as-you-go.md.
+DB_ENGINE_INVARIANTS_ENFORCED = True
+
+# The connection-leak count is reported but not enforced. Web API tests run a
+# live server whose background tasks can still hold a connection past the
+# test's own teardown, and the remaining cases have not been traced to a
+# specific holder -- an intermittently failing gate is worse than a logged
+# count. Tracked as follow-up; the duration check above already catches a
+# connection held open inside a transaction, which is the hazard that matters.
+DB_ENGINE_LEAK_CHECK_ENFORCED = False
+
+# How long to let in-flight background work finish before calling it a leak.
+_DB_INVARIANT_DRAIN_SECONDS = 5.0
+
+
+async def check_db_engine_invariants(engine: AsyncEngine, test_name: str) -> None:
+    """Report (or fail on) transaction-duration and connection-leak violations.
+
+    Background work (a running server, a stream hub, a task worker) can still
+    be finishing a short operation when the test itself is done, so give it a
+    moment to drain first: "leaked" means still held after everything settles,
+    not still held at this instant.
+    """
+    instrumentation = get_instrumentation(engine)
+    assert instrumentation is not None, (
+        f"{test_name} used an engine built without instrument=True, so the "
+        "transaction-duration and connection-leak checks did not run"
+    )
+    # There is no event to wait on -- the work belongs to whatever background
+    # task is still running -- so poll until the counters settle or time out.
+    with contextlib.suppress(TimeoutError):
+        await wait_for_condition(
+            lambda: not instrumentation.violations(),
+            timeout=_DB_INVARIANT_DRAIN_SECONDS,
+            interval=0.05,
+            description="in-flight database work to drain",
+        )
+
+    violations = instrumentation.violations()
+    if not violations:
+        return
+
+    leaks = [problem for problem in violations if "checked out" in problem]
+    enforced = [problem for problem in violations if problem not in leaks]
+    if leaks and not DB_ENGINE_LEAK_CHECK_ENFORCED:
+        logger.warning("Connection-leak count in %s: %s", test_name, "; ".join(leaks))
+
+    if not enforced:
+        return
+    report = f"Database engine invariant violations in {test_name}:\n" + "\n".join(
+        enforced
+    )
+    if DB_ENGINE_INVARIANTS_ENFORCED:
+        raise AssertionError(report)
+    logger.warning(report)
+
+
+@pytest.fixture(scope="session")
+def sqlite_schema_template(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[[], Awaitable[pathlib.Path]]:
+    """Build one closed SQLite schema per worker, without sharing test state."""
+    template_dir = tmp_path_factory.mktemp("sqlite_schema")
+    template_path = template_dir / "schema.sqlite"
+
+    async def get_template() -> pathlib.Path:
+        if not template_path.exists():
+            building_path = template_dir / "building.sqlite"
+            engine = create_engine_with_sqlite_optimizations(
+                f"sqlite+aiosqlite:///{building_path}", instrument=True
+            )
+            try:
+                await init_db(engine)
+            finally:
+                # Closing every connection checkpoints the WAL before the copy.
+                await engine.dispose()
+            building_path.replace(template_path)
+        return template_path
+
+    return get_template
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_engine(
     request: pytest.FixtureRequest,
+    sqlite_schema_template: Callable[[], Awaitable[pathlib.Path]],
 ) -> AsyncGenerator[AsyncEngine]:
     """
     Provides a parameterized database engine (SQLite or PostgreSQL).
@@ -259,8 +367,9 @@ async def db_engine(
             prefix="fa_test_", suffix=".sqlite", delete=False
         ) as tmp_file:
             tmp_name = tmp_file.name
+        shutil.copyfile(await sqlite_schema_template(), tmp_name)
         engine = create_engine_with_sqlite_optimizations(
-            f"sqlite+aiosqlite:///{tmp_name}"
+            f"sqlite+aiosqlite:///{tmp_name}", instrument=True
         )
         logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
         logger.info(f"Created SQLite test engine: {engine.url}")
@@ -290,6 +399,7 @@ async def db_engine(
         admin_url = postgres_container.get_connection_url().replace(
             "postgresql://", "postgresql+asyncpg://", 1
         )
+        # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
         admin_engine = create_async_engine(
             admin_url, echo=False, isolation_level="AUTOCOMMIT"
         )
@@ -298,6 +408,7 @@ async def db_engine(
         logger.info(f"Creating unique database: {unique_db_name}")
 
         # Create the unique database
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
         async with admin_engine.begin() as conn:
             # Check if database exists and drop it if so (cleanup from previous failed run)
             result = await conn.execute(
@@ -321,12 +432,12 @@ async def db_engine(
             test_db_url = f"{db_part}/{unique_db_name}?{query_params}"
         else:
             test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
-        engine = create_async_engine(test_db_url, echo=False)
+        engine = create_engine_with_sqlite_optimizations(test_db_url, instrument=True)
         logger.info(f"Created PostgreSQL test engine for database: {unique_db_name}")
 
         # Initialize vector extension first for PostgreSQL
-        async with DatabaseContext(engine=engine) as db_context:
-            await init_vector_db(db_context)
+        db_context = Database(engine=engine)
+        await init_vector_db(db_context)
         logger.info("PostgreSQL vector database components initialized.")
 
     if not engine:
@@ -338,7 +449,8 @@ async def db_engine(
     try:
         # Initialize the database schema using the test engine
         # Pass the engine to init_db for dependency injection
-        await init_db(engine)
+        if db_backend == "postgres":
+            await init_db(engine)
         logger.info("Database schema initialized.")
 
         # Yield control to the test function
@@ -348,19 +460,12 @@ async def db_engine(
         # Cleanup: dispose the engine
         logger.info(f"--- Test DB Teardown ({request.node.name}) ---")
 
+        # Checked before dispose(), which returns every connection to the pool
+        # and would mask a leak.
+        await check_db_engine_invariants(engine, request.node.name)
+
         # Force close all connections before disposing
         await engine.dispose()
-
-        # For PostgreSQL, ensure all connections are truly closed
-        if db_backend == "postgres":
-            # PostgreSQL connections may take a moment to fully close after engine.dispose()
-            # This sleep helps prevent "database is being accessed by other users" errors
-            # when dropping the test database. This is particularly important when using
-            # a session-scoped event loop where many tests run in sequence.
-            # TODO: Investigate if asyncpg or SQLAlchemy provides a more deterministic way
-            # to wait for all connections to be closed.
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Database connection cleanup delay
-            await asyncio.sleep(0.1)
 
         logger.info("Test engine disposed.")
         if db_backend == "sqlite" and tmp_name:
@@ -370,22 +475,20 @@ async def db_engine(
         # Drop the PostgreSQL database if we created one
         if db_backend == "postgres" and unique_db_name and admin_url:
             # Recreate admin engine for cleanup
+            # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
             admin_engine = create_async_engine(
                 admin_url, echo=False, isolation_level="AUTOCOMMIT"
             )
             try:
+                # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
                 async with admin_engine.begin() as conn:
-                    # Terminate any remaining connections to the test database
+                    # Drop with FORCE rather than terminating backends first and
+                    # dropping after: a connection appearing between the two
+                    # steps fails the drop with ObjectInUseError, which is a
+                    # teardown error against whichever test happened to run.
+                    # FORCE does both as one statement (PostgreSQL 13+).
                     await conn.execute(
-                        text(
-                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                            "WHERE datname = :dbname AND pid <> pg_backend_pid()"
-                        ),
-                        {"dbname": unique_db_name},
-                    )
-                    # Drop the test database
-                    await conn.execute(
-                        text(f'DROP DATABASE IF EXISTS "{unique_db_name}"')
+                        text(f'DROP DATABASE IF EXISTS "{unique_db_name}" WITH (FORCE)')
                     )
                 logger.info(f"Dropped test database: {unique_db_name}")
             finally:
@@ -558,6 +661,7 @@ async def pg_vector_db_engine(
     admin_url = postgres_container.get_connection_url().replace(
         "postgresql://", "postgresql+asyncpg://", 1
     )
+    # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
     admin_engine = create_async_engine(
         admin_url, echo=False, isolation_level="AUTOCOMMIT"
     )
@@ -566,6 +670,7 @@ async def pg_vector_db_engine(
     logger.info(f"Creating unique database: {unique_db_name}")
 
     # Create the unique database
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with admin_engine.begin() as conn:
         # Check if database exists and drop it if so (cleanup from previous failed run)
         result = await conn.execute(
@@ -590,15 +695,15 @@ async def pg_vector_db_engine(
     else:
         test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
 
-    engine = create_engine_with_sqlite_optimizations(test_db_url)
+    engine = create_engine_with_sqlite_optimizations(test_db_url, instrument=True)
 
     # No global engine to patch anymore - engine is passed via dependency injection
     logger.info("Using PostgreSQL test engine with vector support.")
 
     try:
         # Initialize vector extension first for PostgreSQL
-        async with DatabaseContext(engine=engine) as db_context:
-            await init_vector_db(db_context)
+        db_context = Database(engine=engine)
+        await init_vector_db(db_context)
         logger.info("PostgreSQL vector database components initialized.")
 
         # Initialize the database schema
@@ -609,13 +714,16 @@ async def pg_vector_db_engine(
         yield engine
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
+        await check_db_engine_invariants(engine, request.node.name)
         await engine.dispose()
 
         # Drop the PostgreSQL database
+        # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
         admin_engine = create_async_engine(
             admin_url, echo=False, isolation_level="AUTOCOMMIT"
         )
         try:
+            # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
             async with admin_engine.begin() as conn:
                 # Terminate any remaining connections to the test database
                 await conn.execute(
@@ -632,11 +740,11 @@ async def pg_vector_db_engine(
             await admin_engine.dispose()
 
 
-# Note: We don't provide a DatabaseContext fixture directly.
+# Note: We don't provide a Database fixture directly.
 # Tests should create their own context using the pg_vector_db_engine fixture:
 #
 # async def test_something(pg_vector_db_engine):
-#     async with DatabaseContext(engine=pg_vector_db_engine) as db:
+#     async with Database(engine=pg_vector_db_engine) as db:
 #         # Use db.fetch_all, db.execute_with_retry, etc.
 #         ...
 
@@ -682,23 +790,6 @@ async def cleanup_task_worker(
         worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await worker_task
-
-    # Give a moment for database connections to fully close
-    # This is crucial when using PostgreSQL to avoid "database is being accessed by other users" errors
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - PostgreSQL connection cleanup delay
-    await asyncio.sleep(0.5)
-
-    # Force all pending tasks to complete
-    pending = [
-        task
-        for task in asyncio.all_tasks()
-        if not task.done() and task != asyncio.current_task()
-    ]
-    if pending:
-        logger.warning(f"Found {len(pending)} pending tasks after {label} cleanup")
-        # Give them a moment to complete
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Pending task cleanup delay
-        await asyncio.sleep(0.1)
 
 
 @pytest.fixture(scope="function")
@@ -800,7 +891,8 @@ def radicale_server_session() -> Generator[tuple[str, str, str]]:
     base_url = f"http://127.0.0.1:{port}"
 
     # Create htpasswd file
-    hashed_password = bcrypt.hash(RADICALE_TEST_PASS)
+    # Exercise real authentication without production password-hardening cost.
+    hashed_password = bcrypt.hash(RADICALE_TEST_PASS, rounds=4)
     with open(htpasswd_file_path, "w", encoding="utf-8") as f:
         f.write(f"{RADICALE_TEST_USER}:{hashed_password}\n")
 
@@ -865,10 +957,6 @@ backtrace_on_debug = True
                 f"Radicale server did not start on port {port} within {max_wait_time} seconds."
             )
 
-        # Give Radicale a moment more to settle after port is open
-        # ast-grep-ignore: no-time-sleep-in-tests - Radicale server initialization delay
-        time.sleep(2)  # Added delay
-
         # Session fixture no longer creates a default calendar.
         # It only ensures the server is running and the user exists.
         try:
@@ -909,6 +997,23 @@ backtrace_on_debug = True
 
         shutil.rmtree(temp_dir)
         logger.info(f"Cleaned up Radicale temp directory: {temp_dir}")
+
+
+async def _validate_new_calendar(calendar: Calendar, calendar_name: str) -> str:
+    assert calendar.url is not None, "Created calendar has no URL."
+    calendar_url = str(calendar.url)
+    logger.info(
+        f"Successfully created unique calendar '{calendar_name}' with URL: {calendar_url}"
+    )
+
+    events = await asyncio.to_thread(calendar.events)
+    assert len(events) == 0, (
+        f"Newly created calendar '{calendar_name}' should have 0 events, found {len(events)}."
+    )
+    logger.info(
+        f"Verified newly created calendar '{calendar_name}' exists and has 0 events."
+    )
+    return calendar_url
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -953,20 +1058,8 @@ async def radicale_server(
         assert new_calendar_obj is not None, (
             "make_calendar did not return a calendar object."
         )
-        assert new_calendar_obj.url is not None, "Created calendar has no URL."
-        unique_calendar_url = str(new_calendar_obj.url)  # Ensure it's a string
-        logger.info(
-            f"Successfully created unique calendar '{unique_calendar_name}' with URL: {unique_calendar_url}"
-        )
-
-        # Verification: Check if the calendar is listable or has events (should be 0)
-        # This also implicitly checks if the calendar exists on the server.
-        events = await asyncio.to_thread(new_calendar_obj.events)
-        assert len(events) == 0, (
-            f"Newly created calendar '{unique_calendar_name}' should have 0 events, found {len(events)}."
-        )
-        logger.info(
-            f"Verified newly created calendar '{unique_calendar_name}' exists and has 0 events."
+        unique_calendar_url = await _validate_new_calendar(
+            new_calendar_obj, unique_calendar_name
         )
 
         yield base_url, username, password, unique_calendar_url

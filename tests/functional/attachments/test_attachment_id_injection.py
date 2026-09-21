@@ -23,7 +23,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -262,18 +262,18 @@ async def test_attachment_id_injected_and_referenceable(
 
     # --- Simulate User Interaction ---
     user_message = "Get a camera snapshot and highlight the eagle statue on it"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message}],
-            trigger_interface_message_id="msg_attachment_id_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message}],
+        trigger_interface_message_id="msg_attachment_id_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     # Assertions
     assert error is None, f"Error during interaction: {error}"

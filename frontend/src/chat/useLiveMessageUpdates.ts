@@ -217,18 +217,24 @@ export function useLiveMessageUpdates({
     // state before the persistent SSE connection is established. This is a pragmatic trade-off
     // between test reliability and user experience - the 1.5s delay happens after page load,
     // so UX impact is minimal while ensuring tests work correctly.
+    // Both deferrals are cancelled on cleanup: one still pending after the
+    // conversation changes or the hook unmounts would otherwise open a stream
+    // for the old conversation that nothing ever closes.
+    let idleCallbackId: number | null = null;
+    let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const scheduleConnect = () => {
       if ('requestIdleCallback' in window) {
         // Use requestIdleCallback + timeout to ensure networkidle is achieved
-        window.requestIdleCallback(
+        idleCallbackId = window.requestIdleCallback(
           () => {
-            setTimeout(connect, 1500);
+            idleCallbackId = null;
+            connectTimeoutId = setTimeout(connect, 1500);
           },
           { timeout: 500 }
         );
       } else {
         // Fallback for browsers without requestIdleCallback
-        setTimeout(connect, 1500);
+        connectTimeoutId = setTimeout(connect, 1500);
       }
     };
 
@@ -243,6 +249,12 @@ export function useLiveMessageUpdates({
     // Cleanup on unmount or when conversation changes
     return () => {
       window.removeEventListener('load', scheduleConnect);
+      if (idleCallbackId !== null) {
+        window.cancelIdleCallback(idleCallbackId);
+      }
+      if (connectTimeoutId !== null) {
+        clearTimeout(connectTimeoutId);
+      }
       cleanup();
     };
   }, [conversationId, interfaceType, enabled, cleanup, reconnectTrigger]);

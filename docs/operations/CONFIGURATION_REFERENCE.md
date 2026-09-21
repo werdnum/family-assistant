@@ -34,6 +34,29 @@ production use with pgvector extension for vector search.
 
 ______________________________________________________________________
 
+### POSTGRES_STATEMENT_TIMEOUT_MS
+
+Server-side ceiling, in milliseconds, on any single PostgreSQL statement the application runs.
+
+| Property  | Value         |
+| --------- | ------------- |
+| Required  | No            |
+| Default   | `60000` (60s) |
+| Sensitive | No            |
+| Example   | `30000`       |
+
+A backstop, not a latency target — nothing the application runs should come close to it. It exists
+so that a statement whose caller has gone away cannot keep consuming database capacity indefinitely;
+without it, a request cancelled after 2.9 seconds left its query running for 41 minutes. Set `0` to
+disable, which is PostgreSQL's own meaning for the setting.
+
+Startup migrations are exempt: they run on a connection from this same pool, so the migration runner
+lifts the ceiling for their duration (a large index build or backfill is the one place a long
+statement is legitimate). The exemption is local to the migration transaction and disappears when
+that transaction commits. Ignored on SQLite.
+
+______________________________________________________________________
+
 ### SERVER_URL
 
 Base URL of the running server, used for generating links and webhooks.
@@ -44,6 +67,56 @@ Base URL of the running server, used for generating links and webhooks.
 | Default   | `http://localhost:8000`         |
 | Sensitive | No                              |
 | Example   | `https://assistant.example.com` |
+
+______________________________________________________________________
+
+### METRICS_ENABLED
+
+Whether to serve Prometheus metrics. Off by default: the endpoint has no authentication of its own
+and carries token spend, model line-up and error rates, so a deployment that wants it says so. See
+[MONITORING.md](MONITORING.md#metrics) for the metric reference.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `false` |
+| Sensitive | No      |
+| Example   | `true`  |
+
+______________________________________________________________________
+
+### METRICS_BIND_HOST
+
+Address the metrics endpoint binds. Defaults to loopback, so enabling metrics does not by itself
+expose them to the network. Set to `0.0.0.0` when the scraper is not on the same host — a Kubernetes
+pod scrape reaching the pod IP, for instance. Getting this wrong breaks scraping, which is visible;
+the opposite default would publish the data, which is not.
+
+| Property  | Value       |
+| --------- | ----------- |
+| Required  | No          |
+| Default   | `127.0.0.1` |
+| Sensitive | No          |
+| Example   | `0.0.0.0`   |
+
+______________________________________________________________________
+
+### METRICS_PORT
+
+Port the metrics endpoint listens on. Deliberately separate from the application port: the
+application port is normally published by an Ingress in its entirety, and token spend, model line-up
+and error rates should not be public. Do not route this port from an Ingress.
+
+Setting it equal to `SERVER_PORT` while metrics are enabled is a startup error. The exporter binds
+first, so on a collision it is the application that fails to bind — in a background task nobody
+observes, leaving a process that is up and serving metrics for an API that is gone.
+
+| Property  | Value  |
+| --------- | ------ |
+| Required  | No     |
+| Default   | `9090` |
+| Sensitive | No     |
+| Example   | `9100` |
 
 ______________________________________________________________________
 
@@ -74,6 +147,89 @@ Enable development mode features.
 | Example   | `true`  |
 
 Enables development-specific features like hot reloading and debug endpoints.
+
+______________________________________________________________________
+
+## Task Worker Pool
+
+Background work -- reminders, delegated runs, automations, indexing and the nightly cleanups -- runs
+on a pool of in-process task workers. The pool has two kinds of worker, and each is sized
+separately. See [docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md)
+for the lanes themselves.
+
+### task_worker_count
+
+Number of **general** workers. A general worker runs any queued task it has a handler for, taking
+interactive work (reminders, confirmations, delegated runs, automations) ahead of background work
+(indexing, cleanups) whenever both are due.
+
+| Property  | Value |
+| --------- | ----- |
+| Required  | No    |
+| Default   | `2`   |
+| Sensitive | No    |
+| Example   | `4`   |
+
+### reserved_task_worker_count
+
+Number of **reserved** workers, in addition to the general ones. A reserved worker runs interactive
+tasks only, so a burst of background work cannot delay a reminder or a confirmation. It also never
+runs a handler that parks waiting on another queued task (a delegated run waiting on a human
+confirmation), because holding one would occupy the capacity that has to run the task releasing it.
+
+| Property  | Value |
+| --------- | ----- |
+| Required  | No    |
+| Default   | `1`   |
+| Sensitive | No    |
+| Example   | `2`   |
+
+**Capacity caveat:** a delegated run that asks for a human confirmation holds its worker until the
+decision arrives (up to its handler timeout), and its approval resumes that same handler rather than
+queueing separate work. So a pool of one general worker and no reserved worker does not deadlock,
+but everything else in the queue waits behind the pending decision for as long as it takes. The
+default of two general workers and one reserved worker keeps the rest of the queue moving while a
+run is parked.
+
+______________________________________________________________________
+
+## Privacy Policy Page
+
+Every deployment serves a privacy policy at `/privacy`. The path is in `PUBLIC_PATHS`, so it renders
+without authentication — App Store Connect and TestFlight require a policy URL reachable by
+reviewers who have no account. Use your `SERVER_URL` with `/privacy` appended as the privacy policy
+URL.
+
+The policy text lives in `src/family_assistant/templates/privacy_policy.html.j2` and describes the
+software's data handling; the two settings below identify the operator of your instance, who is the
+data controller.
+
+### PRIVACY_POLICY_OPERATOR
+
+Name of the person or household operating this instance, shown in the policy.
+
+| Property  | Value                                                    |
+| --------- | -------------------------------------------------------- |
+| Required  | No                                                       |
+| Default   | `the person who operates this Family Assistant instance` |
+| Sensitive | No                                                       |
+| Example   | `The Garrett household`                                  |
+
+______________________________________________________________________
+
+### PRIVACY_POLICY_CONTACT_EMAIL
+
+Contact address for privacy questions and data deletion requests. When unset, the policy directs
+readers to the operator instead of showing an address. Set it on any instance reachable from the
+internet, and especially where email intake is enabled — inbound mail can come from people who are
+not users of the instance and have no other way to reach its operator.
+
+| Property  | Value                 |
+| --------- | --------------------- |
+| Required  | No                    |
+| Default   | Unset                 |
+| Sensitive | No                    |
+| Example   | `privacy@example.com` |
 
 ______________________________________________________________________
 
@@ -165,7 +321,8 @@ Use the stable Keycloak/OIDC email as `id` unless you have a stronger local conv
 The optional `label` is the human-friendly display name the assistant uses to address the user (for
 example in the web chat). When a web/OIDC or API-token user has a `label`, the assistant uses it
 instead of a generic placeholder; if it is omitted the assistant falls back to the OIDC display name
-and then the canonical `id`.
+and then the canonical `id`. It is also the name a memory review attributes an entry to — see
+[Who a review says said something](#who-a-review-says-said-something).
 
 When `users` is configured, unknown OIDC users, Telegram users, and required email mappings are
 rejected at the interface boundary. When it is empty, the app keeps the legacy behavior:
@@ -619,6 +776,282 @@ Default LLM model identifier.
 
 ______________________________________________________________________
 
+### llm_parameters (reasoning and thinking)
+
+`llm_parameters` in `config.yaml` maps a model name or prefix to keyword arguments passed to that
+provider for every matching model. It is shared by all profiles, including both halves of a
+`retry_config`. A single model tier entry can overlay it for itself — see
+[model_tiers](#model_tiers) below.
+
+```yaml
+llm_parameters:
+  "claude-sonnet-4-6":
+    thinking:
+      type: enabled
+      budget_tokens: 4096
+  "some-openai-model":
+    use_responses_api: false # opt a model back out; the default is on
+```
+
+#### Reasoning propagation, by provider
+
+Reasoning state has to be replayed on each turn of a tool loop or the model restarts its reasoning
+from scratch on every step. How that works differs:
+
+- **Google (Gemini)** — thought signatures are captured and replayed automatically. No
+  configuration.
+
+- **OpenAI** — direct OpenAI models use the **Responses API by default**. Only Responses returns the
+  encrypted reasoning items that can be replayed; Chat Completions has no equivalent, so anything
+  left on it loses reasoning between tool-loop steps. Defaulting on means a newly configured model
+  gets reasoning propagation without anyone remembering to enrol it. Set `use_responses_api: false`
+  to pin a specific model back to Chat Completions. Direct OpenAI only; OpenRouter and other
+  `base_url` backends implement Chat Completions, and the flag is ignored for them.
+
+  Switching a model between the two APIs is observable beyond reasoning: parallel tool-calling
+  behaviour can differ for the same prompt, and structured output (`generate_structured` /
+  `generate_json`) always uses Chat Completions regardless of this setting.
+
+- **Anthropic** — extended thinking is off by default. Once enabled, thinking blocks are captured
+  and replayed automatically.
+
+#### Anthropic thinking
+
+The configuration shape differs by model generation and the two are **not** interchangeable — a
+single `"claude-"` prefix entry cannot serve both:
+
+| Model generation           | Shape                                                                  |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `claude-sonnet-4-6`, `4-5` | `thinking: {type: enabled, budget_tokens: N}`                          |
+| `claude-fable-5`, `5-1`    | `thinking: {type: adaptive}` plus `output_config: {effort: low\|high}` |
+
+Applying the `enabled` shape to a model that wants `adaptive` is rejected by the API at request time
+with a message naming the alternative.
+
+`budget_tokens` must be less than `max_tokens` (default 8192). A budget that cannot fit is rejected
+up front with both values named, rather than failing mid-conversation. Raise `max_tokens` in the
+same `llm_parameters` entry if you want a larger budget.
+
+Enabling thinking is worthwhile mainly for long tool loops — the profile running Claude (`engineer`)
+is the candidate. Note that thinking is incompatible with a non-default `temperature`.
+
+______________________________________________________________________
+
+### model_tiers
+
+A **model tier** is a named model recipe: a primary provider/model, an optional availability
+fallback, and the request parameters each is served with. A tier says how inference runs; a profile
+says how the agent operates (prompt, tools, iteration limit). A profile selects one with
+`processing_config.model_tier`, so replacing a model is an edit here rather than in every profile
+that named it.
+
+```yaml
+model_tiers:
+  standard:
+    label: "Standard" # user-facing name; may differ from the config name
+    description: "Everyday conversation, retrieval and straightforward tool use."
+    chain:
+      - provider: "google"
+        model: "gemini-3.8-flash"
+      - provider: "openai"
+        model: "gpt-5.6-terra"
+  frontier:
+    label: "Max"
+    chain:
+      - provider: "anthropic"
+        model: "claude-fable-5"
+        llm_parameters:
+          thinking:
+            type: "adaptive"
+          output_config:
+            effort: "xhigh"
+
+service_profiles:
+  - id: "default_assistant"
+    processing_config:
+      model_tier: "standard"
+    allowed_model_tiers: ["standard", "frontier"]
+```
+
+| Key                      | Meaning                                                                     |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `chain`                  | One or two entries: primary, then optional availability fallback. Required. |
+| `chain[].provider`       | Optional; auto-detected from the model name when omitted.                   |
+| `chain[].model`          | Required on every entry.                                                    |
+| `chain[].llm_parameters` | Request parameters for **this entry only**, overlaid on the global map.     |
+| `label`                  | User-facing name for the tier.                                              |
+| `description`            | One line on when the tier is worth its cost.                                |
+| `slash_command`          | Per-message chat command that runs one request on this tier.                |
+
+Tier names must start with a lowercase letter and contain only lowercase letters, digits and
+underscores. A chain is capped at two entries because that is what the retry client serves: a chain
+answers "what if the selected model is unavailable", never "the cheap model's answer was poor, run
+it again on the expensive one".
+
+**Write the map cheapest and weakest first.** Insertion order is the one order every surface
+presents tiers in — the profile listing a composer builds its intelligence control from, the tier
+catalog `delegate_to_service` advertises, and the list the Auto classifier is shown, whose prompt
+tells it these are ordered cheapest first and to prefer the least expensive that will do. Nothing
+validates the ordering, because "cheaper" is not a property this configuration can see; a map
+written in some other order will simply be presented, and routed on, in that order.
+
+#### Per-entry `llm_parameters`
+
+The global `llm_parameters` map stays the source of model defaults. An entry's own block is merged
+over the global entry for that model and re-inserted under the model's exact id **after** every
+global pattern, so it applies last and reaches no other entry.
+
+This exists because the global map is matched by *substring* in insertion order, which makes the
+same model at two efforts inexpressible there — the first matching pattern wins for every use of the
+model. Put the shared defaults in the global map and the tier-specific difference on the entry. In
+the example above, no `claude-fable-` entry exists in the global map at all — it matches by
+substring, so one would reach every model in the family — and Fable 5.1 therefore inherits no
+thinking configuration where it serves as `deep`'s fallback, while Fable 5 gets adaptive thinking
+only in `frontier`.
+
+Tier names must not collide with each other's `slash_command`, with any profile's `slash_commands`,
+or with the bot's own commands (`/start`, `/interrupt`): a chat surface dispatches a leading `/word`
+by looking it up, so a collision means one of the two silently never runs — and against a built-in
+it is always the configured one that loses. Compared case-insensitively, since Telegram treats
+`/Deep` and `/deep` as one command. Shipped: `/deep` and `/max`.
+
+#### Eligibility: `model_tier`, `allowed_model_tiers`, `auto_model_tiers`
+
+- `processing_config.model_tier` — the tier the profile runs on when a request names none.
+- `allowed_model_tiers` (top level on the profile, beside `tools_policy`) — the tiers **a user** may
+  explicitly run the profile on. Omitted means "only its own `model_tier`".
+- `auto_model_tiers` (likewise top level) — the subset **a model** may select without a
+  confirmation: a `delegate_to_service` `model_tier` argument, and the Auto classifier. Omitted
+  means "only its own `model_tier`".
+
+Both lists are replaced, never merged, when a profile or an operator overrides one, so they can only
+narrow. Every name must exist in `model_tiers`; the profile's own `model_tier` must appear in
+`allowed_model_tiers`; `auto_model_tiers` may not reach past `allowed_model_tiers`, because
+automatic selection is the weaker authority of the two; and setting either on a profile with no
+`model_tier` is a startup error.
+
+The distinction is who authorized the spend. An authenticated person choosing Max on their own
+request *is* the authorization. A model choosing it is not, which is why the shipped
+`default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
+automatically.
+
+#### Selecting a tier per request
+
+- **Web/API:** `model_tier` on `POST /api/v1/chat/turns` and `POST /api/v1/chat/send_message`. Bound
+  by `allowed_model_tiers`; a tier the profile does not accept is a 400 naming the ones that would
+  have worked. `GET /api/v1/profiles` reports each profile's `model_tiers` and `default_model_tier`,
+  which is what a client renders its intelligence control from — an empty list means the profile is
+  pinned to one model — plus `model_selection`, which says whether a request naming no tier gets
+  `default_model_tier` or gets one chosen for it. `model_selection` reports **effective** behaviour:
+  a profile configured for Auto reads as `explicit` while `model_routing.mode` is `off` or `shadow`,
+  because that is what its requests actually do.
+- **Delegation:** `model_tier` on `delegate_to_service`, bound by the *target's* `auto_model_tiers`.
+  The resolved tier is persisted with the queued run and re-applied verbatim when a worker executes
+  it, so a restart or a deployment cannot change the models of a run that was already authorized. A
+  parent's tier never propagates: each delegation decides independently.
+- **Chat commands:** a tier's `slash_command` runs one message on that tier, on whatever profile the
+  conversation is already using.
+
+Selection is one-shot: it applies to the request that carries it and nothing else. The tier a turn
+ran at, what was requested and who chose it are recorded with the reply and on its trace span.
+
+#### Auto routing: `model_routing` and `processing_config.model_selection`
+
+When nobody names a tier, a profile can have one chosen per request instead of always taking its
+default. Auto is a routing policy over tiers, not a tier: a cheap classifier runs once before the
+turn, picks from the profile's `auto_model_tiers`, and the choice is frozen for the whole run.
+
+```yaml
+model_routing:
+  mode: "shadow" # off | shadow | active
+  classifier:
+    provider: "google"
+    model: "gemini-3.8-flash"
+  timeout_seconds: 10
+  history_messages: 6
+```
+
+- **`mode`** — `off` never calls the classifier. `shadow` calls it and records what it would have
+  chosen while the run executes on the profile's configured tier, which is how Auto is evaluated
+  against real outcomes before anything acts on it. `active` lets the decision pick the tier.
+  Shipped as `shadow`. **Shadow is not free:** it is a serial classifier call, up to
+  `timeout_seconds` of it, in front of every turn on an auto profile, and it changes nothing about
+  what that turn runs on — the cost is the price of the evaluation data.
+- **`classifier`** — one classifier for the whole deployment, in the same `provider`/`model` shape
+  as a `retry_config` entry. What varies per request is the tier list and the profile's guidance,
+  both of which travel with the call. Required whenever `mode` is not `off`; omitting it is a
+  startup error rather than a run of failures that look like a provider outage.
+- **`timeout_seconds`** — a classification that has not answered by here is abandoned and the run
+  continues on the configured tier. A lost turn is worse than a weaker one.
+- **`history_messages`** — how many recent messages of the conversation the classifier sees,
+  alongside the current request and the names and types (never the contents) of its attachments.
+
+Two settings turn it on for a profile:
+
+- **`processing_config.model_selection`** — `explicit` (default) or `auto`. `auto` requires a
+  `model_tier` and a non-empty `auto_model_tiers`; both are startup errors otherwise, because a
+  classifier with nothing to choose from would spend a call to say so.
+- **`auto_routing_guidance`** (top level on the profile) — where this agent's routing threshold
+  sits, in the classifier's own words. Replaced wholesale rather than merged when a profile
+  overrides it. The classifier's shared instructions live in `prompts.yaml` under
+  `model_routing_prompt`.
+
+Routing runs only when nothing else has decided: an explicit user selection, a slash command, or a
+`delegate_to_service` `model_tier` bypasses the classifier entirely, and a queued run replays the
+envelope frozen when it was created rather than being routed again. A delegation that named *no*
+tier **is** routed, because each agent boundary decides its own — routed against the target profile
+when the delegation is created, so the persisted envelope a worker later replays is already a routed
+one.
+
+**A routing failure is visible, never a silent decision.** The run continues on the configured tier
+and the outcome is recorded beside it, so a classifier outage cannot read as a run of confident
+`Auto → Standard` decisions. Every routed turn's assistant row records `model_tier_routing_outcome`
+(`decided`, `timeout`, `invalid` or `error`) and `model_tier_classifier_model` in
+`message_history.reasoning_info`, and a shadow-mode row also records `model_tier_would_choose` —
+together the shadow evaluation dataset, queryable directly against that column, and durable in a way
+traces are not. Routing is also on the trace span as `llm.model_tier.routing_outcome`,
+`llm.model_tier.would_choose` and `llm.model_tier.classifier_model`, and on the
+`family_assistant_model_routing_decisions` and `family_assistant_model_routing_latency_seconds`
+metrics. The classifier's own token spend is attributed to the profile it routed for, under the tier
+label `router` rather than under the tier the turn then ran at.
+
+Shipped: `default_assistant` is `auto` over `standard` and `deep`, with `mode: shadow`, so nothing
+routes yet. `frontier` stays outside the automatic range — a classifier false positive there has
+asymmetric cost, so reaching Max remains a person's explicit choice.
+
+#### Precedence against `retry_config` / `llm_model` / `provider`
+
+A profile names **either** a tier **or** an inline model, never both:
+
+- Declaring both in the same block is a startup error.
+- Declaring `model_tier` drops any `provider`, `llm_model` and `retry_config` inherited from
+  `default_profile_settings` or from the shipped profile an operator is overriding.
+- Declaring `provider`, `llm_model` or `retry_config` drops an inherited `model_tier` the same way.
+
+The same rule applies to `default_profile_settings` itself: an operator who sets a chain or an
+inline model there replaces the shipped `model_tier` rather than colliding with it, and one who sets
+`model_tier` replaces a shipped chain or model. A bare `retry_config: null` asks for no chain and
+says nothing about tiers, so it leaves the shipped tier in place.
+
+`default_profile_settings.processing_config.model_tier` therefore sets the tier for every profile
+that does not select its own or pin an inline model.
+
+#### Profiles that cannot use a tier
+
+Refused at startup, because the runtime is coupled to one provider or one API surface and a tier
+offers to replace it:
+
+- `enable_computer_use` profiles (Google GenAI client only).
+- profiles with `antigravity_config`, and any tier whose chain names an Interactions API agent
+  (Antigravity or Deep Research) — those run server-side rather than as chat models.
+- `remote_a2a` profiles, where the remote agent chooses its own model. A remote profile inherits no
+  model selection at all — neither a tier nor an inline model reaches it from
+  `default_profile_settings` — so only a `model_tier` written on the profile itself is refused.
+- profiles pinned for perception reasons rather than by a config flag, such as `media_analyst` (only
+  the Gemini adapter represents audio and video), which stay on an inline model by choice.
+
+______________________________________________________________________
+
 ### EMBEDDING_MODEL
 
 Embedding model for vector search.
@@ -727,6 +1160,63 @@ Useful for debugging prompts and responses.
 ______________________________________________________________________
 
 ## Calendar Integration
+
+Family Assistant supports multi-source calendar integration with CalDAV servers (e.g. Nextcloud,
+iCloud, Google Workspace) and subscribed iCal feeds (e.g. TripIt, school calendars, public event
+feeds).
+
+Calendars can be configured in `config.yaml` using structured entries to assign friendly display
+names, stable IDs for targeting and filtering, and default calendar selection. Legacy
+comma-separated environment variables are also supported for simple deployments.
+
+### YAML Configuration
+
+```yaml
+calendar:
+  caldav:
+    username: "user@example.com"
+    password: "app-specific-password"
+    base_url: "https://caldav.example.com"  # Optional, inferred from URLs if omitted
+    calendar_urls:
+      - url: "https://caldav.example.com/calendars/user/family"
+        name: "Family"
+        id: "family"
+        default: true
+      - url: "https://caldav.example.com/calendars/user/work"
+        name: "Work"
+        id: "work"
+  ical:
+    urls:
+      - url: "https://www.tripit.com/feed/ical/private/..."
+        name: "TripIt"
+        id: "tripit"
+      - url: "https://school.example.edu/calendar.ics"
+        name: "School"
+        id: "school"
+  duplicate_detection:
+    enabled: true
+    similarity_strategy: "embedding"
+    similarity_threshold: 0.30
+```
+
+#### CalDAV Calendar Source Options
+
+| Field     | Type    | Description                                                                                                                                                                                                                 |
+| --------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`     | string  | **Required**. Direct URL to the CalDAV calendar collection.                                                                                                                                                                 |
+| `name`    | string  | Optional friendly display name shown in prompt context (`[{source_name}]`) and search results. If omitted, derived from the ID slug.                                                                                        |
+| `id`      | string  | Optional stable identifier used for tool targeting (`calendar_id`) and search filtering (`source_ids`). If omitted, derived from the URL path slug.                                                                         |
+| `default` | boolean | Optional flag designating this calendar collection as the default destination for `add_calendar_event` when no `calendar_id` is passed. If omitted on all collections, the first configured CalDAV calendar is the default. |
+
+#### iCal Feed Source Options
+
+| Field  | Type   | Description                                                                                                                                                                                                                                                         |
+| ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`  | string | **Required**. URL to the public or subscribed iCalendar (.ics) feed. URLs often contain private subscription tokens (e.g. TripIt, private webcals) and are kept strictly internal: they are never sent to the LLM in tool calls, prompt context, or error messages. |
+| `name` | string | Optional friendly display name. If omitted, the feed's `X-WR-CALNAME` header is used, falling back to the URL path slug.                                                                                                                                            |
+| `id`   | string | Optional stable identifier used for search filtering (`source_ids`) and status listing (`list_calendars`). If omitted, derived from the URL path slug.                                                                                                              |
+
+______________________________________________________________________
 
 ### CALDAV_USERNAME
 
@@ -868,6 +1358,36 @@ subscriptions fail.
 
 ______________________________________________________________________
 
+## iOS Universal Links
+
+The server publishes `/.well-known/apple-app-site-association` for native app-auth callbacks and
+shared-conversation links. The checked-in production defaults match the
+`assistant.andrewgarrett.dev` app; set both variables for a differently signed or self-hosted app.
+Setting both also makes the app-auth callback use the verified HTTPS Universal Link instead of the
+`familyassistant://` fallback.
+
+### APPLE_TEAM_ID
+
+Apple Developer Team ID used in the AASA `appID`.
+
+| Property  | Value        |
+| --------- | ------------ |
+| Required  | Self-hosted  |
+| Default   | `H7NBC2S52X` |
+| Sensitive | No           |
+
+### APPLE_BUNDLE_ID
+
+iOS application bundle identifier used in the AASA `appID`.
+
+| Property  | Value                         |
+| --------- | ----------------------------- |
+| Required  | Self-hosted                   |
+| Default   | `dev.andrewgarrett.assistant` |
+| Sensitive | No                            |
+
+______________________________________________________________________
+
 ## Push Notifications (iOS APNs)
 
 Native iOS push is delivered through Apple Push Notification service using provider-token
@@ -965,14 +1485,16 @@ sends go to the right host.
 
 ______________________________________________________________________
 
-## Google Integration (Gmail & Drive)
+## Google Integration (Gmail, Drive & Calendar)
 
-Per-user Gmail and Drive access needs an OAuth client from Google Cloud Console plus a Fernet key
-for encrypting refresh tokens at rest. All three secrets must be present; if any is missing the
-integration is disabled at startup with an error naming the unmet condition.
+Per-user Gmail, Drive and Google Calendar access needs an OAuth client from Google Cloud Console
+plus a Fernet key for encrypting refresh tokens at rest. All three secrets must be present; if any
+is missing the integration is disabled at startup with an error naming the unmet condition.
 
 See [docs/design/user-scoped-google-data-access.md](../design/user-scoped-google-data-access.md) and
-the user-facing [Gmail and Google Drive guide](../user/google-workspace.md).
+the user-facing [Gmail and Google Drive guide](../user/google-workspace.md). Google Calendar is
+covered in [docs/design/google-calendar-per-user.md](../design/google-calendar-per-user.md) and the
+[calendar guide](../user/calendar.md).
 
 **OAuth client setup.** Create an OAuth 2.0 client in Google Cloud Console with the redirect URI
 pointing at `<your-server>/api/integrations/google/callback`, and add every household member who
@@ -993,6 +1515,8 @@ google_integration:
     - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
     - "https://www.googleapis.com/auth/drive.file"
+    - "https://www.googleapis.com/auth/calendar.readonly"
+    - "https://www.googleapis.com/auth/calendar.events"
   require_taint_enforcement: true
 ```
 
@@ -1052,12 +1576,12 @@ ______________________________________________________________________
 
 Allowlist of Google OAuth data scopes requested at consent.
 
-| Property  | Value                                                             |
-| --------- | ----------------------------------------------------------------- |
-| Required  | No                                                                |
-| Default   | `gmail.readonly`, `gmail.compose`, `drive.readonly`, `drive.file` |
-| Sensitive | No                                                                |
-| Example   | `["https://www.googleapis.com/auth/gmail.readonly"]`              |
+| Property  | Value                                                                                                     |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| Required  | No                                                                                                        |
+| Default   | `gmail.readonly`, `gmail.compose`, `drive.readonly`, `drive.file`, `calendar.readonly`, `calendar.events` |
+| Sensitive | No                                                                                                        |
+| Example   | `["https://www.googleapis.com/auth/gmail.readonly"]`                                                      |
 
 The `scopes` list *narrows* the grant — remove the Drive scopes to get a Gmail-only integration, for
 example. Only scopes used by shipped deterministic tools are allowed; adding an unsupported scope
@@ -1073,6 +1597,21 @@ Tool registration follows the configured scopes:
 | `drive_search`                                              | `drive.readonly` or `drive.metadata.readonly` |
 | `drive_get_file`                                            | `drive.readonly`                              |
 | `drive_write_file`                                          | `drive.file`                                  |
+
+Google Calendar has no tools of its own; it extends the calendar tools (`list_calendars`,
+`search_calendar_events`, `add_calendar_event`, `modify_calendar_event`, `delete_calendar_event`)
+and the calendar context, which keep working without it:
+
+| Scope               | Enables                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `calendar.readonly` | The user's Google calendars in the calendar tools, and their primary Google calendar in the per-turn calendar context |
+| `calendar.events`   | Adding, changing and deleting events on those calendars (needs `calendar.readonly` as well)                           |
+
+Calendar writes never add attendees and always ask Google not to send updates, so they cannot email
+anyone. When calendar access is configured, every profile that allows a calendar tool is held to the
+taint floor described under `require_taint_enforcement`, not only profiles allowing the Gmail/Drive
+tools. Users who connected before calendar scopes were added keep working for Gmail and Drive and
+must **Reconnect** to grant calendar access.
 
 The draft tool never sends email, although Google's `gmail.compose` scope itself also authorizes
 sending. Drive writes are deterministically confined to the app-created Family Assistant folder and
@@ -1090,7 +1629,8 @@ ______________________________________________________________________
 
 ### google_integration.require_taint_enforcement
 
-Whether the Gmail/Drive tools require taint enforcement before they register.
+Whether the Google integration (the Gmail/Drive tools, and Google Calendar in the calendar tools)
+requires taint enforcement before it is enabled.
 
 | Property  | Value   |
 | --------- | ------- |
@@ -1101,9 +1641,18 @@ Whether the Gmail/Drive tools require taint enforcement before they register.
 
 When `true`, the tools only register if `taint_policy.mode` is `enforce` **and** the effective
 policy matrix floors the key exfiltration sinks — `arbitrary_external_message`,
-`attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening` — at `confirm` for
-untrusted content. If the check fails, the tools are not registered and the integration status
-endpoint reports the unmet condition.
+`attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening` — at least at
+`confirm` for untrusted content. An `adjudicate` cell satisfies this check only when its effective
+reviewer verdict floor is `confirm` or `deny`, whether the floor comes from the cell's
+`verdict_floor` or from `operator_minimum`. Bare `adjudicate` can return `allow` and therefore does
+not satisfy the check.
+
+The shipped review-era defaults deliberately use bare, unfloored `adjudicate` cells and keep
+`sensitive_read_broadening` at `audit`, so merely changing the shipped `taint_policy.mode` from
+`observe` to `enforce` does not make this registration requirement pass. Add explicit floors or use
+the documented [migration pin](#migration-for-deployments-already-enforcing-taint-policy) to retain
+the earlier deterministic gates. If the check fails, the tools are not registered and the
+integration status endpoint reports the unmet condition.
 
 Setting it to `false` waives the check (logged at startup and surfaced on the status endpoint) and
 the tools register regardless of taint mode.
@@ -1125,6 +1674,187 @@ part of the floor check:
   shipped `default_profile_settings.tools_policy` carries a priority-20 `confirm` rule for
   `delete_calendar_event` and `modify_calendar_event`, so those remain confirmed whatever the matrix
   says. A soft taint outcome never removes a confirmation that tool policy imposes.
+
+______________________________________________________________________
+
+## Automatic Tool-Call Review
+
+### tool_call_review
+
+Configures the shared, non-agentic judge used by runtime-taint `adjudicate` cells and static
+tool-policy `review` rules.
+
+```yaml
+tool_call_review:
+  enabled: true
+  provider: "google"
+  model: "gemini-3.7-flash"
+  timeout_seconds: 30.0
+  max_reviews_per_turn: 25
+  escalation:
+    consecutive_denials: 3
+    total_denials_per_turn: 20
+  guidance: >-
+    Optional deployment-wide trusted guidance about routine workflows.
+```
+
+`timeout_seconds` bounds a single review, which runs inline: the gated tool call waits on it, so the
+value trades a stalled turn against a fail-closed fallback. The default of 30 s suits a reasoning
+model on a long prompt — reviews on `gemini-3.7-flash` commonly take 4-10 s with a tail past 15 s,
+and a budget near that range turns ordinary reviews into fallbacks rather than judgements. Lower it
+only with evidence from `taint_audit_events` that the configured model returns sooner, and read it
+alongside `max_reviews_per_turn`, which bounds how many such waits one turn can incur.
+
+The reviewer gets no tools. It receives only explicitly trusted-tier conversation rows, an
+audit-safe provenance digest, the matched policy context, and the complete proposed arguments fenced
+as untrusted data. It returns `allow`, `confirm`, or `deny`. `confirm` uses the existing durable
+confirmation path; `deny` returns a structured refusal so the calling model can continue and choose
+another route. Provider errors, malformed output, timeouts, a disabled reviewer, and per-turn budget
+exhaustion all use the caller-owned fallback; no such path can resolve to `allow`. The configured
+reviewer provider is initialized on its first review rather than during application startup. A
+deployment that has not configured that provider's credentials can still start, while any attempted
+review fails closed through the same caller-owned fallback. Provider initialization failures are
+cached for the process lifetime, so restart after correcting credentials or provider configuration.
+
+Profiles can add trusted, additive instructions with `processing_config.review_guidance`. Do not put
+request data, trigger payloads, browser content, or secrets in either guidance field.
+
+Runtime-taint matrix cells accept either the short form `adjudicate` (whose fallback is derived from
+the pre-review default — `confirm` for every gated cell, so an unavailable reviewer asks the human
+and an unattended context still fails closed) or an explicit cell:
+
+```yaml
+taint_policy:
+  matrix_overrides:
+    unknown_external:
+      sandbox_network:
+        outcome: "adjudicate"
+        verdict_floor: "confirm" # optional: confirm or deny
+        fallback: "deny"         # required for a new cell: confirm or deny
+```
+
+#### Source trust tiers
+
+Matrix and `operator_minimum` rows are keyed by source trust tier, least to most
+trusted-pole-distant:
+
+| Tier                 | Meaning                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `trusted_user`       | Content a human typed through an authenticated channel                                                    |
+| `trusted_internal`   | Content composed inside the trust boundary without a human hand — ordinary model output, system templates |
+| `known_contact`      | A vetted external sender                                                                                  |
+| `recognized_machine` | A recognized automated sender                                                                             |
+| `unknown_external`   | Anything else                                                                                             |
+
+`trusted_user` and `trusted_internal` are both the trusted pole and **no shipped cell distinguishes
+them**. The split exists so that the parts of the reviewer contract that need *the human's own
+words* — the originating-request slot and the destination-echo signal — can ask for them by tier
+instead of guessing from message structure; those two narrow to exactly `trusted_user`, while
+everything evidential (which conversation rows render, which provenance detail is shown) covers
+both.
+
+**You do not need to write `trusted_internal` rows.** A `matrix`, `matrix_overrides`, or
+`operator_minimum` entry written for `trusted_user` governs `trusted_internal` evaluations too,
+unless you write an explicit `trusted_internal` entry for that same sink class, which then wins.
+Inheritance is deliberate: a deployment that floored `trusted_user` keeps governing ordinary model
+output rather than silently exempting it when that output reclassifies.
+
+Almost every turn contains model output, so a turn's *maximum* tier is normally at least
+`trusted_internal`; the distinction is meaningful per row, per field, and per artifact, not per
+turn.
+
+A `confirm` floor limits the model to `confirm`/`deny`; a `deny` floor limits it to `deny`.
+`operator_minimum` is applied as a verdict floor and profiles cannot relax it. `redact` cannot be a
+minimum for an adjudicated cell. In `observe` mode, adjudication still runs but its effect is
+`audit`; taint-only reviews are detached from the execution path and drained during shutdown.
+
+Static policy can delegate a matched call in the same way:
+
+```yaml
+tools_policy:
+  rules:
+    - match: {tags_any: ["destructive"]}
+      decision: "review"
+      priority: 20
+      description: "Judge destructive operations against the trusted request"
+```
+
+`review` tools remain advertised even without a live confirmation channel. When static `review` and
+taint `adjudicate` match the same call, one reviewer invocation receives both contexts; their
+verdict spaces and fallbacks merge toward the stricter result. A `confirm` verdict with no available
+confirmation path degrades to a structured denial.
+
+The confined-profile exemption skips a taint-only disclosure review only when
+`include_aggregated_context` is `false`, the turn recorded no sensitive reads or high-taint history,
+no effective `confirm`/`deny` floor applies, and the reviewer message window proves it contains only
+the current turn (system scaffolding followed by the current user message, with no prior user,
+assistant, tool, or error rows). This taint-layer exemption also applies to browser-tagged actions;
+independent static/action-review rules are unchanged. Browser tools that return page content are
+tagged as sensitive reads, so a successful browser read disables the exemption for later
+disclosures. A missing or ambiguous message window fails toward review. The exemption resolves to
+`audit`, never `allow`. Destination-bearing local tools declare their destination argument in
+trusted metadata; an exact whole-value match in the current trusted request is passed to the
+reviewer as evidence, not as authorization. URL matching normalizes scheme and host case but
+preserves path, query, and fragment case; non-URL destinations retain case-insensitive text
+normalization.
+
+The central executor treats every successful tool tagged both `read_only` and `sensitive_data` as a
+sensitive read. A tool can record a narrower corpus scope itself; otherwise the executor records a
+conservative tool-level scope by comparing state before and after successful execution. There is no
+in-flight read reservation: a concurrent disclosure formed before the read returns cannot causally
+contain its result, while disclosures after return see the recorded read and cannot exempt.
+
+`GET /api/diagnostics/taint-audit` includes verdict and resolution-status counts. Individual
+`tool_call_review` audit events include the verdict, reason, latency, fallback use, delegating
+contexts, allowed verdicts, and destination-echo signal without storing raw tool arguments. The
+reason is the reviewer's free-form rationale, stored verbatim so an observe-mode verdict can be
+explained after the fact; it is model output and may quote reviewed content. Trusted local-schema
+argument names may appear in the argument summary, while every argument value is omitted and MCP or
+unexpected mapping keys are pseudonymized. For message-originated calls, `turn_id` and
+`tool_call_id` can locate the canonical stored assistant message for later reconstruction without
+duplicating it in the audit table. Direct named-sink and other non-message-originated authorizations
+may have no corresponding message row, so their structured event is the complete durable record.
+When a blocking-path model-denial threshold is reserved, one `tool_call_review_escalation` event is
+also recorded with review status `escalation_confirmation_requested` or
+`escalation_turn_terminated`. Detached observe-only reviews do not update denial counters, so these
+trip counts intentionally describe blocking static/enforce paths rather than shadow traffic.
+
+#### Migration for deployments already enforcing taint policy
+
+The shipped default matrix now replaces the old egress and sandbox gates with `adjudicate`, and
+makes `unknown_external` household messaging and sensitive-read broadening auditable. A deployment
+already running `taint_policy.mode: enforce` must either adopt that judged posture deliberately or
+pin every previously deterministic gate before upgrading. This is the literal cell-for-cell pin:
+
+```yaml
+taint_policy:
+  operator_minimum:
+    known_contact:
+      arbitrary_external_message: "confirm"
+      attacker_addressable_egress: "confirm"
+      sandbox_network: "confirm"
+    recognized_machine:
+      arbitrary_external_message: "confirm"
+      attacker_addressable_egress: "confirm"
+      sandbox_network: "confirm"
+    unknown_external:
+      arbitrary_external_message: "confirm"
+      attacker_addressable_egress: "confirm"
+      known_user_message: "confirm"
+      sensitive_read_broadening: "confirm"
+      sandbox_network: "deny"
+```
+
+Until automation-definition provenance is persisted, every unattended callback enters at
+`unknown_external`; the `known_user_message` minimum therefore makes a reminder's
+`send_message_to_user` call create a deferred confirmation instead of delivering. A deployment that
+requires automatic reminder delivery may deliberately omit that one entry while retaining the other
+minima. That is a reminder-compatible exception to the old posture, not a cell-for-cell pin. Remove
+the entry from `operator_minimum` to choose the shipped `audit` behavior; a weaker matrix override
+cannot relax an operator minimum.
+
+Keep production in `observe` until the audit data shows near-zero false allows on adversarial
+replays, acceptable projected confirmation volume, and acceptable p95 reviewer latency.
 
 ______________________________________________________________________
 
@@ -1167,6 +1897,60 @@ See [docs/design/taint-history-epoch-amnesty.md](../design/taint-history-epoch-a
 
 ______________________________________________________________________
 
+## Legacy Definition Amnesty
+
+An automation, event listener, or stored script written before definition records shipped carries
+none, and a firing reads that absence as fail-closed: the definition renders to the tool-call
+reviewer as a stub and seeds its turn at `unknown_external`, permanently. A deployment whose
+automation estate predates the feature migrates it with `scripts/restamp_legacy_definitions.py`,
+which lists the definitions holding no record that were created before a cutoff you state, and —
+only with `--apply` — records an operator amnesty for each.
+
+```bash
+# What would be amnestied? Nothing is written.
+python scripts/restamp_legacy_definitions.py \
+    --database-url "$DATABASE_URL" --created-before 2026-08-01
+
+# Grant it.
+python scripts/restamp_legacy_definitions.py \
+    --database-url "$DATABASE_URL" --created-before 2026-08-01 --apply
+```
+
+State `--created-before` as the instant definition records were **deployed**. There is no default: a
+definition written after that instant with no record is a write-path regression to fix, not a legacy
+artifact to bless. Restrict a run with `--kind` (`schedule_automation`, `event_listener`, `script`)
+and `--name`, both repeatable, to amnesty in batches.
+
+An amnestied definition fires with its intent rendered, and the reviewer is told which it is
+reading: the review status says the definition was amnestied by the operator and examined by no
+gate, it never counts as a human attestation, and it never feeds the destination echo. It is bound
+to a hash of the content it was granted over, so editing the definition afterwards voids the amnesty
+and returns it to the ordinary creation gate.
+
+Two properties bound what a run can do. It fills absence only — a definition already holding a
+record, including one voided by a hash mismatch, is never touched — and it is reversible:
+
+```bash
+python scripts/restamp_legacy_definitions.py --database-url "$DATABASE_URL" --revoke          # list
+python scripts/restamp_legacy_definitions.py --database-url "$DATABASE_URL" --revoke --apply  # clear
+```
+
+Revocation clears records carrying the amnesty disposition and nothing else, restoring the
+fail-closed state exactly, so a judge verdict or human confirmation can never be deleted this way.
+Review the amnestied estate with `--revoke` (without `--apply`) when you later add a `confirm` floor
+to executable persistence: an amnesty records a decision no gate made, and like a judge-allowed cure
+it keeps curing under configuration tightened afterwards.
+
+One-shot callbacks in flight (reminders, `schedule_future_callback`) are not covered — their records
+ride the enqueued task and expire on firing.
+
+Notes and attachments need no equivalent: an artifact carrying no stored provenance contributes no
+taint, so legacy ones are already unaffected.
+
+See [docs/design/legacy-definition-amnesty.md](../design/legacy-definition-amnesty.md).
+
+______________________________________________________________________
+
 ## Confined Diagnostics Profile (`ops_automation`)
 
 `ops_automation` exists so an unattended scheduled job can crawl recent error logs, triage them, and
@@ -1181,6 +1965,206 @@ conversation.
 To let a profile read those reports, grant it the `ops_diagnostics` visibility label. Without that
 grant the reports are readable only through the web interface. See
 [docs/design/profile-confined-note-writes-and-automation-approvals.md](../design/profile-confined-note-writes-and-automation-approvals.md).
+
+______________________________________________________________________
+
+## Profile Note Visibility
+
+A note is visible to a profile when its visibility labels are a **subset** of the profile's
+`visibility_grants`. Four `processing_config` keys narrow that on a per-profile basis, and all four
+are enforced at the storage layer rather than in a tool, so they hold for every path that reaches
+notes — the assistant's note tools, scripts, and the context provider that renders notes into the
+system prompt.
+
+```yaml
+- id: "some_profile"
+  visibility_grants: ["memory"]
+  processing_config:
+    default_note_visibility_labels: ["memory"]
+    required_note_visibility_labels: ["memory"]
+    allowed_note_visibility_labels: ["memory"]
+    required_note_read_labels: ["memory"]
+```
+
+- **default_note_visibility_labels** — applied when the profile creates a note without naming
+  labels.
+- **required_note_visibility_labels** — write floor: every note the profile writes carries these,
+  and it may not modify a note that does not already.
+- **allowed_note_visibility_labels** — write ceiling: no note the profile writes may carry a label
+  outside this set.
+- **required_note_read_labels** — read floor, the mirror of the write floor: a note or file-based
+  skill must carry every label listed here for the profile to read it at all.
+
+The read floor is what a grant set cannot express. Because visibility is a subset test, an
+**unlabelled** note is visible to every reader, and a file-based skill — which carries no labels —
+passes any grant set for the same reason. A profile granted only `memory` therefore still sees every
+unlabelled household note until a read floor is set. Setting one confines the profile to notes
+labelled for it, at both boundaries that resolve notes: the notes repository and the skill registry.
+
+Memory topic notes are left out of the "Other available notes" title list for every reader, so the
+memory contribution to a rendered prompt is the core note alone. They remain reachable by title
+through `get_note`, through search, and in `list_notes` output.
+
+The shipped `memory_curator` profile sets all four to `memory`, which is what confines the
+background curator to the memory notes in both directions. See
+[docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+The `memory` label itself is not granted through `visibility_grants`. It is granted, or taken away,
+by the `memory_read` setting described under [Conversation Memory](#conversation-memory) below, so
+that turning memory reading off for a profile is one switch rather than a switch and a grant list
+that have to agree.
+
+______________________________________________________________________
+
+## Conversation Memory
+
+`memory_config` bounds the household memory store — the notes carrying the `memory` visibility
+label. Every writer is held to these bounds at the notes repository, so a value here applies to the
+notes UI, the assistant's own note tools and the background curator alike; a write that would exceed
+a cap is refused with a message telling the writer to condense or move detail to a topic note.
+
+```yaml
+memory_config:
+  core_note_max_chars: 6000
+  topic_note_max_chars: 12000
+  topic_index_max_chars: 1500
+  review_input_max_chars: 24000
+  max_edits_per_review: 12
+  core_note_title: "Household Memory"
+```
+
+- **core_note_max_chars** — ceiling on the single always-loaded memory note, which is the whole
+  memory contribution to every prompt.
+- **topic_note_max_chars** — ceiling on each memory topic note, sized so no memory note exceeds what
+  one review can read.
+- **topic_index_max_chars** — the share of the core note its derived index of topic notes may
+  occupy.
+- **review_input_max_chars** — ceiling on everything one memory review is given: the rendered
+  transcript of the stretch plus the current memory topic entries shown beside it. The transcript
+  takes two thirds of it, and the entries whatever is left, most recently changed first; that split
+  is not configurable.
+- **max_edits_per_review** — how many note edits one review may propose.
+- **core_note_title** — the title the core note is created under. It is created automatically on the
+  first memory write, identified thereafter by id, so renaming it in the notes UI is safe. If a note
+  with this title already exists and is not part of memory, memory writes are refused until it is
+  renamed.
+
+Deleting the core note is refused (exactly one must exist); clearing its contents is an ordinary
+edit. See [docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+### Which profiles read and contribute
+
+Two `processing_config` settings decide a profile's relationship to memory. They are on for the two
+household profiles and off for every other profile, which is also the code default for a profile
+that names neither.
+
+```yaml
+- id: "some_profile"
+  processing_config:
+    memory_read: true
+    memory_contribute: false
+```
+
+- **memory_read** — whether the profile sees household memory. This is the whole of memory's
+  visibility: with it on, the `memory` label is added to the profile's effective read grants, so the
+  always-loaded core note reaches its prompt and `get_note` opens a topic note; with it off, the
+  label is denied even if `visibility_grants` names it, and no memory note reaches the profile
+  through any path. It also governs writing: a profile that reads no memory must not write any
+  either, so `propose_memory_edits` is withheld from its effective tool set whatever its
+  `tools_policy` grants, and "remember this" is served by `add_or_update_note` as an ordinary note.
+- **memory_contribute** — whether conversations run under the profile are reviewed into memory by
+  the background curator.
+
+`default_assistant` and `complex_tasks` ship with both set to `true` and carry them explicitly, so
+the household's memory behaviour is visible where an operator reads rather than inherited from a
+code default. To opt out, set `memory_contribute: false` on a profile to keep the memory it already
+has without adding to it, set both to `false` to take it out of memory entirely, or set
+`memory_config.enabled: false` to turn the whole mechanism off for every profile at once. Setting
+`memory_read: false` while leaving contribution on is a startup error: contributing requires
+reading.
+
+`complex_tasks` contributes rather than reading only, because a long investigation is where
+constraints, rejected options and open decisions actually get settled. The setting covers top-level
+`/complex` conversations only: a delegation into `complex_tasks` runs in a subconversation, and
+subconversations never contribute, whatever the profile's settings — the delegating conversation is
+reviewed instead, and it carries the delegated result.
+
+The `memory_curator` profile is the exception and is left alone: it reads memory because curating it
+is its whole job, and does not contribute, since its own subconversation is never reviewed.
+
+A profile that does not read memory cannot write it either. `propose_memory_edits` refuses with that
+reason, and whole-note writes to a memory note — `add_or_update_note`, `delete_note` — are refused
+at the notes repository: a profile that cannot see the existing entries would be duplicating what is
+already there or replacing text it never read. The web notes UI is an admin surface and is
+unaffected.
+
+Contributing without reading is a startup error. Contribution feeds a profile's conversations to the
+curator, which then writes entries the profile itself cannot see, so it could neither honour what it
+taught nor be corrected by it.
+
+A profile's first startup with contribution on records the moment, and reviews consider only
+conversation from then on. For a deployment upgrading into these defaults this is the plain answer
+to "what happens to everything we have already said": nothing. The existing history is never
+reviewed and never curated; memory starts from the first conversation after that startup, so the
+upgrade costs no burst of model calls over months of old conversation. Turning contribution off and
+on again records a new moment, which discards anything said in between that had not yet been
+reviewed. Reviewing older history is a separate, explicit backfill.
+
+### When conversations are reviewed
+
+`memory_config` also holds the timing of the background review. A recurring system task evaluates a
+predicate over stored state every few minutes and enqueues one review per due conversation; nothing
+is enqueued when a message is persisted, so there is no state to lose across a restart.
+
+```yaml
+memory_config:
+  enabled: true
+  sweep_interval_minutes: 5
+  idle_window_minutes:
+    web: 30
+    telegram: 90
+  default_idle_window_minutes: 30
+  max_deferral_hours: 24
+  contributing_interfaces: ["telegram", "web"]
+```
+
+- **enabled** — the master switch for the whole mechanism, on by default. With it off nothing is
+  swept and nothing is reviewed, and no profile reads or writes memory either, whatever any profile
+  is configured to do: a profile that still carries `memory_read: true` gets no memory note in its
+  context, is denied the `memory` label wherever it reads notes, and does not hold
+  `propose_memory_edits`. It does not touch the enablement moments a contributing profile has
+  already recorded, so turning it back on resumes from them and conversation held while it was off
+  is reviewed then; `memory_contribute: false` is the setting that discards what was not reviewed.
+  The sweep is only scheduled at all when this is on **and** at least one profile contributes, so a
+  deployment that turns either off schedules no recurring query that could only return nothing.
+- **sweep_interval_minutes** — how often the predicate is evaluated. Freshness is quantised to this,
+  which is negligible against the idle windows.
+- **idle_window_minutes** — per interface, how long a conversation must have been quiet before it is
+  reviewed. An idle stretch is a settled discussion, and how long that takes differs by interface:
+  Telegram is bursty, and a household member replying twenty minutes later is still the same
+  exchange.
+- **default_idle_window_minutes** — the window for an interface the map does not name.
+- **max_deferral_hours** — how long the oldest unreviewed message may wait before the conversation
+  is reviewed whether it has gone quiet or not. This is what guarantees a busy group chat that never
+  settles is still reviewed.
+- **contributing_interfaces** — which interfaces may contribute at all. Telephone calls and iOS
+  native-voice sessions are deliberately absent: a call is saved as a transcript note rather than as
+  message rows, and a native-voice session is persisted with every assistant row stamped at the
+  untrusted extreme, so a review of one would be skipped on provenance in any case. Both read memory
+  like any other interface; they only do not feed it. Email intake, A2A, delegation subconversations
+  and automation-triggered turns are excluded whatever this says, by the profile they run under, by
+  their subconversation, or by being application-generated rather than a person speaking.
+
+### Who a review says said something
+
+A memory entry records who said it, and a group chat is one conversation with several speakers, so
+the transcript a review renders names the sender of every user message. A message row stores its
+writer as a user id and nothing more, so the name comes from the top-level
+[`users`](#user-identities) list: the `label` of the canonical user the stored id belongs to. Set a
+`label` for each household member and their messages are attributed by name, on Telegram and the web
+alike; leave it out and the transcript shows the stored id instead, which is less readable but still
+keeps two speakers apart. Names are read from configuration at startup, not from Telegram at review
+time, so a member who changes their Telegram display name keeps the name you configured.
 
 ______________________________________________________________________
 
@@ -1231,16 +2215,132 @@ apparent backfill size. Use `days` to set the audit window and `max_events` to b
 response says explicitly when that cap truncated the breakdown. It exposes no message content,
 conversation IDs, tool arguments, or source IDs.
 
-The token grants no access beyond those endpoints. It does not make anything public that was not
-already: `/api/*` bypasses `AuthMiddleware` and individual routes enforce their own auth, so a
-deliberately public route such as the `POST /api/errors/` report receiver stays reachable without
-it. In particular `GET /api/debug/profiles` (the full config dump) is **not** covered, while the
-tool-inventory endpoint that is covered exposes only tool names and sizes — no prompts and no policy
-bodies.
+The diagnostics token grants no access beyond the endpoints above. `/api/*` requires
+`AuthMiddleware` authentication by default; the smaller set in `route_auth.NO_DEFAULT_AUTH_ROUTES`
+instead uses its declared scoped policy or, for a deliberately public receiver such as
+`POST /api/errors/`, bounded public handling. In particular `GET /api/debug/profiles` (the full
+config dump) is **not** covered, while the tool-inventory endpoint that is covered exposes only tool
+names and sizes — no prompts and no policy bodies.
+
+### Redaction in config dumps
+
+Every diagnostic dump of the resolved configuration — `GET /api/debug/profiles`, and the engineer
+profile's `get_resolved_config` / `get_profile_config` / `get_mcp_server_status` tools — hides
+credentials in three ways, in descending order of how much you should rely on them:
+
+- **Declared credential fields are typed `SecretStr`.** Pydantic masks them when the config is
+  serialized (they appear as `**********`, pydantic's own mask), so they cannot reach a dump at all.
+  This covers every credential the application declares — API keys, tokens, signing keys, OAuth
+  secrets, the APNs key, CalDAV and MQTT passwords, and the `token` of an MCP server entry. An unset
+  field shows as `null`, so a dump still distinguishes "not configured" from "configured but
+  hidden".
+- **Credentials embedded inside a larger value** are stripped by shape and marked `[REDACTED]`,
+  whatever the field is called: the password in a URL's userinfo
+  (`postgresql://user:[REDACTED]@host/db`), credential query parameters (`token`, `api_key`,
+  `client_secret`, `signature`, …) in any URL including MCP endpoints and stdio arguments, and
+  inline PEM blocks. The surrounding host, database and endpoint are preserved so the dump stays
+  useful. This exists because such a field is not wholly secret — masking `database_url` outright
+  would throw away the host and database you opened the dump to read.
+- **An MCP `env` block is redacted whole**, values only. Its keys are environment variable names you
+  chose rather than declared config fields, so nothing can judge them individually.
+
+**What is not covered.** Startup logging is outside this guarantee: config is logged before it is
+validated, so a credential supplied through an environment variable is still a plain string at that
+point and is hidden only by that logger's own exclusion list. Treat application logs as containing
+credentials, and do not rely on `SecretStr` there.
+
+`mcp_config.mcpServers` entries accept arbitrary extra keys, and an undeclared one —
+`custom_api_key`, say — is not a declared field and so is not masked. It is redacted only if its
+*value* has a recognizable shape (a URL or a PEM block). Keep MCP credentials in `env` or `token`,
+as described under [Passing credentials to an MCP server](#passing-credentials-to-an-mcp-server); a
+credential anywhere else in an entry may appear in full.
+
+When adding a config field that holds a credential, type it `SecretStr` — that is what makes the
+guarantee, not what you call the field.
+
+______________________________________________________________________
+
+## JWT Access Tokens (Edge Gateway Authentication)
+
+### JWT_SIGNING_KEY
+
+Optional PEM-encoded EC private key enabling short-lived signed access tokens (ES256). When set,
+`POST /api/auth/exchange`, `POST /api/auth/refresh`, and `POST /api/auth/token` return a signed JWT
+instead of an opaque secret; the JWT is also what the browser session bridge
+(`GET /api/auth/browser-token`) sets as an HttpOnly cookie scoped to `/api`. A deployment's edge
+gateway can then verify API requests statelessly against the published JWKS
+(`GET /.well-known/jwks.json`) — see docs/design/jwt-edge-auth.md.
+
+| Property  | Value                                                               |
+| --------- | ------------------------------------------------------------------- |
+| Required  | No                                                                  |
+| Default   | Unset (opaque token behaviour)                                      |
+| Sensitive | **Yes**                                                             |
+| Example   | PEM text (generate with `openssl ecparam -name prime256v1 -genkey`) |
+
+Unset ⇒ everything behaves as before (30-day opaque API tokens). Set but unparsable fails startup.
+The public key is published at `/.well-known/jwks.json`; the route classification the gateway policy
+must mirror is published at `/.well-known/auth-route-classification`.
+
+### JWT_ACCESS_TOKEN_TTL_SECONDS
+
+Lifetime of issued signed access tokens in seconds.
+
+| Property | Value  |
+| -------- | ------ |
+| Required | No     |
+| Default  | `3600` |
+
+Requires `JWT_SIGNING_KEY`. A JWT upgraded from an expiring opaque token is capped at that token's
+remaining lifetime. Revoked, expired, or deleted backing tokens are rejected immediately by the
+server; edge gateways accept an already issued JWT until its own expiry by design.
+
+### Error-intake abuse controls
+
+`POST /api/errors/` is deliberately reachable without a session so error capture works pre-login and
+with broken auth. It is bounded server-side: per-authenticated-user rate limiting (falling back to
+client address before authentication) of 60 reports per 60 seconds (HTTP 429 beyond), a 64 KiB body
+cap, hard field-length limits on the report model, and reports arriving without a valid session/API
+credential are clamped into the in-memory telemetry ring. They are never persisted to `error_logs`,
+whatever severity they claim, and are lost on process restart. Authenticated reporters keep the full
+behaviour described above.
 
 ______________________________________________________________________
 
 ## External Services
+
+### Keychute brokered script HTTP
+
+Family Assistant can expose `keychute_http_request()` to Monty scripts while leaving credentials
+inside [Keychute](https://github.com/werdnum/keychute). Family Assistant calls Keychute's HTTP API
+directly to create and await an access request, validate the resulting grant, and proxy the call.
+
+```yaml
+keychute_config:
+  enabled: true
+  url: "https://keychute.example.com"
+  token_file: "/var/run/secrets/keychute/token"
+  ca_bundle: "/etc/ssl/keychute/ca.crt"
+  max_response_bytes: 26214400
+```
+
+| Setting              | Default    | Description                                         |
+| -------------------- | ---------- | --------------------------------------------------- |
+| `enabled`            | `false`    | Exposes the brokered HTTP function to scripts.      |
+| `url`                | `null`     | Keychute API origin.                                |
+| `token`              | `null`     | Static client bearer token.                         |
+| `token_file`         | `null`     | Rotating client bearer-token file.                  |
+| `ca_bundle`          | `null`     | Optional PEM CA bundle for the Keychute connection. |
+| `max_response_bytes` | `26214400` | Maximum upstream response body retained in RAM.     |
+
+The URL, token, token file, and CA bundle may instead be supplied through `KEYCHUTE_URL`,
+`KEYCHUTE_TOKEN`, `KEYCHUTE_TOKEN_FILE`, and `KEYCHUTE_CA_BUNDLE`. Production deployments normally
+use the rotating service-account token file. The file is reread for every Keychute API request so
+token rotation continues during an approval wait. Enabling the integration without a working
+configuration fails individual script calls explicitly; it does not fall back to direct
+unauthenticated HTTP.
+
+______________________________________________________________________
 
 ### BRAVE_API_KEY
 
@@ -1325,10 +2425,14 @@ Secret token for authenticating Asterisk WebSocket connections.
 
 | Property  | Value                          |
 | --------- | ------------------------------ |
-| Required  | No                             |
+| Required  | When `JWT_SIGNING_KEY` is set  |
 | Default   | None (authentication disabled) |
 | Sensitive | **Yes**                        |
 | Example   | `my-secure-token-123`          |
+
+The Asterisk WebSocket is exempt from gateway JWT enforcement because the client cannot attach a
+browser cookie or authorization header. When signed JWT authentication is enabled, the backend
+rejects all Asterisk connections unless this separate transport secret is configured.
 
 ______________________________________________________________________
 
@@ -1342,6 +2446,82 @@ Comma-separated list of allowed Asterisk extensions.
 | Default   | Empty (all extensions allowed) |
 | Sensitive | No                             |
 | Example   | `100,101,102`                  |
+
+______________________________________________________________________
+
+## Voice Mode Tools (`gemini_live_config.tools`)
+
+A Gemini Live session — browser, iOS, watch or a phone call over Asterisk — fixes its tool
+declarations when the session starts and can never be given another one. The progressive disclosure
+the chat assistant uses (`activate_tools`, which works by handing the model a longer tool list on
+the next iteration) therefore cannot work in voice.
+
+```yaml
+gemini_live_config:
+  tools:
+    on_demand: true
+```
+
+With `on_demand: true` (the default) a voice session declares the profile's eager tools plus two
+meta-tools, `search_tools` and `call_tool`. Everything the profile lists in
+`tools_config.on_demand_local_tools` / `on_demand_mcp_server_ids` stays out of the declaration list
+and is named in the system instruction instead; the model looks a tool's argument schema up with
+`search_tools` and runs it with `call_tool`. The inner call's arguments are checked against the
+tool's schema first — a call with invented, missing or mistyped arguments is refused with the schema
+attached, so the model can correct it — and then dispatched through the profile's ordinary provider
+chain, so tool policy, taint tracking and tool-call review apply exactly as they do for a declared
+tool.
+
+Set it to `false` to declare every advertisable tool up front, as before. Either way, a voice
+session has no confirmation channel, so tools that require confirmation are never advertised to it
+and `call_tool` refuses them.
+
+See [voice-mode-on-demand-tools.md](../design/voice-mode-on-demand-tools.md).
+
+______________________________________________________________________
+
+## Voice Transcription Language (`gemini_live_config.transcription.language_codes`)
+
+```yaml
+gemini_live_config:
+  transcription:
+    language_codes: ["en-AU"]
+```
+
+BCP-47 codes for the language(s) the user speaks, sent by the native iOS app as a hint for
+transcribing the user's speech. With an empty list Gemini auto-detects the language, which misreads
+short or noisy phrases (common in a car) as another language. `defaults.yaml` ships `["en"]`; set a
+regional code to hint the accent as well. The web client's SDK does not yet accept the setting.
+
+______________________________________________________________________
+
+## Voice Activity Detection (`gemini_live_config.vad`, `car_audio_vad`)
+
+Voice activity detection decides when the user has started talking — which also interrupts the
+assistant mid-reply — and when they have finished.
+
+```yaml
+gemini_live_config:
+  vad:
+    start_of_speech_sensitivity: "DEFAULT"   # or START_SENSITIVITY_LOW / START_SENSITIVITY_HIGH
+    end_of_speech_sensitivity: "DEFAULT"     # or END_SENSITIVITY_LOW / END_SENSITIVITY_HIGH
+    prefix_padding_ms: null
+    silence_duration_ms: null
+  car_audio_vad:
+    start_of_speech_sensitivity: "START_SENSITIVITY_LOW"
+    prefix_padding_ms: 300
+```
+
+The native iOS app sends `vad` with every session, except when its audio is routed through a car
+(CarPlay), where it sends `car_audio_vad` instead. A car's microphone hears the assistant through
+the cabin speakers, and at default sensitivity that echo is taken for the user interrupting; the car
+block trades a slightly less eager barge-in for not cutting the assistant off. `car_audio_vad`
+replaces `vad` whole rather than overriding individual fields. Every session records which block it
+used, and each interruption, in the `Voice.connection` telemetry lane.
+
+`automatic: false` (push-to-talk) is not supported by the native app, which has no control to mark
+the start and end of speech; it logs the setting as an error and keeps automatic detection. Phone
+calls over Asterisk use `vad` with `telephone_overrides.vad` applied on top.
 
 ______________________________________________________________________
 
@@ -1471,6 +2651,28 @@ The rules apply regardless of the profile's own `tools_policy`, which otherwise 
 defaults wholesale rather than merging with them. Use it for tools that must be available in all
 contexts. Operator policy still overrides global rules.
 
+**A profile's own `tools_policy` cannot opt out.** Global rules are injected at the `profile` policy
+layer, which outranks the `defaults` layer a profile's own `tools_policy` occupies, so a deny rule
+written there does not override a global allow at any priority — layer beats priority.
+
+Use `excluded_global_tools` on the profile to withhold one. It denies in the same layer as the
+global rules at the maximum priority, which is what makes it effective. The shipped `media_analyst`
+profile withholds all three, because none is safe in a fully untrusted context:
+`read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than only
+the current turn's artifacts, and `report_technical_problem` persists model-supplied text.
+
+```yaml
+service_profiles:
+  - id: "media_analyst"
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
+```
+
+Keep this section to broadly safe tools, and treat anything that reads user-owned data by id, or
+writes, as needing an exclusion in every profile that processes untrusted input.
+
 The shipped default uses it for two things:
 
 - `report_technical_problem`, so the assistant can always report bugs — these surface through the
@@ -1492,6 +2694,266 @@ global_tools_policy:
           - "jq_query"
       decision: "allow"
       priority: 50
+```
+
+______________________________________________________________________
+
+### include_aggregated_context
+
+Per-profile `processing_config` flag deciding whether the profile receives the context providers'
+output at all.
+
+| Property  | Value            |
+| --------- | ---------------- |
+| Required  | No               |
+| Default   | `false`          |
+| Sensitive | No               |
+| Values    | `true` / `false` |
+
+Context providers gather the household's notes, calendar, known users, weather and Home Assistant
+state. When this is `true`, that material reaches the model in the trailing `<turn_context>` block
+appended to the end of every request. When it is `false` — the default — the profile receives none
+of it.
+
+The default is off so that a profile nobody has explicitly considered is denied the household's
+private data rather than granted it — a profile that reads untrusted input should not also hold
+sensitive data. Turning it on for such a profile is the combination the Rule of Two exists to
+prevent.
+
+`excluded_context_providers` is the finer-grained control underneath it — it drops individual
+providers from a profile that has this flag on, and has no effect on a profile that does not.
+
+The current time is injected for **every** profile regardless of this flag; it is not sensitive.
+
+Shipped `defaults.yaml` sets it on six profiles: `default_assistant`, `data_visualization`,
+`camera_analyst`, `event_handler`, `complex_tasks` and `engineer`. Every other profile — including
+`telephone_external`, which serves external callers, and `media_analyst`, which reads
+attacker-controlled media — gets no aggregated context.
+
+```yaml
+service_profiles:
+  - id: "my_profile"
+    processing_config:
+      include_aggregated_context: true
+```
+
+______________________________________________________________________
+
+### excluded_context_providers
+
+Per-profile `processing_config` list naming context providers to drop for that profile.
+
+| Property  | Value                                                           |
+| --------- | --------------------------------------------------------------- |
+| Required  | No                                                              |
+| Default   | `[]` (every applicable provider is attached)                    |
+| Sensitive | No                                                              |
+| Values    | `notes`, `calendar`, `known_users`, `weather`, `home_assistant` |
+
+Context providers inject the user's own data into the trailing `<turn_context>` block. They apply
+only to profiles that set `include_aggregated_context: true`; within such a profile every applicable
+provider is attached by default (`weather` and `home_assistant` only when configured). An
+unrecognised name is a startup error rather than a no-op, since a silently-ignored entry would leave
+a profile holding data the config says it doesn't.
+
+Use it to keep private data out of a profile that needs some context but not all of it. The shipped
+`media_analyst` profile excludes all five as a second layer on top of leaving
+`include_aggregated_context` at its default: it exists to transcribe attacker-controlled media, so
+pairing the user's notes with that input is precisely the combination the Rule of Two is meant to
+prevent.
+
+```yaml
+service_profiles:
+  - id: "media_analyst"
+    processing_config:
+      excluded_context_providers:
+        - "notes"
+        - "calendar"
+        - "known_users"
+        - "weather"
+        - "home_assistant"
+```
+
+______________________________________________________________________
+
+### antigravity_config
+
+Per-profile `processing_config` block tuning the Google Antigravity managed agent. Read only when
+`llm_model` names the agent (`antigravity-preview-09-2026` or a later `antigravity-*` revision);
+setting it on any other profile is a startup error rather than a silently discarded block.
+
+| Property  | Value                                                                   |
+| --------- | ----------------------------------------------------------------------- |
+| Required  | No                                                                      |
+| Default   | `model: gemini-3.8-flash`, no token cap, no environment                 |
+| Sensitive | No (credentials are named by env var, never written here)               |
+| Values    | `model` (string), `max_total_tokens` (int > 0), `environment` (mapping) |
+
+`model` is the model the agent reasons with — the Gemini 3.x Flash family, `gemini-3.8-flash` being
+the current default. It is pinned in `defaults.yaml` rather than left to the API, so an upstream
+default change shows up as a config change. `max_total_tokens` caps what a single run may spend;
+unset leaves the API's own default, which together with `max_async_seconds` is the only bound on how
+long an autonomous run iterates.
+
+#### `environment`: sandbox egress and injected credentials
+
+`environment` describes the sandbox a run gets. Today that is its egress policy: which domains the
+sandbox may reach, and which credentials the API's egress proxy attaches on the way out. **The
+sandbox never receives a credential** — the agent issues an unauthenticated request and the proxy
+adds the header, so nothing the agent can print, log or write to a file contains the token.
+
+| Key         | Values                                                                  |
+| ----------- | ----------------------------------------------------------------------- |
+| `network`   | `default` (send no policy), `disabled` (no network at all), `allowlist` |
+| `allowlist` | list of rules; required by, and only valid with, `allowlist`            |
+
+Each allowlist rule takes `domain` (wildcards allowed; `*` matches everything), an optional
+`headers` mapping of **non-secret** static headers, and an optional `credential`:
+
+| Key           | Values                                                                   |
+| ------------- | ------------------------------------------------------------------------ |
+| `type`        | `github_app` (mints a token) or `bearer` (reads `token_env`)             |
+| `header_name` | Header to inject; defaults to `Authorization`                            |
+| `scheme`      | `bearer` (default) or `basic`                                            |
+| `token_env`   | Env var holding the token; required by `bearer`, rejected on other types |
+
+`scheme` matters because GitHub authenticates its REST API and git-over-HTTPS differently: `bearer`
+renders `Authorization: Bearer <token>` (the REST API), and `basic` renders
+`Authorization: Basic base64("x-access-token:<token>")` (git). Applying one to both fails as a 401
+in the middle of an agent run rather than as a config error, so each domain names its own.
+
+`type: "github_app"` reads the same environment variables the k8s-agent and ai-worker deployments
+already use, so a cluster that runs a GitHub App needs no new secret plumbing — mount the existing
+key and set:
+
+| Variable                      | Purpose                                                         |
+| ----------------------------- | --------------------------------------------------------------- |
+| `GITHUB_APP_ID`               | The App's numeric id (JWT `iss`). Required.                     |
+| `GITHUB_APP_INSTALLATION_ID`  | The installation to mint a token for. Required.                 |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the App's PEM private key (a mounted secret).           |
+| `GITHUB_APP_PRIVATE_KEY`      | The PEM contents inline, used in preference to the path if set. |
+
+The App private key never leaves the process: it signs a short-lived JWT which is exchanged for an
+installation access token, and only that ~1-hour token is handed to the proxy. A credential that
+cannot be resolved — a missing variable, an unreadable key, a revoked installation — fails the run
+rather than submitting it unauthenticated, which would otherwise surface as a 404 on a private
+repository from inside the agent.
+
+**Runs longer than the token cannot keep GitHub access.** The proxy is given one fixed header at
+submit and there is no way to refresh it mid-run, so a token is minted fresh per run to give each
+one the longest possible window — but a run that outlasts it (~1 hour) starts failing GitHub calls,
+possibly on a final push. `max_async_seconds` for the shipped `coder` profile is `7200`. Set it
+below an hour on a credentialed profile if GitHub must hold for the whole of every run; leave it
+high if long runs matter more and late-run GitHub failures are acceptable.
+
+**Injecting a credential widens the profile's Rule of Two class**, and how far is mostly set outside
+this file. The shipped `coder` is `[C]` only; GitHub App access adds `[B]`, and the agent already
+reads the open web (`[A]`). Three layers bound that, in the order they take effect:
+
+1. **The credential's scope.** An App installation token reaches only the repositories the App is
+   installed on, only with the permissions granted, and expires in about an hour. Scoping the
+   installation is the primary control — it sets the blast radius before any runtime gate applies,
+   so widening the App's installation or permissions is a security change in its own right.
+2. **The taint gate.** `taint_sink_class: "sandbox_network"` with `taint_policy.mode: "enforce"`
+   (see below) stops content the assistant derived from an email from directing the agent at all.
+3. **The egress policy here.** A closed allowlist also stops the agent reading an
+   attacker-controlled page mid-run while the proxy attaches a credential; a `{domain: "*"}` rule
+   does not. Allow-all is the shape the API documents for "restrict nothing, inject on some" and
+   what a coding agent installing packages from arbitrary indexes needs — a risk/benefit call
+   against the scope set in (1), not a question with one right answer.
+
+See
+[antigravity-environment-and-credentials.md](../design/antigravity-environment-and-credentials.md).
+
+The agent runs server-side on the Interactions API, so the profile must use `provider: "google"` and
+must not set `retry_config` — a fallback would be an ordinary chat completion answering from the
+model's own knowledge instead of running the task, which is why that combination is rejected at
+startup. It needs `GEMINI_API_KEY` like any other Google profile.
+
+The shipped profile using it is `coder` (slash command `/coder`), which holds no tools at all: the
+agent works in a Google-hosted sandbox with no access to household data. See
+[gemini-antigravity-managed-agent.md](../design/gemini-antigravity-managed-agent.md).
+
+```yaml
+service_profiles:
+  - id: "coder"
+    processing_config:
+      provider: "google"
+      llm_model: "antigravity-preview-09-2026"
+      antigravity_config:
+        model: "gemini-3.8-flash"
+        max_total_tokens: 250000
+        environment:
+          network: "allowlist"
+          allowlist:
+            # Everything else the agent needs (package indexes, docs, the web).
+            - domain: "*"
+            # git clone/push authenticates as HTTP Basic...
+            - domain: "github.com"
+              credential:
+                type: "github_app"
+                scheme: "basic"
+            # ...while the REST API takes a bearer token.
+            - domain: "api.github.com"
+              credential:
+                type: "github_app"
+```
+
+______________________________________________________________________
+
+### taint_sink_class
+
+Per-profile `processing_config` value declaring the runtime-taint sink class that a **whole turn**
+on this profile counts as.
+
+| Property  | Value                                              |
+| --------- | -------------------------------------------------- |
+| Required  | No                                                 |
+| Default   | unset (the profile is not a sink in its own right) |
+| Sensitive | No                                                 |
+| Values    | any `SinkClass` name, e.g. `sandbox_network`       |
+
+Runtime taint normally gates individual **tools**: `spawn_worker` is classified `sandbox_network`,
+and the shipped `unknown_external × sandbox_network` cell is bare `adjudicate`. Its reviewer may
+return `allow`, `confirm`, or `deny`; `confirm` is the fail-closed fallback when review is
+unavailable, not a deterministic verdict floor, and a context with no confirmation channel is
+refused by the absent human rather than by the cell. Deployments that need a hard denial must set
+the `operator_minimum` shown in the
+[enforcement migration pin](#migration-for-deployments-already-enforcing-taint-policy). A profile
+whose entire turn is the privileged operation — an agent that runs code in a sandbox — has no such
+tool to gate, and delegating to it would otherwise be classified as an ordinary delegation.
+
+Declaring a sink here changes two things. `delegate_to_service` calls naming this profile as
+`target_service_id` are evaluated as that sink rather than as a generic delegation, so the caller is
+refused (or asked to confirm) before a delegation run is created. And the profile itself evaluates
+the sink against the turn's taint before every model call, covering the entry points a tool gate
+does not see: slash commands, A2A requests and `wake_llm` automations. On a profile that declares a
+sink and also holds tools, that per-call evaluation is what stops a tool result from raising the
+turn's tier and then being fed to the model anyway. An `adjudicate` outcome invokes the shared
+reviewer against the complete current state; a `confirm` verdict uses the turn's confirmation
+channel when one exists and otherwise fails closed.
+
+Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
+so an untrusted file raises the turn's tier even when the request text is trusted.
+
+**A declared sink takes effect when `taint_policy.mode` does.** The deployment-wide mode defaults to
+`observe`, which downgrades every gating outcome to `audit`, so a declared sink records rather than
+decides until the deployment switches to `enforce`. Do not reach for a profile-level
+`taint_policy.mode: enforce` to get there sooner. A profile may tighten the deployment policy, but
+doing it here applies the shipped matrix to one profile ahead of the friction measurement that keeps
+the rollout in `observe` — and it refuses more than the untrusted input it is aimed at, because the
+tiers the matrix only wants *confirmed* have no confirmation path while the calling profile's tool
+gate is still observing and therefore never asks. See
+[runtime-taint-enforcement-operational-findings.md](../design/runtime-taint-enforcement-operational-findings.md).
+
+The shipped `coder` profile declares the sink and leaves the mode to the deployment. See
+[interactions-agent-taint-and-attachments.md](../design/interactions-agent-taint-and-attachments.md).
+
+```yaml
+service_profiles:
+  - id: "coder"
+    processing_config:
+      taint_sink_class: "sandbox_network"
 ```
 
 ______________________________________________________________________
@@ -1526,6 +2988,58 @@ Operator merge note for tool policy:
 - `default_profile_settings.tools_policy.default_decision` still overrides the shipped default when
   explicitly set.
 
+### Remote A2A profiles
+
+A service profile with `remote_a2a` delegates to an agent discovered from
+`agent_url/.well-known/agent-card.json`. The client supports A2A protocol v1 and legacy v0.3
+JSON-RPC interfaces. It selects the protocol version advertised by the agent card; no version flag
+is required in Family Assistant configuration.
+
+| Key                     | Required       | Default               | Purpose                                                |
+| ----------------------- | -------------- | --------------------- | ------------------------------------------------------ |
+| `agent_url`             | Yes            | —                     | Base URL used for agent-card discovery.                |
+| `auth.type`             | No             | `none`                | `none`, `bearer`, or `api_key`.                        |
+| `auth.token_env`        | For token auth | —                     | Environment variable containing the credential.        |
+| `auth.header_name`      | No             | `Authorization`       | Header carrying the credential.                        |
+| `timeout_seconds`       | No             | `300`                 | Timeout for one discovery or protocol request.         |
+| `poll_interval_seconds` | No             | `10`                  | Base polling cadence for a submitted remote task.      |
+| `max_async_seconds`     | No             | `3600`                | Total lifetime allowed for an asynchronous delegation. |
+| `skills_description`    | No             | Agent URL description | Text exposed in the delegation catalog.                |
+
+```yaml
+service_profiles:
+  - id: "remote_research"
+    description: "Delegates research to a remote A2A agent"
+    remote_a2a:
+      agent_url: "https://agent.example.com"
+      auth:
+        type: "bearer"
+        token_env: "REMOTE_A2A_TOKEN"
+      timeout_seconds: 60
+      poll_interval_seconds: 15
+      max_async_seconds: 3600
+```
+
+### llm_parameters
+
+Per-model keyword arguments, passed through to whichever provider SDK serves that model. Keys are
+matched as **substrings** of the model name, so `"gpt-5.6-"` covers every variant in that line while
+`"gpt-5.6-terra"` targets one. Every matching entry is merged, and the result is applied **over**
+the provider client's own defaults — so this is the supported way to override a hard-coded default
+such as the Anthropic client's `max_tokens`.
+
+Settings currently shipped in `defaults.yaml`:
+
+| Key             | Setting                                                                            | Why                                                                                                                                                                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-opus-5` | `thinking: {type: adaptive}`, `output_config: {effort: high}`, `max_tokens: 16000` | The recipe Opus 5 gets wherever a deployment names it; no shipped tier runs it. Thinking on for the long tool loops it suits. `max_tokens` is raised because thinking shares that budget with the response. See the comment in `defaults.yaml`. |
+| `gpt-5.6-sol`   | `reasoning_effort: high`                                                           | The `deep` tier's primary, which `complex_tasks` and `engineer` run on and the assistant reaches by request, so it can afford to think longer.                                                                                                  |
+| `gpt-5.6-terra` | `reasoning_effort: medium`                                                         | The fallback for `default_assistant` and `camera_analyst`, both of which answer interactively, where time-to-first-token is felt directly.                                                                                                      |
+
+`reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-5.6 models and
+defaults to `medium` when unset. Raising it trades latency and tokens for capability; it is the
+first dial to turn when a profile's agentic performance falls short, ahead of changing the model.
+
 ### mcp_config.json
 
 MCP server definitions with environment variable expansion using `$VAR` or `${VAR}` syntax:
@@ -1547,6 +3061,150 @@ Expansion applies to every string value: stdio `command`, `args`, and `env` entr
 of a remote SSE or Streamable HTTP server. For example, `"url": "${MCP_HTTP_ORIGIN}/mcp"` keeps a
 deployment-specific origin out of `config.yaml`.
 
+#### Passing credentials to an MCP server
+
+Give a stdio server its credentials through `env`, and a remote SSE or Streamable HTTP server its
+credential through the `token` field. That is the supported path, and diagnostic dumps redact both:
+every value in an `env` block is redacted regardless of the variable's name, and `token` is redacted
+by field name.
+
+Note that `$VAR` references are expanded when the configuration is loaded, not when a server is
+contacted, so the resolved `AppConfig` holds the real value and a placeholder is not by itself
+protection. Redaction, not the placeholder, is what keeps a credential out of a dump.
+
+A credential put anywhere else in the entry is outside that path and may be shown in full by
+`get_mcp_server_status` and the config dump. Redaction still catches the shapes it can recognize — a
+userinfo password or a `token=`-style query parameter in a `url`, and the same inside an argument —
+but it does not, for instance, pair `args: ["--token", "secret"]` with its value. Keep credentials
+in `env` and `token`.
+
+#### GitHub history for the engineer profile
+
+`defaults.yaml` ships three hosted GitHub MCP servers — `github-repos`, `github-issues` and
+`github-pull-requests` — which give the engineer profile the repository history the running
+application cannot see for itself. The production image excludes `.git`, so without them the only
+version fact available is the `GIT_COMMIT` baked in at build time, which `get_system_info` reports.
+
+Set one variable to turn them on:
+
+| Variable           | Purpose                                                            |
+| ------------------ | ------------------------------------------------------------------ |
+| `GITHUB_MCP_TOKEN` | Token sent to GitHub's hosted MCP endpoint as a bearer credential. |
+
+The token is required, including for a public repository. The hosted endpoint authenticates the MCP
+session itself, before any repository is named, and answers an unauthenticated `initialize` with
+`401` — so there is no anonymous mode to fall back on, unlike GitHub's REST API. Without the
+variable the servers are marked `failed` like any other server missing its credential; the
+application still starts, and the engineer simply has no history tools.
+
+Give the token read access only: repository contents, issues, pull requests and metadata. It is a
+separate credential from the `GITHUB_TOKEN` that `create_github_issue` uses, which needs write scope
+— keep them apart so a read path never carries the ability to post.
+
+Three properties are load-bearing, and each is pinned by a test in
+`tests/functional/tools/test_github_mcp_defaults.py`:
+
+- **The URLs end in `/readonly`.** GitHub enforces read-only server-side for those endpoints. The
+  tool policy grants each server wholesale by id, so it cannot tell a read from a write; the URL is
+  what makes the grant safe. Removing the suffix silently turns the engineer into an account that
+  can open, close and comment.
+- **One toolset per server** (`/mcp/x/<toolset>/readonly`) rather than the combined `/mcp/readonly`
+  endpoint, which would advertise every toolset GitHub offers for three toolsets' worth of use.
+- **`tool_metadata` classifies them with a `"*"` wildcard**, as `read_only`,
+  `low_bandwidth_external` and `output_untrusted`. Low-bandwidth because the endpoint is fixed by
+  configuration and the model chooses only a repository and a query, never a recipient. Untrusted
+  because commit messages, issue bodies and review comments are written by anyone who can reach the
+  repository. A wildcard rather than a tool list so a tool GitHub adds tomorrow inherits the same
+  classification instead of falling back to whatever its annotations happen to say.
+
+The servers are on-demand for the engineer, so they cost nothing in profiles and turns that never
+ask for history. No other profile names these ids, and every shipped profile is deny-by-default, so
+nothing else in the deployment can reach them.
+
+#### The environment a stdio server actually receives
+
+A stdio server is spawned with a whitelisted environment — `HOME`, `LOGNAME`, `PATH`, `SHELL`,
+`TERM`, `USER` — plus whatever the entry's own `env` block declares. Nothing else from the
+application's environment reaches the child process.
+
+This rules out launchers that rely on ambient configuration. `uvx <package>` cannot see
+`UV_TOOL_DIR`, so it will not find a pre-installed tool environment and re-resolves the package from
+PyPI on every connection, inside the initialization timeout and onto whatever versions resolve that
+day. Install the server and invoke its entry point by name instead, or pass what it needs through
+`env`.
+
+A server that fails to start does not make the application unhealthy — it is logged, marked
+`failed`, and its tools are simply absent. Run `poe check-mcp` (or
+`python scripts/check_mcp_servers.py <server-id>`) to get a verdict per server.
+
+#### parameter_overrides (adapting a tool's parameters)
+
+An MCP server declares its parameters for its own callers, which is not always what this deployment
+wants the model to see. `parameter_overrides` says how to adapt them, keyed by tool name the same
+way `tool_metadata` is. Each parameter takes one override:
+
+```yaml
+meshy:
+  parameter_overrides:
+    meshy_image_to_3d:
+      image_url:
+        mode: data_uri
+        description: "The image to build the model from."
+      file_path: drop
+    meshy_multi_image_to_3d:
+      image_urls: data_uri
+      file_paths: drop
+```
+
+##### `data_uri` / `file_path` — fill this parameter with an attachment
+
+The server knows nothing about our attachments: a tool that takes an image expects a `string`
+holding a data URI or a filesystem path, not one of our attachment UUIDs. Naming a mode makes the
+parameter carry an attachment instead.
+
+The parameter is advertised to the model as an attachment UUID — the same shape a built-in tool that
+takes an attachment uses — and its schema is **replaced**, not decorated. Whatever the server
+declared about the string it used to want (a `format: uri`, a pattern, an optional's `anyOf`, and
+its description) no longer describes the value the model supplies. Only the shape (one attachment or
+a list) and a list's `minItems`/`maxItems` carry over. Optionality is unaffected — that lives in the
+schema's `required` list.
+
+**The server's description goes too**, because it describes that string rather than the parameter.
+Meshy's `image_url`, for instance, reads *"PUBLIC image URL (https://...). Use ONLY for remote
+images. ... NEVER manually base64-encode"* — advertised alongside a request for an attachment ID,
+that is two contradictory instructions in one sentence. Write the parameter as a mapping to give it
+a description of your own; a bare mode leaves the generic "UUID of the attachment" text.
+
+At call time the UUID is resolved under the acting user's own access and rendered in the configured
+mode:
+
+- `data_uri` — the attachment's bytes inline as `data:<mime>;base64,...`. Works for every transport.
+- `file_path` — the bytes are written to a temporary file and its path is passed. The file is
+  deleted as soon as the call returns.
+
+Anything that is not an attachment the user can reach is an error, and the call is not made: a
+parameter configured as an attachment never forwards a model-supplied string to the server.
+
+`file_path` only means something to a **stdio** server, which we spawn ourselves and which therefore
+shares our filesystem. Configuring it for an `sse` or Streamable HTTP server fails at configuration
+load — a remote server would receive a path it cannot open — so use `data_uri` there.
+
+##### `drop` — hide this parameter from the model
+
+A server often offers several ways in and describes each as though the others did not exist. Meshy
+takes an image as `image_url` **or** `file_path`, and calls the latter *"PREFERRED for local files"*
+— so once `image_url` carries an attachment, the untouched `file_path` actively argues for the input
+you want ignored. `drop` removes the parameter from what the model sees.
+
+If the server marks a dropped parameter `required`, its `required` entry is removed too (a mandatory
+parameter the model cannot see is a schema nothing can satisfy) and a warning is logged: the server
+may still reject calls that omit it, and whether that is acceptable is your call.
+
+##### Both
+
+A configured parameter the server's schema does not have is logged and ignored, so a tool that
+renames a parameter degrades to its own schema rather than being called with one the server rejects.
+
 #### tool_metadata (taint classification)
 
 Configure `tool_metadata` for MCP servers whose protocol annotations do not describe their security
@@ -1562,13 +3220,32 @@ boundary, so the runtime taint policy can classify their tools correctly:
 Every configured entry should also declare `output_trusted` or `output_untrusted`. An exact
 `tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to them.
 
+`script_deterministic` is an explicit opt-in for operations that do not execute new code, make a
+model decision, or create executable definitions. A reviewed script invocation may reuse its
+approval for a tagged operation, while tool availability, access control, hard policy controls,
+required confirmations, argument validation, and execution limits still apply. An untagged tool
+remains an independent review boundary.
+
 ### prompts.yaml
 
-LLM prompts with template variables:
+LLM prompts with template variables. A profile's `system_prompt` may reference:
 
-- `{current_time}` - Current timestamp
 - `{user_name}` - User's display name
-- `{aggregated_other_context}` - Context from providers
+- `{server_url}` - Public base URL of the deployment (see [SERVER_URL](#server_url))
+- `{profile_id}` - ID of the profile the prompt is being rendered for
+
+That is the complete list. Any other placeholder is an error, and every profile's prompt is rendered
+once at startup, so a template naming an unknown one fails the boot rather than the first
+conversation with that profile. Escape literal braces as `{{` and `}}`.
+
+> **⚠️ BREAKING CHANGE for custom prompts**: `{current_time}` and `{aggregated_other_context}` are
+> no longer template variables. The current time and the context providers' output are delivered in
+> the trailing `<turn_context>` block appended to each request instead of being interpolated into
+> the system prompt, so that the system prompt and conversation history stay byte-stable and can be
+> cached by the provider. A `system_prompt` still referencing either placeholder fails at startup.
+> Delete the reference; if the profile needs the providers' output, set
+> [include_aggregated_context](#include_aggregated_context) on it. The current time needs no opt-in.
+> See [docs/design/prompt-cache-turn-context.md](../design/prompt-cache-turn-context.md).
 
 ______________________________________________________________________
 

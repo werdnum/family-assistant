@@ -12,11 +12,14 @@ import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
 import ConversationSidebar from './ConversationSidebar';
 import { LOADING_MARKER } from './constants';
+import IntelligenceSelector from './IntelligenceSelector';
 import { NotificationSettings } from './NotificationSettings';
 import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import ProfileSelector from './ProfileSelector';
+import { type ModelTier, ProfilesProvider, useProfiles } from './profilesContext';
 import { PushNotificationButton } from './PushNotificationButton';
-import { ChatControlsContext, type SteerResult } from './chatControls';
+import { ShareConversationButton } from './ShareConversationButton';
+import { ChatControlsContext, type OlderMessagesStatus, type SteerResult } from './chatControls';
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
@@ -28,11 +31,16 @@ import {
   ConversationMessagesResponse,
   Message,
   MessageContent,
+  MessageReasoningInfo,
 } from './types';
 import { useActivityStream } from './useActivityStream';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
 import { useStreamingResponse } from './useStreamingResponse';
+
+// Stable empty list for profiles that offer no choice of tier, so the
+// intelligence control's props keep their identity across renders.
+const EMPTY_MODEL_TIERS: ModelTier[] = [];
 
 // Error boundary to catch transient @assistant-ui/store tapClientLookup race
 // condition errors during rendering (assistant-ui/assistant-ui#3395).
@@ -52,7 +60,10 @@ class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadError
   }
 
   componentDidCatch(error: Error, _info: ErrorInfo): void {
-    if (!error.message?.includes('tapClientLookup')) {
+    if (
+      !error.message?.includes('tapClientLookup') &&
+      !error.message?.includes('useClientLookup')
+    ) {
       throw error;
     }
     // Schedule re-mount with a new key so children get a fresh fiber tree
@@ -378,15 +389,42 @@ export function confirmationMapsEqual(
   return true;
 }
 
-const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
+// Rows of history fetched when a conversation opens, and added per "load earlier".
+const HISTORY_PAGE_SIZE = 50;
+
+const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  // Which rows every load of the open conversation fetches. It starts as the
+  // latest page; loading earlier history widens it and pins it to the oldest
+  // row loaded (floorId), so later reloads (after a turn, or from the follow
+  // stream) keep that history as new rows arrive, and always return a
+  // contiguous tail with no gap to stitch.
+  const historyWindowRef = useRef<{
+    convId: string | null;
+    limit: number;
+    floorId: string | null;
+  }>({
+    convId: null,
+    limit: HISTORY_PAGE_SIZE,
+    floorId: null,
+  });
+  const [olderHistory, setOlderHistory] = useState<{ convId: string; hasMore: boolean } | null>(
+    null
+  );
+  const [olderMessagesStatus, setOlderMessagesStatus] = useState<OlderMessagesStatus>('idle');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [persistedConversationId, setPersistedConversationId] = useState<string | null>(null);
   // Always-current mirror of conversationId, so a deferred follow-up timer can
   // synchronously check whether the conversation changed before it fires.
   const conversationIdRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
+  // True while the open conversation exists only in this client and holds no
+  // turns: an id minted by handleNewChat (or at startup) that has never been
+  // sent. Tracked explicitly rather than inferred from an empty `messages`,
+  // which also reads empty while a real conversation's history is loading.
+  const conversationIsUnsentDraftRef = useRef(true);
   // Set to a conversation id while it has a turn that gave up but is still running
   // server-side, to drive the fallback reconcile poll. Cleared once the turn
   // resolves (reply lands or it finishes with none).
@@ -411,10 +449,33 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const saved = localStorage.getItem('notificationsEnabled');
     return saved === 'true';
   });
+  // The intelligence (model tier) choice for the profile currently selected.
+  // `null` -- the usual state -- means the profile's default tier, and is the
+  // only state in which a send omits `model_tier` entirely. A choice is
+  // one-shot: the next send consumes it and the control returns to the default,
+  // unless it is pinned, in which case it holds for the rest of this
+  // conversation. Nothing about it is persisted: spending more on a request is a
+  // decision about that request, not a setting that should outlive a reload.
+  const [modelTierChoice, setModelTierChoice] = useState<{
+    tierId: string;
+    pinned: boolean;
+  } | null>(null);
+  // Mirror for handleNew, which must not take the choice as a dependency: its
+  // identity feeds the assistant-ui runtime, and picking a tier should not
+  // rebuild the send path mid-conversation.
+  const modelTierChoiceRef = useRef(modelTierChoice);
+  modelTierChoiceRef.current = modelTierChoice;
+  const { profilesById } = useProfiles();
+  const currentProfile = profilesById[currentProfileId];
+  const modelTiers: ModelTier[] = currentProfile?.model_tiers ?? EMPTY_MODEL_TIERS;
+  const defaultModelTier = currentProfile?.default_model_tier ?? null;
   const streamingMessageIdRef = useRef<string | null>(null);
   const activeStreamConversationIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
   const lastStreamingErrorRef = useRef<string | null>(null);
+  // Whether that error was written for the user (shown verbatim) rather than
+  // for a debugger (replaced by the generic line plus a diagnostics link).
+  const lastStreamingErrorIsUserFacingRef = useRef(false);
   // The turn id of the currently-streaming turn, used to tag mid-turn steering
   // user bubbles. Set in handleNew, cleared when the turn completes.
   const activeTurnIdRef = useRef<string | null>(null);
@@ -430,19 +491,33 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // without echoing them (the model was in a final text-only iteration, so the
   // loop never drained them), they're recovered as normal follow-ups rather than
   // silently lost. A list, since the user can submit several steers during one
-  // long turn.
-  const awaitingEchoSteersRef = useRef<string[]>([]);
+  // long turn. Each carries the input_id it was submitted with, which is what
+  // the turn's echo names when it consumes the message.
+  const awaitingEchoSteersRef = useRef<{ inputId: string; prompt: string }[]>([]);
+  // input_ids of steers we have SEEN the turn echo back, i.e. observed it
+  // consume. Distinct from the awaiting list above, which is emptied by Stop, a
+  // conversation change and the recovery drain — so "not awaiting" says nothing
+  // about delivery, while an entry here is positive evidence of it. Identifying
+  // submissions rather than text is what makes it evidence: an identical message
+  // from another client, or from this one earlier, has a different id.
+  const consumedSteerEchoesRef = useRef<string[]>([]);
   useEffect(() => {
     setSteerError(null);
     // Drop any queued/awaiting steers so they can't fire into the new conversation.
     awaitingEchoSteersRef.current = [];
     pendingFollowupsRef.current = [];
+    consumedSteerEchoesRef.current = [];
   }, [conversationId]);
   // handleNew is defined after the streaming callbacks; the completion handler
   // reaches it via this ref to fire a queued follow-up.
   const handleNewRef = useRef<((message: { content: { text: string }[] }) => Promise<void>) | null>(
     null
   );
+  // Same story for handleReloadHistory: the completion handler reconciles an
+  // adopted turn whose output it suppressed, and that callback is defined below.
+  const handleReloadHistoryRef = useRef<
+    ((conversationId: string, options?: { retryIfBailed?: boolean }) => void) | null
+  >(null);
   // Set when the running turn ended because the user stopped it, so the
   // completion handler can render a "stopped" affordance instead of an empty
   // bubble (and never an error toast).
@@ -731,6 +806,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Store the error but don't treat it as terminal — the stream may recover
     // with subsequent tool results or text content
     lastStreamingErrorRef.current = typeof error === 'string' ? error : error.message;
+    // Some failures are written for the user rather than for a debugger — a send
+    // refused because the conversation is still busy, which tells them what to
+    // do next. Those are rendered verbatim instead of being replaced by the
+    // generic error line below.
+    lastStreamingErrorIsUserFacingRef.current =
+      typeof error !== 'string' && (error as Error & { userFacing?: boolean }).userFacing === true;
     // The optimistic row is retired in handleStreamingComplete (always called
     // from the hook's finally, keyed by the completing turn id) — including the
     // failed-POST case — so nothing to do here.
@@ -742,16 +823,29 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       toolCalls: _toolCalls,
       completed = true,
       turnId,
+      unconsumedAdoptedPrompt = null,
+      undeliveredPrompt = null,
+      adopted = false,
+      kickoffFailed = false,
+      reconciledWithoutEnd = false,
+      reasoningInfo = null,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
       completed?: boolean;
       turnId?: string;
+      unconsumedAdoptedPrompt?: string | null;
+      undeliveredPrompt?: string | null;
+      adopted?: boolean;
+      kickoffFailed?: boolean;
+      reconciledWithoutEnd?: boolean;
+      reasoningInfo?: MessageReasoningInfo | null;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
       const toolCallMessageId = toolCallMessageIdRef.current;
       const lastError = lastStreamingErrorRef.current;
+      const lastErrorIsUserFacing = lastStreamingErrorIsUserFacingRef.current;
       const wasStopped = turnStoppedRef.current;
       turnStoppedRef.current = false;
 
@@ -764,6 +858,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // clock can't pin it.
       if (turnId) {
         pendingOptimisticConversationsRef.current.delete(turnId);
+      }
+      if (!kickoffFailed && conversationId) {
+        setPersistedConversationId(conversationId);
       }
 
       if (messageId) {
@@ -836,21 +933,23 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             })
           );
         } else if (lastError) {
-          // No text, no tool calls, but had an error: show error message
+          // No text, no tool calls, but had an error. A user-facing one already
+          // says what happened and what to do (e.g. a send refused because the
+          // conversation is still busy), so show it as written — the generic
+          // line would hide the instruction and point at diagnostics for
+          // something that isn't a fault.
           const diagnosticsUrl = getDiagnosticsUrl({
             conversationId: conversationId ?? undefined,
           });
+          const errorText = lastErrorIsUserFacing
+            ? lastError
+            : `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`;
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === messageId
                 ? {
                     ...msg,
-                    content: [
-                      {
-                        type: 'text',
-                        text: `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
-                      },
-                    ],
+                    content: [{ type: 'text', text: errorText }],
                     isLoading: false,
                   }
                 : msg
@@ -879,6 +978,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         }
       }
 
+      // Record what served this turn on the reply itself, so the thread can
+      // name the tier it ran at without waiting for a history reload.
+      if (messageId && reasoningInfo) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, reasoning_info: reasoningInfo } : msg
+          )
+        );
+      }
+
       // Update tool call message status when streaming completes
       if (toolCallMessageId) {
         setMessages((prev) =>
@@ -905,32 +1014,145 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         toolCallMessageIdRef.current = null;
       }
       lastStreamingErrorRef.current = null;
+      lastStreamingErrorIsUserFacingRef.current = false;
       fetchConversations();
 
-      // Recover/queue follow-ups only on a clean completion we actually saw end.
+      // Recover/queue follow-ups on any terminal outcome except a deliberate
+      // Stop, which abandons queued work by definition.
       // - completed === false: a local detach (cancelStream during navigation) —
       //   the server turn keeps running and may still drain the steer, so
       //   resending would duplicate it.
-      // - stopped/failed: the user pressed Stop, or the turn errored. Resending
-      //   an abandoned steer would restart the very interaction Stop was meant to
-      //   end, so abandon any queued/awaiting steers instead.
-      const cleanCompletion = completed && !wasStopped && !lastError;
-      if (cleanCompletion) {
-        // Accepted steers the turn never echoed (it finished a final text-only
-        // iteration without draining them) would otherwise be lost. Recover
-        // them as normal follow-ups.
+      // - stopped: the user asked for this interaction to end; restarting it is
+      //   the opposite of what they pressed.
+      // - failed: still recovered. Neither an accepted steer nor an adopted
+      //   prompt is persisted until the LLM loop drains it and emits the echo,
+      //   and the composer cleared its text on accept — so the client's queue
+      //   holds the user's ONLY copy, and dropping it here deletes the message.
+      //   Each recovery is resent as one new turn, so a conversation that keeps
+      //   failing drains the queue rather than looping on it.
+      const recoverQueued = completed && !wasStopped;
+      // A recovered message's own kickoff can fail before any stream is opened
+      // (a 500 from /turns), which reports completed: false. That is terminal
+      // for this send, unlike a local detach (navigation), which also reports
+      // false but leaves the server turn running. The hook says which happened
+      // — inferring it from lastError would also catch a mid-stream error event,
+      // which is explicitly non-terminal. Without this the queue stops draining
+      // and the messages behind it are lost.
+      const terminalKickoffFailure = kickoffFailed && !wasStopped;
+      const recoverAdopted = recoverQueued && Boolean(unconsumedAdoptedPrompt);
+
+      // A prompt that reached nothing at all — the kickoff was refused and the
+      // steer it was rerouted to found the turn already gone. There is no doubt
+      // about delivery, so it is recovered regardless of how this stream ended.
+      if (undeliveredPrompt) {
+        if (turnId) {
+          setMessages((prev) => prev.filter((msg) => msg.turnId !== turnId));
+        }
+        // To the FRONT of the queue: this was the send that opened the stream,
+        // so it predates anything already queued — a steer submitted while the
+        // kickoff was still in flight lands here first, and appending would
+        // replay the user's messages in the wrong order.
+        pendingFollowupsRef.current.unshift(undeliveredPrompt);
+      }
+
+      // The stream stopped following this turn without seeing it end, so the
+      // echo that would have settled an accepted steer will never arrive. The
+      // turn may have drained it (it is persisted, and history now shows it) or
+      // died first (it exists nowhere) — and the client cannot tell which, since
+      // the events that would say so are exactly what it lost.
+      //
+      // Neither guess is safe: resending duplicates an instruction the assistant
+      // may already have acted on, dropping deletes a message the composer
+      // cleared. So hand the text back and let the user decide, as the ambiguous
+      // steer failure does. Leaving it registered is the one clearly wrong
+      // option — it fires against whatever turn completes next, out of order and
+      // possibly hours later.
+      //
+      // The adopted prompt is in the same position and is the more damaging of
+      // the two: it is not in the awaiting-echo list (the hook steered it, not
+      // submitSteer), the clean-completion recovery below never runs on this
+      // path, and the history reload that follows replaces its optimistic
+      // bubble — so without this it exists nowhere at all. It goes first, since
+      // it is the send that opened the stream.
+      const unresolvedOnGiveUp = reconciledWithoutEnd
+        ? [
+            ...(unconsumedAdoptedPrompt ? [unconsumedAdoptedPrompt] : []),
+            ...awaitingEchoSteersRef.current.map((steer) => steer.prompt),
+          ]
+        : [];
+      if (unresolvedOnGiveUp.length > 0) {
+        const unresolved = unresolvedOnGiveUp;
+        awaitingEchoSteersRef.current = [];
+        // Surfaced above the composer rather than as a message: this path
+        // reloads persisted history immediately afterwards, which replaces the
+        // thread wholesale and would drop a locally appended bubble.
+        setSteerError(
+          `Couldn't confirm the assistant received ${
+            unresolved.length === 1 ? 'this' : 'these'
+          }. Check the reply, then send again if missed: ${unresolved.join(' / ')}`
+        );
+      }
+
+      // An adopted stream withheld the turn's output until it echoed our prompt,
+      // so the tail of the answer it was already giving is missing from the
+      // thread. Reconcile it from persisted history whenever such a stream ends
+      // — not only when the prompt went unconsumed, which is the narrower case
+      // handled below.
+      if (adopted && conversationId) {
+        // retryIfBailed: recovering a prompt fires its replacement turn right
+        // after this, and an active stream makes the reconcile bail.
+        void handleReloadHistoryRef.current?.(conversationId, { retryIfBailed: true });
+      }
+
+      if (recoverAdopted) {
+        // Drop the turn's optimistic bubbles. The resend renders the prompt
+        // again, and the assistant row holds nothing worth keeping: the stream
+        // suppresses the adopted turn's output until it echoes our prompt,
+        // which by definition never happened here.
+        if (turnId) {
+          setMessages((prev) => prev.filter((msg) => msg.turnId !== turnId));
+        }
+        // History reconciliation already happened above for every adopted
+        // stream, which covers this case too.
+      }
+
+      if (recoverQueued) {
+        // The adopted prompt goes to the front: it was the send that opened this
+        // stream, so it predates every steer typed while the stream ran —
+        // whether that steer is already queued here or still awaiting an echo —
+        // and queueing it after them would replay the user's messages out of
+        // order. It is tracked separately because it isn't in the awaiting-echo
+        // list — the hook sent that steer, not submitSteer.
+        if (unconsumedAdoptedPrompt) {
+          pendingFollowupsRef.current.unshift(unconsumedAdoptedPrompt);
+        }
+
         const unEchoed = awaitingEchoSteersRef.current;
         if (unEchoed.length > 0) {
           awaitingEchoSteersRef.current = [];
-          pendingFollowupsRef.current.push(...unEchoed);
+          pendingFollowupsRef.current.push(...unEchoed.map((steer) => steer.prompt));
         }
+      } else if (completed) {
+        // A deliberate Stop: drop everything queued rather than restarting the
+        // interaction the user just ended.
+        awaitingEchoSteersRef.current = [];
+        pendingFollowupsRef.current = [];
+      }
 
-        // Fire the next queued follow-up (a steer that hit an already-finished
-        // turn, or a recovered un-echoed steer). One at a time: each turn's own
-        // completion handler fires the next, so they don't start concurrent
-        // turns. Defer past this hook's cleanup (which clears abortControllerRef
-        // / activeTurnRef after onComplete returns) so the follow-up turn's refs
-        // aren't clobbered and Stop/Steer target it correctly.
+      // Fire the next queued follow-up (a steer that hit an already-finished
+      // turn, a recovered un-echoed steer, or a recovered adopted prompt). One
+      // at a time: each turn's own completion handler fires the next, so they
+      // don't start concurrent turns. Defer past this hook's cleanup (which
+      // clears abortControllerRef / activeTurnRef after onComplete returns) so
+      // the follow-up turn's refs aren't clobbered and Stop/Steer target it
+      // correctly.
+      //
+      // reconciledWithoutEnd counts too: a steer that got 404/409 while this
+      // stream was still on screen was queued here as a normal follow-up, and
+      // if the stream then gives up none of the other three fire. Unlike the
+      // handback above, these need no user decision — a 404/409 means the steer
+      // reached no turn at all, so sending it is unambiguous.
+      if (recoverQueued || undeliveredPrompt || terminalKickoffFailure || reconciledWithoutEnd) {
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
           const convAtSchedule = conversationIdRef.current;
@@ -943,11 +1165,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             void handleNewRef.current?.({ content: [{ text: followup }] });
           }, 0);
         }
-      } else if (completed) {
-        // Terminal but not a clean success (stopped or failed): drop any
-        // queued/awaiting steers so Stop/failure doesn't auto-start a new turn.
-        awaitingEchoSteersRef.current = [];
-        pendingFollowupsRef.current = [];
       }
     },
     [conversationId, fetchConversations]
@@ -956,7 +1173,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // A mid-turn steering message the user sent while the turn was running. Render
   // it as a user bubble just before the in-progress assistant bubble so the
   // conversation reads in order; the turn continues streaming after it.
-  const handleStreamingUserInput = useCallback((content: string) => {
+  const handleStreamingUserInput = useCallback((content: string, inputId: string | null) => {
     const assistantId = streamingMessageIdRef.current;
     const steeringMessage: Message = {
       id: `msg_${Date.now()}_steer_${Math.random().toString(36).slice(2)}`,
@@ -974,11 +1191,33 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       next.splice(idx, 0, steeringMessage);
       return next;
     });
-    // The echo confirms the turn consumed this steer, so drop one matching
-    // awaiting-echo entry so it isn't recovered as a follow-up later.
-    const idx = awaitingEchoSteersRef.current.findIndex((s) => s.trim() === content.trim());
+    // An echo with no id comes from a backend that predates the field. Match it
+    // the old way — on the text — so a steer this turn really did consume isn't
+    // left registered and resent as a follow-up. It can't be credited as
+    // positive delivery evidence, since another client's identical message
+    // looks the same.
+    if (!inputId) {
+      const untagged = awaitingEchoSteersRef.current.findIndex(
+        (s) => s.prompt.trim() === content.trim()
+      );
+      if (untagged !== -1) {
+        awaitingEchoSteersRef.current.splice(untagged, 1);
+      }
+      return;
+    }
+    // The echo confirms the turn consumed this steer, so drop its awaiting-echo
+    // entry — it isn't recovered as a follow-up later.
+    const idx = awaitingEchoSteersRef.current.findIndex((s) => s.inputId === inputId);
     if (idx !== -1) {
       awaitingEchoSteersRef.current.splice(idx, 1);
+    }
+    // Record it as observed-delivered, which is what lets a steer whose POST
+    // response was lost report success instead of asking the user to resend
+    // something the turn already acted on. Bounded: it only has to outlive an
+    // in-flight steer request, so a short tail is plenty.
+    consumedSteerEchoesRef.current.push(inputId);
+    if (consumedSteerEchoesRef.current.length > 20) {
+      consumedSteerEchoesRef.current.shift();
     }
   }, []);
 
@@ -1062,7 +1301,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const handleReloadHistory = useCallback(
     (
       reloadConversationId: string,
-      options?: { errorIfNoReply?: boolean; turnId?: string; errorOnFailedReload?: boolean }
+      options?: {
+        errorIfNoReply?: boolean;
+        turnId?: string;
+        errorOnFailedReload?: boolean;
+        retryIfBailed?: boolean;
+      }
     ) => {
       activeStreamConversationIdRef.current = null;
       // A bounded resume that gave up — or a 410 — no longer holds the turn's
@@ -1095,7 +1339,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           // stays unconfirmed and self-heals on the next successful reload. (A 410
           // omits errorOnFailedReload — its reply is durably persisted — so a
           // transient /messages failure there stays silent and self-heals.)
-          if (options?.errorIfNoReply && options.turnId && result === 'bailed') {
+          if (
+            result === 'bailed' &&
+            (options?.retryIfBailed || (options?.errorIfNoReply && options.turnId))
+          ) {
+            // A stream was active for this conversation, so the reconcile never
+            // ran. Drive the fallback poll to retry once that stream clears —
+            // a recovered prompt starts its replacement turn immediately, which
+            // is exactly what bails this reload.
             setPendingReconcileConvId(reloadConversationId);
             return;
           }
@@ -1164,16 +1415,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         interfaceType: string;
         attachments?: Array<{ id: string; type: string; name: string; content: string }>;
         turnId?: string;
+        modelTier?: string;
       }) => Promise<void>;
       cancelStream: () => void;
       stopTurn: () => Promise<boolean>;
-      steerStream: (params: { prompt: string }) => Promise<'accepted' | 'finished' | 'error'>;
+      steerStream: (params: {
+        prompt: string;
+        inputId: string;
+      }) => Promise<'accepted' | 'finished' | 'error'>;
       isStreaming: boolean;
     };
 
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId: string, background = false) => {
     try {
+      // A background reload is deferred, so the user can have moved on before it
+      // runs — an aborted stream still reconciles the conversation it was for.
+      // Painting that history now would replace the thread on screen with
+      // another conversation's, under the current one's composer, and would also
+      // abort the load the new conversation has in flight (they share an abort
+      // controller). A foreground load IS the user opening this conversation, so
+      // it proceeds; the state it sets is what makes the ref match.
+      if (background && conversationIdRef.current !== convId) {
+        return 'bailed' as ReloadResult;
+      }
       const streamWasActiveAtRequestStart = activeStreamConversationIdRef.current === convId;
 
       // Cancel previous messages request if it exists
@@ -1188,15 +1453,29 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (!background) {
         setIsLoading(true);
       }
+      // Opening a conversation starts from one page of history; a background
+      // reload of the same conversation keeps whatever window the user has
+      // widened it to.
+      if (!background || historyWindowRef.current.convId !== convId) {
+        historyWindowRef.current = { convId, limit: HISTORY_PAGE_SIZE, floorId: null };
+      }
+      const requestWindow = historyWindowRef.current;
+      // A pinned window asks for a page of headroom, so rows that arrived since
+      // the last load can't push its oldest row out of the response.
+      const requestLimit =
+        requestWindow.floorId === null
+          ? requestWindow.limit
+          : requestWindow.limit + HISTORY_PAGE_SIZE;
+      const params = new URLSearchParams({ limit: String(requestLimit) });
       // A foreground load is an explicit user open, where we adopt the
       // conversation's profile; ask the backend to resolve it (it's computed
       // across the whole conversation, not just the returned page, so adoption
       // is correct even when the last user message is many rows back). Background
       // reloads skip it to keep the response cheap.
-      const messagesUrl = background
-        ? `/api/v1/chat/conversations/${convId}/messages`
-        : `/api/v1/chat/conversations/${convId}/messages?include_conversation_profile=true`;
-      const response = await fetch(messagesUrl, {
+      if (!background) {
+        params.set('include_conversation_profile', 'true');
+      }
+      const response = await fetch(`/api/v1/chat/conversations/${convId}/messages?${params}`, {
         signal: messagesAbortController.signal,
       });
       if (response.ok) {
@@ -1206,6 +1485,37 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           // reconcile. Don't clobber it, and treat this as a supersession.
           return 'bailed' as const;
         }
+        // A background load is deferred, so the user can have left this
+        // conversation while it was in flight.
+        if (background && conversationIdRef.current !== convId) {
+          return 'bailed' as const;
+        }
+
+        // Trim the headroom back to the oldest row the user had loaded, and
+        // keep the window pinned there so the next load covers the same range
+        // plus whatever arrives in the meantime.
+        const { messages: fetchedRows, has_more_before: fetchedHasMore } = data;
+        const floorIndex =
+          requestWindow.floorId === null
+            ? -1
+            : fetchedRows.findIndex((row) => row.internal_id === requestWindow.floorId);
+        const historyRows = floorIndex > 0 ? fetchedRows.slice(floorIndex) : fetchedRows;
+        const historyHasMore = floorIndex > 0 || fetchedHasMore === true;
+        const windowIsWidened =
+          requestWindow.floorId !== null || requestWindow.limit > HISTORY_PAGE_SIZE;
+        if (windowIsWidened && historyWindowRef.current === requestWindow) {
+          historyWindowRef.current = {
+            convId,
+            limit: Math.max(historyRows.length, HISTORY_PAGE_SIZE),
+            floorId: historyRows[0]?.internal_id ?? null,
+          };
+        }
+
+        if (historyRows.length > 0 && conversationIdRef.current === convId) {
+          setPersistedConversationId(convId);
+        }
+        setOlderHistory({ convId, hasMore: historyHasMore });
+        setOlderMessagesStatus((prev) => (prev === 'failed' ? 'idle' : prev));
 
         // A foreground load means the user just opened this conversation (every
         // background reload passes background=true). Adopt the profile its
@@ -1248,7 +1558,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         const toolAttachments = new Map<string, BackendAttachment[]>();
 
         // First pass: collect tool responses and attachments
-        data.messages.forEach((msg: BackendConversationMessage) => {
+        historyRows.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             const responseContent =
               typeof msg.content === 'string'
@@ -1266,7 +1576,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           }
         });
 
-        data.messages.forEach((msg: BackendConversationMessage) => {
+        historyRows.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool') {
             return;
           }
@@ -1411,6 +1721,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               content: content,
               createdAt: new Date(msg.timestamp),
               status: { type: 'complete' },
+              reasoning_info: msg.reasoning_info ?? undefined,
             });
             return;
           }
@@ -1497,7 +1808,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // hidden), so we just pass the message through. Skip the first load of
         // a conversation (no prior baseline) so opening it doesn't notify for
         // its existing tail.
-        const latestAssistantMessage = [...data.messages]
+        const latestAssistantMessage = [...historyRows]
           .reverse()
           .find((msg) => msg.role === 'assistant');
         const hadBaseline = lastSeenAssistantIdRef.current.has(convId);
@@ -1601,6 +1912,23 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   }, []);
   loadConversationMessagesRef.current = loadConversationMessages;
 
+  // Widen the open conversation's history window by a page and reload it. A
+  // reload this supersedes (or that supersedes it) reads the widened window
+  // too, so a 'bailed' result still ends with the older rows shown.
+  const loadOlderMessages = useCallback(async () => {
+    const convId = conversationIdRef.current;
+    if (!convId) {
+      return;
+    }
+    const current = historyWindowRef.current;
+    const limit =
+      (current.convId === convId ? current.limit : HISTORY_PAGE_SIZE) + HISTORY_PAGE_SIZE;
+    historyWindowRef.current = { convId, limit, floorId: null };
+    setOlderMessagesStatus('loading');
+    const result = await loadConversationMessages(convId, true);
+    setOlderMessagesStatus(result === 'failed' ? 'failed' : 'idle');
+  }, [loadConversationMessages]);
+
   // Fallback reconcile poll: while the open conversation has a turn that gave up
   // but is still running server-side, re-poll history so its eventual completion
   // is reconciled even if the always-on follow stream missed the turn_ended (it
@@ -1646,6 +1974,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Cancel any active streaming before switching conversations
       cancelStream();
 
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(convId);
       setMobileShowList(false);
       localStorage.setItem('lastConversationId', convId);
@@ -1778,6 +2107,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const handleNewChat = useCallback(() => {
     // Cancel any active streaming before creating a new chat
     cancelStream();
+    // A history load still in flight belongs to the conversation being left.
+    messagesAbortControllerRef.current?.abort();
 
     // A new chat starts from the user's preferred profile, not whatever profile
     // an old conversation we were just viewing was adopted into.
@@ -1785,6 +2116,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     setCurrentProfileId(preferredProfileId);
 
     const newConvId = `web_conv_${generateUUID()}`;
+    conversationIsUnsentDraftRef.current = true;
     setConversationId(newConvId);
     setMobileShowList(false);
     setMessages([]);
@@ -1798,6 +2130,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     setMobileShowList(true);
   }, [cancelStream]);
 
+  // Set when a conversation switch is triggered by a profile change, where the
+  // draft the user is composing must survive into the fresh conversation.
+  const preserveComposerOnConversationSwitchRef = useRef(false);
+
+  // Always-current mirror of "a turn is in flight", so callbacks can read it
+  // without taking it as a dependency. Same value the runtime reports as
+  // isRunning below.
+  const turnIsRunningRef = useRef(false);
+  turnIsRunningRef.current = isLoading || isStreaming;
+
+  // A tier choice belongs to the profile and the conversation it was made in.
+  // A new chat, opening another conversation, and switching profile all return
+  // to the profile default rather than carrying a spend decision into somewhere
+  // the user did not make it.
+  useEffect(() => {
+    setModelTierChoice(null);
+  }, [conversationId, currentProfileId]);
+
+  // The control reports a choice of the profile default as no choice at all, so
+  // whatever is stored here differs from the default and is worth sending.
+  const handleModelTierChange = useCallback((tierId: string | null, pinned: boolean) => {
+    setModelTierChoice(tierId === null ? null : { tierId, pinned });
+  }, []);
+
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
@@ -1805,11 +2161,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Persist selection to localStorage
       localStorage.setItem('selectedProfileId', newProfileId);
 
-      // Optionally start a new conversation when switching profiles
-      // to maintain clear context separation
-      if (currentProfileId !== newProfileId && conversationId) {
-        handleNewChat();
+      if (currentProfileId === newProfileId || !conversationId) {
+        return;
       }
+      // An unsent draft has no turns to separate from, so switching in place is
+      // enough — minting a new conversation would only churn the id (and reset
+      // the composer's surroundings) for no gain.
+      if (conversationIsUnsentDraftRef.current) {
+        return;
+      }
+      // Otherwise start a new conversation to keep each profile's context
+      // clearly separated. The user is mid-composing the same message they'll
+      // send under the new profile, so this switch must not wipe the composer
+      // the way a real conversation switch does — UNLESS a turn is running, in
+      // which case the composer holds steer text aimed at THAT turn (which
+      // handleNewChat is about to cancel). Carrying it over would drop it into
+      // an empty thread under a different profile, ready to send as a
+      // standalone message: exactly the leak the clear exists to prevent.
+      //
+      // Read the running state from a ref, NOT from the deps: ProfileSelector
+      // re-runs its profile fetch whenever onProfileChange changes identity, so
+      // depending on state that flips every turn would refetch profiles mid-turn
+      // and blank the picker.
+      preserveComposerOnConversationSwitchRef.current = !turnIsRunningRef.current;
+      handleNewChat();
     },
     [currentProfileId, conversationId, handleNewChat]
   );
@@ -1866,6 +2241,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // a no-content spinner with an error) without touching a concurrent turn's
       // live spinner. effectiveTurnId in the hook is this same id.
       const turnId = generateUUID();
+      // A steer error from the previous turn has been read by now — the user is
+      // sending again, which is what it asked them to consider.
+      setSteerError(null);
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
         role: 'user',
@@ -1886,6 +2264,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       };
 
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
+
+      // The conversation now holds a turn, so it is no longer a switch-in-place
+      // draft: a later profile change has real context to separate from.
+      conversationIsUnsentDraftRef.current = false;
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
 
@@ -1917,7 +2299,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       activeTurnIdRef.current = turnId;
       turnStoppedRef.current = false;
       lastStreamingErrorRef.current = null;
+      lastStreamingErrorIsUserFacingRef.current = false;
       selfTurnIdsRef.current.add(turnId);
+
+      // A tier choice applies to this send. An unpinned one is spent here, so
+      // the control returns to the profile default instead of quietly repricing
+      // every later message in the conversation.
+      const tierChoice = modelTierChoiceRef.current;
+      if (tierChoice && !tierChoice.pinned) {
+        setModelTierChoice(null);
+      }
 
       await sendStreamingMessage({
         prompt: message.content[0].text,
@@ -1926,6 +2317,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         interfaceType: 'web',
         attachments: processedAttachments,
         turnId,
+        modelTier: tierChoice?.tierId,
       });
     },
     [conversationId, sendStreamingMessage, currentProfileId]
@@ -1936,6 +2328,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   useEffect(() => {
     handleNewRef.current = handleNew;
   }, [handleNew]);
+
+  // Same for handleReloadHistory, which that handler uses to reconcile an
+  // adopted turn whose output was suppressed pending an echo that never came.
+  useEffect(() => {
+    handleReloadHistoryRef.current = handleReloadHistory;
+  }, [handleReloadHistory]);
 
   const convertMessage = useCallback((message: Message) => {
     // Ensure content is always an array for assistant-ui compatibility
@@ -1972,6 +2370,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const convertedMessage = {
       ...messageWithoutAttachments,
       content,
+      // assistant-ui rebuilds each message from the fields it knows and drops
+      // the rest, so anything of ours the thread has to render — which profile
+      // answered, which model tier served it — travels in metadata.custom.
+      metadata: {
+        custom: {
+          processing_profile_id: message.processing_profile_id,
+          reasoning_info: message.reasoning_info,
+        },
+      },
     };
     if (message.role === 'user' && convertedAttachments && convertedAttachments.length > 0) {
       return { ...convertedMessage, attachments: convertedAttachments };
@@ -2025,12 +2432,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // across conversation changes. On a real conversation switch, clear it so
   // steer text typed for the previous turn can't leak into — and be sent in —
   // the newly selected thread. Guarded on an actual id change so an unrelated
-  // runtime re-render never wipes text the user is typing.
+  // runtime re-render never wipes text the user is typing. A switch caused by
+  // a profile change is exempt: the user keeps composing the same draft, just
+  // under a different profile.
   const prevConversationIdRef = useRef(conversationId);
   useEffect(() => {
     if (prevConversationIdRef.current !== conversationId) {
       prevConversationIdRef.current = conversationId;
-      runtime.thread.composer.setText('');
+      if (preserveComposerOnConversationSwitchRef.current) {
+        preserveComposerOnConversationSwitchRef.current = false;
+      } else {
+        runtime.thread.composer.setText('');
+      }
     }
   }, [conversationId, runtime]);
 
@@ -2044,13 +2457,52 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         return 'finished';
       }
       setSteerError(null);
-      const result = await steerStream({ prompt });
+      // Register as awaiting-echo BEFORE the request, not after it resolves. The
+      // turn can drain the steer and publish its user_input echo while the POST
+      // response is still in flight; the echo handler then finds nothing to
+      // remove, and registering afterwards would leave an already-consumed
+      // prompt marked unconsumed — which terminal recovery resends, repeating
+      // whatever the user asked for. Registered early, the echo removes it.
+      // Names this submission on the wire: the turn's echo carries the id back,
+      // so delivery is established by identity rather than by matching text that
+      // another client — or this one, earlier — could have sent too.
+      const inputId = generateUUID();
+      awaitingEchoSteersRef.current.push({ inputId, prompt });
+      const result = await steerStream({ prompt, inputId });
       if (result === 'accepted') {
-        // Track it as awaiting-echo so that if the turn completes without
-        // draining it (a final text-only iteration), the completion handler
-        // recovers it as a normal follow-up instead of losing it.
-        awaitingEchoSteersRef.current.push(prompt);
+        // Left registered (or already removed by its echo): if the turn ends
+        // without draining it, the completion handler recovers it as a normal
+        // follow-up instead of losing it.
         return 'accepted';
+      }
+      const echoedIdx = consumedSteerEchoesRef.current.indexOf(inputId);
+      if (echoedIdx !== -1) {
+        // We SAW the turn echo this submission back, so it was delivered and
+        // only the response was lost. Report acceptance so the composer clears;
+        // keeping the text would invite a retry that sends the instruction a
+        // second time.
+        //
+        // This covers 'finished' as well as 'error': steerStream retries a lost
+        // 5xx with the same body, and the turn can drain the steer and end in
+        // the meantime, so the retry sees 409. Resending on that would repeat an
+        // instruction the assistant already acted on.
+        //
+        // This keys off having observed the echo, not off the registration
+        // being absent: Stop, a conversation change and the recovery drain all
+        // empty that registry too, so absence would read a message the turn
+        // never saw as delivered and drop it.
+        consumedSteerEchoesRef.current.splice(echoedIdx, 1);
+        return 'accepted';
+      }
+      const registeredIdx = awaitingEchoSteersRef.current.findIndex(
+        (steer) => steer.inputId === inputId
+      );
+      // Otherwise nothing will echo it, so drop the registration again: the
+      // caller handles this prompt itself (resending a 'finished' one as a
+      // normal message, keeping an 'error' one in the composer), and leaving it
+      // registered would have recovery send it a second time.
+      if (registeredIdx !== -1) {
+        awaitingEchoSteersRef.current.splice(registeredIdx, 1);
       }
       if (result === 'error') {
         // The turn may still be running and the steer may even have been
@@ -2082,8 +2534,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     () => ({
       submitSteer,
       steerError,
+      hasOlderMessages: olderHistory?.convId === conversationId && olderHistory.hasMore,
+      olderMessagesStatus,
+      loadOlderMessages: () => void loadOlderMessages(),
     }),
-    [steerError, submitSteer]
+    [steerError, submitSteer, olderHistory, conversationId, olderMessagesStatus, loadOlderMessages]
   );
 
   // Initialize conversation ID from URL or localStorage
@@ -2102,9 +2557,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages([]);
       localStorage.setItem('lastConversationId', newConvId);
     } else if (urlConversationId) {
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(urlConversationId);
       loadConversationMessages(urlConversationId);
     } else if (lastConversationId) {
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(lastConversationId);
       loadConversationMessages(lastConversationId);
       window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);
@@ -2204,16 +2661,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </Button>
               <h2 className="text-xl font-semibold">Chat</h2>
 
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <ProfileSelector
                   selectedProfileId={currentProfileId}
                   onProfileChange={handleProfileChange}
                   disabled={isLoading}
                   onLoadingChange={setProfilesLoading}
                 />
+                <IntelligenceSelector
+                  tiers={modelTiers}
+                  defaultTierId={defaultModelTier}
+                  selectedTierId={modelTierChoice?.tierId ?? null}
+                  pinned={modelTierChoice?.pinned ?? false}
+                  onChange={handleModelTierChange}
+                  disabled={isLoading}
+                />
               </div>
 
               <div className="flex items-center gap-2 ml-auto">
+                <ShareConversationButton
+                  conversationId={conversationId}
+                  hasPersistedMessages={
+                    messages.length > 0 && persistedConversationId === conversationId
+                  }
+                />
                 <NotificationSettings
                   enabled={notificationsEnabled}
                   onEnabledChange={handleNotificationEnabledChange}
@@ -2272,16 +2743,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </Button>
               <h2 className="text-xl font-semibold">Chat</h2>
 
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <ProfileSelector
                   selectedProfileId={currentProfileId}
                   onProfileChange={handleProfileChange}
                   disabled={isLoading}
                   onLoadingChange={setProfilesLoading}
                 />
+                <IntelligenceSelector
+                  tiers={modelTiers}
+                  defaultTierId={defaultModelTier}
+                  selectedTierId={modelTierChoice?.tierId ?? null}
+                  pinned={modelTierChoice?.pinned ?? false}
+                  onChange={handleModelTierChange}
+                  disabled={isLoading}
+                />
               </div>
 
               <div className="flex items-center gap-2 ml-auto">
+                <ShareConversationButton
+                  conversationId={conversationId}
+                  hasPersistedMessages={
+                    messages.length > 0 && persistedConversationId === conversationId
+                  }
+                />
                 <NotificationSettings
                   enabled={notificationsEnabled}
                   onEnabledChange={handleNotificationEnabledChange}
@@ -2338,5 +2823,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     </TooltipProvider>
   );
 };
+
+// One profile fetch for the whole page: the picker, the intelligence control
+// and the per-message badges in the thread all read the same list.
+const ChatApp: React.FC<ChatAppProps> = (props) => (
+  <ProfilesProvider>
+    <ChatAppContent {...props} />
+  </ProfilesProvider>
+);
 
 export default ChatApp;

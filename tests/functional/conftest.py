@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
 
@@ -31,9 +31,9 @@ async def api_client(
 ) -> AsyncGenerator[httpx.AsyncClient]:
     """Provide an HTTP client for testing FastAPI endpoints."""
 
-    async def override_get_db() -> AsyncGenerator[DatabaseContext]:
-        async with DatabaseContext(engine=db_engine) as db:
-            yield db  # noqa: ASYNC119
+    async def override_get_db() -> AsyncGenerator[Database]:
+        db = Database(engine=db_engine)
+        yield db
 
     fastapi_app.dependency_overrides[get_db] = override_get_db
     fastapi_app.state.embedding_generator = MockEmbeddingGenerator(

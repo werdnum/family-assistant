@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp.types import Tool, ToolAnnotations
+from mcp.types import ListToolsResult, Tool, ToolAnnotations
 
 from family_assistant.tools import (
     MCPServerConfig,
@@ -470,14 +470,18 @@ async def test_health_check_retries_failed_and_cancelled_servers() -> None:
         server_id: str, server_conf: MCPServerConfig
     ) -> tuple[object | None, list[ToolDefinition], list, dict[str, str]]:
         if server_id == "healthy":
-            session = SimpleNamespace(list_tools=AsyncMock())
+            session = SimpleNamespace(
+                list_tools=AsyncMock(return_value=ListToolsResult(tools=[]))
+            )
             provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
             return session, [], [], {}
         # On first call (init), fail. On retry via _reconnect_server, succeed.
         if server_id not in retried_servers:
             provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             return None, [], [], {}
-        session = SimpleNamespace(list_tools=AsyncMock())
+        session = SimpleNamespace(
+            list_tools=AsyncMock(return_value=ListToolsResult(tools=[]))
+        )
         provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
         return session, [], [], {}
 
@@ -528,7 +532,9 @@ async def test_initialize_starts_health_check_with_no_sessions() -> None:
         if not reconnected.is_set():
             provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             return None, [], [], {}
-        session = SimpleNamespace(list_tools=AsyncMock())
+        session = SimpleNamespace(
+            list_tools=AsyncMock(return_value=ListToolsResult(tools=[]))
+        )
         provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
         return session, [], [], {}
 

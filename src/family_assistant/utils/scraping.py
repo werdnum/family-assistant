@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 if TYPE_CHECKING:
+    from rebrowser_playwright.async_api import Page, Playwright, Response
     from rebrowser_playwright.async_api._context_manager import (
         PlaywrightContextManager,
     )
@@ -43,10 +44,6 @@ try:
         launch_stealth_browser,
     )
 
-    PlaywrightError = PlaywrightErrorImport
-    PlaywrightTimeoutError = PlaywrightTimeoutErrorImport
-    async_playwright = async_playwright_import
-    _playwright_installed = True
 except ImportError:
     _playwright_installed = False
 
@@ -64,6 +61,11 @@ except ImportError:
     PlaywrightError = _PlaywrightErrorBaseFallback
     PlaywrightTimeoutError = _PlaywrightTimeoutErrorSpecificFallback
     async_playwright = None  # Define for checks
+else:
+    PlaywrightError = PlaywrightErrorImport
+    PlaywrightTimeoutError = PlaywrightTimeoutErrorImport
+    async_playwright = async_playwright_import
+    _playwright_installed = True
 
 # Conditionally import MarkItDown and define a type for it
 MarkItDownType: type["ActualMarkItDownClass"] | None = None
@@ -203,13 +205,12 @@ class PlaywrightScraper:
         def convert_sync() -> str | None:
             stream = io.BytesIO(content_bytes)
             effective_filename = filename or "unknown_file"
-            try:
+
+            def _convert() -> str | None:
                 logger.debug(
                     f"MarkItDown: Attempting conversion for {effective_filename}"
                 )
-                assert (
-                    self.md_converter is not None
-                )  # Ensure converter is not None here
+                assert self.md_converter is not None
                 result = self.md_converter.convert_stream(
                     stream, filename=effective_filename
                 )
@@ -218,11 +219,13 @@ class PlaywrightScraper:
                         f"MarkItDown: Conversion successful for {effective_filename}"
                     )
                     return result.text_content
-                else:
-                    logger.warning(
-                        f"MarkItDown: Conversion resulted in empty content for {effective_filename}"
-                    )
-                    return None
+                logger.warning(
+                    f"MarkItDown: Conversion resulted in empty content for {effective_filename}"
+                )
+                return None
+
+            try:
+                return _convert()
             except Exception as e_convert:
                 logger.exception(
                     f"MarkItDown: convert_stream failed for {effective_filename}: {e_convert}"
@@ -421,85 +424,9 @@ class PlaywrightScraper:
             )
             return None, None, None
 
-        content_str: str | None = None
-        final_mime_type: str | None = None
-        page_title_str: str | None = None
-        browser = None
-        context = None
-        page = None
-
         try:
-            async with async_playwright() as p:
-                try:
-                    # Use stealth browser with same user agent as httpx for consistency
-                    browser = await launch_stealth_browser(p, headless=True)
-                    context = await create_stealth_context(
-                        browser,
-                        ignore_https_errors=not self.verify_ssl,
-                        user_agent=self.user_agent,
-                    )
-                    page = await context.new_page()
-                    response = None
-                    try:
-                        logger.debug(f"Playwright navigating to {url}")
-                        response = await page.goto(
-                            url, wait_until="networkidle", timeout=60000
-                        )
-                        logger.debug(f"Playwright navigation to {url} completed.")
-                    except PlaywrightTimeoutError:
-                        logger.warning(
-                            f"Playwright timed out waiting for network idle at {url}. Content might be incomplete."
-                        )
-                    except PlaywrightError as e:
-                        if "net::ERR_" in str(e):
-                            logger.error(
-                                f"Playwright navigation network error for {url}: {e}"
-                            )
-                        else:
-                            logger.error(f"Playwright navigation error for {url}: {e}")
-                        return None, None, None
-
-                    try:
-                        content_str = await page.content()
-                        page_title_str = await page.title()  # Fetch page title
-                        if response:
-                            headers = await response.all_headers()
-                            content_type_header = headers.get("content-type")
-                            if content_type_header:
-                                final_mime_type = (
-                                    content_type_header.split(";")[0].strip().lower()
-                                )
-                        logger.debug(
-                            f"Playwright successfully fetched content for {url}. Title: '{page_title_str}', Length: {len(content_str or '')}"
-                        )
-                    except PlaywrightError as e:
-                        logger.error(f"Playwright error getting content for {url}: {e}")
-                        content_str = None
-                        page_title_str = None
-
-                except PlaywrightError as e:
-                    logger.exception(f"Playwright execution error: {e}")
-                    if "Executable doesn't exist" in str(
-                        e
-                    ) or "Browser process exited" in str(e):
-                        logger.error(
-                            "Playwright browser not found or failed to launch. "
-                            "Please run: python -m rebrowser_playwright install --with-deps chromium"
-                        )
-                        self.playwright_available = False
-                    return None, None, None
-                except Exception as e:
-                    logger.exception(
-                        f"Unexpected error during Playwright scraping context: {e}"
-                    )
-                    return None, None, None
-                finally:
-                    if page:
-                        await page.close()
-                    if context:
-                        await context.close()
-                    if browser:
-                        await browser.close()
+            async with async_playwright() as playwright:
+                return await self._scrape_with_playwright(playwright, url)
         except Exception as e:
             logger.exception(f"Error setting up/tearing down Playwright: {e}")
             if isinstance(e, PlaywrightError) and (
@@ -509,6 +436,97 @@ class PlaywrightScraper:
                 self.playwright_available = False
             return None, None, None
 
+    async def _scrape_with_playwright(
+        self, playwright: "Playwright", url: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Run one Playwright scrape while guaranteeing resource cleanup."""
+        browser = None
+        context = None
+        page = None
+        try:
+            browser = await launch_stealth_browser(playwright, headless=True)
+            context = await create_stealth_context(
+                browser,
+                ignore_https_errors=not self.verify_ssl,
+                user_agent=self.user_agent,
+            )
+            page = await context.new_page()
+            return await self._scrape_playwright_page(page, url)
+        except PlaywrightError as e:
+            logger.exception(f"Playwright execution error: {e}")
+            if "Executable doesn't exist" in str(e) or "Browser process exited" in str(
+                e
+            ):
+                logger.error(
+                    "Playwright browser not found or failed to launch. "
+                    "Please run: python -m rebrowser_playwright install --with-deps chromium"
+                )
+                self.playwright_available = False
+            return None, None, None
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error during Playwright scraping context: {e}"
+            )
+            return None, None, None
+        finally:
+            if page:
+                await page.close()
+            if context:
+                await context.close()
+            if browser:
+                await browser.close()
+
+    async def _scrape_playwright_page(
+        self, page: "Page", url: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Navigate and read a Playwright page."""
+        response, should_read_page = await self._navigate_playwright_page(page, url)
+        if not should_read_page:
+            return None, None, None
+        return await self._read_playwright_page(page, response, url)
+
+    @staticmethod
+    async def _navigate_playwright_page(
+        page: "Page", url: str
+    ) -> tuple["Response | None", bool]:
+        """Navigate to a URL, allowing timed-out pages to return partial content."""
+        try:
+            logger.debug(f"Playwright navigating to {url}")
+            response = await page.goto(url, wait_until="networkidle", timeout=60000)
+            logger.debug(f"Playwright navigation to {url} completed.")
+            return response, True
+        except PlaywrightTimeoutError:
+            logger.warning(
+                f"Playwright timed out waiting for network idle at {url}. Content might be incomplete."
+            )
+            return None, True
+        except PlaywrightError as e:
+            if "net::ERR_" in str(e):
+                logger.error(f"Playwright navigation network error for {url}: {e}")
+            else:
+                logger.error(f"Playwright navigation error for {url}: {e}")
+            return None, False
+
+    @staticmethod
+    async def _read_playwright_page(
+        page: "Page", response: "Response | None", url: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Read rendered page content and its response metadata."""
+        try:
+            content_str = await page.content()
+            page_title_str = await page.title()
+            headers = await response.all_headers() if response else None
+        except PlaywrightError as e:
+            logger.error(f"Playwright error getting content for {url}: {e}")
+            return None, None, None
+
+        final_mime_type: str | None = None
+        content_type_header = headers.get("content-type") if headers else None
+        if content_type_header:
+            final_mime_type = content_type_header.split(";")[0].strip().lower()
+        logger.debug(
+            f"Playwright successfully fetched content for {url}. Title: '{page_title_str}', Length: {len(content_str or '')}"
+        )
         return content_str, final_mime_type, page_title_str
 
     async def _fetch_with_httpx(
@@ -520,23 +538,7 @@ class PlaywrightScraper:
         """
         headers = {"User-Agent": self.user_agent}
         try:
-            async with httpx.AsyncClient(
-                headers=headers,
-                verify=self.verify_ssl,
-                follow_redirects=True,
-                timeout=15.0,
-            ) as client:
-                logger.debug(f"httpx GET request to {url}")
-                response = await client.get(url)
-                response.raise_for_status()
-                raw_bytes = response.content
-                content_type_header = response.headers.get("content-type")
-                final_url = str(response.url)
-                encoding = response.encoding
-                logger.debug(
-                    f"httpx GET successful for {url}. Status: {response.status_code}, Final URL: {final_url}"
-                )
-                return raw_bytes, content_type_header, final_url, encoding
+            return await self._request_with_httpx(url, headers)
         except httpx.HTTPStatusError as http_err:
             logger.error(
                 f"HTTP error occurred for {url}: {http_err.response.status_code} {http_err.response.reason_phrase}"
@@ -548,6 +550,28 @@ class PlaywrightScraper:
                 f"An unexpected error occurred during async httpx request for {url}: {err}"
             )
         return None, None, url, None  # Return original URL on failure here
+
+    async def _request_with_httpx(
+        self, url: str, headers: dict[str, str]
+    ) -> tuple[bytes, str | None, str, str | None]:
+        """Fetch one URL with httpx without changing the caller's error mapping."""
+        async with httpx.AsyncClient(
+            headers=headers,
+            verify=self.verify_ssl,
+            follow_redirects=True,
+            timeout=15.0,
+        ) as client:
+            logger.debug(f"httpx GET request to {url}")
+            response = await client.get(url)
+            response.raise_for_status()
+            raw_bytes = response.content
+            content_type_header = response.headers.get("content-type")
+            final_url = str(response.url)
+            encoding = response.encoding
+            logger.debug(
+                f"httpx GET successful for {url}. Status: {response.status_code}, Final URL: {final_url}"
+            )
+            return raw_bytes, content_type_header, final_url, encoding
 
 
 async def convert_html_bytes_to_markdown(

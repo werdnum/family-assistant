@@ -324,7 +324,7 @@ async def download_media_tool(
     # Get file size limits from config
     max_file_size, _ = get_attachment_limits(exec_context)
 
-    try:
+    async def _download() -> ToolResult:
         if metadata_only:
             # Just extract metadata without downloading
             metadata = await asyncio.to_thread(_extract_metadata, url)
@@ -404,6 +404,8 @@ async def download_media_tool(
                 },
             )
 
+    try:
+        return await _download()
     except DownloadError as e:
         error_msg = str(e)
         logger.warning(f"yt-dlp download error: {error_msg}")

@@ -19,7 +19,7 @@ from family_assistant.llm import (
 )
 from family_assistant.llm.messages import MessageAttachmentMetadata
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from tests.functional.web.conftest import run_chat_turn_stream
 from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
@@ -243,15 +243,15 @@ async def test_chat_api_rejects_other_user_attachment_reference(
     attachment_registry_fixture: AttachmentRegistry,
     db_engine: AsyncEngine,
 ) -> None:
-    async with get_db_context(engine=db_engine) as db_context:
-        attachment = await attachment_registry_fixture.register_user_attachment(
-            db_context=db_context,
-            content=b"not an image",
-            filename="private.txt",
-            mime_type="text/plain",
-            conversation_id="other-conversation",
-            user_id="other_user",
-        )
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=b"not an image",
+        filename="private.txt",
+        mime_type="text/plain",
+        conversation_id="other-conversation",
+        user_id="other_user",
+    )
 
     response = await run_chat_turn_stream(
         api_test_client,
@@ -280,15 +280,15 @@ async def test_chat_api_accepts_native_ios_uploaded_attachment_reference_and_loa
     db_engine: AsyncEngine,
 ) -> None:
     conversation_id = "web_conv_ios_attachment"
-    async with get_db_context(engine=db_engine) as db_context:
-        attachment = await attachment_registry_fixture.register_user_attachment(
-            db_context=db_context,
-            content=b"family trip notes",
-            filename="trip.md",
-            mime_type="text/markdown",
-            conversation_id=None,
-            user_id="test_user",
-        )
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=b"family trip notes",
+        filename="trip.md",
+        mime_type="text/markdown",
+        conversation_id=None,
+        user_id="test_user",
+    )
 
     def uploaded_markdown_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
@@ -348,6 +348,71 @@ async def test_chat_api_accepts_native_ios_uploaded_attachment_reference_and_loa
     assert user_message["attachments"][0]["content_url"] == (
         f"/api/attachments/{attachment.attachment_id}"
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_api_passes_through_an_attachment_of_an_unrecognised_type(
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """A type the client has no case for still reaches the model.
+
+    A client labels what it recognises and falls back to something generic for
+    the rest. Gating on that label meant the upload succeeded, the turn ran
+    without the file and the model answered as though nothing was attached --
+    a silent drop the user could only see as the assistant ignoring them.
+    """
+    conversation_id = "web_conv_unrecognised_type"
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=b"solid bracket\n",
+        filename="bracket.stl",
+        mime_type="model/stl",
+        conversation_id=None,
+        user_id="test_user",
+    )
+
+    def model_file_matcher(args: dict) -> bool:
+        return any(
+            attachment.attachment_id
+            in extract_text_from_content(get_message_content(msg))
+            for msg in args.get("messages", [])
+        )
+
+    api_mock_llm_client.rules = [
+        (model_file_matcher, LLMOutput(content="I can see the 3D model."))
+    ]
+    api_mock_llm_client.default_response = LLMOutput(
+        content="Attachment injection was missing."
+    )
+
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
+            "prompt": "What is this?",
+            "conversation_id": conversation_id,
+            "profile_id": "default_assistant",
+            "interface_type": "web",
+            "attachments": [
+                {
+                    "type": "file",
+                    "content": f"/api/attachments/{attachment.attachment_id}",
+                    "name": "bracket.stl",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    streamed_text = ""
+    for line in response.content.decode("utf-8").splitlines():
+        if line.startswith("data: "):
+            data = json.loads(line.removeprefix("data: "))
+            streamed_text += data.get("content", "")
+    assert streamed_text == "I can see the 3D model."
 
 
 @pytest.mark.asyncio
@@ -635,15 +700,15 @@ async def test_explicitly_attached_response_attachment_is_persisted(
     buffer = io.BytesIO()
     Image.new("RGB", (8, 8), color="red").save(buffer, format="PNG")
 
-    async with get_db_context(engine=db_engine) as db_context:
-        attachment = await attachment_registry_fixture.register_user_attachment(
-            db_context=db_context,
-            content=buffer.getvalue(),
-            filename="earlier-upload.png",
-            mime_type="image/png",
-            conversation_id=conversation_id,
-            user_id="test_user",
-        )
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=buffer.getvalue(),
+        filename="earlier-upload.png",
+        mime_type="image/png",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
 
     def call_attach_to_response_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
@@ -724,15 +789,15 @@ async def test_response_attachment_is_recorded_once_when_more_tools_follow(
     buffer = io.BytesIO()
     Image.new("RGB", (8, 8), color="blue").save(buffer, format="PNG")
 
-    async with get_db_context(engine=db_engine) as db_context:
-        attachment = await attachment_registry_fixture.register_user_attachment(
-            db_context=db_context,
-            content=buffer.getvalue(),
-            filename="earlier-upload.png",
-            mime_type="image/png",
-            conversation_id=conversation_id,
-            user_id="test_user",
-        )
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=buffer.getvalue(),
+        filename="earlier-upload.png",
+        mime_type="image/png",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
 
     def tool_round(args: dict, name: str) -> bool:
         """Match the round whose history ends just before `name` should be called."""
@@ -877,38 +942,38 @@ async def test_conversation_history_enriches_bare_attachment_references(
     Image.new("RGB", (8, 8), color="green").save(buffer, format="PNG")
     image_bytes = buffer.getvalue()
 
-    async with get_db_context(engine=db_engine) as db_context:
-        attachment = await attachment_registry_fixture.register_user_attachment(
-            db_context=db_context,
-            content=image_bytes,
-            filename="chart.png",
-            mime_type="image/png",
-            conversation_id=conversation_id,
-            user_id="test_user",
-        )
-        await db_context.message_history.add_message(
-            UserMessage(content="Show me the chart"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
-            user_id="test_user",
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="Here it is."),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime(2026, 7, 1, 12, 0, 1, tzinfo=UTC),
-            attachments=[
-                MessageAttachmentMetadata(
-                    type="attachment_reference",
-                    attachment_id=attachment.attachment_id,
-                ),
-                MessageAttachmentMetadata(
-                    type="attachment_reference",
-                    attachment_id="unknown-attachment",
-                ),
-            ],
-        )
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=image_bytes,
+        filename="chart.png",
+        mime_type="image/png",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        UserMessage(content="Show me the chart"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Here it is."),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime(2026, 7, 1, 12, 0, 1, tzinfo=UTC),
+        attachments=[
+            MessageAttachmentMetadata(
+                type="attachment_reference",
+                attachment_id=attachment.attachment_id,
+            ),
+            MessageAttachmentMetadata(
+                type="attachment_reference",
+                attachment_id="unknown-attachment",
+            ),
+        ],
+    )
 
     response = await api_test_client.get(
         f"/api/v1/chat/conversations/{conversation_id}/messages"

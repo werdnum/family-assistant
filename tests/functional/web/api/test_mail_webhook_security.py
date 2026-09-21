@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from authheaders import SPFAuthenticationResult
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from family_assistant.config_models import (
@@ -26,7 +27,7 @@ from family_assistant.config_models import (
 )
 from family_assistant.email_intake.actions import EMAIL_INTAKE_ACTION_TASK_TYPE
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.web.app_creator import app as fastapi_app
@@ -156,47 +157,47 @@ def _configure_email_intake(
 
 
 async def _email_exists(engine: AsyncEngine, message_id: str) -> bool:
-    async with DatabaseContext(engine=engine) as db_context:
-        row = await db_context.fetch_one(
-            select(received_emails_table.c.id).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=engine)
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.id).where(
+            received_emails_table.c.message_id_header == message_id
         )
+    )
     return row is not None
 
 
 async def _email_target_user_id(engine: AsyncEngine, message_id: str) -> str | None:
-    async with DatabaseContext(engine=engine) as db_context:
-        row = await db_context.fetch_one(
-            select(received_emails_table.c.target_user_id).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=engine)
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.target_user_id).where(
+            received_emails_table.c.message_id_header == message_id
         )
+    )
     return row["target_user_id"] if row else None
 
 
 async def _email_dmarc_result(engine: AsyncEngine, message_id: str) -> str | None:
-    async with DatabaseContext(engine=engine) as db_context:
-        row = await db_context.fetch_one(
-            select(received_emails_table.c.dmarc_result).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=engine)
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.dmarc_result).where(
+            received_emails_table.c.message_id_header == message_id
         )
+    )
     return row["dmarc_result"] if row else None
 
 
 async def _email_body_fields(
     engine: AsyncEngine, message_id: str
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    async with DatabaseContext(engine=engine) as db_context:
-        row = await db_context.fetch_one(
-            select(
-                received_emails_table.c.body_plain,
-                received_emails_table.c.body_html,
-                received_emails_table.c.stripped_text,
-                received_emails_table.c.stripped_html,
-            ).where(received_emails_table.c.message_id_header == message_id)
-        )
+    db_context = Database(engine=engine)
+    row = await db_context.fetch_one(
+        select(
+            received_emails_table.c.body_plain,
+            received_emails_table.c.body_html,
+            received_emails_table.c.stripped_text,
+            received_emails_table.c.stripped_html,
+        ).where(received_emails_table.c.message_id_header == message_id)
+    )
     if row is None:
         return None, None, None, None
     return (
@@ -226,7 +227,7 @@ async def test_mail_webhook_accepts_signed_authorized_authenticated_sender(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             allowed_sender_addresses=[SENDER],
             allowed_recipient_addresses=[RECIPIENT],
             require_authenticated_sender=True,
@@ -262,7 +263,7 @@ async def test_mail_webhook_enqueues_action_task_for_mapped_email_when_enabled(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             allowed_sender_addresses=[SENDER],
             allowed_recipient_addresses=[RECIPIENT],
             require_authenticated_sender=True,
@@ -281,18 +282,18 @@ async def test_mail_webhook_enqueues_action_task_for_mapped_email_when_enabled(
     response = await api_client.post("/webhook/mail", data=form)
 
     assert response.status_code == 200, response.text
-    async with DatabaseContext(engine=db_engine) as db_context:
-        email_row = await db_context.fetch_one(
-            select(received_emails_table.c.id).where(
-                received_emails_table.c.message_id_header == form["Message-Id"]
-            )
+    db_context = Database(engine=db_engine)
+    email_row = await db_context.fetch_one(
+        select(received_emails_table.c.id).where(
+            received_emails_table.c.message_id_header == form["Message-Id"]
         )
-        assert email_row is not None
-        task_row = await db_context.fetch_one(
-            select(tasks_table.c.task_type, tasks_table.c.payload).where(
-                tasks_table.c.task_id == f"email_intake_action_{email_row['id']}"
-            )
+    )
+    assert email_row is not None
+    task_row = await db_context.fetch_one(
+        select(tasks_table.c.task_type, tasks_table.c.payload).where(
+            tasks_table.c.task_id == f"email_intake_action_{email_row['id']}"
         )
+    )
 
     assert task_row is not None
     assert task_row["task_type"] == EMAIL_INTAKE_ACTION_TASK_TYPE
@@ -310,7 +311,7 @@ async def test_mail_webhook_maps_target_user_from_unified_users_config(
     tmp_path: Path,
 ) -> None:
     email_intake = EmailIntakeConfig(
-        mailgun_webhook_signing_key=SIGNING_KEY,
+        mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
         allowed_sender_addresses=[SENDER],
         allowed_recipient_addresses=[RECIPIENT],
         require_authenticated_sender=True,
@@ -373,7 +374,7 @@ async def test_mail_webhook_mime_alias_accepts_same_payload(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             allowed_sender_addresses=[SENDER],
             allowed_recipient_addresses=[RECIPIENT],
             require_authenticated_sender=True,
@@ -407,7 +408,7 @@ async def test_mail_webhook_mime_alias_extracts_missing_body_fields_from_raw_mim
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             allowed_sender_addresses=[form["sender"]],
         ),
     )
@@ -444,7 +445,7 @@ async def test_mail_webhook_rejects_invalid_mailgun_signature(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(mailgun_webhook_signing_key=SIGNING_KEY),
+        EmailIntakeConfig(mailgun_webhook_signing_key=SecretStr(SIGNING_KEY)),
     )
     form = _mailgun_form(signature="not-a-valid-signature")
 
@@ -519,7 +520,7 @@ async def test_mail_webhook_rejects_unlisted_sender(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             allowed_sender_addresses=["authorized@example.com"],
         ),
     )
@@ -545,7 +546,7 @@ async def test_mail_webhook_maps_recipient_alias_to_target_user(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             allowed_sender_addresses=[SENDER],
             allowed_recipient_addresses=["assistant+alice@mg.example.com"],
             require_user_mapping=True,
@@ -576,7 +577,7 @@ async def test_mail_webhook_rejects_unmapped_user_when_mapping_required(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_user_mapping=True,
             user_mappings=[
                 EmailIntakeUserMapping(
@@ -606,7 +607,7 @@ async def test_mail_webhook_rejects_ambiguous_user_mapping(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_user_mapping=True,
             user_mappings=[
                 EmailIntakeUserMapping(
@@ -685,7 +686,7 @@ async def test_mail_webhook_passes_dmarc_via_spf_alignment(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_authenticated_sender=True,
         ),
         dns_resolver=dns,
@@ -714,7 +715,7 @@ async def test_mail_webhook_rejects_tampered_dkim_signature(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_authenticated_sender=True,
         ),
     )
@@ -741,7 +742,7 @@ async def test_mail_webhook_rejects_unsigned_message_when_dmarc_required(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_authenticated_sender=True,
         ),
     )
@@ -786,7 +787,7 @@ async def test_mail_webhook_swallows_permissive_auth_errors(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(mailgun_webhook_signing_key=SIGNING_KEY),
+        EmailIntakeConfig(mailgun_webhook_signing_key=SecretStr(SIGNING_KEY)),
         dns_resolver=FakeDnsResolver(),
     )
     monkeypatch.setattr(
@@ -815,7 +816,7 @@ async def test_mail_webhook_rejects_missing_body_mime_when_auth_required(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_authenticated_sender=True,
         ),
     )
@@ -839,7 +840,7 @@ async def test_mail_webhook_accepts_missing_body_mime_without_auth_required(
     _configure_email_intake(
         monkeypatch,
         tmp_path,
-        EmailIntakeConfig(mailgun_webhook_signing_key=SIGNING_KEY),
+        EmailIntakeConfig(mailgun_webhook_signing_key=SecretStr(SIGNING_KEY)),
     )
     form = _mailgun_form(include_body_mime=False)
 
@@ -868,7 +869,7 @@ async def test_mail_webhook_rejects_from_domain_without_dmarc_policy(
         monkeypatch,
         tmp_path,
         EmailIntakeConfig(
-            mailgun_webhook_signing_key=SIGNING_KEY,
+            mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
             require_authenticated_sender=True,
         ),
         dns_resolver=dns,

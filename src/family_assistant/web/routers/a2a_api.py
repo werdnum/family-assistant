@@ -13,6 +13,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -21,12 +22,12 @@ from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
 
-from family_assistant.a2a.converters import (
-    a2a_message_to_content_parts,
-    chat_result_to_artifact,
-    content_parts_to_a2a_parts,
-    error_to_artifact,
+from family_assistant.a2a.attachments import (
+    A2AAttachmentError,
+    A2AAttachmentTransfer,
+    default_a2a_peer_taint_source,
 )
+from family_assistant.a2a.converters import error_to_artifact, text_to_a2a_part
 from family_assistant.a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -47,18 +48,16 @@ from family_assistant.a2a.types import (
     TaskStatusUpdateEvent,
     TextPart,
 )
-from family_assistant.llm.content_parts import ContentPartDict, text_content
+from family_assistant.llm.content_parts import ContentPartDict
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.security.taint import (
     A2A_TAINT_METADATA_KEY,
-    SourceTrustTier,
     TaintMetadata,
     TaintSource,
-    TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.a2a_tasks import A2ATaskRow
 from family_assistant.web.dependencies import get_current_user, get_db
 
@@ -66,6 +65,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.processing.types import ChatInteractionResult
+    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,20 @@ def _get_processing_services(request: Request) -> dict[str, DelegatableService]:
 def _get_default_service(request: Request) -> ProcessingService | None:
     """Get the default processing service."""
     return getattr(request.app.state, "processing_service", None)
+
+
+def _get_attachment_registry(request: Request) -> "AttachmentRegistry":
+    """Get the attachment registry from app state.
+
+    Required: attachment bytes crossing the A2A boundary are stored and read
+    through it, so a deployment without one cannot serve A2A traffic correctly.
+    """
+    registry: AttachmentRegistry | None = getattr(
+        request.app.state, "attachment_registry", None
+    )
+    if registry is None:
+        raise RuntimeError("AttachmentRegistry is not configured on app state")
+    return registry
 
 
 def _get_a2a_cancel_events(request: Request) -> dict[str, asyncio.Event]:
@@ -202,7 +217,7 @@ async def a2a_jsonrpc(
     rpc_request: JSONRPCRequest,
     request: Request,
     current_user: Annotated[dict[str, object], Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> Response:
     """JSON-RPC 2.0 endpoint for A2A protocol methods.
 
@@ -256,7 +271,7 @@ async def _handle_send_message(
     params: dict[str, object],
     request: Request,
     current_user: dict[str, object],
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> JSONResponse:
     """Handle the message/send JSON-RPC method.
 
@@ -283,69 +298,18 @@ async def _handle_send_message(
         )
 
     profile_id = service.service_config.id
-
-    # Convert A2A message to FA content parts
-    try:
-        content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
-    except ValueError as e:
-        return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
-    if not content_parts:
-        return _jsonrpc_error(
-            request_id,
-            INVALID_PARAMS,
-            "Message contained no processable content parts",
-        )
-
     user_id = str(current_user.get("user_identifier", "a2a_user"))
+    attachment_registry = _get_attachment_registry(request)
     history_entry = message.model_dump(exclude_none=True)
 
-    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
-    confirmation_ui_managers = getattr(
-        request.app.state,
-        "confirmation_ui_managers",
-        None,
-    )
-    base_url = str(request.base_url).rstrip("/")
-
-    if not _send_is_blocking(send_params):
-        # Commit the 'working' row in its own transaction BEFORE spawning the
-        # background task: that task runs on a separate db connection and, on
-        # Postgres, cannot see the request transaction (not committed until this
-        # handler returns). Without this its update_task_status would silently
-        # no-op and the row would be stuck 'working'. Mirrors the streaming path.
-        # create_task_if_absent also handles concurrent retries with the same
-        # task_id atomically, returning the existing task rather than surfacing
-        # the unique-constraint loser as a JSON-RPC internal error.
-        db_engine: AsyncEngine = request.app.state.database_engine
-        async with get_db_context(db_engine) as committed_db:
-            existing = await committed_db.a2a_tasks.create_task_if_absent(
-                task_id=task_id,
-                profile_id=profile_id,
-                conversation_id=conversation_id,
-                context_id=context_id,
-                status=TaskState.working,
-                history_json=[history_entry],
-            )
-        if existing is not None:
-            return _jsonrpc_result(
-                request_id, _row_to_task(existing).model_dump(exclude_none=True)
-            )
-        return _start_background_send(
-            request_id,
-            request=request,
-            service=service,
-            task_id=task_id,
-            context_id=context_id,
-            conversation_id=conversation_id,
-            content_parts=content_parts,
-            message=message,
-            history_entry=history_entry,
-            user_id=user_id,
-            chat_interfaces=chat_interfaces,
-            confirmation_ui_managers=confirmation_ui_managers,
-            base_url=base_url,
-        )
-
+    # Claim the task id before converting: conversion registers the peer's inline
+    # files as durable attachments, and a retry that reuses a task id must not
+    # store a second copy of every file only to be handed the existing task.
+    # create_task_if_absent handles concurrent retries with the same task_id
+    # atomically, returning the existing task rather than surfacing the
+    # unique-constraint loser as a JSON-RPC internal error. The 'working' row is
+    # durable when this returns, so a background task -- which runs on its own
+    # connection -- can see it.
     existing = await db_context.a2a_tasks.create_task_if_absent(
         task_id=task_id,
         profile_id=profile_id,
@@ -358,6 +322,56 @@ async def _handle_send_message(
         return _jsonrpc_result(
             request_id, _row_to_task(existing).model_dump(exclude_none=True)
         )
+
+    # Convert A2A message to FA content parts, registering any inline files
+    # the peer sent as attachments owned by the authenticated caller. The task
+    # row is already claimed, so a bad message finalizes it as failed rather
+    # than leaving it 'working' forever.
+    try:
+        content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
+            attachment_registry, db_context
+        ).message_to_content_parts(
+            message,
+            conversation_id=conversation_id,
+            owner_user_id=user_id,
+            taint_sources=_initial_taint_sources_from_message(message),
+        )
+        if not content_parts:
+            raise ValueError("Message contained no processable content parts")
+    except ValueError as e:
+        await _fail_claimed_task(db_context, task_id, f"Invalid message parts: {e}")
+        return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
+    except Exception:
+        # Storing the peer's files failed (disk, database). The claim is durable,
+        # so leaving the row 'working' would make every retry with this task id
+        # hand back a task that never progresses.
+        logger.exception("Failed to prepare A2A message for task %s", task_id)
+        await _fail_claimed_task(db_context, task_id, "Internal error")
+        raise
+
+    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+    confirmation_ui_managers = getattr(
+        request.app.state,
+        "confirmation_ui_managers",
+        None,
+    )
+    if not _send_is_blocking(send_params):
+        return await _start_background_send(
+            request_id,
+            request=request,
+            service=service,
+            task_id=task_id,
+            context_id=context_id,
+            conversation_id=conversation_id,
+            content_parts=content_parts,
+            message=message,
+            history_entry=history_entry,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            attachment_registry=attachment_registry,
+        )
+
     task = await _execute_and_persist_send(
         db_context=db_context,
         service=service,
@@ -370,14 +384,14 @@ async def _handle_send_message(
         user_id=user_id,
         chat_interfaces=chat_interfaces,
         confirmation_ui_managers=confirmation_ui_managers,
-        base_url=base_url,
+        attachment_registry=attachment_registry,
     )
     return _jsonrpc_result(request_id, task.model_dump(exclude_none=True))
 
 
 async def _execute_and_persist_send(
     *,
-    db_context: DatabaseContext,
+    db_context: Database,
     service: DelegatableService,
     task_id: str,
     context_id: str,
@@ -388,7 +402,7 @@ async def _execute_and_persist_send(
     user_id: str,
     chat_interfaces: "dict[str, ChatInterface] | None",
     confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
-    base_url: str,
+    attachment_registry: "AttachmentRegistry",
 ) -> Task:
     """Run the chat interaction and persist the terminal task; return it.
 
@@ -412,19 +426,19 @@ async def _execute_and_persist_send(
     if result.has_error:
         artifact = error_to_artifact(result.error_traceback or "Unknown error")
         final_status = TaskState.failed
+        reply_text = result.text_reply
     else:
-        attachment_urls = _attachment_urls(base_url, result.attachment_ids)
-        artifact = chat_result_to_artifact(result, attachment_urls=attachment_urls)
-        final_status = TaskState.completed
+        artifact, final_status, reply_text = await _artifact_for_result(
+            result,
+            attachment_registry=attachment_registry,
+            db_context=db_context,
+            user_id=user_id,
+        )
 
     artifacts = [artifact] if artifact else []
     artifacts_dicts = [a.model_dump(exclude_none=True) for a in artifacts]
 
-    response_parts = (
-        content_parts_to_a2a_parts([text_content(result.text_reply or "")])
-        if result.text_reply
-        else []
-    )
+    response_parts = [text_to_a2a_part(reply_text)] if reply_text else []
     agent_message = Message(
         role=Role.agent,
         parts=response_parts or [Part(root=TextPart(text=""))],
@@ -434,12 +448,34 @@ async def _execute_and_persist_send(
     )
     history = [history_entry, agent_message.model_dump(exclude_none=True)]
 
-    await db_context.a2a_tasks.update_task_status(
+    persisted = await db_context.a2a_tasks.update_task_status(
         task_id=task_id,
         status=final_status,
         artifacts_json=artifacts_dicts,
         history_json=history,
     )
+    if not persisted:
+        # The row went terminal while this send was running -- a concurrent
+        # tasks/cancel, which the blocking path is now exposed to because its
+        # 'working' row is durable the moment it is written rather than at the
+        # end of the request. The guarded update above is what keeps ``canceled``
+        # winning; returning the locally built Task would hand the caller a
+        # completed task whose stored row says otherwise, so report what was
+        # actually persisted.
+        row = await db_context.a2a_tasks.get_task(task_id)
+        if row is not None:
+            logger.info(
+                "A2A task %s reached a terminal state while its send was "
+                "running; returning the persisted '%s' task.",
+                task_id,
+                row["status"],
+            )
+            return _row_to_task(row)
+        logger.warning(
+            "A2A task %s could not be finalized and its row is gone; "
+            "returning the in-memory result.",
+            task_id,
+        )
 
     return Task(
         id=task_id,
@@ -450,7 +486,42 @@ async def _execute_and_persist_send(
     )
 
 
-def _start_background_send(
+async def _artifact_for_result(
+    result: "ChatInteractionResult",
+    *,
+    attachment_registry: "AttachmentRegistry",
+    db_context: Database,
+    user_id: str,
+) -> tuple[Artifact | None, TaskState, str]:
+    """Build the response artifact, failing the task if a file cannot be sent.
+
+    Returns the artifact, the task's terminal state, and the text for its status
+    message — which on failure is the transfer error, not the turn's own reply:
+    a peer reads a failed task's status message as the reason, so leaving the
+    successful answer there would report "Here is your report" as the error.
+    """
+    try:
+        return (
+            await A2AAttachmentTransfer(
+                attachment_registry, db_context
+            ).result_to_artifact(result, acting_user_id=user_id),
+            TaskState.completed,
+            result.text_reply,
+        )
+    except A2AAttachmentError as exc:
+        logger.exception("A2A response attachment could not be sent")
+        reason = f"Response prepared but not delivered: {exc}"
+        return error_to_artifact(reason), TaskState.failed, reason
+    except Exception:
+        # The task row is claimed and durable, so any failure here has to come
+        # back as a terminal state: letting it escape leaves the row 'working'
+        # and every retry with this task id gets a task that never progresses.
+        logger.exception("Failed to build the A2A response artifact")
+        reason = "Response prepared but not delivered: internal error"
+        return error_to_artifact(reason), TaskState.failed, reason
+
+
+async def _start_background_send(
     request_id: str | int | None,
     *,
     request: Request,
@@ -464,7 +535,7 @@ def _start_background_send(
     user_id: str,
     chat_interfaces: "dict[str, ChatInterface] | None",
     confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
-    base_url: str,
+    attachment_registry: "AttachmentRegistry",
 ) -> JSONResponse:
     """Spawn background processing and return a non-terminal ``working`` task."""
     db_engine: AsyncEngine = request.app.state.database_engine
@@ -487,12 +558,19 @@ def _start_background_send(
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
-            base_url=base_url,
+            attachment_registry=attachment_registry,
             background_tasks=background_tasks,
             cancel_events=cancel_events,
         ),
         name=f"a2a-send-{task_id}",
     )
+
+    # Let the new task reach its first suspension point before returning. A
+    # task cancelled before its first step never runs its body at all, so its
+    # CancelledError handler never persists a terminal state and the row would
+    # be stuck 'working' forever -- and a graceful shutdown cancels in-flight
+    # sends without warning.
+    await asyncio.sleep(0)
 
     working_task = Task(
         id=task_id,
@@ -516,7 +594,7 @@ async def _run_background_send(
     user_id: str,
     chat_interfaces: "dict[str, ChatInterface] | None",
     confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
-    base_url: str,
+    attachment_registry: "AttachmentRegistry",
     background_tasks: "dict[str, asyncio.Task[None]]",
     cancel_events: dict[str, asyncio.Event],
 ) -> None:
@@ -527,21 +605,21 @@ async def _run_background_send(
     that already finalized this row wins over a later write here.
     """
     try:
-        async with get_db_context(db_engine) as bg_db:
-            await _execute_and_persist_send(
-                db_context=bg_db,
-                service=service,
-                task_id=task_id,
-                context_id=context_id,
-                conversation_id=conversation_id,
-                content_parts=content_parts,
-                message=message,
-                history_entry=history_entry,
-                user_id=user_id,
-                chat_interfaces=chat_interfaces,
-                confirmation_ui_managers=confirmation_ui_managers,
-                base_url=base_url,
-            )
+        bg_db = Database(db_engine)
+        await _execute_and_persist_send(
+            db_context=bg_db,
+            service=service,
+            task_id=task_id,
+            context_id=context_id,
+            conversation_id=conversation_id,
+            content_parts=content_parts,
+            message=message,
+            history_entry=history_entry,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            attachment_registry=attachment_registry,
+        )
     except asyncio.CancelledError:
         # Cancelled by tasks/cancel (the DB row is already 'canceled') or by a
         # graceful shutdown (stop_services cancels in-flight sends, then awaits
@@ -580,6 +658,37 @@ async def _run_background_send(
         cancel_events.pop(task_id, None)
 
 
+async def _fail_claimed_task(db_context: Database, task_id: str, reason: str) -> None:
+    """Finalize a task whose row was claimed before the work could start."""
+    await db_context.a2a_tasks.update_task_status(
+        task_id=task_id,
+        status=TaskState.failed,
+        artifacts_json=[error_to_artifact(reason).model_dump(exclude_none=True)],
+    )
+
+
+def _terminal_status_event(
+    task_id: str,
+    context_id: str,
+    state: TaskState,
+    text: str,
+) -> TaskStatusUpdateEvent:
+    """A final SSE status event carrying the reason a stream ended."""
+    return TaskStatusUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        status=TaskStatus(
+            state=state,
+            message=Message(
+                role=Role.agent,
+                parts=[text_to_a2a_part(text)],
+                message_id=str(uuid.uuid4()),
+            ),
+        ),
+        final=True,
+    )
+
+
 async def _mark_a2a_task_terminal(
     db_engine: "AsyncEngine",
     task_id: str,
@@ -588,12 +697,12 @@ async def _mark_a2a_task_terminal(
 ) -> None:
     """Best-effort write of a terminal status for a backgrounded a2a task."""
     artifact = error_to_artifact(error_text)
-    async with get_db_context(db_engine) as db:
-        await db.a2a_tasks.update_task_status(
-            task_id=task_id,
-            status=status,
-            artifacts_json=[artifact.model_dump(exclude_none=True)] if artifact else [],
-        )
+    db = Database(db_engine)
+    await db.a2a_tasks.update_task_status(
+        task_id=task_id,
+        status=status,
+        artifacts_json=[artifact.model_dump(exclude_none=True)] if artifact else [],
+    )
 
 
 # ===== tasks/get =====
@@ -602,7 +711,7 @@ async def _mark_a2a_task_terminal(
 async def _handle_get_task(
     request_id: str | int | None,
     params: dict[str, object],
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> JSONResponse:
     """Handle the tasks/get JSON-RPC method."""
     try:
@@ -627,7 +736,7 @@ async def _handle_cancel_task(
     request_id: str | int | None,
     params: dict[str, object],
     request: Request,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> JSONResponse:
     """Handle the tasks/cancel JSON-RPC method."""
     try:
@@ -731,6 +840,69 @@ def _sse_jsonrpc(
     return {"event": event_type, "data": json.dumps(envelope)}
 
 
+@dataclass
+class _A2AStreamState:
+    accumulated_text: str = ""
+    attachment_ids: list[str] | None = None
+    has_error: bool = False
+    is_canceled: bool = False
+    error_msg: str = ""
+
+
+async def _forward_a2a_stream_events(
+    request_id: str | int | None,
+    service: ProcessingService,
+    db_context: Database,
+    message: Message,
+    conversation_id: str,
+    content_parts: list[ContentPartDict],
+    user_id: str,
+    cancel_event: asyncio.Event,
+    task_id: str,
+    context_id: str,
+    artifact_id: str,
+    state: _A2AStreamState,
+) -> AsyncIterator[dict[str, str]]:
+    async for stream_event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="a2a",
+        conversation_id=conversation_id,
+        trigger_content_parts=content_parts,
+        trigger_interface_message_id=message.message_id,
+        user_name=user_id,
+        user_id=user_id,
+        initial_taint_sources=_initial_taint_sources_from_message(message),
+    ):
+        if cancel_event.is_set():
+            state.is_canceled = True
+            break
+        if stream_event.type == "content" and stream_event.content:
+            state.accumulated_text += stream_event.content
+            artifact_event = TaskArtifactUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                artifact=Artifact(
+                    artifact_id=artifact_id,
+                    parts=[Part(root=TextPart(text=stream_event.content))],
+                ),
+                append=True,
+            )
+            yield _sse_jsonrpc(
+                request_id,
+                "artifact",
+                artifact_event.model_dump(exclude_none=True),
+            )
+        elif stream_event.type == "error":
+            state.has_error = True
+            state.error_msg = stream_event.error or "Unknown error"
+        elif stream_event.type == "done" and stream_event.metadata:
+            # A done event closes an agentic turn, not the interaction. Keep
+            # streaming and retain the last turn's response attachments.
+            state.attachment_ids = stream_event.metadata.get(
+                "attachment_ids", state.attachment_ids
+            )
+
+
 async def _stream_message(
     request_id: str | int | None,
     send_params: MessageSendParams,
@@ -763,63 +935,24 @@ async def _stream_message(
         return
 
     profile_id = service.service_config.id
-    try:
-        content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
-    except ValueError as e:
-        event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(
-                state=TaskState.failed,
-                message=Message(
-                    role=Role.agent,
-                    parts=[Part(root=TextPart(text=f"Invalid message parts: {e}"))],
-                    message_id=str(uuid.uuid4()),
-                ),
-            ),
-            final=True,
-        )
-        yield _sse_jsonrpc(request_id, "status", event.model_dump(exclude_none=True))
-        return
-    if not content_parts:
-        event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(
-                state=TaskState.failed,
-                message=Message(
-                    role=Role.agent,
-                    parts=[
-                        Part(
-                            root=TextPart(
-                                text="Message contained no processable content parts"
-                            )
-                        )
-                    ],
-                    message_id=str(uuid.uuid4()),
-                ),
-            ),
-            final=True,
-        )
-        yield _sse_jsonrpc(request_id, "status", event.model_dump(exclude_none=True))
-        return
-
     user_id = str(current_user.get("user_identifier", "a2a_user"))
-    history_entry = message.model_dump(exclude_none=True)
     db_engine = request.app.state.database_engine
+    history_entry = message.model_dump(exclude_none=True)
 
     # Create task in a short-lived context so it's immediately visible to
-    # concurrent tasks/get and tasks/cancel requests.
+    # concurrent tasks/get and tasks/cancel requests -- and before the message
+    # is converted, since conversion registers the peer's inline files durably
+    # and a retry that reuses a task id must not leave a second copy of each.
     try:
-        async with get_db_context(db_engine) as db_context:
-            await db_context.a2a_tasks.create_task(
-                task_id=task_id,
-                profile_id=profile_id,
-                conversation_id=conversation_id,
-                context_id=context_id,
-                status=TaskState.working,
-                history_json=[history_entry],
-            )
+        db_context = Database(db_engine)
+        await db_context.a2a_tasks.create_task(
+            task_id=task_id,
+            profile_id=profile_id,
+            conversation_id=conversation_id,
+            context_id=context_id,
+            status=TaskState.working,
+            history_json=[history_entry],
+        )
     except Exception:
         logger.exception("Failed to create A2A task %s", task_id)
         error_event = TaskStatusUpdateEvent(
@@ -840,6 +973,47 @@ async def _stream_message(
         )
         return
 
+    # Convert the peer's message, registering any inline files it sent as
+    # attachments owned by the authenticated caller.
+    try:
+        content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
+            _get_attachment_registry(request), db_context
+        ).message_to_content_parts(
+            message,
+            conversation_id=conversation_id,
+            owner_user_id=user_id,
+            taint_sources=_initial_taint_sources_from_message(message),
+        )
+        if not content_parts:
+            raise ValueError("Message contained no processable content parts")
+    except ValueError as e:
+        await _mark_a2a_task_terminal(
+            db_engine, task_id, TaskState.failed, f"Invalid message parts: {e}"
+        )
+        yield _sse_jsonrpc(
+            request_id,
+            "status",
+            _terminal_status_event(
+                task_id, context_id, TaskState.failed, f"Invalid message parts: {e}"
+            ).model_dump(exclude_none=True),
+        )
+        return
+    except Exception:
+        # As on the send path: the claim is durable, so a storage failure must
+        # still finalize the row rather than leave it 'working' forever.
+        logger.exception("Failed to prepare A2A message for task %s", task_id)
+        await _mark_a2a_task_terminal(
+            db_engine, task_id, TaskState.failed, "Internal error"
+        )
+        yield _sse_jsonrpc(
+            request_id,
+            "status",
+            _terminal_status_event(
+                task_id, context_id, TaskState.failed, "Internal error"
+            ).model_dump(exclude_none=True),
+        )
+        return
+
     # Emit initial "working" status
     working_event = TaskStatusUpdateEvent(
         task_id=task_id,
@@ -852,70 +1026,74 @@ async def _stream_message(
     )
 
     # Stream the interaction with a separate DB context for ProcessingService
-    accumulated_text = ""
-    has_error = False
-    is_canceled = False
-    error_msg = ""
     artifact_id = uuid.uuid4().hex
+    stream_state = _A2AStreamState()
 
     # Register cancellation event so tasks/cancel can signal us
     cancel_events: dict[str, asyncio.Event] = request.app.state.a2a_cancel_events
     cancel_event = asyncio.Event()
     cancel_events[task_id] = cancel_event
     try:
-        async with get_db_context(db_engine) as db_context:
-            try:
-                async for stream_event in service.handle_chat_interaction_stream(
-                    db_context=db_context,
-                    interface_type="a2a",
-                    conversation_id=conversation_id,
-                    trigger_content_parts=content_parts,
-                    trigger_interface_message_id=message.message_id,
-                    user_name=user_id,
-                    user_id=user_id,
-                    initial_taint_sources=_initial_taint_sources_from_message(message),
-                ):
-                    # Check for cooperative cancellation between chunks
-                    if cancel_event.is_set():
-                        is_canceled = True
-                        break
-                    if stream_event.type == "content" and stream_event.content:
-                        accumulated_text += stream_event.content
-                        artifact_event = TaskArtifactUpdateEvent(
-                            task_id=task_id,
-                            context_id=context_id,
-                            artifact=Artifact(
-                                artifact_id=artifact_id,
-                                parts=[Part(root=TextPart(text=stream_event.content))],
-                            ),
-                            append=True,
-                        )
-                        yield _sse_jsonrpc(  # noqa: ASYNC119
-                            request_id,
-                            "artifact",
-                            artifact_event.model_dump(exclude_none=True),
-                        )
-                    elif stream_event.type == "error":
-                        has_error = True
-                        error_msg = stream_event.error or "Unknown error"
-                    elif stream_event.type == "done":
-                        break
-            except Exception:
-                logger.exception("Error during A2A streaming for task %s", task_id)
-                has_error = True
-                error_msg = "Internal streaming error"
+        db_context = Database(db_engine)
+        try:
+            async for response_event in _forward_a2a_stream_events(
+                request_id,
+                service,
+                db_context,
+                message,
+                conversation_id,
+                content_parts,
+                user_id,
+                cancel_event,
+                task_id,
+                context_id,
+                artifact_id,
+                stream_state,
+            ):
+                yield response_event
+        except Exception:
+            logger.exception("Error during A2A streaming for task %s", task_id)
+            stream_state.has_error = True
+            stream_state.error_msg = "Internal streaming error"
     finally:
         cancel_events.pop(task_id, None)
 
+    accumulated_text = stream_state.accumulated_text
+    attachment_ids = stream_state.attachment_ids
+    has_error = stream_state.has_error
+    is_canceled = stream_state.is_canceled
+    error_msg = stream_state.error_msg
+
+    # Files the turn queued for its response are not part of the text stream, so
+    # they are resolved here and ride out on the final artifact chunk.
+    response_file_parts: list[Part] = []
+    if attachment_ids and not has_error and not is_canceled:
+        try:
+            response_file_parts = await A2AAttachmentTransfer(
+                _get_attachment_registry(request), Database(db_engine)
+            ).response_attachment_parts(attachment_ids, acting_user_id=user_id)
+        except A2AAttachmentError as exc:
+            logger.exception("A2A response attachment could not be streamed")
+            has_error = True
+            error_msg = f"A response attachment could not be delivered: {exc}"
+        except Exception:
+            # As above: the claimed row must still reach a terminal state.
+            logger.exception("Failed to build the A2A response attachments")
+            has_error = True
+            error_msg = "A response attachment could not be delivered: internal error"
+
     # Emit final artifact chunk
-    if accumulated_text and not has_error and not is_canceled:
+    final_parts = (
+        [Part(root=TextPart(text=accumulated_text))] if accumulated_text else []
+    ) + response_file_parts
+    if final_parts and not has_error and not is_canceled:
         final_artifact = TaskArtifactUpdateEvent(
             task_id=task_id,
             context_id=context_id,
             artifact=Artifact(
                 artifact_id=artifact_id,
                 name="response",
-                parts=[Part(root=TextPart(text=accumulated_text))],
+                parts=final_parts,
             ),
             last_chunk=True,
         )
@@ -961,11 +1139,11 @@ async def _stream_message(
     if has_error:
         err_art = error_to_artifact(error_msg)
         artifacts_json = [err_art.model_dump(exclude_none=True)]
-    elif accumulated_text:
+    elif final_parts:
         art = Artifact(
             artifact_id=artifact_id,
             name="response",
-            parts=[Part(root=TextPart(text=accumulated_text))],
+            parts=final_parts,
         )
         artifacts_json = [art.model_dump(exclude_none=True)]
 
@@ -974,30 +1152,16 @@ async def _stream_message(
         status_message.model_dump(exclude_none=True),
     ]
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.a2a_tasks.update_task_status(
-            task_id=task_id,
-            status=final_status,
-            artifacts_json=artifacts_json or None,
-            history_json=history,
-        )
+    db_context = Database(db_engine)
+    await db_context.a2a_tasks.update_task_status(
+        task_id=task_id,
+        status=final_status,
+        artifacts_json=artifacts_json or None,
+        history_json=history,
+    )
 
 
 # ===== Helpers =====
-
-
-def _attachment_urls(
-    base_url: str,
-    attachment_ids: list[str] | None,
-) -> dict[str, str]:
-    """Build absolute download URLs for attachment IDs from a base URL.
-
-    Takes a plain ``base_url`` rather than the request so background tasks can
-    build URLs after the originating request has returned.
-    """
-    if not attachment_ids:
-        return {}
-    return {att_id: f"{base_url}/api/attachments/{att_id}" for att_id in attachment_ids}
 
 
 def _resolve_service(request: Request, message: Message) -> ProcessingService | None:
@@ -1031,15 +1195,10 @@ def _initial_taint_sources_from_message(message: Message) -> tuple[TaintSource, 
 
 
 def _default_a2a_peer_taint_source(message: Message) -> TaintSource:
-    return TaintSource(
-        source_type=TaintSourceType.MANUAL,
-        source_id=message.message_id,
-        tier=SourceTrustTier.RECOGNIZED_MACHINE,
-        labels=frozenset({"source_recognized_machine"}),
-        reason=(
-            "Inbound A2A message did not include Family Assistant runtime taint "
-            "metadata; defaulting peer content to recognized_machine."
-        ),
+    return default_a2a_peer_taint_source(
+        message.message_id,
+        "Inbound A2A message did not include Family Assistant runtime taint "
+        "metadata; defaulting peer content to recognized_machine.",
     )
 
 

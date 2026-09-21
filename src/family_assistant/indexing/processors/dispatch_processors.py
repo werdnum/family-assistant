@@ -7,7 +7,6 @@ import uuid
 from typing import TYPE_CHECKING, cast
 
 from family_assistant.indexing.pipeline import ContentProcessor, IndexableContent
-from family_assistant.storage.tasks import enqueue_task
 from family_assistant.storage.vector import Document  # Document protocol
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -142,11 +141,14 @@ class EmbeddingDispatchProcessor(ContentProcessor):
             logger.info(
                 f"[{self.name}/{doc_id_for_log}] Attempting to enqueue 'embed_and_store_batch' task (ID: {task_id}) for document ID {document_id} with {len(texts_to_embed_list)} items."
             )
-            await enqueue_task(
-                db_context=context.db_context,
+            await context.db_context.tasks.enqueue(
                 task_id=task_id,
                 task_type="embed_and_store_batch",
                 payload=task_payload,
+                # The pipeline does not know which handler ran it, so the lane
+                # comes from the task that did: an upload's batches are
+                # interactive, a bulk re-index's are not.
+                priority=context.inherited_task_priority(),
             )
             logger.info(
                 f"[{self.name}/{doc_id_for_log}] Successfully enqueued 'embed_and_store_batch' task (ID: {task_id}) for document ID {document_id} with {len(texts_to_embed_list)} items."

@@ -26,6 +26,10 @@ class WebMidTurnController:
         self._lock = asyncio.Lock()
         self._pending: list[MidTurnUserInput] = []
         self._interrupted = False
+        # Every ``interface_message_id`` this turn has accepted, kept for the
+        # turn's lifetime rather than cleared on drain: a retry can arrive after
+        # the loop has already consumed the original.
+        self._accepted_input_ids: set[str] = set()
 
     def request_interrupt(self) -> None:
         """Mark the turn for a graceful stop at the next loop boundary."""
@@ -35,10 +39,24 @@ class WebMidTurnController:
         """Return whether a stop has been requested for this turn."""
         return self._interrupted
 
-    async def add_input(self, user_input: MidTurnUserInput) -> None:
-        """Queue a steering message to inject into the next LLM iteration."""
+    async def add_input(self, user_input: MidTurnUserInput) -> bool:
+        """Queue a steering message to inject into the next LLM iteration.
+
+        Returns whether it was queued. A client whose response was lost retries
+        with the same ``interface_message_id``; queueing that twice would feed
+        the instruction to the model twice and can repeat whatever tool work it
+        asks for, so a repeat of an id this turn has already accepted is
+        dropped. An input with no id is always queued -- there is nothing to
+        recognise it by.
+        """
         async with self._lock:
+            input_id = user_input.interface_message_id
+            if input_id is not None:
+                if input_id in self._accepted_input_ids:
+                    return False
+                self._accepted_input_ids.add(input_id)
             self._pending.append(user_input)
+            return True
 
     async def drain_pending_mid_turn_inputs(self) -> list[MidTurnUserInput]:
         """Return and consume any queued mid-turn user inputs."""

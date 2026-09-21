@@ -21,7 +21,7 @@ def test_message_to_json_dict_omits_taint_metadata_by_default() -> None:
     taint_metadata = cast(
         "TaintMetadata",
         {
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "sources": [],
         },

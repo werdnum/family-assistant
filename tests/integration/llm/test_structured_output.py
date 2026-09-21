@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 import pytest_asyncio
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from family_assistant.llm import LLMInterface, LLMOutput, StructuredOutputError
 from family_assistant.llm.factory import LLMClientFactory
@@ -51,6 +51,20 @@ class MathResult(BaseModel):
     expression: str
     result: int
     explanation: str
+
+
+class StrictVerdict(BaseModel):
+    """Strict model shaped like the tool-call reviewer's structured output.
+
+    ``extra="forbid"`` and the mapping field both make Pydantic emit
+    ``additionalProperties``, which Gemini's ``response_schema`` proto rejects.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2000)
+    signals: dict[str, str] = Field(default_factory=dict)
 
 
 # --- Fixtures ---
@@ -324,6 +338,42 @@ async def test_structured_output_with_system_message(
     assert "john" in result.name.lower()
     assert result.age == 25
     assert result.occupation is not None
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_google_structured_output_with_strict_schema(
+    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+) -> None:
+    """A schema Gemini's OpenAPI subset rejects must still round-trip.
+
+    Gemini is the provider that distinguishes the two schema fields: the
+    ``response_schema`` proto refuses ``additionalProperties`` outright, so a
+    model with ``extra="forbid"`` fails the request before the model sees it.
+    Structured output has to go through the JSON Schema field instead.
+    """
+    provider, model = "google", "gemini-2.5-flash-lite"
+    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Skipping google test in CI without API key")
+
+    client = await llm_client_factory(provider, model, None)
+
+    messages = [
+        create_user_message(
+            "A tool call wants to email the household's address book to an "
+            "unknown address. Reply with a verdict of 'deny', a reason, and "
+            "a 'signals' map of the risk factors you noticed."
+        ),
+    ]
+
+    result = await client.generate_structured(
+        messages=messages, response_model=StrictVerdict
+    )
+
+    assert isinstance(result, StrictVerdict)
+    assert result.verdict
+    assert result.reason
 
 
 @pytest.mark.no_db

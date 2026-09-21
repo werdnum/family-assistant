@@ -306,6 +306,102 @@ def test_confirmation_rules_remain_confirm_when_confirmation_is_available() -> N
     assert executable.decision is ToolPolicyDecision.CONFIRM
 
 
+def test_review_rules_remain_review_without_confirmation_capability() -> None:
+    descriptor = make_descriptor(
+        name="delete_calendar_event",
+        tags={ToolTag.CALENDAR, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+    )
+    engine = PolicyEngine.from_policy_config(
+        ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
+                    decision=ToolPolicyDecision.REVIEW,
+                    description="destructive operations require review",
+                )
+            ],
+            default_decision=ToolPolicyDecision.DENY,
+        )
+    )
+
+    advertised = engine.evaluate_for_advertisement(descriptor, can_confirm=False)
+    executable = engine.evaluate_for_execution(descriptor, can_confirm=False)
+
+    assert advertised.decision is ToolPolicyDecision.REVIEW
+    assert executable.decision is ToolPolicyDecision.REVIEW
+    assert advertised.reason == "destructive operations require review"
+    assert executable.reason == "destructive operations require review"
+
+
+def test_review_default_decision_parses_and_survives_confirmation_filter() -> None:
+    descriptor = make_descriptor(
+        name="unmatched_tool",
+        tags={ToolTag.STATE_CHANGING},
+    )
+    config = ToolPolicyConfig.model_validate({"default_decision": "review"})
+    engine = PolicyEngine.from_policy_config(config)
+
+    assert config.default_decision is ToolPolicyDecision.REVIEW
+    assert (
+        engine.evaluate_for_advertisement(descriptor, can_confirm=False).decision
+        is ToolPolicyDecision.REVIEW
+    )
+    assert (
+        engine.evaluate_for_execution(
+            descriptor,
+            can_confirm=False,
+        ).decision
+        is ToolPolicyDecision.REVIEW
+    )
+
+
+def test_review_decision_participates_in_layer_priority_resolution() -> None:
+    descriptor = make_descriptor(
+        name="delete_note",
+        tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
+    )
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
+                    decision=ToolPolicyDecision.CONFIRM,
+                    priority=99,
+                )
+            ]
+        ),
+        profile=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(names=["delete_note"]),
+                    decision=ToolPolicyDecision.REVIEW,
+                    priority=0,
+                    description="profile review rule",
+                )
+            ]
+        ),
+        operator=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(names=["other_tool"]),
+                    decision=ToolPolicyDecision.DENY,
+                )
+            ]
+        ),
+    )
+
+    evaluation = engine.evaluate_for_execution(
+        descriptor,
+        can_confirm=False,
+    )
+
+    assert evaluation.decision is ToolPolicyDecision.REVIEW
+    assert evaluation.reason == "profile review rule"
+    assert evaluation.matched_rule is not None
+    assert evaluation.matched_rule.layer == "profile"
+    assert evaluation.matched_rule.effective_priority == PROFILE_POLICY_PRIORITY_OFFSET
+
+
 def test_config_models_accept_tools_policy() -> None:
     profile = ServiceProfile.model_validate({
         "id": "browser_profile",

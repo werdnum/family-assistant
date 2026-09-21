@@ -402,7 +402,7 @@ if [ $SKIP_LINT -eq 0 ]; then
     # Start pylint
     echo "${BLUE}  ▸ Starting pylint...${NC}"
     PYLINT_START=$(date +%s)
-    "${VIRTUAL_ENV:-.venv}"/bin/pylint -j0 src tests &
+    "$(dirname "${BASH_SOURCE[0]}")"/run-pylint.sh src tests &
     PYLINT_PID=$!
     BACKGROUND_PIDS+=("$PYLINT_PID")
 

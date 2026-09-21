@@ -125,6 +125,20 @@ curl -X DELETE "https://your-domain.com/api/me/tokens/{token_id}" \
   -H "Authorization: Bearer <your-token>"
 ```
 
+#### Short-Lived Signed Tokens (JWT)
+
+When the server has a JWT signing key configured (see `JWT_SIGNING_KEY` in the configuration
+reference), clients can exchange a credential for a short-lived signed JWT that is accepted anywhere
+an opaque Bearer token is:
+
+- `POST /api/auth/token` with `{"token": "<opaque-api-token>"}` — upgrades an opaque token. Use this
+  for remote access when opaque tokens are rejected by the edge gateway, which cannot consult the
+  database; the opaque token itself keeps working on the local network.
+- `POST /api/auth/refresh` — as before, returns a fresh signed token.
+
+Signed tokens expire (default one hour); re-run the exchange/refresh to obtain a new one. Revoking
+the underlying API token invalidates its tokens immediately at the server.
+
 ### Public Endpoints
 
 Some endpoints are accessible without authentication:
@@ -170,6 +184,31 @@ POST /api/v1/chat/send_message
 `turn_id` makes `/send_message` idempotent: retrying the same request with the same `turn_id`
 returns the already-persisted reply instead of re-driving the LLM and persisting a second copy. The
 retry's response carries `already_complete: true`. Omit `turn_id` to always generate a fresh reply.
+
+**409 Conflict — the conversation already has a running turn.** `/send_message` takes the same
+one-turn-per-conversation reservation as `POST /v1/chat/turns`, so a send that lands while a turn is
+already running on that conversation — from the web UI, another device, or another API client — is
+refused rather than started alongside it. The refusal carries the same payload as the streaming
+path:
+
+```json
+{
+  "detail": {
+    "message": "This conversation already has a running turn. Steer that turn instead of starting a new one.",
+    "active_turn_id": "uuid-of-the-running-turn",
+    "active_turn_first_seq": 12
+  }
+}
+```
+
+A non-streaming turn is not steerable — it publishes no event stream to carry a steer echo — so a
+client refused by one should wait for it to finish and resend, or send into a different
+conversation. Turns started by `/send_message` are short-lived; there is no lingering reservation to
+wait out once the reply is returned.
+
+A `turn_id` that this backend has already run but that produced no persisted reply (its turn failed)
+is also refused with 409, carrying `turn_id` and `turn_status` instead of `active_turn_id`. Retry
+that message under a fresh `turn_id`.
 
 **Response:**
 
@@ -274,6 +313,38 @@ the completed turn was pruned/evicted). The turn already finished and is **not**
 hub, so the client must **not** open `/stream`; it should reload conversation history to show the
 persisted reply instead.
 
+**409 Conflict — the conversation already has a running turn.** A conversation runs one turn at a
+time: two concurrent turns interleave their writes on one history, and the second replays tool calls
+the first has not answered yet. Retrying the *same* `turn_id` is still idempotent and returns 200 —
+only a different `turn_id` arriving while a turn is running is refused.
+
+```json
+{
+  "detail": {
+    "message": "This conversation already has a running turn. Steer that turn instead of starting a new one.",
+    "active_turn_id": "uuid-of-the-running-turn",
+    "active_turn_first_seq": 12
+  }
+}
+```
+
+Send the message to the running turn with [Steer a Turn](#steer-a-turn) rather than starting a new
+one; `active_turn_id` is the turn to target. A client that has lost track of the running turn (its
+stream dropped, or the app was suspended and resumed) reaches this case, and the payload is enough
+to recover without a second round trip: steer the prompt into `active_turn_id`, then subscribe.
+
+Subscribe from the steer's `queued_after_seq + 1`, not from `active_turn_first_seq`. The turn has
+usually been working for a while, and replaying it from the start pours that earlier answer into the
+bubble the client just opened for the new message — showing the previous reply again underneath it,
+and twice over when history had already rendered that turn. What the turn does in response to the
+steered message begins after `queued_after_seq`; the rest is reconciled from persisted history when
+the turn ends. `active_turn_first_seq` remains the turn's own starting cursor for a client that
+genuinely wants the whole turn replayed.
+
+Steering carries text only, so a refused request that had `attachments` cannot be recovered this way
+— the files would be dropped from a message the model still answered. Surface the refusal to the
+user and resend the whole message, attachments included, once the running turn ends.
+
 ##### Subscribe to the Conversation Stream
 
 ```
@@ -319,9 +390,10 @@ Replays buffered events with `seq >= from_seq`, then tails live events.
   `{"request_id": "...", "approved": true | false}`.
 - `error` - Error occurred: `{"error": "message", "error_id": "..."}`
 - `message` - Content-free "new messages were persisted" nudge published outside the token stream
-  (e.g. by the non-streaming `/send_message` path or a reply delivered from another interface):
+  (e.g. a reply delivered from another interface, such as a scheduled callback):
   `{"new_messages": true}`. A follow client reacts by reloading conversation history rather than
-  rendering tokens.
+  rendering tokens. A `/send_message` turn does not publish one — its `turn_ended` already tells a
+  follower to reload.
 - `turn_ended` - The turn finished: `{"status": "complete" | "failed", "reasoning_info": {...}}`.
   After handling this, a client should `POST /ack` with its `seq`.
 - `heartbeat` - Keep-alive on `follow=true` (and idle non-follow) streams: `{}`.
@@ -355,6 +427,73 @@ fallback suppresses a redundant push for an already-delivered reply. Send this a
 
 ```json
 { "ok": true }
+```
+
+##### Steer a Turn
+
+```
+POST /api/v1/chat/turns/{turn_id}/steer
+```
+
+Delivers a user message to a turn that is already running, instead of starting a new one. The LLM
+loop drains it after the current tool round, so the model adapts mid-turn rather than finishing work
+the message has made irrelevant. The message surfaces as a `user_input` event on the conversation
+stream and is persisted to history as the raw text the user typed.
+
+**Request body:**
+
+```json
+{
+  "conversation_id": "uuid-of-conversation",
+  "prompt": "actually, focus on tomorrow",
+  "input_id": "client-generated-id-for-this-submission"
+}
+```
+
+`input_id` is optional and generated by the client. The turn's `user_input` echo carries it back, so
+a client whose response was lost (a 5xx, a dropped connection) can tell whether the turn consumed
+*its* submission rather than an identical message someone else sent. Reuse the same `input_id` when
+retrying a submission, and a fresh one for a new one: a retry of an id the turn has already accepted
+answers 200 without queueing the message a second time, so a lost response costs nothing, while a
+genuinely new message needs its own id to be delivered at all.
+
+**Response:**
+
+```json
+{
+  "turn_id": "uuid-of-the-running-turn",
+  "conversation_id": "uuid-of-conversation",
+  "accepted": true,
+  "queued_after_seq": 41
+}
+```
+
+`queued_after_seq` is the `seq` of the conversation's most recent event when the message was queued
+(`-1` if it has none). The turn publishes the `user_input` echo later, so the echo's `seq` is always
+greater. A client replaying the turn from an earlier cursor uses this to tell that echo from an
+identical message the turn had already consumed — matching on text alone would consume the wrong
+event and render the new message twice. When the steer carried an `input_id`, the echo names it
+directly and no cursor arithmetic is needed to identify it.
+
+| Status | Meaning                                                                         |
+| ------ | ------------------------------------------------------------------------------- |
+| 200    | Queued for injection into the running turn                                      |
+| 404    | No such turn — it may not have registered yet, so this is worth a bounded retry |
+| 409    | The turn has already finished; start a new turn with `POST /v1/chat/turns`      |
+
+##### Stop a Turn
+
+```
+POST /api/v1/chat/turns/{turn_id}/cancel
+```
+
+Requests a cooperative interrupt and then cancels the producer, ending the turn as `cancelled` — a
+terminal status distinct from `failed`. Any reply text produced before the stop is persisted.
+
+**Request body:**
+
+```json
+{ "conversation_id": "uuid-of-conversation" }
 ```
 
 **Example using curl:**

@@ -59,7 +59,9 @@ Defined in `tests/conftest.py` unless noted otherwise.
 **`db_engine`** (function scope) — the primary fixture for database tests. Parameterized to SQLite
 or PostgreSQL by `pytest_generate_tests` from the `--db`/`--postgres` flags. SQLite uses a temporary
 on-disk file (`fa_test_*.sqlite`) deleted after the test; PostgreSQL creates and drops a unique
-database per test. Handles schema initialization. Not `autouse` — tests must request it.
+database per test. SQLite copies a closed schema template initialized once per pytest worker;
+connections and data remain local to each test. Handles schema initialization. Not `autouse` — tests
+must request it.
 
 **`postgres_container`** (session scope) — manages the PostgreSQL server for the whole session, via
 `pgserver` (embedded) or an external instance from `TEST_DATABASE_URL`. Includes `pgvector`.
@@ -96,7 +98,8 @@ it into the worker.
 ### CalDAV Server Fixtures
 
 **`radicale_server_session`** (session scope) — starts a Radicale CalDAV server for the session with
-user `testuser`/`testpass`. Yields `(base_url, username, password)`.
+user `testuser`/`testpass`. Yields `(base_url, username, password)`. Its test-only bcrypt password
+uses the minimum work factor; authentication is still verified on every request.
 
 **`radicale_server`** (function scope) — depends on `radicale_server_session` and `db_engine`;
 creates a uniquely-named calendar per test and cleans it up afterwards. Yields

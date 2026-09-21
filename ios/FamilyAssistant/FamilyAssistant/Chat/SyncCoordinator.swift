@@ -56,10 +56,18 @@ protocol SyncStreamDelegate: AnyObject {
     /// Open the account-global activity stream.
     func openActivityStream(
         generation: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error>
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error>
 
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
+
+    /// Surface an authentication wall detected while opening the steady-state
+    /// follow stream. The reconnect loop continues with backoff after the UI is informed.
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int)
+
+    /// Surface an authentication wall detected while opening the steady-state
+    /// activity stream. The reconnect loop continues with backoff after the UI is informed.
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int)
 
     /// Tear down the in-flight send's transport task WITHOUT running the
     /// user-facing `cancelStream()` semantics ("Response stopped", control
@@ -531,6 +539,7 @@ final class SyncCoordinator {
         followTask = Task { [weak self] in
             var delay = initialDelay
             var authRefreshAlreadyAttempted = false
+            var authWallPresented = false
             while !Task.isCancelled {
                 guard let self else { return }
                 if self.authManager.authRequired {
@@ -547,6 +556,7 @@ final class SyncCoordinator {
                 var connected = false
                 var connectedAt: Date?
                 var streamError: Error?
+                var sawValidContent = false
                 do {
                     guard let stream = try await self.delegate?.openFollowStream(
                         conversationID: conversationID,
@@ -557,15 +567,19 @@ final class SyncCoordinator {
                     connected = true
                     connectedAt = Date()
                     self.apply(.followConnected(generation: generation))
-                    authRefreshAlreadyAttempted = false
                     await self.delegate?.followStreamDidConnect(
                         conversationID: conversationID,
                         generation: generation
                     )
-                    delay = initialDelay
                     for try await event in stream {
                         if Task.isCancelled {
                             break
+                        }
+                        if !sawValidContent {
+                            sawValidContent = true
+                            authRefreshAlreadyAttempted = false
+                            authWallPresented = false
+                            delay = initialDelay
                         }
                         let shouldContinue = await self.delegate?.handleFollowEvent(
                             event,
@@ -626,6 +640,11 @@ final class SyncCoordinator {
                             break
                         }
                     }
+                }
+
+                if let streamError, Self.isAuthWall(streamError), !authWallPresented {
+                    authWallPresented = true
+                    self.delegate?.presentFollowStreamAuthWall(streamError, generation: generation)
                 }
 
                 self.reportStreamDisconnect(
@@ -696,6 +715,7 @@ final class SyncCoordinator {
         activityTask = Task { [weak self] in
             var delay = initialDelay
             var authRefreshAlreadyAttempted = false
+            var authWallPresented = false
             while !Task.isCancelled {
                 guard let self else { return }
                 if self.authManager.authRequired {
@@ -710,6 +730,7 @@ final class SyncCoordinator {
                 self.markActivityReopening(generation: generation)
                 var connectedAt: Date?
                 var streamError: Error?
+                var sawValidContent = false
                 do {
                     guard let stream = try await self.delegate?.openActivityStream(
                         generation: generation
@@ -717,15 +738,21 @@ final class SyncCoordinator {
                         return
                     }
                     connectedAt = Date()
-                    delay = initialDelay
                     self.apply(.activityConnected(generation: generation))
-                    authRefreshAlreadyAttempted = false
                     await self.delegate?.activityStreamDidSignal(generation: generation)
-                    for try await _ in stream {
+                    for try await event in stream {
                         if Task.isCancelled {
                             break
                         }
-                        await self.delegate?.activityStreamDidSignal(generation: generation)
+                        if !sawValidContent {
+                            sawValidContent = true
+                            authRefreshAlreadyAttempted = false
+                            authWallPresented = false
+                            delay = initialDelay
+                        }
+                        if case .activity = event {
+                            await self.delegate?.activityStreamDidSignal(generation: generation)
+                        }
                     }
                 } catch {
                     streamError = error
@@ -780,6 +807,10 @@ final class SyncCoordinator {
                         }
                     }
                 }
+                if let streamError, Self.isAuthWall(streamError), !authWallPresented {
+                    authWallPresented = true
+                    self.delegate?.presentActivityStreamAuthWall(streamError, generation: generation)
+                }
                 self.reportStreamDisconnect(
                     channel: "activity",
                     generation: generation,
@@ -801,6 +832,16 @@ final class SyncCoordinator {
                 self.reportPresentationIfChanged()
             }
         }
+    }
+
+    private static func isAuthWall(_ error: Error) -> Bool {
+        if let apiError = error as? ChatAPIError, case .authWall = apiError {
+            return true
+        }
+        if let authError = error as? AuthError, case .authWall = authError {
+            return true
+        }
+        return false
     }
 
     /// Cancel the follow stream only (e.g. a conversation switch cancels it before

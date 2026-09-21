@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenAI API Development"
+  short_description: "Build with current OpenAI API models and official docs"
+  default_prompt: "Use official OpenAI documentation to implement or update this OpenAI API integration."

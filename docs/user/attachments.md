@@ -9,20 +9,26 @@ move between tools and people.
   Telegram album counts as one message, so you get a single answer covering all the photos.
 - **Web interface:** attach files in chat, or add them to your searchable documents one at a time on
   the **Upload Document** page.
-- **iOS app:** attach from the composer, paste a copied image, or share a file into the app from
-  another app.
+- **iOS app:** take a photo with the camera, choose an image or file from the composer, paste a
+  copied image, or share a file into the app from another app.
 
-**Supported types** depend on where you're sending from:
+**Any file type is accepted**, from any of those places — a 3D model, an accounts export, a firmware
+image, a zip archive. What differs is how much the assistant can do with one: it reads images,
+audio, video, PDFs and text directly, and for anything else it works from the file's name, type and
+whatever its tools can extract, so say what a file is when you send something unusual.
 
-- **Web and iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
-- **Telegram:** images and documents, including formats the web chat won't take.
-- **Upload Document page:** PDF, TXT, DOCX, DOC, HTML, and MD — documents rather than images, since
-  the point of that page is indexing text you can search later.
+The **Upload Document page** is the exception, and deliberately so: it indexes text you can search
+later, so it takes PDF, TXT, DOCX, DOC, HTML, and MD.
 
-If a file is rejected, converting it to a nearby format (an image to PNG, a spreadsheet to CSV sent
-through Telegram) is usually the quickest way through.
+Size limits apply: typically 20 MB for anything a model looks at or listens to — images, audio and
+video — and 100 MB for other files. A recording over the limit is refused with its size rather than
+accepted and then failed on, so trimming a long recording, or sending a lower-quality version of a
+video, gets it through.
 
-Size limits apply: typically 20 MB for images and 100 MB for other files.
+A conversation works on one message at a time, so a message with files attached won't send while the
+assistant is still busy with the previous one — it tells you so rather than sending your question
+without the files. Send it again once the reply arrives. Plain text sent mid-answer is different:
+that reaches the assistant straight away and it adapts to it.
 
 ## What you can do with them
 
@@ -41,6 +47,17 @@ in a chat stays with that conversation; to make its content permanently searchab
 web interface's **Upload Document** page instead. See
 [documents-and-search.md](documents-and-search.md).
 
+**Transcribe or describe audio and video:**
+
+- "What does this voice note say?"
+- "Summarise what's discussed in this recording."
+- "What happens in this video?"
+
+Not every model the assistant runs on can listen to audio or watch video. When one can't, it hands
+the file to a model that can and works from what comes back, so asking is the same either way — it
+just means an extra step before you get an answer. If part of a recording is inaudible, you'll be
+told that rather than given a guess at it.
+
 **Ask about an attachment itself:**
 
 - "Tell me about this attachment."
@@ -54,11 +71,17 @@ When the assistant attaches something to its reply — a generated image, a char
 a file it fetched from your email — it arrives with the answer itself:
 
 - **Images** appear inline, underneath the reply text, in both the web app and the iOS app. Tap or
-  click one to see it full size, and use the download button beside it to save or share it.
+  click one to open it full screen, and use the download button to save or share it.
 - **Other files** (PDFs, documents, data files) appear as a named attachment with a download button
   rather than a preview.
 - Images are part of the saved reply, so reopening the conversation later shows them again — they
   are not just a live-stream effect.
+
+In the web app, the full-screen viewer fills the window with the image and its name. Click the image
+to switch between fitting the window and full size, and scroll around when it's larger than the
+screen. When a reply carries several images, arrows on either side — or the left and right arrow
+keys — move between them, with a counter showing where you are. Close it with the X, the Escape key,
+or a click outside the image. Images you attach to your own messages open in the same viewer.
 
 ## How attachments behave
 
@@ -67,6 +90,11 @@ conversation. That means you can refer back to something you sent earlier, and t
 pass an attachment from one tool to another — take a camera snapshot and then analyse it, edit an
 image and then send the result, extract information from a document and save it as a note.
 
+**Bulky tool output:** when a tool produces more data than fits in the conversation — a long log, a
+big export — it is stored as an attachment and the assistant works from that instead of pasting it
+all out. Those stay behind the scenes rather than being sent to you; ask for the file and the
+assistant will attach it.
+
 **Who can see them:** attachments belong to you, not to a single conversation. Other people can't
 read what you upload, but you can — a later chat can pull up a file you sent earlier, and files
 attached to a note stay reachable whenever that note comes up. Each attachment records the
@@ -74,6 +102,11 @@ conversation it arrived in, which is how the assistant keeps track of what you'r
 isn't a wall between your own conversations.
 
 If you want something genuinely out of reach, delete it rather than relying on starting a new chat.
+
+**Files you attach but never send:** attaching a file uploads it straight away, before you send the
+message. If you close the tab, or the send doesn't go through, that upload is cleared out
+automatically about a day later. Anything that reached the assistant — in a message, or attached to
+a note — stays.
 
 ## Sending attachments to other people
 
@@ -87,4 +120,6 @@ step applies.
 - Be specific about what you want to know about an image; "what's wrong with this label?" beats
   "describe this".
 - When uploading several files at once, say what each one is so the assistant can tell them apart.
-- Very large files take longer to process and may be rejected outright.
+- Very large files take longer to process, and one over the size limit is refused outright.
+- For a file format the assistant can't read directly, say what it is and what you want from it — it
+  can often get there by running code over the file.

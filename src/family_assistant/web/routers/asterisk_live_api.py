@@ -50,12 +50,20 @@ from google.genai.types import (
 from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
+from family_assistant.processing.turn_context import (
+    render_turn_context_block,
+    turn_context_guidance,
+)
 from family_assistant.security.taint import InMemoryTurnTaintTracker
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.tools.infrastructure import (
+    get_tool_definitions_for_advertisement,
+)
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.audio_utils import StatefulResampler
 from family_assistant.web.dependencies import get_live_audio_client
+from family_assistant.web.live_tools import resolve_live_tools
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import (  # noqa: TC001 - FastAPI resolves this at runtime for Depends
     LiveAudioClient,
@@ -184,6 +192,7 @@ class AsteriskLiveHandler:
         self.audio_buffer = bytearray()
         self.gemini_session: AsyncSession | None = None
         self.receive_task: asyncio.Task[None] | None = None
+        self._greeting_task: asyncio.Task[None] | None = None
         self.format: str | None = None
         self.media_send_allowed: asyncio.Event = asyncio.Event()
         self.debug_enabled = _env_flag(_DEBUG_ENV, default=False)
@@ -403,7 +412,7 @@ class AsteriskLiveHandler:
             event="websocket_accept",
         )
 
-        try:
+        async def run_session() -> None:
             # Wait for initial configuration (MEDIA_START) from Asterisk
             # This ensures we know the sample rate before establishing the Gemini session
             while not self.format:
@@ -540,7 +549,7 @@ class AsteriskLiveHandler:
 
             # Start pre-canned greeting playback as a background task.
             # Store reference to prevent garbage collection of the task.
-            self._greeting_task: asyncio.Task[None] | None = None
+            self._greeting_task = None
             if self.gemini_live_config.greeting.enabled:
                 self._greeting_task = asyncio.create_task(
                     self._send_precanned_greeting()
@@ -584,7 +593,7 @@ class AsteriskLiveHandler:
                 # Start task to receive from Gemini and send to Asterisk
                 self.receive_task = asyncio.create_task(self._receive_from_gemini())
 
-                try:
+                async def relay_asterisk_messages() -> None:
                     while True:
                         # Receive message from Asterisk
                         message = await self.websocket.receive()
@@ -616,6 +625,8 @@ class AsteriskLiveHandler:
                                 payload=self._safe_serialize(message),
                             )
 
+                try:
+                    await relay_asterisk_messages()
                 except WebSocketDisconnect:
                     logger.info("WebSocket disconnected")
                     await self._trace_event(
@@ -637,6 +648,8 @@ class AsteriskLiveHandler:
                             await self.receive_task
                     await self._save_call_transcript()
 
+        try:
+            await run_session()
         except Exception as e:
             logger.exception(f"Error in AsteriskLiveHandler: {e}")
             await self._trace_event(
@@ -830,7 +843,7 @@ class AsteriskLiveHandler:
             logger.warning(f"Greeting file not found: {greeting_path}")
             return
 
-        try:
+        async def send_greeting() -> None:
             with wave.open(str(greeting_path), "rb") as wf:
                 wav_rate = wf.getframerate()
                 wav_channels = wf.getnchannels()
@@ -878,6 +891,8 @@ class AsteriskLiveHandler:
                 total_bytes=len(pcm_data),
             )
 
+        try:
+            await send_greeting()
         except Exception:
             logger.exception("Error sending pre-canned greeting")
 
@@ -968,7 +983,7 @@ class AsteriskLiveHandler:
         if not self.gemini_session:
             return
 
-        try:
+        async def receive_messages() -> None:
             async for response in self._iter_gemini_messages():
                 if response.tool_call:
                     await self._handle_tool_call(response.tool_call)
@@ -1176,6 +1191,8 @@ class AsteriskLiveHandler:
                                 )
                                 await self.websocket.send_bytes(bytes(chunk))
 
+        try:
+            await receive_messages()
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1270,64 +1287,79 @@ class AsteriskLiveHandler:
                 args=self._safe_serialize(args),
             )
 
-            try:
-                async with get_db_context(self.database_engine) as db_context:
-                    exec_context = ToolExecutionContext(
-                        interface_type="telephone",
-                        conversation_id=self.conversation_id,
-                        user_name=self.extension or "Caller",
-                        user_id=None,
-                        turn_id=call_id,
-                        db_context=db_context,
-                        chat_interface=None,
-                        chat_interfaces=self.chat_interfaces,
-                        confirmation_ui_managers=self.confirmation_ui_managers,
-                        timezone=self.processing_service.service_config.timezone,
-                        processing_profile_id=self.processing_service.service_config.id,
-                        subconversation_id=None,
-                        request_confirmation_callback=None,
-                        processing_service=self.processing_service,
-                        clock=self.processing_service.clock,
-                        home_assistant_client=self.processing_service.home_assistant_client,
-                        event_sources=self.processing_service.event_sources,
-                        indexing_source=(
-                            cast(
-                                "IndexingSource | None",
-                                self.processing_service.event_sources.get("indexing"),
-                            )
-                            if self.processing_service.event_sources
-                            else None
-                        ),
-                        attachment_registry=self.processing_service.attachment_registry,
-                        camera_backend=self.processing_service.camera_backend,
-                        tools_provider=self.processing_service.tools_provider,
-                        visibility_grants=(
-                            set(
-                                self.processing_service.service_config.visibility_grants
-                            )
-                            if self.processing_service.service_config.visibility_grants
-                            else None
-                        ),
-                        default_note_visibility_labels=(
-                            self.processing_service.service_config.default_note_visibility_labels
-                        ),
-                        required_note_visibility_labels=(
-                            self.processing_service.service_config.required_note_visibility_labels
-                        ),
-                        allowed_note_visibility_labels=(
-                            self.processing_service.service_config.allowed_note_visibility_labels
-                        ),
-                        allow_wake_llm=(
-                            self.processing_service.service_config.allow_wake_llm
-                        ),
-                        credential_resolvers=None,
-                        api_backend=None,
-                        taint_tracker=self._taint_tracker,
-                    )
+            async def execute_call(
+                current_call_id: str | None,
+                current_name: str,
+                current_args: dict[str, JsonValue],
+            ) -> None:
+                assert self.database_engine is not None
+                assert self.processing_service is not None
+                assert self.processing_service.tools_provider is not None
+                db_context = Database(self.database_engine)
+                exec_context = ToolExecutionContext(
+                    interface_type="telephone",
+                    conversation_id=self.conversation_id,
+                    user_name=self.extension or "Caller",
+                    user_id=None,
+                    turn_id=current_call_id,
+                    db_context=db_context,
+                    chat_interface=None,
+                    chat_interfaces=self.chat_interfaces,
+                    confirmation_ui_managers=self.confirmation_ui_managers,
+                    timezone=self.processing_service.service_config.timezone,
+                    processing_profile_id=self.processing_service.service_config.id,
+                    subconversation_id=None,
+                    request_confirmation_callback=None,
+                    processing_service=self.processing_service,
+                    # The Live session picks no tier, so tools that call a
+                    # model use the profile's default one.
+                    llm_client=self.processing_service.llm_client,
+                    clock=self.processing_service.clock,
+                    home_assistant_client=self.processing_service.home_assistant_client,
+                    event_sources=self.processing_service.event_sources,
+                    indexing_source=(
+                        cast(
+                            "IndexingSource | None",
+                            self.processing_service.event_sources.get("indexing"),
+                        )
+                        if self.processing_service.event_sources
+                        else None
+                    ),
+                    attachment_registry=self.processing_service.attachment_registry,
+                    camera_backend=self.processing_service.camera_backend,
+                    tools_provider=self.processing_service.tools_provider,
+                    visibility_grants=(
+                        set(self.processing_service.service_config.visibility_grants)
+                        if self.processing_service.service_config.visibility_grants
+                        else None
+                    ),
+                    default_note_visibility_labels=(
+                        self.processing_service.service_config.default_note_visibility_labels
+                    ),
+                    required_note_visibility_labels=(
+                        self.processing_service.service_config.required_note_visibility_labels
+                    ),
+                    required_note_read_labels=(
+                        self.processing_service.service_config.required_note_read_labels
+                    ),
+                    memory_read=self.processing_service.service_config.memory_read,
+                    allowed_note_visibility_labels=(
+                        self.processing_service.service_config.allowed_note_visibility_labels
+                    ),
+                    allow_wake_llm=(
+                        self.processing_service.service_config.allow_wake_llm
+                    ),
+                    credential_resolvers=None,
+                    api_backend=None,
+                    taint_tracker=self._taint_tracker,
+                )
 
-                    result = await self.processing_service.tools_provider.execute_tool(
-                        name, args, exec_context, call_id
-                    )
+                # Dispatch through the live view so `call_tool` resolves; the
+                # context keeps the plain provider, because a script the model
+                # starts must still see every tool policy allows.
+                result = await self.processing_service.live_tools_provider.execute_tool(
+                    current_name, current_args, exec_context, current_call_id
+                )
 
                 if isinstance(result, ToolResult):
                     if result.data is not None:
@@ -1343,11 +1375,14 @@ class AsteriskLiveHandler:
 
                 function_responses.append(
                     FunctionResponse(
-                        id=call_id,
-                        name=name,
+                        id=current_call_id,
+                        name=current_name,
                         response=response_payload,
                     )
                 )
+
+            try:
+                await execute_call(call_id, name, args)
             except Exception as e:
                 logger.exception(f"Tool execution failed for '{name}': {e}")
                 function_responses.append(
@@ -1393,7 +1428,8 @@ class AsteriskLiveHandler:
         if not self._transcript_segments or self.database_engine is None:
             return
 
-        try:
+        async def save_transcript() -> None:
+            assert self.database_engine is not None
             tz = (
                 self.processing_service.service_config.timezone
                 if self.processing_service
@@ -1434,19 +1470,22 @@ class AsteriskLiveHandler:
                 write_policy = NoteWritePolicy.UNCONSTRAINED
                 transcript_labels = None
 
-            async with get_db_context(self.database_engine) as db_context:
-                await db_context.notes.add_or_update(
-                    title=title,
-                    content=content,
-                    include_in_prompt=False,
-                    visibility_labels=transcript_labels,
-                    write_policy=write_policy,
-                )
+            db_context = Database(self.database_engine)
+            await db_context.notes.add_or_update(
+                title=title,
+                content=content,
+                include_in_prompt=False,
+                visibility_labels=transcript_labels,
+                write_policy=write_policy,
+            )
 
             logger.info(
                 f"Saved call transcript: {title} "
                 f"({len(self._transcript_segments)} segments)"
             )
+
+        try:
+            await save_transcript()
         except Exception:
             logger.exception("Failed to save call transcript")
 
@@ -1481,6 +1520,7 @@ async def asterisk_live_endpoint(
 
     Authentication:
         - Set ASTERISK_SECRET_TOKEN env var to require token authentication
+          (mandatory when JWT edge authentication is enabled)
         - Pass token as query parameter: ?token=<secret>
         - Set ASTERISK_ALLOWED_EXTENSIONS to restrict by extension (comma-separated)
 
@@ -1496,6 +1536,14 @@ async def asterisk_live_endpoint(
         Dial(WebSocket/host:8000/api/asterisk/live?token=${TOKEN}&extension=${CALLERID(num)}&channel_id=${CHANNEL}&profile=telephone_external)
     """
     secret_token, allowed_extensions = get_asterisk_auth_config()
+    jwt_service = getattr(websocket.app.state, "jwt_token_service", None)
+    if getattr(jwt_service, "enabled", False) and not secret_token:
+        logger.error(
+            "Asterisk connection rejected: ASTERISK_SECRET_TOKEN is required "
+            "when JWT edge authentication is enabled"
+        )
+        await websocket.close(code=1008, reason="Asterisk authentication required")
+        return
 
     # Layer 1: Server authentication
     if secret_token and (not token or not secrets.compare_digest(token, secret_token)):
@@ -1526,8 +1574,10 @@ async def asterisk_live_endpoint(
     profile_id = profile or "telephone"
     system_instruction = None
     tools: ToolListUnion | None = None
+    telephone_service: ProcessingService | None = None
 
-    try:
+    async def load_profile_configuration() -> bool:
+        nonlocal gemini_live_config, system_instruction, telephone_service, tools
         processing_services = getattr(websocket.app.state, "processing_services", {})
         telephone_service = processing_services.get(profile_id)
 
@@ -1539,27 +1589,54 @@ async def asterisk_live_endpoint(
                 code=1008,
                 reason=f"Profile '{profile_id}' is a remote delegation-only profile",
             )
-            return
+            return False
 
         if telephone_service:
             # Get system prompt
             prompts = telephone_service.service_config.prompts
             sys_prompt_template = prompts.get("system_prompt", "")
             if sys_prompt_template:
-                # Use configured timezone
-                tz = telephone_service.service_config.timezone
-                current_time = datetime.now(tz).strftime("%I:%M %p, %A, %B %d, %Y")
-                system_instruction = sys_prompt_template.replace(
-                    "{current_time}", current_time
-                )
+                system_instruction = sys_prompt_template
                 from family_assistant.processing import (  # noqa: PLC0415
                     ProcessingService,
                 )
 
+                aggregated_context = ""
+                includes_aggregated_context = False
                 if isinstance(telephone_service, ProcessingService):
                     addition = await telephone_service.delegation_catalog_addition()
                     if addition:
                         system_instruction = f"{system_instruction}\n\n{addition}"
+                    includes_aggregated_context = (
+                        telephone_service.service_config.include_aggregated_context
+                    )
+                    if includes_aggregated_context:
+                        aggregated_context = (
+                            await telephone_service.context_preparer.aggregate_context(
+                                acting_user_id=None
+                            )
+                        )
+
+                # A Live API session carries no message list, so the turn-context
+                # block the chat path appends as a trailing message is inlined at
+                # the end of the system instruction; its tags keep it delimited.
+                # The guidance in front of it is what stops the model reading the
+                # tags out to the caller, which on a phone call is all they hear.
+                guidance = turn_context_guidance(
+                    includes_aggregated_context=includes_aggregated_context,
+                    placement="inline",
+                )
+                # A spoken time, not the machine-readable one the chat path uses:
+                # the model reads this aloud.
+                turn_context = render_turn_context_block(
+                    current_time_str=telephone_service.current_time_str(
+                        fmt="%I:%M %p, %A, %B %d, %Y"
+                    ),
+                    aggregated_context=aggregated_context,
+                )
+                system_instruction = (
+                    f"{system_instruction}\n\n{guidance}\n\n{turn_context}"
+                )
 
             # Get tools
             if telephone_service.tools_provider:
@@ -1568,13 +1645,22 @@ async def asterisk_live_endpoint(
                     convert_tools_to_genai_format,
                 )
 
-                raw_tools = (
-                    await telephone_service.tools_provider.get_tool_definitions()
+                # A Live session's declarations are fixed at setup, so on-demand
+                # tools are reached through search_tools/call_tool instead of
+                # being flattened into the list. A call has no confirmation UI,
+                # so nothing gated on confirmation is advertised either.
+                live_provider, tools_addition = await resolve_live_tools(
+                    telephone_service, on_demand=gemini_live_config.tools.on_demand
+                )
+                raw_tools = await get_tool_definitions_for_advertisement(
+                    live_provider, can_confirm=False
                 )
                 tools = cast("ToolListUnion", convert_tools_to_genai_format(raw_tools))
                 logger.info(
                     f"Loaded {len(tools)} tools (Gemini format) for '{profile_id}' profile"
                 )
+                if tools_addition and system_instruction:
+                    system_instruction = f"{system_instruction}\n\n{tools_addition}"
 
             # Override greeting WAV path if profile specifies one
             wav_path = telephone_service.service_config.greeting_wav_path
@@ -1594,13 +1680,28 @@ async def asterisk_live_endpoint(
                 await websocket.close(
                     code=1008, reason=f"Profile '{profile_id}' not found"
                 )
-                return
+                return False
             logger.warning(
                 "Default 'telephone' profile not found, using unconfigured defaults"
             )
 
+        return True
+
+    try:
+        if not await load_profile_configuration():
+            return
     except Exception as e:
+        # Continuing here would answer the call with whatever partial state had
+        # been assigned -- typically no tools and no system prompt -- so the
+        # caller talks to an assistant that silently cannot do anything. A
+        # rejected call is a fault the operator can see. The profile-not-found
+        # path above returns False instead of raising, so the deliberate
+        # unconfigured-defaults fallback is unaffected.
         logger.exception(f"Error loading profile '{profile_id}' configuration: {e}")
+        await websocket.close(
+            code=1011, reason=f"Profile '{profile_id}' configuration failed to load"
+        )
+        return
 
     chat_interfaces = getattr(websocket.app.state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(

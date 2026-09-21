@@ -1,10 +1,17 @@
 import { HomeIcon, MessageSquarePlusIcon, SearchIcon } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Conversation, ConversationSidebarProps } from './types';
+
+const SEARCH_DEBOUNCE_MS = 300;
+
+interface SearchResults {
+  query: string;
+  conversations: Conversation[];
+}
 
 const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   conversations = [],
@@ -17,11 +24,61 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   isMobile = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
+  const [searchFailed, setSearchFailed] = useState(false);
+  const trimmedQuery = searchQuery.trim();
 
-  // Filter conversations based on search query
-  const filteredConversations = conversations.filter((conv) =>
-    conv.last_message.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Search runs on the server, so it covers everything said in every
+  // conversation rather than only the previews already loaded here.
+  useEffect(() => {
+    setSearchFailed(false);
+    if (!trimmedQuery) {
+      setSearchResults(null);
+      return;
+    }
+    const abortController = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const matches: Conversation[] = [];
+        let hasMore = true;
+        while (hasMore) {
+          const params = new URLSearchParams({
+            interface_type: 'web',
+            limit: '100',
+            offset: String(matches.length),
+            q: trimmedQuery,
+          });
+          const response = await fetch(`/api/v1/chat/conversations?${params}`, {
+            signal: abortController.signal,
+          });
+          if (!response.ok) {
+            throw new Error(`Conversation search failed with status ${response.status}`);
+          }
+          const data: { conversations: Conversation[]; count: number } = await response.json();
+          matches.push(...data.conversations);
+          hasMore = data.conversations.length > 0 && matches.length < data.count;
+        }
+        setSearchResults({ query: trimmedQuery, conversations: matches });
+      } catch (error) {
+        if (!abortController.signal.aborted) {
+          console.error('Conversation search failed:', error);
+          setSearchFailed(true);
+        }
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      abortController.abort();
+    };
+  }, [trimmedQuery]);
+
+  const isAwaitingSearch =
+    trimmedQuery !== '' && searchResults?.query !== trimmedQuery && !searchFailed;
+  let displayedConversations: Conversation[] = conversations;
+  if (trimmedQuery) {
+    displayedConversations =
+      searchResults?.query === trimmedQuery ? searchResults.conversations : [];
+  }
 
   // Format timestamp for display
   const formatTimestamp = (timestamp: string): string => {
@@ -47,7 +104,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     return date.toLocaleDateString();
   };
 
-  const SidebarContent = () => (
+  const sidebarContent = (
     <div className="flex h-full flex-col min-h-0">
       <div className="flex items-center gap-2 p-4 pb-3">
         <Button
@@ -93,20 +150,30 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
 
       <ScrollArea className="flex-1 px-2 overflow-y-auto">
         <div className="py-1">
-          {conversationsLoading ? (
+          {searchFailed && (
+            <div
+              className="px-3 py-2 text-xs text-destructive"
+              data-testid="conversation-search-failed"
+            >
+              Search failed. Try again.
+            </div>
+          )}
+          {(conversationsLoading && !trimmedQuery) || isAwaitingSearch ? (
             <div
               className="py-8 text-center text-sm text-muted-foreground/60"
               data-loading-indicator="true"
             >
-              Loading...
+              {isAwaitingSearch ? 'Searching...' : 'Loading...'}
             </div>
-          ) : filteredConversations.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground/60">
-              {searchQuery ? 'No matches' : 'No conversations yet'}
-            </div>
+          ) : displayedConversations.length === 0 ? (
+            !searchFailed && (
+              <div className="py-8 text-center text-sm text-muted-foreground/60">
+                {trimmedQuery ? 'No matches' : 'No conversations yet'}
+              </div>
+            )
           ) : (
             <div className="space-y-0.5">
-              {filteredConversations.map((conv: Conversation) => {
+              {displayedConversations.map((conv: Conversation) => {
                 const isActive = conv.conversation_id === currentConversationId;
                 return (
                   <button
@@ -121,6 +188,14 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                     <div className="text-sm leading-snug line-clamp-2 mb-1">
                       {conv.last_message}
                     </div>
+                    {conv.match_excerpt && (
+                      <div
+                        className="text-xs leading-snug text-muted-foreground line-clamp-2 mb-1"
+                        data-testid="conversation-match-excerpt"
+                      >
+                        {conv.match_excerpt}
+                      </div>
+                    )}
                     <div className="flex justify-between items-center">
                       <span className="text-[11px] text-muted-foreground/70">
                         {formatTimestamp(conv.last_timestamp)}
@@ -146,11 +221,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
 
   // On mobile, render as a full-page view (parent controls visibility)
   if (isMobile) {
-    return (
-      <div className="h-full w-full bg-background">
-        <SidebarContent />
-      </div>
-    );
+    return <div className="h-full w-full bg-background">{sidebarContent}</div>;
   }
 
   // Desktop: collapsible sidebar panel
@@ -160,7 +231,7 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
         isOpen ? 'ml-0' : '-ml-72'
       }`}
     >
-      <SidebarContent />
+      {sidebarContent}
     </div>
   );
 };

@@ -8,10 +8,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.scripting.apis.keychute import (
+    get_keychute_config,
+    keychute_external_function_names,
+)
+from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.storage.types import ActionConfig
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -63,7 +68,7 @@ def _validate_parameters_schema_shape(
 
 
 async def validate_script_action_config(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - action_config comes from LLM tool args as plain dict
     action_config: ActionConfig | dict[str, Any],
 ) -> str | None:
@@ -175,6 +180,9 @@ async def save_script_tool(
     validation = ScriptValidator(tool_definitions=tool_definitions).validate(
         code,
         input_names=input_names,
+        extra_external_functions=keychute_external_function_names(
+            get_keychute_config(exec_context)
+        ),
         include_tools_api=tools_provider is not None,
         include_attachment_api=bool(exec_context.attachment_registry),
     )
@@ -191,6 +199,8 @@ async def save_script_tool(
         description=description,
         script_code=code,
         parameters_schema=parameters_schema,
+        definition_taint_state=authoring_taint_state(exec_context.taint_tracker),
+        definition_gate=exec_context.definition_gate_outcome,
     )
     return ToolResult(
         data={

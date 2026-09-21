@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -123,21 +123,21 @@ class TestGetAttachmentPathExternal:
             )
             attachment_id = str(uuid.uuid4())
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                await registry.register_attachment(
-                    db_context=db_context,
-                    attachment_id=attachment_id,
-                    source_type="email",
-                    source_id="<msg@example.com>",
-                    mime_type="text/plain",
-                    description="Test email attachment",
-                    size=len(payload),
-                    storage_path=str(external_file),
-                )
+            db_context = Database(engine=db_engine)
+            await registry.register_attachment(
+                db_context=db_context,
+                attachment_id=attachment_id,
+                source_type="email",
+                source_id="<msg@example.com>",
+                mime_type="text/plain",
+                description="Test email attachment",
+                size=len(payload),
+                storage_path=str(external_file),
+            )
 
-                content = await registry.get_attachment_content(
-                    db_context, attachment_id, acting_user_id=None
-                )
+            content = await registry.get_attachment_content(
+                db_context, attachment_id, acting_user_id=None
+            )
 
             assert content == payload
 
@@ -151,20 +151,20 @@ class TestGetAttachmentPathExternal:
                 storage_path=registry_dir, db_engine=db_engine, config=None
             )
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                metadata = await registry.register_user_attachment(
-                    db_context=db_context,
-                    content=b"user upload",
-                    filename="doc.txt",
-                    mime_type="text/plain",
-                )
+            db_context = Database(engine=db_engine)
+            metadata = await registry.register_user_attachment(
+                db_context=db_context,
+                content=b"user upload",
+                filename="doc.txt",
+                mime_type="text/plain",
+            )
 
-                managed_path = registry.get_attachment_path(metadata.attachment_id)
-                assert managed_path is not None and managed_path.exists()
+            managed_path = registry.get_attachment_path(metadata.attachment_id)
+            assert managed_path is not None and managed_path.exists()
 
-                deleted = await registry.delete_attachment(
-                    db_context, metadata.attachment_id, acting_user_id=None
-                )
+            deleted = await registry.delete_attachment(
+                db_context, metadata.attachment_id, acting_user_id=None
+            )
 
             assert deleted is True
             assert not managed_path.exists()
@@ -184,28 +184,28 @@ class TestGetAttachmentPathExternal:
             )
             attachment_id = str(uuid.uuid4())
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                await registry.register_attachment(
-                    db_context=db_context,
-                    attachment_id=attachment_id,
-                    source_type="email",
-                    source_id="<msg@example.com>",
-                    mime_type="text/plain",
-                    description="Test email attachment",
-                    size=5,
-                    storage_path=str(external_file),
-                )
+            db_context = Database(engine=db_engine)
+            await registry.register_attachment(
+                db_context=db_context,
+                attachment_id=attachment_id,
+                source_type="email",
+                source_id="<msg@example.com>",
+                mime_type="text/plain",
+                description="Test email attachment",
+                size=5,
+                storage_path=str(external_file),
+            )
 
-                deleted = await registry.delete_attachment(
+            deleted = await registry.delete_attachment(
+                db_context, attachment_id, acting_user_id=None
+            )
+
+            # Registry row was removed but the external file survives.
+            assert deleted is True
+            assert external_file.exists()
+            assert (
+                await registry.get_attachment(
                     db_context, attachment_id, acting_user_id=None
                 )
-
-                # Registry row was removed but the external file survives.
-                assert deleted is True
-                assert external_file.exists()
-                assert (
-                    await registry.get_attachment(
-                        db_context, attachment_id, acting_user_id=None
-                    )
-                    is None
-                )
+                is None
+            )

@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.document_indexer import DocumentIndexer
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
@@ -345,32 +345,32 @@ async def test_document_indexing_and_query_e2e(
 
         # --- Act: Fetch the Task ID ---
         # Need to query the DB to find the task enqueued by the API call
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            # Wait briefly for task to likely appear in DB after API commit
-            await asyncio.sleep(0.2)
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    # Filter by task type and payload content (document_id)
-                    tasks_table.c.task_type == "process_uploaded_document",
-                    # Note: JSON operators might be DB specific (e.g., ->> for postgres)
-                    # Using LIKE for simplicity, adjust if needed for robustness
-                    tasks_table.c.payload.cast(sqlalchemy.Text).like(
-                        f'%"document_id": {document_db_id}%'
-                    ),
-                )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
-            )  # Get the latest matching task
+        db = Database(engine=pg_vector_db_engine)
+        # Wait briefly for task to likely appear in DB after API commit
+        await asyncio.sleep(0.2)
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                # Filter by task type and payload content (document_id)
+                tasks_table.c.task_type == "process_uploaded_document",
+                # Note: JSON operators might be DB specific (e.g., ->> for postgres)
+                # Using LIKE for simplicity, adjust if needed for robustness
+                tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                    f'%"document_id": {document_db_id}%'
+                ),
+            )
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )  # Get the latest matching task
 
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find enqueued task for document ID {document_db_id}"
-            )
-            indexing_task_id = task_info["task_id"]
-            logger.info(
-                f"Found indexing task ID: {indexing_task_id} for document DB ID: {document_db_id}"
-            )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, (
+            f"Could not find enqueued task for document ID {document_db_id}"
+        )
+        indexing_task_id = task_info["task_id"]
+        logger.info(
+            f"Found indexing task ID: {indexing_task_id} for document DB ID: {document_db_id}"
+        )
 
         # --- Act: Wait for Indexing Task Completion ---
         # Signal the worker (in case it was waiting) - API doesn't pass the event,
@@ -398,17 +398,17 @@ async def test_document_indexing_and_query_e2e(
 
         # --- Act & Assert: Semantic Query ---
         semantic_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(
-                f"Querying vectors using semantic text: '{TEST_QUERY_TEXT_SEMANTIC}'"
-            )
-            semantic_query_results = await query_vectors(
-                db,
-                query_embedding=query_semantic_embedding,
-                embedding_model=TEST_EMBEDDING_MODEL,
-                limit=5,
-                filters={"source_type": TEST_DOC_SOURCE_TYPE},  # Filter by source type
-            )
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(
+            f"Querying vectors using semantic text: '{TEST_QUERY_TEXT_SEMANTIC}'"
+        )
+        semantic_query_results = await query_vectors(
+            db,
+            query_embedding=query_semantic_embedding,
+            embedding_model=TEST_EMBEDDING_MODEL,
+            limit=5,
+            filters={"source_type": TEST_DOC_SOURCE_TYPE},  # Filter by source type
+        )
 
         assert semantic_query_results is not None, (
             "Semantic query_vectors returned None"
@@ -446,18 +446,16 @@ async def test_document_indexing_and_query_e2e(
 
         # --- Act & Assert: Keyword Query ---
         keyword_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(
-                f"Querying vectors using keyword text: '{TEST_QUERY_TEXT_KEYWORD}'"
-            )
-            keyword_query_results = await query_vectors(
-                db,
-                query_embedding=query_keyword_embedding,  # Use keyword-related embedding
-                embedding_model=TEST_EMBEDDING_MODEL,
-                keywords=TEST_QUERY_TEXT_KEYWORD,  # Add keywords for FTS
-                limit=5,
-                filters={"source_type": TEST_DOC_SOURCE_TYPE},
-            )
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(f"Querying vectors using keyword text: '{TEST_QUERY_TEXT_KEYWORD}'")
+        keyword_query_results = await query_vectors(
+            db,
+            query_embedding=query_keyword_embedding,  # Use keyword-related embedding
+            embedding_model=TEST_EMBEDDING_MODEL,
+            keywords=TEST_QUERY_TEXT_KEYWORD,  # Add keywords for FTS
+            limit=5,
+            filters={"source_type": TEST_DOC_SOURCE_TYPE},
+        )
 
         assert keyword_query_results is not None, "Keyword query_vectors returned None"
         assert len(keyword_query_results) > 0, (
@@ -522,19 +520,19 @@ async def test_document_indexing_and_query_e2e(
         # Clean up document and task
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
-                    logger.info(f"Cleaned up test document DB ID {document_db_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
+                logger.info(f"Cleaned up test document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test document cleanup: {cleanup_err}")
         # Task should be 'done' or 'failed', but delete entry if needed
         if indexing_task_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_id == indexing_task_id
-                    )
-                    await db_cleanup.execute_with_retry(delete_stmt)
-                    logger.info(f"Cleaned up test task ID {indexing_task_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_id == indexing_task_id
+                )
+                await db_cleanup.execute(delete_stmt)
+                logger.info(f"Cleaned up test task ID {indexing_task_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test task cleanup: {cleanup_err}")

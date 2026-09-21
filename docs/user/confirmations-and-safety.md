@@ -34,6 +34,15 @@ requested in Telegram can also be approved in the web interface.
 
 The assistant waits for your answer before proceeding.
 
+### Requests too large for Telegram
+
+Telegram messages hold about 4000 characters. When what you'd be approving is longer than that — a
+long delegated brief, a big document being written, a lengthy tool payload — Telegram sends a notice
+with the beginning of the request and no buttons, because approving something you can only partly
+see isn't approving it. Open the pending confirmations in the web interface to read the whole thing
+and approve or reject it there; the request stays open until you do. Nothing is refused for being
+large.
+
 ## Approvals when you're not there
 
 The assistant sometimes acts without you in the chat — a scheduled reminder firing, an automation
@@ -64,6 +73,12 @@ choose, run networked code, send a message — the action may be audited, requir
 blocked, depending on your operator's policy. This is why you'll sometimes be asked to approve
 something that reads as harmless on its own.
 
+When the assistant hands part of a job to another mode — a browser run, a longer background task —
+that mode's actions are usually judged against your original request, not just against the
+instruction it was handed. An action the handed-off mode proposes that your request does not account
+for is the kind that gets queried or blocked. Work handed on a second time, from one background task
+to another, is judged on the narrower ground of the instruction alone, so it errs towards asking.
+
 ## Restricted modes
 
 Some situations run the assistant with deliberately reduced powers:
@@ -72,8 +87,9 @@ Some situations run the assistant with deliberately reduced powers:
   main assistant's context. See [automations.md](automations.md).
 - **iOS "Capture this"** handles shared pages and emails in a restricted mode that can read your
   information to file things sensibly, but asks before making changes.
-- **`/engineer`** is read-only by design: it can inspect the system but not change data or send
-  messages. See [troubleshooting.md](troubleshooting.md).
+- **`/engineer`** inspects the system but cannot change your data or send messages; the code it runs
+  runs in a throwaway sandbox with no access to your information, holding only what the assistant
+  puts into the command it runs there. See [troubleshooting.md](troubleshooting.md).
 - **Scheduled health checks** write only quarantined diagnostics notes. See
   [automations.md](automations.md#scheduled-health-checks).
 

@@ -1,5 +1,4 @@
 import Combine
-import Markdown
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -14,6 +13,7 @@ struct ChatRootView: View {
     // deterministically and stays in sync as the user opens threads / taps Back,
     // rather than letting the selection-before-data-loads race decide.
     @State private var preferredColumn: NavigationSplitViewColumn
+    let authManager: AuthManager
     let route: ChatRoute
 
     init(
@@ -28,6 +28,7 @@ struct ChatRootView: View {
         )
         _viewModel = State(initialValue: model)
         _preferredColumn = State(initialValue: model.conversationSelection == nil ? .sidebar : .detail)
+        self.authManager = authManager
         self.route = route
     }
 
@@ -54,8 +55,13 @@ struct ChatRootView: View {
                             LiveUpdatesIndicator(viewModel: viewModel)
                         }
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        ConversationShareToolbar(
+                            authManager: authManager,
+                            conversationID: viewModel.shareableConversationID
+                        )
                         ProfilePickerView(viewModel: viewModel)
+                        IntelligencePickerView(viewModel: viewModel)
                     }
                 }
         }
@@ -121,18 +127,119 @@ struct ChatRootView: View {
     }
 }
 
+private struct ConversationShareToolbar: View {
+    let conversationID: String?
+
+    @State private var shareViewModel: ConversationShareViewModel
+    @State private var shareURL: URL?
+
+    init(authManager: AuthManager, conversationID: String?) {
+        self.conversationID = conversationID
+        _shareViewModel = State(
+            initialValue: ConversationShareViewModel(
+                apiClient: ChatAPIClient(authManager: authManager)
+            )
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            switch shareViewModel.status {
+            case .unavailable:
+                EmptyView()
+            case .loading:
+                Button {} label: {
+                    Label("Loading sharing status", systemImage: "square.and.arrow.up")
+                }
+                .disabled(true)
+            case .inactive:
+                shareButton(label: "Share Conversation")
+            case .active:
+                shareButton(label: "Replace Shared Conversation Link")
+                Button(role: .destructive) {
+                    guard let conversationID else { return }
+                    Task { await shareViewModel.revokeShare(conversationID: conversationID) }
+                } label: {
+                    Label("Stop Sharing Conversation", systemImage: "link.badge.minus")
+                }
+                .disabled(shareViewModel.isUpdating)
+                .accessibilityIdentifier("stop-sharing-conversation")
+            case .failed:
+                Button {
+                    Task { await shareViewModel.loadStatus(conversationID: conversationID) }
+                } label: {
+                    Label("Retry Loading Sharing Status", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("retry-sharing-status")
+            }
+        }
+        .task(id: conversationID) {
+            await shareViewModel.loadStatus(conversationID: conversationID)
+        }
+        .sheet(
+            item: Binding(
+                get: { shareURL.map(ShareURL.init(url:)) },
+                set: { if $0 == nil { shareURL = nil } }
+            )
+        ) { item in
+            ShareSheet(activityItems: [item.url])
+        }
+        .alert(
+            "Sharing Error",
+            isPresented: Binding(
+                get: { shareViewModel.actionErrorMessage != nil },
+                set: { if !$0 { shareViewModel.actionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(shareViewModel.actionErrorMessage ?? "")
+        }
+    }
+
+    private func shareButton(label: String) -> some View {
+        Button {
+            guard let conversationID else { return }
+            Task {
+                shareURL = await shareViewModel.createShare(conversationID: conversationID)
+            }
+        } label: {
+            Label(label, systemImage: "square.and.arrow.up")
+        }
+        .disabled(shareViewModel.isUpdating)
+        .accessibilityIdentifier("share-conversation")
+    }
+}
+
 private struct ConversationListView: View {
     var viewModel: ChatViewModel
     @State private var searchText = ""
+    /// Server results for the query they were fetched for; results for an older
+    /// query are never shown against newer text.
+    @State private var searchResults: (query: String, conversations: [ChatConversationSummary])?
+    @State private var searchFailed = false
 
-    private var filteredConversations: [ChatConversationSummary] {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private static let searchDebounce: Duration = .milliseconds(300)
+
+    private var searchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isAwaitingSearchResults: Bool {
+        !searchQuery.isEmpty && searchResults?.query != searchQuery && !searchFailed
+    }
+
+    /// The whole list, or the server's matches for the current query (empty
+    /// until they arrive).
+    private var displayedConversations: [ChatConversationSummary] {
+        let query = searchQuery
+        guard !query.isEmpty else {
             return viewModel.conversations
         }
-        return viewModel.conversations.filter {
-            $0.conversationID.localizedCaseInsensitiveContains(searchText)
-                || $0.lastMessage.localizedCaseInsensitiveContains(searchText)
+        guard let searchResults, searchResults.query == query else {
+            return []
         }
+        return searchResults.conversations
     }
 
     var body: some View {
@@ -142,13 +249,26 @@ private struct ConversationListView: View {
         )) {
             if viewModel.conversationsRefreshFailed {
                 ConversationListRefreshBanner(
-                    lastRefreshed: viewModel.conversationsLastRefreshedAt
+                    lastRefreshed: viewModel.conversationsLastRefreshedAt,
+                    message: viewModel.conversationsRefreshFailureMessage
                 )
             }
-            if filteredConversations.isEmpty && !viewModel.isLoadingConversations {
-                ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
+            if searchFailed {
+                Label("Couldn’t search chats. Edit the search to try again.", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("conversation-search-failed")
+            }
+            if displayedConversations.isEmpty && !viewModel.isLoadingConversations && !isAwaitingSearchResults
+                && !searchFailed
+            {
+                if searchQuery.isEmpty {
+                    ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
+                } else {
+                    ContentUnavailableView.search(text: searchQuery)
+                }
             } else {
-                ForEach(filteredConversations) { conversation in
+                ForEach(displayedConversations) { conversation in
                     ConversationRow(conversation: conversation)
                         .tag(conversation.conversationID)
                         .accessibilityIdentifier("conversation-row-\(conversation.conversationID)")
@@ -156,12 +276,36 @@ private struct ConversationListView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search chats")
+        .task(id: searchQuery) {
+            await runSearch(for: searchQuery)
+        }
         .refreshable {
             await viewModel.refreshConversations()
         }
         .overlay {
             if viewModel.isLoadingConversations && viewModel.conversations.isEmpty {
                 ProgressView("Loading chats...")
+            } else if isAwaitingSearchResults && displayedConversations.isEmpty {
+                ProgressView()
+            }
+        }
+    }
+
+    /// Runs as the `.task(id:)` for the current query, so typing another
+    /// character cancels both the debounce and any request still in flight.
+    private func runSearch(for query: String) async {
+        searchFailed = false
+        guard !query.isEmpty else {
+            searchResults = nil
+            return
+        }
+        do {
+            try await Task.sleep(for: Self.searchDebounce)
+            let conversations = try await viewModel.searchConversations(matching: query)
+            searchResults = (query, conversations)
+        } catch {
+            if !Task.isCancelled {
+                searchFailed = true
             }
         }
     }
@@ -173,6 +317,9 @@ private struct ConversationListView: View {
 /// or the thread-scoped banner couldn't do on the list column.
 private struct ConversationListRefreshBanner: View {
     let lastRefreshed: Date?
+    /// Actionable detail replacing the generic title (an auth wall); nil keeps
+    /// the default text.
+    let message: String?
 
     private var subtitle: String {
         guard let lastRefreshed else {
@@ -186,7 +333,7 @@ private struct ConversationListRefreshBanner: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Couldn’t refresh")
+                Text(message ?? "Couldn’t refresh")
                     .font(.subheadline.weight(.medium))
                 Text(subtitle)
                     .font(.caption)
@@ -211,6 +358,12 @@ private struct ConversationRow: View {
                 Text(conversation.lastTimestamp, style: .date)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if let matchExcerpt = conversation.matchExcerpt, !matchExcerpt.isEmpty {
+                Text(matchExcerpt)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             HStack(spacing: 8) {
                 Label("\(conversation.messageCount)", systemImage: "text.bubble")
@@ -399,9 +552,62 @@ func containsMarkdownSyntax(_ text: String) -> Bool {
     return false
 }
 
-private struct MessageBubble: View {
+@MainActor
+protocol ChatAttachmentLoading: AnyObject {
+    var attachmentCacheScope: String { get }
+
+    func authenticatedImageData(for attachment: ChatAttachment) async throws -> Data
+    func downloadAttachmentForSharing(_ attachment: ChatAttachment) async -> URL?
+}
+
+extension ChatViewModel: ChatAttachmentLoading {}
+
+struct MessageBubble: View {
     let message: ChatMessage
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
+    let retryViewModel: ChatViewModel?
+    let userRoleTitle: String
+    /// Tier id to user-facing name. Empty where no profile list is available (a
+    /// shared transcript), which falls back to naming the tier by its id.
+    let modelTierLabels: [String: String]
+
+    init(
+        message: ChatMessage,
+        viewModel: ChatViewModel,
+        userRoleTitle: String = "You"
+    ) {
+        self.message = message
+        attachmentLoader = viewModel
+        retryViewModel = viewModel
+        self.userRoleTitle = userRoleTitle
+        modelTierLabels = viewModel.modelTierLabels
+    }
+
+    init(
+        message: ChatMessage,
+        attachmentLoader: any ChatAttachmentLoading,
+        userRoleTitle: String,
+        modelTierLabels: [String: String] = [:]
+    ) {
+        self.message = message
+        self.attachmentLoader = attachmentLoader
+        retryViewModel = nil
+        self.userRoleTitle = userRoleTitle
+        self.modelTierLabels = modelTierLabels
+    }
+
+    /// The intelligence level this reply ran at, named as the user chose it.
+    ///
+    /// Shown only on a bubble that carries no tool calls — the answer that ends
+    /// the turn. Every assistant message of a turn records the same resolved
+    /// tier (it is frozen for the run), so badging the tool-call bubbles too
+    /// would repeat one fact several times down a single turn.
+    private var modelTierLabel: String? {
+        guard !isUser, message.toolCalls.isEmpty, let tier = message.modelTier else {
+            return nil
+        }
+        return modelTierLabels[tier] ?? tier
+    }
 
     private var isUser: Bool {
         message.role == .user
@@ -431,6 +637,19 @@ private struct MessageBubble: View {
                         .padding(.vertical, 2)
                         .background(.thinMaterial, in: Capsule())
                 }
+                if let modelTierLabel {
+                    Text(modelTierLabel)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.thinMaterial, in: Capsule())
+                        .accessibilityLabel(
+                            message.modelTierSource == "user"
+                                ? "Intelligence: \(modelTierLabel), you chose it"
+                                : "Intelligence: \(modelTierLabel)"
+                        )
+                        .accessibilityIdentifier("model-tier-badge")
+                }
             }
             .foregroundStyle(.secondary)
 
@@ -449,22 +668,22 @@ private struct MessageBubble: View {
             // left inside it is invisible on reload even though it rendered
             // during the live turn.
             if !inlineImages.isEmpty {
-                ResponseImageGallery(images: inlineImages, viewModel: viewModel)
+                ResponseImageGallery(images: inlineImages, attachmentLoader: attachmentLoader)
             }
             if !message.toolCalls.isEmpty {
                 ToolGroupView(
                     toolCalls: message.toolCalls,
                     hoistedAttachmentKeys: hoistedKeys,
-                    viewModel: viewModel
+                    attachmentLoader: attachmentLoader
                 )
             }
             let strayAttachments = message.attachments.filter { !hoistedKeys.contains($0.dedupeKey) }
             if !strayAttachments.isEmpty {
-                AttachmentStrip(attachments: strayAttachments, viewModel: viewModel)
+                AttachmentStrip(attachments: strayAttachments, attachmentLoader: attachmentLoader)
             }
-            if let failed = viewModel.failedSend(for: message) {
+            if let retryViewModel, let failed = retryViewModel.failedSend(for: message) {
                 Button {
-                    Task { await viewModel.retryFailedSend(turnID: failed.turnID) }
+                    Task { await retryViewModel.retryFailedSend(turnID: failed.turnID) }
                 } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                         .font(.caption.bold())
@@ -475,7 +694,7 @@ private struct MessageBubble: View {
                 // it must not fire while a newer turn is actively streaming (it would
                 // cancel that unrelated in-flight reply). Mirrors the composer's
                 // send guard.
-                .disabled(viewModel.isStreaming)
+                .disabled(retryViewModel.isStreaming)
                 .accessibilityIdentifier("chat-retry-\(message.id)")
             }
         }
@@ -515,7 +734,7 @@ private struct MessageBubble: View {
     private var roleTitle: String {
         switch message.role {
         case .user:
-            "You"
+            userRoleTitle
         case .assistant:
             "Assistant"
         case .system:
@@ -669,6 +888,7 @@ struct StickyBottomScroll<Content: View>: View {
 private struct ChatComposerView: View {
     var viewModel: ChatViewModel
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var capturesPhoto = false
     @State private var importsFiles = false
     @State private var handledFocusRequestID: UUID?
     @FocusState private var isComposerFocused: Bool
@@ -718,6 +938,18 @@ private struct ChatComposerView: View {
             }
             HStack(alignment: .bottom, spacing: 4) {
                 if !viewModel.isStreaming {
+                    Button {
+                        capturesPhoto = true
+                    } label: {
+                        Image(systemName: "camera")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 36)
+                    }
+                    .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                    .accessibilityLabel("Take Photo")
+                    .accessibilityIdentifier("chat-camera-button")
+
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         Image(systemName: "photo")
                             .font(.title3)
@@ -844,9 +1076,28 @@ private struct ChatComposerView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: $capturesPhoto) {
+            CameraImagePicker(isPresented: $capturesPhoto) { image in
+                do {
+                    let capturedImage = try CapturedChatImage(image: image)
+                    Task {
+                        await viewModel.addImageData(
+                            capturedImage.data,
+                            filename: "\(UUID().uuidString).\(capturedImage.filenameExtension)",
+                            mimeType: capturedImage.mimeType
+                        )
+                    }
+                } catch {
+                    viewModel.reportAttachmentImportError(
+                        "Could not import the captured photo. \(error.localizedDescription)"
+                    )
+                }
+            }
+            .ignoresSafeArea()
+        }
         .fileImporter(
             isPresented: $importsFiles,
-            allowedContentTypes: [.jpeg, .png, .gif, .webP, .plainText, .markdown, .pdf],
+            allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
             if case .success(let urls) = result {
@@ -878,6 +1129,61 @@ private struct ChatComposerView: View {
             throw ChatAPIError.validation("Could not convert the selected photo to JPEG.")
         }
         return jpegData
+    }
+}
+
+struct CapturedChatImage: Equatable {
+    let data: Data
+    let mimeType = "image/jpeg"
+    let filenameExtension = "jpg"
+
+    init(image: UIImage) throws {
+        guard let data = image.jpegData(compressionQuality: 0.9) else {
+            throw ChatAPIError.validation("Could not convert the captured photo to JPEG.")
+        }
+        self.data = data
+    }
+}
+
+private struct CameraImagePicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let onCapture: (UIImage) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let parent: CameraImagePicker
+
+        init(parent: CameraImagePicker) {
+            self.parent = parent
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.isPresented = false
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.isPresented = false
+        }
     }
 }
 
@@ -1073,6 +1379,111 @@ private struct ProfilePickerView: View {
     }
 }
 
+/// Picks how much model capability to apply to the next message, beside the
+/// profile picker that says which agent handles it.
+///
+/// Renders nothing where the active profile offers no choice — one pinned to a
+/// single model, or a profile list that has not loaded — rather than a dead
+/// control the user can open and find nothing to decide in. It is disabled while
+/// a turn runs, where the next submission steers that turn at its already-frozen
+/// tier instead of starting one this choice could apply to.
+///
+/// The label is icon-only while the profile's own default is in force, and names
+/// the tier once the user has chosen one: a selection is the state that has to be
+/// visible, and a phone toolbar should not spend permanent width restating a
+/// default.
+private struct IntelligencePickerView: View {
+    var viewModel: ChatViewModel
+
+    private var choice: ChatViewModel.ModelTierChoice? {
+        viewModel.modelTierChoice
+    }
+
+    private var selectedLabel: String? {
+        guard let choice else {
+            return nil
+        }
+        return viewModel.availableModelTiers.first { $0.id == choice.tierID }?.label ?? choice.tierID
+    }
+
+    var body: some View {
+        if viewModel.offersModelTierChoice {
+            Menu {
+                Picker("Intelligence", selection: tierSelection) {
+                    ForEach(viewModel.availableModelTiers) { tier in
+                        tierRow(tier).tag(tier.id)
+                    }
+                }
+                .pickerStyle(.inline)
+                if let choice, let selectedLabel {
+                    Divider()
+                    Toggle(isOn: pinBinding(for: choice)) {
+                        Label(
+                            "Keep \(selectedLabel) for this chat",
+                            systemImage: "pin"
+                        )
+                    }
+                    .accessibilityIdentifier("intelligence-pin-toggle")
+                }
+            } label: {
+                label
+            }
+            .disabled(!viewModel.canSelectModelTier)
+            .accessibilityIdentifier("intelligence-picker")
+            .accessibilityLabel(accessibilityLabel)
+        }
+    }
+
+    @ViewBuilder
+    private func tierRow(_ tier: ChatModelTier) -> some View {
+        VStack(alignment: .leading) {
+            Text(tier.id == viewModel.defaultModelTierID ? "\(tier.label) (Default)" : tier.label)
+            if let description = tier.tierDescription {
+                Text(description)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if let selectedLabel {
+            Label(
+                selectedLabel,
+                systemImage: choice?.pinned == true ? "pin.fill" : "gauge.with.dots.needle.67percent"
+            )
+            .labelStyle(.titleAndIcon)
+        } else {
+            Image(systemName: "gauge.with.dots.needle.67percent")
+        }
+    }
+
+    private var accessibilityLabel: String {
+        guard let selectedLabel else {
+            return "Intelligence"
+        }
+        return choice?.pinned == true
+            ? "Intelligence: \(selectedLabel), kept for this chat"
+            : "Intelligence: \(selectedLabel), for the next message"
+    }
+
+    /// The menu shows the tier actually in force, which is the profile's default
+    /// until the user chooses otherwise. Selecting the default is selecting
+    /// nothing, which `selectModelTier` turns back into no choice at all.
+    private var tierSelection: Binding<String> {
+        Binding(
+            get: { choice?.tierID ?? viewModel.defaultModelTierID ?? "" },
+            set: { viewModel.selectModelTier($0, pinned: choice?.pinned ?? false) }
+        )
+    }
+
+    private func pinBinding(for choice: ChatViewModel.ModelTierChoice) -> Binding<Bool> {
+        Binding(
+            get: { choice.pinned },
+            set: { viewModel.selectModelTier(choice.tierID, pinned: $0) }
+        )
+    }
+}
+
 private struct PendingConfirmationsBanner: View {
     var viewModel: ChatViewModel
 
@@ -1170,111 +1581,6 @@ private struct ConfirmationCard: View {
         }
         .padding(10)
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-indirect enum NativeMarkdownBlock: Equatable {
-    case paragraph(String)
-    case heading(level: Int, text: String)
-    case unorderedList([NativeMarkdownListItem])
-    case orderedList(startIndex: UInt, items: [NativeMarkdownListItem])
-    case blockQuote([NativeMarkdownBlock])
-    case codeBlock(language: String?, code: String)
-    case table(header: [String], rows: [[String]])
-    case thematicBreak
-    case fallback(String)
-}
-
-struct NativeMarkdownListItem: Equatable {
-    let checkbox: Checkbox?
-    let blocks: [NativeMarkdownBlock]
-}
-
-enum NativeMarkdownRenderer {
-    // Parsing markdown is expensive, and SwiftUI re-evaluates a bubble's body
-    // far more often than its text changes (scrolling a long thread, sibling
-    // updates, layout passes). Caching by exact source string keeps a given
-    // message from being re-parsed on every render. Parsing is pure, so caching
-    // by the source string is always correct.
-    private final class BlocksBox {
-        let blocks: [NativeMarkdownBlock]
-        init(_ blocks: [NativeMarkdownBlock]) { self.blocks = blocks }
-    }
-
-    private final class AttributedBox {
-        let value: AttributedString?
-        init(_ value: AttributedString?) { self.value = value }
-    }
-
-    private static let blockCache: NSCache<NSString, BlocksBox> = {
-        let cache = NSCache<NSString, BlocksBox>()
-        cache.countLimit = 256
-        return cache
-    }()
-
-    private static let inlineCache: NSCache<NSString, AttributedBox> = {
-        let cache = NSCache<NSString, AttributedBox>()
-        cache.countLimit = 512
-        return cache
-    }()
-
-    static func blocks(from markdown: String) -> [NativeMarkdownBlock] {
-        let key = markdown as NSString
-        if let cached = blockCache.object(forKey: key) {
-            return cached.blocks
-        }
-        let document = Document(parsing: markdown)
-        let parsed = document.children.flatMap(blocks(from:))
-        let result = parsed.isEmpty ? [.paragraph(markdown)] : parsed
-        blockCache.setObject(BlocksBox(result), forKey: key)
-        return result
-    }
-
-    static func inlineAttributedString(from markdown: String) -> AttributedString? {
-        let key = markdown as NSString
-        if let cached = inlineCache.object(forKey: key) {
-            return cached.value
-        }
-        let value = try? AttributedString(
-            markdown: markdown,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        )
-        inlineCache.setObject(AttributedBox(value), forKey: key)
-        return value
-    }
-
-    private static func blocks(from markup: Markup) -> [NativeMarkdownBlock] {
-        switch markup {
-        case let heading as Heading:
-            return [.heading(level: heading.level, text: heading.plainText)]
-        case let paragraph as Paragraph:
-            return [.paragraph(inlineMarkdown(from: paragraph))]
-        case let unorderedList as UnorderedList:
-            return [.unorderedList(unorderedList.listItems.map(listItem(from:)))]
-        case let orderedList as OrderedList:
-            return [.orderedList(startIndex: orderedList.startIndex, items: orderedList.listItems.map(listItem(from:)))]
-        case let blockQuote as BlockQuote:
-            return [.blockQuote(blockQuote.children.flatMap(blocks(from:)))]
-        case let codeBlock as CodeBlock:
-            return [.codeBlock(language: codeBlock.language, code: codeBlock.code.trimmingCharacters(in: CharacterSet.newlines))]
-        case let table as Markdown.Table:
-            return [.table(header: table.head.cells.map { $0.plainText }, rows: table.body.rows.map { $0.cells.map { $0.plainText } })]
-        case is ThematicBreak:
-            return [.thematicBreak]
-        default:
-            let fallback = inlineMarkdown(from: markup)
-            return fallback.isEmpty ? [] : [.fallback(fallback)]
-        }
-    }
-
-    private static func listItem(from item: ListItem) -> NativeMarkdownListItem {
-        NativeMarkdownListItem(checkbox: item.checkbox, blocks: item.children.flatMap(blocks(from:)))
-    }
-
-    private static func inlineMarkdown(from markup: Markup) -> String {
-        var formatter = MarkupFormatter()
-        formatter.visit(markup.detachedFromParent)
-        return formatter.result.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
     }
 }
 
@@ -1724,7 +2030,7 @@ private struct ToolGroupView: View {
     /// Attachments already shown inline in the reply, which the cards must not
     /// render a second time.
     let hoistedAttachmentKeys: Set<String>
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     @State private var collapsedCompleted = true
 
     private var shouldCollapse: Bool {
@@ -1738,7 +2044,7 @@ private struct ToolGroupView: View {
                     ToolCallCard(
                         toolCall: toolCall,
                         hoistedAttachmentKeys: hoistedAttachmentKeys,
-                        viewModel: viewModel
+                        attachmentLoader: attachmentLoader
                     )
                 }
             }
@@ -1754,7 +2060,7 @@ private struct ToolGroupView: View {
 private struct ToolCallCard: View {
     let toolCall: ChatToolCall
     let hoistedAttachmentKeys: Set<String>
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1778,7 +2084,7 @@ private struct ToolCallCard: View {
                 !hoistedAttachmentKeys.contains($0.dedupeKey)
             }
             if !remainingAttachments.isEmpty {
-                AttachmentStrip(attachments: remainingAttachments, viewModel: viewModel)
+                AttachmentStrip(attachments: remainingAttachments, attachmentLoader: attachmentLoader)
             }
         }
         .padding(10)
@@ -1804,7 +2110,7 @@ private struct ToolCallCard: View {
 
 private struct AttachmentStrip: View {
     let attachments: [ChatAttachment]
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1814,7 +2120,7 @@ private struct AttachmentStrip: View {
             // stack would pull every one of them at once.
             LazyHStack(spacing: 10) {
                 ForEach(attachments) { attachment in
-                    AttachmentPreview(attachment: attachment, viewModel: viewModel)
+                    AttachmentPreview(attachment: attachment, attachmentLoader: attachmentLoader)
                 }
             }
         }
@@ -1823,13 +2129,13 @@ private struct AttachmentStrip: View {
 
 private struct AttachmentPreview: View {
     let attachment: ChatAttachment
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     @State private var shareURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if attachment.type == .image {
-                AuthenticatedAttachmentImage(attachment: attachment, viewModel: viewModel)
+                AuthenticatedAttachmentImage(attachment: attachment, attachmentLoader: attachmentLoader)
                     .frame(width: 160, height: 110)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
@@ -1845,7 +2151,7 @@ private struct AttachmentPreview: View {
                 Spacer()
                 Button {
                     Task {
-                        shareURL = await viewModel.downloadAttachmentForSharing(attachment)
+                        shareURL = await attachmentLoader.downloadAttachmentForSharing(attachment)
                     }
                 } label: {
                     Image(systemName: "square.and.arrow.down")
@@ -1872,7 +2178,7 @@ private struct AttachmentPreview: View {
 /// the scene-update watchdog).
 private struct ResponseImageGallery: View {
     let images: [ChatAttachment]
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     // One sheet binding for both destinations: stacking two `.sheet` modifiers
     // on the same view leaves only one of them able to present.
     @State private var sheet: Sheet?
@@ -1900,7 +2206,11 @@ private struct ResponseImageGallery: View {
                     Button {
                         sheet = .fullSize(image)
                     } label: {
-                        AuthenticatedAttachmentImage(attachment: image, viewModel: viewModel, contentMode: .fit)
+                        AuthenticatedAttachmentImage(
+                            attachment: image,
+                            attachmentLoader: attachmentLoader,
+                            contentMode: .fit
+                        )
                             // A cap rather than a fixed height: a wide, short
                             // image keeps its own proportions instead of sitting
                             // in a tall empty band, while a tall one still costs
@@ -1919,7 +2229,7 @@ private struct ResponseImageGallery: View {
                         Spacer()
                         Button {
                             Task {
-                                if let url = await viewModel.downloadAttachmentForSharing(image) {
+                                if let url = await attachmentLoader.downloadAttachmentForSharing(image) {
                                     sheet = .share(url)
                                 }
                             }
@@ -1935,7 +2245,7 @@ private struct ResponseImageGallery: View {
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .fullSize(let image):
-                ResponseImageViewer(attachment: image, viewModel: viewModel)
+                ResponseImageViewer(attachment: image, attachmentLoader: attachmentLoader)
             case .share(let url):
                 ShareSheet(activityItems: [url])
             }
@@ -1946,13 +2256,17 @@ private struct ResponseImageGallery: View {
 /// Full-size view of one response image, reached by tapping its inline copy.
 private struct ResponseImageViewer: View {
     let attachment: ChatAttachment
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     @Environment(\.dismiss) private var dismiss
     @State private var shareURL: URL?
 
     var body: some View {
         NavigationStack {
-            AuthenticatedAttachmentImage(attachment: attachment, viewModel: viewModel, contentMode: .fit)
+            AuthenticatedAttachmentImage(
+                attachment: attachment,
+                attachmentLoader: attachmentLoader,
+                contentMode: .fit
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .navigationTitle(attachment.name)
                 .navigationBarTitleDisplayMode(.inline)
@@ -1962,7 +2276,7 @@ private struct ResponseImageViewer: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            Task { shareURL = await viewModel.downloadAttachmentForSharing(attachment) }
+                            Task { shareURL = await attachmentLoader.downloadAttachmentForSharing(attachment) }
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                         }
@@ -1982,7 +2296,7 @@ private struct ResponseImageViewer: View {
 
 private struct AuthenticatedAttachmentImage: View {
     let attachment: ChatAttachment
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     var contentMode: ContentMode = .fill
     @State private var image: UIImage?
     @State private var failed = false
@@ -2006,8 +2320,8 @@ private struct AuthenticatedAttachmentImage: View {
         // Keyed on the session scope as well as the URL: a change of
         // credentials must re-run this rather than leave the previously decoded
         // image on screen.
-        .task(id: "\(viewModel.attachmentCacheScope)|\(attachment.contentURL ?? "")") {
-            let server = viewModel.attachmentCacheScope
+        .task(id: "\(attachmentLoader.attachmentCacheScope)|\(attachment.contentURL ?? "")") {
+            let server = attachmentLoader.attachmentCacheScope
             if let cached = AttachmentImageCache.image(for: attachment, server: server) {
                 image = cached
                 failed = false
@@ -2016,7 +2330,7 @@ private struct AuthenticatedAttachmentImage: View {
             image = nil
             failed = false
             do {
-                let data = try await viewModel.authenticatedImageData(for: attachment)
+                let data = try await attachmentLoader.authenticatedImageData(for: attachment)
                 guard let decodedImage = UIImage(data: data) else {
                     image = nil
                     failed = true

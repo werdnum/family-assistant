@@ -4,7 +4,7 @@ import pytest
 
 from family_assistant.services.notification_dispatcher import NotificationDispatcher
 from family_assistant.services.notifier import NotificationMetadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 
 class _FakeChannel:
@@ -21,7 +21,7 @@ class _FakeChannel:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:

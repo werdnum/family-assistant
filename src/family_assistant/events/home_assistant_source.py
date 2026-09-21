@@ -170,53 +170,35 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         logger.info(f"[{self.source_id}] Connecting to Home Assistant WebSocket")
 
         try:
-            # Convert HTTP URL to WebSocket URL
-            ws_url = self.api_url.replace("http://", "ws://").replace(
-                "https://", "wss://"
-            )
-            ws_url = ws_url.rstrip("/api") + "/api/websocket"
-
-            logger.info(f"[{self.source_id}] Connecting to WebSocket at {ws_url}")
-
-            # Create WebSocket client and listen for state_changed events
-            with WebsocketClient(
-                api_url=ws_url,
-                token=self.token,
-                # Note: WebsocketClient doesn't have a verify_ssl parameter
-            ) as ws_client:
-                logger.info(f"[{self.source_id}] Connected to Home Assistant WebSocket")
-
-                # Mark connection as healthy and reset reconnect attempts
-                self._connection_healthy = True
-                self._reconnect_attempts = 0
-                self._reconnect_delay = self._base_reconnect_delay
-                self._last_event_time = time.time()
-
-                # Listen for configured event types
-                # We need to handle multiple event types
-                for event_type in self.event_types or ["all"]:
-                    logger.info(
-                        f"[{self.source_id}] Subscribing to {event_type} events"
-                    )
-
-                # Listen to all events and filter by type
-                with ws_client.listen_events() as events:
-                    for event in events:
-                        if not self._running:
-                            break
-
-                        # Check if this event type is one we're interested in
-                        event_type = getattr(event, "event_type", None)
-                        if event_type and (
-                            self.event_types is None
-                            or (self.event_types and event_type in self.event_types)
-                        ):
-                            # Process the event
-                            self._handle_event_sync(event_type, event)
-
+            self._connect_and_listen_once()
         except Exception as e:
             logger.error(f"WebSocket connection error: {e}")
             raise
+
+    def _connect_and_listen_once(self) -> None:
+        ws_url = self.api_url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = ws_url.rstrip("/api") + "/api/websocket"
+        logger.info(f"[{self.source_id}] Connecting to WebSocket at {ws_url}")
+        with WebsocketClient(api_url=ws_url, token=self.token) as ws_client:
+            logger.info(f"[{self.source_id}] Connected to Home Assistant WebSocket")
+            self._connection_healthy = True
+            self._reconnect_attempts = 0
+            self._reconnect_delay = self._base_reconnect_delay
+            self._last_event_time = time.time()
+            for configured_event_type in self.event_types or ["all"]:
+                logger.info(
+                    f"[{self.source_id}] Subscribing to {configured_event_type} events"
+                )
+            with ws_client.listen_events() as events:
+                for event in events:
+                    if not self._running:
+                        break
+                    event_type = getattr(event, "event_type", None)
+                    if event_type and (
+                        self.event_types is None
+                        or (self.event_types and event_type in self.event_types)
+                    ):
+                        self._handle_event_sync(event_type, event)
 
     def _handle_event_sync(
         self,
@@ -226,90 +208,79 @@ class HomeAssistantSource(BaseEventSource, EventSource):
     ) -> None:
         """Handle an event synchronously from the thread."""
         try:
-            # FiredEvent object may have attributes instead of dict access
-            # Try to access as attributes first, fall back to dict access
-            if hasattr(event, "data"):
-                event_data = cast("HasDataAttr", event).data
-            elif hasattr(event, "get"):
-                event_data = cast("dict[str, Any]", event).get("data", {})
-            else:
-                event_data = {}
-
-            # Convert event_data to dict if it's not already
-            if not isinstance(event_data, dict):
-                # Try to extract attributes from object
-                event_dict = {}
-                for attr in dir(event_data):
-                    if not attr.startswith("_"):
-                        try:
-                            value = getattr(event_data, attr)
-                            # Include all values - we'll handle complex objects later
-                            event_dict[attr] = value
-                        except Exception:
-                            pass
-                event_data = event_dict
-
-            # ast-grep-ignore: no-dict-any - processed_event is built dynamically from arbitrary HA event data with no fixed schema
-            processed_event: dict[str, Any] = {"event_type": event_type}
-
-            if event_type == "state_changed":
-                entity_id = event_data.get("entity_id")
-                if not entity_id:
-                    return
-
-                old_state = event_data.get("old_state", {})
-                new_state = event_data.get("new_state", {})
-
-                def extract_state_info(
-                    # ast-grep-ignore: no-dict-any - HA state objects are untyped dicts or API model objects
-                    state_obj: dict[str, Any] | object | None,
-                ) -> HAStateInfoDict | None:
-                    if not state_obj:
-                        return None
-
-                    if isinstance(state_obj, dict):
-                        return HAStateInfoDict(
-                            state=state_obj.get("state"),
-                            attributes=state_obj.get("attributes", {}),
-                            last_changed=state_obj.get("last_changed"),
-                        )
-                    else:
-                        return HAStateInfoDict(
-                            state=getattr(state_obj, "state", None),
-                            attributes=getattr(state_obj, "attributes", {}),
-                            last_changed=getattr(state_obj, "last_changed", None),
-                        )
-
-                processed_event["entity_id"] = entity_id
-                processed_event["old_state"] = extract_state_info(old_state)
-                processed_event["new_state"] = extract_state_info(new_state)
-            else:
-                # For other event types, include all event data
-                processed_event.update(event_data)
-
-            # Add to queue for async processing
-            # Use janus sync queue for thread-safe operations
-            if self._event_queue:
-                try:
-                    self._event_queue.sync_q.put_nowait(processed_event)
-                    # Update last event time for health check
-                    self._last_event_time = time.time()
-                except janus.SyncQueueShutDown:
-                    # This is our signal to shut down the thread gracefully.
-                    # Re-raising will cause the _connect_and_listen loop to exit.
-                    logger.info(
-                        f"[{self.source_id}] Event queue closed, stopping listener thread."
-                    )
-                    raise
-                except Exception as e:  # Typically queue.Full
-                    logger.warning(
-                        f"Event queue full, dropping event: {event_type}. Error: {e}"
-                    )
-            else:
-                logger.error("Event queue not initialized, dropping event")
-
+            self._handle_event(event_type, event)
         except Exception as e:
             logger.exception(f"Error processing {event_type} event: {e}")
+
+    def _handle_event(
+        self,
+        event_type: str,
+        event: object,
+    ) -> None:
+        if hasattr(event, "data"):
+            event_data = cast("HasDataAttr", event).data
+        elif hasattr(event, "get"):
+            event_data = cast("dict[str, Any]", event).get("data", {})
+        else:
+            event_data = {}
+        if not isinstance(event_data, dict):
+            event_dict = {}
+            for attribute in dir(event_data):
+                if not attribute.startswith("_"):
+                    with contextlib.suppress(Exception):
+                        event_dict[attribute] = getattr(event_data, attribute)
+            event_data = event_dict
+
+        # ast-grep-ignore: no-dict-any - processed HA events retain arbitrary event payload fields
+        processed_event: dict[str, Any] = {"event_type": event_type}
+        if event_type == "state_changed":
+            entity_id = event_data.get("entity_id")
+            if not entity_id:
+                return
+            processed_event["entity_id"] = entity_id
+            processed_event["old_state"] = self._extract_state_info(
+                event_data.get("old_state", {})
+            )
+            processed_event["new_state"] = self._extract_state_info(
+                event_data.get("new_state", {})
+            )
+        else:
+            processed_event.update(event_data)
+
+        if self._event_queue:
+            try:
+                self._event_queue.sync_q.put_nowait(processed_event)
+                self._last_event_time = time.time()
+            except janus.SyncQueueShutDown:
+                logger.info(
+                    f"[{self.source_id}] Event queue closed, stopping listener thread."
+                )
+                raise
+            except Exception as e:
+                logger.warning(
+                    f"Event queue full, dropping event: {event_type}. Error: {e}"
+                )
+        else:
+            logger.error("Event queue not initialized, dropping event")
+
+    @staticmethod
+    def _extract_state_info(
+        # ast-grep-ignore: no-dict-any - HA state objects expose arbitrary integration attributes
+        state_obj: dict[str, Any] | object | None,
+    ) -> HAStateInfoDict | None:
+        if not state_obj:
+            return None
+        if isinstance(state_obj, dict):
+            return HAStateInfoDict(
+                state=state_obj.get("state"),
+                attributes=state_obj.get("attributes", {}),
+                last_changed=state_obj.get("last_changed"),
+            )
+        return HAStateInfoDict(
+            state=getattr(state_obj, "state", None),
+            attributes=getattr(state_obj, "attributes", {}),
+            last_changed=getattr(state_obj, "last_changed", None),
+        )
 
     async def _process_events(self) -> None:
         """Process events from the queue asynchronously."""
@@ -321,26 +292,22 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 continue
 
             try:
-                # Use janus async queue for asyncio side
-                try:
-                    event = await asyncio.wait_for(
-                        self._event_queue.async_q.get(), timeout=1.0
-                    )
-                except TimeoutError:
-                    # No event within timeout, continue loop to check _running
-                    continue
-
-                # Send to processor
-                if self.processor:
-                    await self.processor.process_event(self.source_id, event)
-                else:
-                    logger.error("Event processor is not set - event will be dropped")
-
-                # Mark task as done for proper queue cleanup
-                self._event_queue.async_q.task_done()
-
+                await self._process_next_event()
             except Exception as e:
                 logger.exception(f"Error processing queued event: {e}")
+
+    async def _process_next_event(self) -> None:
+        if not self._event_queue:
+            return
+        try:
+            event = await asyncio.wait_for(self._event_queue.async_q.get(), timeout=1.0)
+        except TimeoutError:
+            return
+        if self.processor:
+            await self.processor.process_event(self.source_id, event)
+        else:
+            logger.error("Event processor is not set - event will be dropped")
+        self._event_queue.async_q.task_done()
 
     async def _health_check_loop(self) -> None:
         """Periodically check connection health."""
@@ -348,44 +315,34 @@ class HomeAssistantSource(BaseEventSource, EventSource):
 
         while self._running:
             try:
-                # Check if connection is marked as healthy
-                if self._connection_healthy:
-                    # Check if we've received any events recently
-                    time_since_last_event = time.time() - self._last_event_time
-
-                    # If no events for extended period, test the connection
-                    if time_since_last_event > 300:  # 5 minutes
-                        logger.warning(
-                            f"No events received for {time_since_last_event:.0f} seconds, "
-                            "checking Home Assistant connection"
-                        )
-
-                        # Try to verify connection with a simple API call
-                        connection_ok = await self._test_connection()
-
-                        if not connection_ok:
-                            logger.error("Home Assistant connection test failed")
-                            # Force reconnection by marking unhealthy
-                            self._connection_healthy = False
-                            # Cancel websocket task to trigger reconnection
-                            if self._websocket_task and not self._websocket_task.done():
-                                self._websocket_task.cancel()
-                else:
-                    # Connection is not healthy, log status
-                    logger.debug(
-                        f"Home Assistant connection unhealthy, reconnect attempt "
-                        f"{self._reconnect_attempts} pending"
-                    )
-
-                # Wait before next health check
-                await asyncio.sleep(self._health_check_interval)
-
+                await self._run_health_check()
             except asyncio.CancelledError:
                 # Task is being cancelled, exit cleanly
                 break
             except Exception as e:
                 logger.exception(f"Error in health check loop: {e}")
                 await asyncio.sleep(self._health_check_interval)
+
+    async def _run_health_check(self) -> None:
+        if self._connection_healthy:
+            time_since_last_event = time.time() - self._last_event_time
+            if time_since_last_event > 300:
+                logger.warning(
+                    f"No events received for {time_since_last_event:.0f} seconds, "
+                    "checking Home Assistant connection"
+                )
+                connection_ok = await self._test_connection()
+                if not connection_ok:
+                    logger.error("Home Assistant connection test failed")
+                    self._connection_healthy = False
+                    if self._websocket_task and not self._websocket_task.done():
+                        self._websocket_task.cancel()
+        else:
+            logger.debug(
+                "Home Assistant connection unhealthy, reconnect attempt "
+                f"{self._reconnect_attempts} pending"
+            )
+        await asyncio.sleep(self._health_check_interval)
 
     async def _test_connection(self) -> bool:
         """Test if Home Assistant connection is working."""
@@ -443,47 +400,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             else:
                 # Format is valid, now check if entity exists via API
                 try:
-                    # Get all states to check if entity exists
-                    states = await asyncio.to_thread(self.client.get_states)
-                    entity_ids = [state.entity_id for state in states]
-
-                    if entity_id not in entity_ids:
-                        # Try to find similar entity IDs for suggestions
-                        domain = entity_id.split(".")[0]
-                        similar = [
-                            eid for eid in entity_ids if eid.startswith(f"{domain}.")
-                        ]
-
-                        # If person.alex was provided, suggest person.alex_smith
-                        if (
-                            entity_id == "person.alex"
-                            and "person.alex_smith" in entity_ids
-                        ):
-                            suggestion = "Did you mean 'person.alex_smith'?"
-                        elif entity_id == "person.taylor" and any(
-                            "taylor" in eid for eid in entity_ids
-                        ):
-                            # Find the correct Taylor entity
-                            taylor_entities = [
-                                eid for eid in entity_ids if "taylor" in eid.lower()
-                            ]
-                            suggestion = (
-                                f"Did you mean '{taylor_entities[0]}'?"
-                                if taylor_entities
-                                else None
-                            )
-                        else:
-                            suggestion = None
-
-                        errors.append(
-                            ValidationError(
-                                field="entity_id",
-                                value=entity_id,
-                                error=f"Entity '{entity_id}' not found in Home Assistant",
-                                suggestion=suggestion,
-                                similar_values=similar[:5] if similar else None,
-                            )
-                        )
+                    await self._check_entity_exists(entity_id, errors)
                 except Exception as e:
                     warnings.append(
                         f"Could not verify entity existence via API due to {type(e).__name__}: {e!s}"
@@ -509,60 +426,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
 
             if state_fields_to_check:
                 try:
-                    # Get entity history for the last 7 days (typical HA history retention)
-                    end_time = datetime.now(UTC)
-                    start_time = end_time - timedelta(days=7)
-
-                    # Get entity histories
-                    histories_raw = await asyncio.to_thread(
-                        self.client.get_entity_histories,
-                        entities=(entity_id,),  # type: ignore[arg-type]  # HA API accepts str at runtime
-                        start_timestamp=start_time,
-                        end_timestamp=end_time,
+                    await self._check_state_history(
+                        entity_id, state_fields_to_check, warnings
                     )
-                    if isinstance(histories_raw, dict):
-                        histories = histories_raw
-                    else:
-                        histories = {
-                            history.entity_id: list(history.states)
-                            for history in histories_raw
-                        }
-
-                    # Check if entity has ever been in the specified states
-                    if histories and entity_id in histories:
-                        entity_history = histories[entity_id]
-                        state_counter = Counter()
-
-                        for state_record in entity_history:
-                            if hasattr(state_record, "state") and state_record.state:
-                                state_counter[state_record.state] += 1
-
-                        historical_states = set(state_counter.keys())
-
-                        # Validate each state condition
-                        for _field_name, state_value in state_fields_to_check:
-                            if state_value not in historical_states:
-                                # State has never been seen - warning, not error
-                                warnings.append(
-                                    f"State '{state_value}' has never been recorded for entity '{entity_id}' "
-                                    f"in the last 7 days. This condition may never trigger."
-                                )
-
-                                # Provide most common states as suggestions
-                                if state_counter:
-                                    # Get the 5 most common states
-                                    most_common = state_counter.most_common(5)
-                                    common_states = [
-                                        state for state, _count in most_common
-                                    ]
-                                    warnings.append(
-                                        f"Most common states for '{entity_id}': {', '.join(common_states)}"
-                                    )
-                    else:
-                        warnings.append(
-                            f"No history found for entity '{entity_id}'. Cannot validate state conditions."
-                        )
-
                 except Exception as e:
                     warnings.append(
                         f"Could not verify state history via API due to {type(e).__name__}: {e!s}"
@@ -573,3 +439,77 @@ class HomeAssistantSource(BaseEventSource, EventSource):
             errors=errors,
             warnings=warnings,
         )
+
+    async def _check_entity_exists(
+        self, entity_id: str, errors: list[ValidationError]
+    ) -> None:
+        states = await asyncio.to_thread(self.client.get_states)
+        entity_ids = [state.entity_id for state in states]
+        if entity_id in entity_ids:
+            return
+        domain = entity_id.split(".", maxsplit=1)[0]
+        similar = [eid for eid in entity_ids if eid.startswith(f"{domain}.")]
+        if entity_id == "person.alex" and "person.alex_smith" in entity_ids:
+            suggestion = "Did you mean 'person.alex_smith'?"
+        elif entity_id == "person.taylor" and any(
+            "taylor" in eid for eid in entity_ids
+        ):
+            taylor_entities = [eid for eid in entity_ids if "taylor" in eid.lower()]
+            suggestion = (
+                f"Did you mean '{taylor_entities[0]}'?" if taylor_entities else None
+            )
+        else:
+            suggestion = None
+        errors.append(
+            ValidationError(
+                field="entity_id",
+                value=entity_id,
+                error=f"Entity '{entity_id}' not found in Home Assistant",
+                suggestion=suggestion,
+                similar_values=similar[:5] if similar else None,
+            )
+        )
+
+    async def _check_state_history(
+        self,
+        entity_id: str,
+        state_fields_to_check: list[tuple[str, object]],
+        warnings: list[str],
+    ) -> None:
+        end_time = datetime.now(UTC)
+        histories_raw = await asyncio.to_thread(
+            self.client.get_entity_histories,
+            entities=(entity_id,),  # type: ignore[arg-type]  # Entity-ID tuple conflicts with third-party tuple[Entity, ...] stub
+            start_timestamp=end_time - timedelta(days=7),
+            end_timestamp=end_time,
+        )
+        if isinstance(histories_raw, dict):
+            histories = histories_raw
+        else:
+            histories = {
+                history.entity_id: list(history.states) for history in histories_raw
+            }
+        if not histories or entity_id not in histories:
+            warnings.append(
+                f"No history found for entity '{entity_id}'. Cannot validate state conditions."
+            )
+            return
+
+        state_counter: Counter[str] = Counter()
+        for state_record in histories[entity_id]:
+            if hasattr(state_record, "state") and state_record.state:
+                state_counter[state_record.state] += 1
+        historical_states = set(state_counter)
+        for _field_name, state_value in state_fields_to_check:
+            if state_value not in historical_states:
+                warnings.append(
+                    f"State '{state_value}' has never been recorded for entity '{entity_id}' "
+                    "in the last 7 days. This condition may never trigger."
+                )
+                if state_counter:
+                    common_states = [
+                        state for state, _count in state_counter.most_common(5)
+                    ]
+                    warnings.append(
+                        f"Most common states for '{entity_id}': {', '.join(common_states)}"
+                    )

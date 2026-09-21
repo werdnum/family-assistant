@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.task_worker import handle_worker_task_cleanup
 
 if TYPE_CHECKING:
@@ -29,19 +29,19 @@ class MinimalContext:
     interface_type: str
     conversation_id: str
     user_name: str
-    db_context: DatabaseContext
+    db_context: Database
     processing_service: None = None  # Not needed when workspace_path is in payload
 
 
 @pytest.fixture
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
     """Create a database context for testing."""
-    async with DatabaseContext(engine=db_engine) as context:
-        yield context
+    context = Database(engine=db_engine)
+    yield context
 
 
 @pytest.fixture
-def exec_context(db_context: DatabaseContext) -> MinimalContext:
+def exec_context(db_context: Database) -> MinimalContext:
     """Create a minimal execution context for testing."""
     return MinimalContext(
         interface_type="test",
@@ -56,7 +56,7 @@ class TestWorkerTaskCleanup:
 
     @pytest.mark.asyncio
     async def test_cleanup_database_records(
-        self, exec_context: MinimalContext, db_context: DatabaseContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
         """Test that cleanup deletes old database records."""
         # Create a task record in the database

@@ -14,7 +14,15 @@ final class ChatViewModel {
     // `showNewerMessages()` slide that fixed eager-render window through
     // history. See `visibleGroupedMessages`.
     var displayedMessageNewerOffset = 0
-    var profiles: [ChatProfile] = []
+    var profiles: [ChatProfile] = [] {
+        didSet { modelTierLabels = Self.modelTierLabels(from: profiles) }
+    }
+    /// Tier id to label across every loaded profile, for naming the tier recorded
+    /// on a past message whose profile is not the one now selected. An id with no
+    /// known label (a tier removed since the turn ran) still names what served
+    /// it. Derived from `profiles` at the one place they are assigned, so the
+    /// thread reads a dictionary rather than rebuilding one per bubble.
+    private(set) var modelTierLabels: [String: String] = [:]
     var defaultProfileID = "default_assistant"
     // The profile the active conversation runs under: it drives the picker label
     // and is sent on every turn. The backend partitions a conversation's history
@@ -22,20 +30,62 @@ final class ChatViewModel {
     // under a different profile than the thread was built in loads NONE of its
     // prior history. Opening an existing conversation therefore adopts that
     // conversation's profile rather than carrying over a stale global selection.
-    var selectedProfileID: String
+    var selectedProfileID: String {
+        didSet { clearModelTierChoiceIfScopeChanged(oldValue != selectedProfileID) }
+    }
     // The profile to use for NEW conversations, persisted across launches. Set
     // when the user picks from the profile picker (which starts a new chat). Kept
     // separate from `selectedProfileID` so viewing an existing conversation in a
     // different profile doesn't overwrite the user's preferred profile for new
     // chats.
     @ObservationIgnored private var preferredProfileID: String
-    var conversationID: String?
+    /// The user's intelligence (model tier) selection for the next message.
+    ///
+    /// Nil — the usual state — means the profile's own default tier, and is the
+    /// only state in which a send omits `model_tier` entirely. A choice is
+    /// one-shot: the send that carries it clears it, unless it is pinned, in
+    /// which case it holds for the rest of this conversation.
+    ///
+    /// It is scoped to the conversation and profile it was made in — the
+    /// `didSet` observers on `conversationID` and `selectedProfileID` clear it,
+    /// so no path can carry a spend decision into a conversation or an agent the
+    /// user did not make it for — and is never persisted across launches:
+    /// spending more on a request is a decision about that request, not a
+    /// setting.
+    private(set) var modelTierChoice: ModelTierChoice?
+
+    struct ModelTierChoice: Equatable {
+        let tierID: String
+        /// Whether the choice holds for the conversation rather than one message.
+        let pinned: Bool
+    }
+    var conversationID: String? {
+        didSet { clearModelTierChoiceIfScopeChanged(oldValue != conversationID) }
+    }
     var conversationSelection: String?
+    /// The conversation whose persisted messages are currently rendered. This is
+    /// intentionally separate from `conversationID`: during a switch the old
+    /// bubbles remain visible while the new request loads, and those bubbles must
+    /// not make sharing controls target the newly selected conversation.
+    private(set) var persistedMessagesConversationID: String?
     var draftText = ""
     var draftAttachments: [ChatAttachment] = []
     var pendingConfirmations: [ChatPendingConfirmation] = []
     var isLoadingConversations = false
-    var isLoadingMessages = false
+    var isLoadingMessages = false {
+        // `sendDraft` refuses to send while messages load, so a follow-up steer
+        // that became ready during a load (e.g. a reattached turn retired while
+        // the follow stream's catch-up reload was in flight) must be drained
+        // once the load settles, or it strands with the composer already cleared.
+        didSet {
+            if oldValue, !isLoadingMessages, !queuedFollowUpSteers.isEmpty {
+                Task { [weak self] in
+                    await self?.sendNextQueuedFollowUpSteerIfReady()
+                }
+            }
+        }
+    }
+    @ObservationIgnored private var activeMessageLoads = 0
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
@@ -52,6 +102,10 @@ final class ChatViewModel {
     /// next successful list refresh. A rate-limit (429) that schedules a retry does
     /// NOT set it — that isn't a failure, just a throttle that self-recovers.
     private(set) var conversationsRefreshFailed = false
+    /// Actionable detail for the list failure banner, when the classifier's
+    /// verdict carries one (an auth wall). Nil keeps the generic "Couldn't
+    /// refresh" text. Cleared with the banner on the next successful refresh.
+    private(set) var conversationsRefreshFailureMessage: String?
     /// When the conversation list was last refreshed successfully, shown alongside the
     /// failure banner ("Last updated …") so a stale list is diagnosable at a glance.
     private(set) var conversationsLastRefreshedAt: Date?
@@ -99,6 +153,18 @@ final class ChatViewModel {
         // so a send would post under the previous profile and the backend would
         // filter this thread's history out of the turn's context.
         return hasContent && attachmentsReady && !isLoadingMessages
+    }
+
+    /// Owner-side share controls mirror the web app and appear only after this
+    /// conversation has at least one server-persisted message.
+    var shareableConversationID: String? {
+        guard !isLoadingMessages,
+              persistedMessagesConversationID == conversationID,
+              messages.contains(where: { !$0.id.hasPrefix("local_") })
+        else {
+            return nil
+        }
+        return conversationID
     }
 
     /// Derived connection state for the toolbar indicator. Forwards the
@@ -193,10 +259,20 @@ final class ChatViewModel {
         isStreaming && reattachedRunningTurnID == nil
     }
 
-    /// The lightweight turn identity for the active session, or nil when no turn
-    /// is in flight. The steer/stop control dictionaries key on this identity.
+    /// The lightweight turn identity for the active local session or a running
+    /// turn recovered from the server. The steer/stop control dictionaries key
+    /// on this identity.
     private var activeTurnIdentity: ActiveChatTurn? {
-        activeTurnSession.map { ActiveChatTurn(turnID: $0.turnID, conversationID: $0.conversationID) }
+        if let activeTurnSession {
+            return ActiveChatTurn(
+                turnID: activeTurnSession.turnID,
+                conversationID: activeTurnSession.conversationID
+            )
+        }
+        guard let reattachedRunningTurnID, let conversationID else {
+            return nil
+        }
+        return ActiveChatTurn(turnID: reattachedRunningTurnID, conversationID: conversationID)
     }
     // In-flight optimistic summaries, keyed by the owning turn id (value is the
     // conversation id). While a conversation has any pending turn,
@@ -247,7 +323,6 @@ final class ChatViewModel {
     private enum Keys {
         static let lastConversationID = "lastConversationId"
         static let lastConversationActiveAt = "lastConversationActiveAt"
-        static let selectedProfileID = "selectedProfileId"
     }
 
     private struct ActiveChatTurn: Equatable {
@@ -453,7 +528,7 @@ final class ChatViewModel {
             followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             breadcrumb: syncBreadcrumb
         )
-        let storedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
+        let storedProfileID = PreferredProfile.id
         preferredProfileID = storedProfileID
         // Starts at the preferred profile; if launch restores a conversation,
         // `bootstrap` reopens it via `selectConversation`, which adopts that
@@ -463,6 +538,12 @@ final class ChatViewModel {
             self.conversationID = Self.generateConversationID()
             conversationSelection = self.conversationID
             composerFocusRequestID = UUID()
+            // Same client-minted, server-less thread as the fresh-launch branch
+            // below: without the sentinel, `bootstrap` would load messages and
+            // open a follow stream against an id that has no server row, which
+            // 404-loops the reconnect backoff and pins the connection indicator
+            // to `.degraded`.
+            opensGeneratedLaunchDraft = true
         } else if let initialPrompt, !initialPrompt.isEmpty {
             // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
@@ -610,21 +691,40 @@ final class ChatViewModel {
     /// coordinator health, but never raises a modal (the popup this design removes);
     /// a user-initiated refresh (pull-to-refresh, bootstrap) keeps its existing
     /// modal/inline surface.
-    func refreshConversations() async {
+    @discardableResult
+    func refreshConversations() async -> Bool {
         isLoadingConversations = true
+        let succeeded: Bool
         do {
             conversations = try await apiClient.listConversations()
             errorMessage = nil
             markConversationListRefreshed(operation: .conversationsRefresh)
+            succeeded = true
         } catch {
             handleConversationListRefreshFailure(
                 operation: .conversationsRefresh,
                 error: error,
-                retry: { [weak self] in await self?.refreshConversations() }
+                retry: { [weak self] in _ = await self?.refreshConversations() }
             )
             errorReporter.report(error, component: "Chat.conversations")
+            succeeded = false
         }
         isLoadingConversations = false
+        return succeeded
+    }
+
+    /// Server-side conversation search. Leaves `conversations` untouched — the
+    /// caller shows the results only while its query is current — and reports a
+    /// failure unless it was a superseded (cancelled) search.
+    func searchConversations(matching query: String) async throws -> [ChatConversationSummary] {
+        do {
+            return try await apiClient.searchConversations(query: query)
+        } catch {
+            if !Task.isCancelled {
+                errorReporter.report(error, component: "Chat.conversationSearch")
+            }
+            throw error
+        }
     }
 
     /// Refresh only the most recent page of conversation summaries.
@@ -678,6 +778,7 @@ final class ChatViewModel {
     /// the freshness time, and record the per-operation advisory-health success.
     private func markConversationListRefreshed(operation: ChatOperation) {
         conversationsRefreshFailed = false
+        conversationsRefreshFailureMessage = nil
         conversationsLastRefreshedAt = Date()
         recordAdvisorySuccess(operation: operation)
     }
@@ -703,6 +804,12 @@ final class ChatViewModel {
         if case let .retryAfter(delay) = surface {
             scheduleAdvisoryRetry(after: delay, retry: retry)
             return
+        }
+        conversationsRefreshFailureMessage = nil
+        if case .inlineFeedback(.authWall) = surface {
+            // The wall is persistent and actionable: carry its explanation onto
+            // the list banner instead of the generic refresh-failed text.
+            conversationsRefreshFailureMessage = ChatAPIError.authWall.errorDescription
         }
         conversationsRefreshFailed = true
         recordAdvisoryFailure(operation: operation)
@@ -815,6 +922,7 @@ final class ChatViewModel {
         displayedMessageNewerOffset = 0
         if isSwitchingConversation {
             draftText = ""
+            persistedMessagesConversationID = nil
         }
         conversationID = id
         conversationSelection = id
@@ -875,7 +983,7 @@ final class ChatViewModel {
         selectedProfileID = conversationProfile ?? preferredProfileID
     }
 
-    func startNewConversation() {
+    func startNewConversation(preservingDraft: Bool = false) {
         cancelStream()
         syncCoordinator.cancelFollowStream(reason: .newConversation)
         highestAppliedSeq = nil
@@ -887,9 +995,12 @@ final class ChatViewModel {
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
-        draftText = ""
-        cleanupTemporaryImports(for: draftAttachments)
-        draftAttachments = []
+        persistedMessagesConversationID = nil
+        if !preservingDraft {
+            draftText = ""
+            cleanupTemporaryImports(for: draftAttachments)
+            draftAttachments = []
+        }
         composerFocusRequestID = UUID()
         mobileShowsConversationList = false
         // A brand-new conversation has no history to load, so it is never in a
@@ -946,22 +1057,142 @@ final class ChatViewModel {
             return
         }
         preferredProfileID = profileID
-        UserDefaults.standard.set(profileID, forKey: Keys.selectedProfileID)
+        PreferredProfile.store(profileID)
+        if isEmptyUnsentConversation {
+            // Nothing has been said yet, so there is no context to separate and a
+            // fresh conversation would only churn the id. Switch in place.
+            selectedProfileID = profileID
+            return
+        }
         // startNewConversation sets `selectedProfileID` to the preferred profile.
-        startNewConversation()
+        // The user is mid-composing the message they'll send under the new
+        // profile, so the draft (text and attachments) carries over.
+        startNewConversation(preservingDraft: true)
+    }
+
+    /// The profile the active conversation runs under, when the profile list has
+    /// loaded and still describes it.
+    private var selectedProfile: ChatProfile? {
+        profiles.first { $0.id == selectedProfileID }
+    }
+
+    /// The intelligence levels the active profile lets the user choose between,
+    /// in configuration order. Empty for a profile pinned to one model, and while
+    /// the profile list is still loading.
+    var availableModelTiers: [ChatModelTier] {
+        selectedProfile?.modelTiers ?? []
+    }
+
+    /// The tier the active profile runs at when a request names none.
+    var defaultModelTierID: String? {
+        selectedProfile?.defaultModelTier
+    }
+
+    /// Whether the active profile gives the user a decision to make. One tier is
+    /// not a choice, so the intelligence control is hidden rather than dead.
+    var offersModelTierChoice: Bool {
+        selectedProfile?.offersModelTierChoice ?? false
+    }
+
+    private nonisolated static func modelTierLabels(
+        from profiles: [ChatProfile]
+    ) -> [String: String] {
+        var labels: [String: String] = [:]
+        for profile in profiles {
+            for tier in profile.modelTiers where labels[tier.id] == nil {
+                labels[tier.id] = tier.label
+            }
+        }
+        return labels
+    }
+
+    /// Whether the intelligence control accepts a choice right now.
+    ///
+    /// It does not while a turn runs. The composer doubles as the steer box in
+    /// that state, so the next thing the user sends folds into the running turn —
+    /// whose tier was frozen when it started and cannot be changed — rather than
+    /// starting a turn the selection could apply to. Offering a live control
+    /// there would let "applies to your next message" mean a message that ran at
+    /// the old tier. The profile picker is unavailable mid-turn for the same
+    /// reason.
+    var canSelectModelTier: Bool {
+        offersModelTierChoice && !isStreaming
+    }
+
+    /// Record the user's intelligence selection for the next message.
+    ///
+    /// Choosing the profile's default is choosing nothing: there is no selection
+    /// to send and nothing to pin, so it clears the choice rather than storing a
+    /// selection that happens to name the default. A tier the active profile does
+    /// not offer clears it too — the menu cannot produce one, but a profile whose
+    /// tiers narrowed under a held selection must not keep sending it.
+    func selectModelTier(_ tierID: String?, pinned: Bool) {
+        guard let tierID,
+              tierID != defaultModelTierID,
+              availableModelTiers.contains(where: { $0.id == tierID })
+        else {
+            modelTierChoice = nil
+            return
+        }
+        modelTierChoice = ModelTierChoice(tierID: tierID, pinned: pinned)
+    }
+
+    /// Drop the selection when the conversation or profile it was made in changes.
+    private func clearModelTierChoiceIfScopeChanged(_ scopeChanged: Bool) {
+        guard scopeChanged else {
+            return
+        }
+        modelTierChoice = nil
+    }
+
+    /// Take the tier this send runs at, spending an unpinned choice.
+    ///
+    /// Called once the turn is being built, so a submission rejected before that
+    /// point (an empty draft, an attachment still uploading) does not silently
+    /// consume the user's selection.
+    private func consumeModelTierForSend() -> String? {
+        guard let choice = modelTierChoice else {
+            return nil
+        }
+        if !choice.pinned {
+            modelTierChoice = nil
+        }
+        return choice.tierID
+    }
+
+    /// True for a conversation that exists only on this client and holds no turns:
+    /// a launch draft or one from `startNewConversation`, before its first send.
+    ///
+    /// `opensGeneratedLaunchDraft` is the load-bearing part. `messages.isEmpty`
+    /// alone is not enough: an existing thread reads as empty for the window
+    /// between `selectConversation` and its `loadMessages` returning, and treating
+    /// that as fresh would pin a real thread to a new profile — which
+    /// `adoptConversationProfile` would then immediately contradict when the
+    /// history landed.
+    private var isEmptyUnsentConversation: Bool {
+        opensGeneratedLaunchDraft && messages.isEmpty && !isLoadingMessages && !isStreaming
     }
 
     func loadMessages(conversationID: String? = nil, userInitiated: Bool = true) async {
         guard let id = conversationID ?? self.conversationID else {
             return
         }
+        activeMessageLoads += 1
         isLoadingMessages = true
         // Reset on EVERY exit, including the stale-selection guards below: a
         // conversation switch during the await returns early, and a leaked
         // `isLoadingMessages` would permanently disable the composer on the thread
         // the user moved to. Reachable when a delayed advisory retry lands after a
-        // switch.
-        defer { isLoadingMessages = false }
+        // switch. Loads can overlap (a follow-stream catch-up alongside a resync
+        // or retry), and each replaces `messages` wholesale, so the flag clears
+        // only when the LAST one settles: a send started while another load is
+        // still in flight would have its optimistic bubbles replaced away.
+        defer {
+            activeMessageLoads -= 1
+            if activeMessageLoads == 0 {
+                isLoadingMessages = false
+            }
+        }
         do {
             let response = try await apiClient.getMessages(conversationID: id)
             // The user may have switched conversations during the network await;
@@ -971,6 +1202,7 @@ final class ChatViewModel {
                 return
             }
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
+            persistedMessagesConversationID = response.messages.isEmpty ? nil : id
             await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
             // A prior failed load of THIS thread may have left a stale inline banner
@@ -1024,6 +1256,12 @@ final class ChatViewModel {
     /// snapshot before the foreign-turn loop: see `reconcileSuspendedSession`.
     private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) async {
         await reconcileSuspendedSession(against: activeTurns)
+        if activeTurnSession == nil, let reattachedRunningTurnID,
+           !activeTurns.contains(where: {
+               $0.turnID == reattachedRunningTurnID && $0.status == "running"
+           }) {
+            clearReattachedSession()
+        }
         for turn in activeTurns {
             guard turn.status == "running",
                   turn.turnID != activeTurnSession?.turnID,
@@ -1162,9 +1400,10 @@ final class ChatViewModel {
     /// mode (`isStreaming = false`), and release the preserved session and its
     /// per-turn control state so the composer returns to a normal send.
     private func clearReattachedSession() {
+        let turnID = activeTurnSession?.turnID ?? reattachedRunningTurnID
         reattachedRunningTurnID = nil
         isStreaming = false
-        if let turnID = activeTurnSession?.turnID {
+        if let turnID {
             registeredTurnIDs.remove(turnID)
             pendingStopTurnIDs.remove(turnID)
             stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
@@ -1361,6 +1600,7 @@ final class ChatViewModel {
             let existingIDs = Set(merged.map(\.id))
             merged.append(contentsOf: rendered.filter { !existingIDs.contains($0.id) })
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(merged))
+            persistedMessagesConversationID = id
             errorMessage = nil
             recordAdvisorySuccess(operation: .messagesMerge)
         } catch {
@@ -1456,40 +1696,111 @@ final class ChatViewModel {
     }
 
     func sendDraft() async {
-        let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = await sendDraft(fallbackFromSteer: false)
+    }
+
+    @discardableResult
+    private func sendDraft(fallbackFromSteer: Bool) async -> Bool {
+        let submittedDraftText = draftText
+        let submittedDraftAttachments = draftAttachments
+        let prompt = submittedDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hadActiveTurnAtSubmission = activeTurnIdentity != nil
         guard !prompt.isEmpty || !draftAttachments.isEmpty else {
-            return
+            return false
         }
         // Defensive: the send button is disabled while a conversation loads, but
         // never post a turn before its profile is adopted (see `canSendDraft`).
         guard !isLoadingMessages else {
-            return
+            return false
         }
         guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
             presentErrorAlert(
                 "Wait for attachments to finish uploading before sending.",
                 reason: .sendAttachmentsUploading
             )
-            return
+            return false
         }
         guard draftAttachments.allSatisfy({ $0.uploadState == .uploaded }) else {
             presentErrorAlert(
                 "Remove failed attachments before sending.",
                 reason: .sendAttachmentFailed
             )
-            return
+            return false
         }
         guard let id = conversationID else {
             startNewConversation()
             // startNewConversation clears the composer; restore the captured
             // prompt so the recursive send still has it.
             draftText = prompt
-            return await sendDraft()
+            return await sendDraft(fallbackFromSteer: fallbackFromSteer)
+        }
+
+        // A missing local session is not proof that the conversation is idle: a
+        // background/foreground handover or a stream teardown can lose the local
+        // handle while the durable turn keeps running. Ask the authoritative
+        // messages endpoint before starting a rival turn. A failed lookup is not
+        // fatal — the turn-start endpoint's 409 response is the race-safe backstop.
+        if !hadActiveTurnAtSubmission, !opensGeneratedLaunchDraft {
+            do {
+                let response = try await apiClient.getMessagesPage(
+                    conversationID: id,
+                    after: nil,
+                    limit: 1
+                )
+                guard conversationID == id else {
+                    return false
+                }
+                // The preflight introduced an await into submission. Never send
+                // the captured text if the user edited the composer meanwhile;
+                // leave the newer draft untouched for their next tap.
+                guard draftText == submittedDraftText,
+                      draftAttachments == submittedDraftAttachments
+                else {
+                    return false
+                }
+                if let runningTurn = response.activeTurns
+                    .filter({ $0.status == "running" })
+                    .max(by: { $0.startedAt < $1.startedAt }) {
+                    reportTurnHandleRecovery(
+                        source: "active_turns_preflight",
+                        turnID: runningTurn.turnID
+                    )
+                    return await adoptRunningTurnAndSteer(
+                        turnID: runningTurn.turnID,
+                        conversationID: id
+                    )
+                }
+                if fallbackFromSteer {
+                    reportSteerDegradedToSend(reason: "no_running_server_turn")
+                }
+            } catch {
+                errorReporter.report(error, component: "Chat.activeTurnLookup")
+                guard conversationID == id,
+                      draftText == submittedDraftText,
+                      draftAttachments == submittedDraftAttachments
+                else {
+                    return false
+                }
+                if fallbackFromSteer {
+                    reportSteerDegradedToSend(reason: "active_turn_lookup_failed")
+                }
+            }
+        }
+
+        // A concurrent reconciliation may have restored the turn handle while
+        // the preflight was suspended. Prefer that identity over cancelling it
+        // and starting a new turn from a stale idle snapshot.
+        if !hadActiveTurnAtSubmission, activeTurnIdentity != nil {
+            return await sendSteerDraftWithResult()
         }
 
         cancelStream()
 
         let turnID = UUID().uuidString
+        // Past every early return: this send is happening, so an unpinned
+        // intelligence selection is spent here and the control returns to the
+        // profile default rather than quietly repricing the rest of the thread.
+        let modelTier = consumeModelTierForSend()
         let uploadedAttachments = draftAttachments.filter { $0.uploadState == .uploaded }
         let userMessage = ChatMessage(
             id: "local_user_\(UUID().uuidString)",
@@ -1552,6 +1863,7 @@ final class ChatViewModel {
             prompt: prompt,
             attachments: uploadedAttachments,
             profileID: selectedProfileID,
+            modelTier: modelTier,
             previousSummary: previousSummary,
             streamToken: streamToken
         )
@@ -1562,6 +1874,7 @@ final class ChatViewModel {
             guard let self else { return }
             await runSendTurn(session)
         }
+        return true
     }
 
     /// Outcome of consuming (or attempting to consume) a turn subscription.
@@ -1627,6 +1940,7 @@ final class ChatViewModel {
         conversationID: String,
         profileID: String?,
         attachments: [ChatAttachment],
+        modelTier: String?,
         ownerEpoch: Int
     ) async throws -> ChatTurnStart {
         do {
@@ -1635,7 +1949,8 @@ final class ChatViewModel {
                 prompt: prompt,
                 conversationID: conversationID,
                 profileID: profileID,
-                attachments: attachments
+                attachments: attachments,
+                modelTier: modelTier
             )
         } catch let ChatAPIError.server(statusCode, _, _) where statusCode == 401 || statusCode == 403 {
             // First attempt got a 401/403. Try one forced refresh; if it succeeds,
@@ -1673,7 +1988,8 @@ final class ChatViewModel {
                 prompt: prompt,
                 conversationID: conversationID,
                 profileID: profileID,
-                attachments: attachments
+                attachments: attachments,
+                modelTier: modelTier
             )
         }
     }
@@ -1719,6 +2035,7 @@ final class ChatViewModel {
                 conversationID: id,
                 profileID: session.profileID,
                 attachments: attachments,
+                modelTier: session.modelTier,
                 ownerEpoch: startEpoch
             )
             startSucceeded = true
@@ -2009,6 +2326,68 @@ final class ChatViewModel {
                     )
                 }
             }
+        } catch ChatAPIError.turnAlreadyRunning(let activeTurnID) {
+            // The preflight and POST are necessarily racy: another client can
+            // start a turn between them. Remove the rejected optimistic send,
+            // adopt the server's turn, and steer the captured prompt without
+            // replacing newer input the user typed while the POST was in flight.
+            guard !isSuspendCancelled(streamToken),
+                  !Task.isCancelled,
+                  currentStreamToken == streamToken,
+                  conversationID == id
+            else {
+                return
+            }
+            removeLocalAssistantPlaceholder(assistantMessageID)
+            messages.removeAll {
+                $0.id.hasPrefix("local_user_") && $0.turnID == turnID
+            }
+            registeredTurnIDs.remove(turnID)
+            let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
+            let wasPendingStop = pendingStopTurnIDs.remove(turnID) != nil
+            let hadStopAfterRegistration = stopAfterRegistrationByTurnID.removeValue(forKey: turnID) != nil
+            let wasStopRequested = stopRequestedTurnIDs.remove(turnID) != nil
+            let hadPendingStop = wasPendingStop || hadStopAfterRegistration || wasStopRequested
+            activeTurnSession = nil
+            currentStreamToken = nil
+            streamTask = nil
+            prependMissingDraftAttachments(attachments)
+            reportTurnHandleRecovery(source: "start_turn_conflict", turnID: activeTurnID)
+            guard let activeTurn = adoptRunningTurn(turnID: activeTurnID, conversationID: id) else {
+                return
+            }
+            if hadPendingStop {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
+                detachPendingSteers(pendingSteers, requeue: false)
+                await stopTurn()
+                return
+            }
+            for pendingSteer in pendingSteers {
+                removeInFlightSteer(pendingSteer)
+                removeAwaitingEchoSteer(pendingSteer)
+            }
+            if !(await submitSteerPrompt(prompt, activeTurn: activeTurn)) {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
+                recoverSteerAsDraft(prompt)
+            }
+            for pendingSteer in pendingSteers {
+                // Each submission yields: history reconciliation or a turn-ended
+                // event can retire the adopted turn before the next prompt.
+                // No send task remains to drain a pre-registration queue for it.
+                guard activeTurnIdentity == activeTurn else {
+                    if conversationID == id,
+                       canRecoverSteerAfterTurnEnded(activeTurnID, defaultWhenUnknown: true) {
+                        recoverSteerAsDraft(pendingSteer)
+                    }
+                    continue
+                }
+                _ = await submitSteerPrompt(pendingSteer, activeTurn: activeTurn)
+            }
+            return
         } catch is CancellationError {
             // A suspend-cancel (real background) must preserve the turn for
             // foreground reattach: no queued stop-cancel POST, no optimistic
@@ -2385,35 +2764,123 @@ final class ChatViewModel {
     }
 
     func sendSteerDraft() async {
+        _ = await sendSteerDraftWithResult()
+    }
+
+    @discardableResult
+    private func sendSteerDraftWithResult() async -> Bool {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
-            return
+            return false
         }
         steerErrorMessage = nil
         // No turn is running, so there is nothing to steer: the composer text is
         // just a normal message. Send it as one (sendDraft consumes and clears
         // the composer).
         guard let activeTurn = activeTurnIdentity else {
-            await sendDraft()
-            return
+            return await sendDraft(fallbackFromSteer: true)
         }
+        return await submitSteerPrompt(prompt, activeTurn: activeTurn)
+    }
+
+    @discardableResult
+    private func submitSteerPrompt(_ prompt: String, activeTurn: ActiveChatTurn) async -> Bool {
         guard !hasPendingSteer(prompt) else {
-            return
+            return true
         }
         inFlightSteers.append(prompt)
         guard registeredTurnIDs.contains(activeTurn.turnID) else {
             pendingSteersByTurnID[activeTurn.turnID, default: []].append(prompt)
-            return
+            return true
         }
         do {
             let result = try await requestSteerWithRetry(activeTurn, prompt: prompt)
             await handleSteerSubmissionResult(result, prompt: prompt, activeTurn: activeTurn)
+            if case .error = result {
+                return false
+            }
+            return true
         } catch {
             removeInFlightSteer(prompt)
             removeAwaitingEchoSteer(prompt)
             steerErrorMessage = error.localizedDescription
             errorReporter.report(error, component: "Chat.steerTurn")
+            return false
         }
+    }
+
+    /// Adopt a server-reported running turn when the local session handle was
+    /// lost, restore steer/stop mode, ensure its follow stream is attached, and
+    /// deliver either a recovered prompt or the current composer text as a steer.
+    /// Attachments remain in the composer because steering is text-only; they
+    /// become visible again when the recovered turn ends.
+    @discardableResult
+    private func adoptRunningTurnAndSteer(
+        turnID: String,
+        conversationID: String,
+        recoveredPrompt: String? = nil
+    ) async -> Bool {
+        guard let activeTurn = adoptRunningTurn(
+            turnID: turnID,
+            conversationID: conversationID
+        ) else {
+            return false
+        }
+        let prompt = (recoveredPrompt ?? draftText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            steerErrorMessage = "Wait for the running reply to finish before sending attachments."
+            return false
+        }
+        let submitted = await submitSteerPrompt(prompt, activeTurn: activeTurn)
+        if recoveredPrompt != nil, !submitted {
+            recoverSteerAsDraft(prompt)
+        }
+        return submitted
+    }
+
+    private func adoptRunningTurn(
+        turnID: String,
+        conversationID: String
+    ) -> ActiveChatTurn? {
+        guard self.conversationID == conversationID else {
+            return nil
+        }
+        endedTurnIDs.remove(turnID)
+        reattachedRunningTurnID = turnID
+        isStreaming = true
+        registeredTurnIDs.insert(turnID)
+        if liveFollowBubbleByTurnID[turnID] == nil {
+            _ = makeLiveFollowBubble(for: turnID)
+        }
+        startLiveEvents(reason: .manualReconnect)
+        return ActiveChatTurn(turnID: turnID, conversationID: conversationID)
+    }
+
+    private func reportTurnHandleRecovery(source: String, turnID: String) {
+        errorReporter.report(
+            message: "Recovered running turn before sending",
+            component: "Chat.turnHandleRecovered",
+            errorType: .component,
+            extraData: [
+                "source": source,
+                "conversation_id": conversationID ?? "none",
+                "turn_id": turnID,
+            ],
+            bypassDedupe: true
+        )
+    }
+
+    private func reportSteerDegradedToSend(reason: String) {
+        errorReporter.report(
+            message: "Steer degraded to a normal send",
+            component: "Chat.steerDegradedToSend",
+            errorType: .component,
+            extraData: [
+                "reason": reason,
+                "conversation_id": conversationID ?? "none",
+            ],
+            bypassDedupe: true
+        )
     }
 
     private func handleSteerSubmissionResult(
@@ -2425,13 +2892,25 @@ final class ChatViewModel {
         let isSameConversation = conversationID == activeTurn.conversationID
         let originalTurnEnded = endedTurnIDs.contains(activeTurn.turnID)
         let originalTurnEndedCleanly = canRecoverSteerAfterTurnEnded(activeTurn.turnID)
-        // A late result for a turn that is neither active nor ended was superseded
-        // (cancelStream/a new send cleared THIS turn's steer arrays). The steer
-        // collections are keyed by prompt text, so a newer turn may already hold an
-        // identical prompt; removing by text here would untrack the newer turn's
-        // steer. Don't touch the shared arrays — just drop a stale matching draft.
+        // A newer turn may hold identical prompt text, so a superseded result
+        // must not remove its entries from the shared steer arrays.
         guard isCurrentTurn || originalTurnEnded else {
-            clearComposerIfMatching(prompt)
+            // A history snapshot can retire a reattached turn without an end
+            // event. With no replacement turn, its request still owns these
+            // entries; release them instead of leaving the composer pending.
+            if isSameConversation, activeTurnIdentity == nil {
+                guard removeInFlightSteer(prompt) else {
+                    return
+                }
+                switch result {
+                case .accepted:
+                    clearComposerIfMatching(prompt)
+                case .finished, .error:
+                    recoverSteerAsDraft(prompt)
+                }
+            } else {
+                clearComposerIfMatching(prompt)
+            }
             return
         }
         switch result {
@@ -2469,7 +2948,11 @@ final class ChatViewModel {
             }
             clearComposerIfMatching(prompt)
             queuedFollowUpSteers.append(prompt)
-            await sendNextQueuedFollowUpSteerIfReady()
+            if reattachedRunningTurnID == activeTurn.turnID {
+                clearReattachedSession()
+            } else {
+                await sendNextQueuedFollowUpSteerIfReady()
+            }
         case .error:
             removeInFlightSteer(prompt)
             removeAwaitingEchoSteer(prompt)
@@ -2746,7 +3229,7 @@ final class ChatViewModel {
     }
 
     private func sendNextQueuedFollowUpSteerIfReady() async {
-        guard !isStreaming, !queuedFollowUpSteers.isEmpty else {
+        guard !isStreaming, !isLoadingMessages, !queuedFollowUpSteers.isEmpty else {
             return
         }
         let followUp = queuedFollowUpSteers.removeFirst()
@@ -2757,10 +3240,26 @@ final class ChatViewModel {
         let preservedDraftAttachments = draftAttachments
         draftText = followUp
         draftAttachments = []
-        await sendDraft()
-        draftText = preservedDraftText
-        draftAttachments = preservedDraftAttachments
-        queuedFollowUpSteers = remainingQueuedFollowUps + queuedFollowUpSteers
+        let submitted = await sendDraft(fallbackFromSteer: false)
+        if submitted, draftText.isEmpty, draftAttachments.isEmpty {
+            draftText = preservedDraftText
+            draftAttachments = preservedDraftAttachments
+        } else if !submitted,
+                  draftText.trimmingCharacters(in: .whitespacesAndNewlines) == followUp,
+                  draftAttachments.isEmpty {
+            draftText = preservedDraftText
+            draftAttachments = preservedDraftAttachments
+        } else {
+            prependMissingDraftAttachments(preservedDraftAttachments)
+        }
+        let unsentFollowUps = submitted ? remainingQueuedFollowUps : [followUp] + remainingQueuedFollowUps
+        queuedFollowUpSteers = unsentFollowUps + queuedFollowUpSteers
+    }
+
+    private func prependMissingDraftAttachments(_ attachments: [ChatAttachment]) {
+        let currentAttachmentIDs = Set(draftAttachments.map(\.id))
+        draftAttachments = attachments.filter { !currentAttachmentIDs.contains($0.id) }
+            + draftAttachments
     }
 
     /// Tear down the in-flight send's transport task for a real background
@@ -3450,6 +3949,9 @@ final class ChatViewModel {
         let prompt: String
         let attachments: [ChatAttachment]
         let profileID: String
+        /// The intelligence level the failed turn was sent at, so a retry
+        /// reissues what the user asked for rather than the current selection.
+        let modelTier: String?
         let previousSummary: ChatConversationSummary?
         /// Whether `POST /turns` was accepted before the failure. `false` ⇒ the
         /// prompt was never persisted, so retry re-POSTs the same turn id;
@@ -3686,6 +4188,7 @@ final class ChatViewModel {
     private func handleConversationGone(conversationID: String) {
         conversations.removeAll { $0.conversationID == conversationID }
         if conversationID == self.conversationID {
+            persistedMessagesConversationID = nil
             presentInlineThreadFeedback(
                 "This conversation is no longer available.",
                 reason: .accessChanged,
@@ -3722,6 +4225,8 @@ final class ChatViewModel {
             "You no longer have access to this conversation."
         case .rateLimited:
             "Too many requests. Please try again in a moment."
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .userReadFailed:
             "Couldn't refresh. \(error.localizedDescription)"
         case .actionFailed:
@@ -4187,6 +4692,7 @@ final class ChatViewModel {
             prompt: session.prompt,
             attachments: session.attachments,
             profileID: session.profileID,
+            modelTier: session.modelTier,
             previousSummary: session.previousSummary,
             postAccepted: postAccepted,
             lastAppliedSeq: lastAppliedSeq
@@ -4220,6 +4726,7 @@ final class ChatViewModel {
                 prompt: session.prompt,
                 attachments: session.attachments,
                 profileID: session.profileID,
+                modelTier: session.modelTier,
                 previousSummary: session.previousSummary,
                 postAccepted: true,
                 lastAppliedSeq: session.lastAppliedSeq
@@ -4280,6 +4787,7 @@ final class ChatViewModel {
             prompt: failed.prompt,
             attachments: failed.attachments,
             profileID: failed.profileID,
+            modelTier: failed.modelTier,
             previousSummary: failed.previousSummary,
             streamToken: streamToken,
             lastAppliedSeq: failed.lastAppliedSeq
@@ -4538,7 +5046,9 @@ final class ChatViewModel {
                 status: backend.errorTraceback == nil ? .complete : .failed,
                 processingProfileID: backend.processingProfileID,
                 errorTraceback: backend.errorTraceback,
-                turnID: backend.turnID
+                turnID: backend.turnID,
+                modelTier: backend.reasoningInfo?.modelTier,
+                modelTierSource: backend.reasoningInfo?.modelTierSource
             )
         }
         return rendered
@@ -4807,7 +5317,7 @@ extension ChatViewModel: SyncStreamDelegate {
 
     func openActivityStream(
         generation _: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         try await apiClient.connectActivityStream()
     }
 
@@ -4821,6 +5331,20 @@ extension ChatViewModel: SyncStreamDelegate {
         // buffered resync drain silent (finding 10): the drain routes through this
         // same handler.
         await refreshRecentConversations()
+    }
+
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        presentAuthWall(error)
+    }
+
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {
+        guard syncCoordinator.isCurrentActivity(generation) else {
+            return
+        }
+        presentAuthWall(error)
     }
 
     func runCoalescedResync(reason: SyncCoordinator.RestartReason) {
@@ -4870,6 +5394,21 @@ extension ChatViewModel: ResyncHost {
         try await authManager.refreshIfNeeded()
     }
 
+    func presentResyncAuthWall(_ error: AuthError) {
+        presentAuthWall(error)
+    }
+
+    private func presentAuthWall(_ error: Error) {
+        let message = inlineMessage(for: .authWall, error: error)
+        conversationsRefreshFailed = true
+        conversationsRefreshFailureMessage = message
+        presentInlineThreadFeedback(
+            message,
+            reason: .authWall,
+            operation: .conversationsRefresh
+        )
+    }
+
     func establishFollowStream(
         conversationID: String,
         generation _: Int
@@ -4904,7 +5443,7 @@ extension ChatViewModel: ResyncHost {
 
     func establishActivityStream(
         generation _: Int
-    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
+    ) async -> AsyncThrowingStream<ChatActivityStreamEvent, Error>? {
         let timeout = resyncEstablishTimeoutSeconds
         let client = apiClient
         let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {
@@ -4959,10 +5498,17 @@ extension ChatViewModel: ResyncHost {
         return resolution
     }
 
-    func applyListSnapshot() async {
+    func applyListSnapshot() async -> Bool {
         // Advisory (§4.4 step 4): a failed resume-time snapshot degrades from
         // per-channel health and breadcrumbs, but must never modal.
-        await refreshConversations()
+        return await refreshConversations()
+    }
+
+    func applyRecentListSnapshot() async {
+        // The first resync snapshot already applied full-replacement semantics.
+        // This post-handoff fallback only closes the activity no-replay window, so
+        // merge the bounded recent page instead of paginating the full history again.
+        await refreshRecentConversations()
     }
 
     func applyMessagesSnapshot(conversationID: String) async {

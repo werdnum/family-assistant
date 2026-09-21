@@ -16,7 +16,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -34,88 +34,88 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
     thread_root_id=NULL) should be included along with all child messages
     (which have thread_root_id pointing to the root).
     """
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create a root message (thread_root_id will be NULL initially)
-        root_msg = await db.message_history.add_message(
-            message=UserMessage(content="Can you highlight the eagle statue?"),
-            interface_type="telegram",
-            conversation_id="test_chat_123",
-            interface_message_id="100",
-            processing_profile_id="default_assistant",
-            timestamp=datetime.now(UTC),
-        )
+    db = Database(engine=db_engine)
+    # Create a root message (thread_root_id will be NULL initially)
+    root_msg = await db.message_history.add_message(
+        message=UserMessage(content="Can you highlight the eagle statue?"),
+        interface_type="telegram",
+        conversation_id="test_chat_123",
+        interface_message_id="100",
+        processing_profile_id="default_assistant",
+        timestamp=datetime.now(UTC),
+    )
 
-        assert root_msg is not None, "Failed to create root message"
-        root_internal_id = root_msg
+    assert root_msg is not None, "Failed to create root message"
+    root_internal_id = root_msg
 
-        # Create child messages in the same thread
-        assistant_msg = await db.message_history.add_message(
-            message=AssistantMessage(
-                content="I'll get a camera snapshot for you.",
-                tool_calls=[
-                    ToolCallItem(
-                        id="call_123",
-                        type="function",
-                        function=ToolCallFunction(
-                            name="get_camera_snapshot",
-                            arguments='{"camera_entity_id": "camera.test"}',
-                        ),
-                    )
-                ],
-            ),
-            interface_type="telegram",
-            conversation_id="test_chat_123",
-            interface_message_id="101",
-            turn_id="turn_1",
-            thread_root_id=root_internal_id,
-            processing_profile_id="default_assistant",
-            timestamp=datetime.now(UTC),
-        )
-
-        assert assistant_msg is not None, "Failed to create assistant message"
-
-        tool_msg = await db.message_history.add_message(
-            message=ToolMessage(
-                tool_call_id="call_123",
-                content="Retrieved snapshot from camera\n[Attachment ID: abc-123-def]",
-                name="get_camera_snapshot",
-            ),
-            interface_type="telegram",
-            conversation_id="test_chat_123",
-            turn_id="turn_1",
-            thread_root_id=root_internal_id,
-            processing_profile_id="default_assistant",
-            timestamp=datetime.now(UTC),
-            attachments=[
-                {
-                    "type": "tool_result",
-                    "attachment_id": "abc-123-def",
-                    "mime_type": "image/jpeg",
-                }
+    # Create child messages in the same thread
+    assistant_msg = await db.message_history.add_message(
+        message=AssistantMessage(
+            content="I'll get a camera snapshot for you.",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_123",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="get_camera_snapshot",
+                        arguments='{"camera_entity_id": "camera.test"}',
+                    ),
+                )
             ],
-        )
+        ),
+        interface_type="telegram",
+        conversation_id="test_chat_123",
+        interface_message_id="101",
+        turn_id="turn_1",
+        thread_root_id=root_internal_id,
+        processing_profile_id="default_assistant",
+        timestamp=datetime.now(UTC),
+    )
 
-        assert tool_msg is not None, "Failed to create tool message"
+    assert assistant_msg is not None, "Failed to create assistant message"
 
-        # Query for thread messages
-        thread_messages = await db.message_history.get_by_thread_id(
-            thread_root_id=root_internal_id
-        )
+    tool_msg = await db.message_history.add_message(
+        message=ToolMessage(
+            tool_call_id="call_123",
+            content="Retrieved snapshot from camera\n[Attachment ID: abc-123-def]",
+            name="get_camera_snapshot",
+        ),
+        interface_type="telegram",
+        conversation_id="test_chat_123",
+        turn_id="turn_1",
+        thread_root_id=root_internal_id,
+        processing_profile_id="default_assistant",
+        timestamp=datetime.now(UTC),
+        attachments=[
+            {
+                "type": "tool_result",
+                "attachment_id": "abc-123-def",
+                "mime_type": "image/jpeg",
+            }
+        ],
+    )
 
-        # Verify all messages are returned, including the root
-        assert len(thread_messages) == 3, (
-            f"Expected 3 messages in thread, got {len(thread_messages)}"
-        )
+    assert tool_msg is not None, "Failed to create tool message"
 
-        # Verify the root message is first (due to timestamp ordering)
-        assert thread_messages[0].role == "user"
-        assert thread_messages[0].content == "Can you highlight the eagle statue?"
+    # Query for thread messages
+    thread_messages = await db.message_history.get_by_thread_id(
+        thread_root_id=root_internal_id
+    )
 
-        # Verify child messages follow
-        assert thread_messages[1].role == "assistant"
+    # Verify all messages are returned, including the root
+    assert len(thread_messages) == 3, (
+        f"Expected 3 messages in thread, got {len(thread_messages)}"
+    )
 
-        assert thread_messages[2].role == "tool"
-        assert "[Attachment ID: abc-123-def]" in thread_messages[2].content
+    # Verify the root message is first (due to timestamp ordering)
+    assert thread_messages[0].role == "user"
+    assert thread_messages[0].content == "Can you highlight the eagle statue?"
+
+    # Verify child messages follow
+    assert thread_messages[1].role == "assistant"
+
+    assert thread_messages[2].role == "tool"
+    assert "[Attachment ID: abc-123-def]" in thread_messages[2].content
 
 
 @pytest.mark.asyncio
@@ -127,74 +127,74 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
     profiles via delegation). The query should only return messages from the
     specified profile.
     """
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create root message with profile A
-        root_msg = await db.message_history.add_message(
-            message=UserMessage(content="Test message"),
-            interface_type="telegram",
-            conversation_id="test_chat_456",
-            interface_message_id="200",
-            processing_profile_id="profile_a",
-            timestamp=datetime.now(UTC),
-        )
+    db = Database(engine=db_engine)
+    # Create root message with profile A
+    root_msg = await db.message_history.add_message(
+        message=UserMessage(content="Test message"),
+        interface_type="telegram",
+        conversation_id="test_chat_456",
+        interface_message_id="200",
+        processing_profile_id="profile_a",
+        timestamp=datetime.now(UTC),
+    )
 
-        assert root_msg is not None, "Failed to create root message"
-        root_internal_id = root_msg
+    assert root_msg is not None, "Failed to create root message"
+    root_internal_id = root_msg
 
-        # Create child message with profile A
-        await db.message_history.add_message(
-            message=AssistantMessage(content="Response from profile A"),
-            interface_type="telegram",
-            conversation_id="test_chat_456",
-            interface_message_id="201",
-            turn_id="turn_1",
-            thread_root_id=root_internal_id,
-            processing_profile_id="profile_a",
-            timestamp=datetime.now(UTC),
-        )
+    # Create child message with profile A
+    await db.message_history.add_message(
+        message=AssistantMessage(content="Response from profile A"),
+        interface_type="telegram",
+        conversation_id="test_chat_456",
+        interface_message_id="201",
+        turn_id="turn_1",
+        thread_root_id=root_internal_id,
+        processing_profile_id="profile_a",
+        timestamp=datetime.now(UTC),
+    )
 
-        # Create child message with profile B
-        await db.message_history.add_message(
-            message=AssistantMessage(content="Response from profile B"),
-            interface_type="telegram",
-            conversation_id="test_chat_456",
-            interface_message_id="202",
-            turn_id="turn_2",
-            thread_root_id=root_internal_id,
-            processing_profile_id="profile_b",
-            timestamp=datetime.now(UTC),
-        )
+    # Create child message with profile B
+    await db.message_history.add_message(
+        message=AssistantMessage(content="Response from profile B"),
+        interface_type="telegram",
+        conversation_id="test_chat_456",
+        interface_message_id="202",
+        turn_id="turn_2",
+        thread_root_id=root_internal_id,
+        processing_profile_id="profile_b",
+        timestamp=datetime.now(UTC),
+    )
 
-        # Query for profile A messages only
-        profile_a_messages = await db.message_history.get_by_thread_id(
-            thread_root_id=root_internal_id, processing_profile_id="profile_a"
-        )
+    # Query for profile A messages only
+    profile_a_messages = await db.message_history.get_by_thread_id(
+        thread_root_id=root_internal_id, processing_profile_id="profile_a"
+    )
 
-        # Should include root (profile_a) and first child (profile_a), but not second child (profile_b)
-        assert len(profile_a_messages) == 2
-        assert profile_a_messages[0].role == "user"
-        assert profile_a_messages[1].content == "Response from profile A"
+    # Should include root (profile_a) and first child (profile_a), but not second child (profile_b)
+    assert len(profile_a_messages) == 2
+    assert profile_a_messages[0].role == "user"
+    assert profile_a_messages[1].content == "Response from profile A"
 
-        # Query for profile B messages only
-        profile_b_messages = await db.message_history.get_by_thread_id(
-            thread_root_id=root_internal_id, processing_profile_id="profile_b"
-        )
+    # Query for profile B messages only
+    profile_b_messages = await db.message_history.get_by_thread_id(
+        thread_root_id=root_internal_id, processing_profile_id="profile_b"
+    )
 
-        # Should only include the second child (profile_b), not root or first child
-        assert len(profile_b_messages) == 1
-        assert profile_b_messages[0].content == "Response from profile B"
+    # Should only include the second child (profile_b), not root or first child
+    assert len(profile_b_messages) == 1
+    assert profile_b_messages[0].content == "Response from profile B"
 
 
 @pytest.mark.asyncio
 async def test_empty_thread_returns_empty_list(db_engine: AsyncEngine) -> None:
     """Test that querying a non-existent thread returns an empty list."""
-    async with DatabaseContext(engine=db_engine) as db:
-        # Query for a thread that doesn't exist
-        messages = await db.message_history.get_by_thread_id(
-            thread_root_id=99999  # Non-existent ID
-        )
+    db = Database(engine=db_engine)
+    # Query for a thread that doesn't exist
+    messages = await db.message_history.get_by_thread_id(
+        thread_root_id=99999  # Non-existent ID
+    )
 
-        assert messages == []
+    assert messages == []
 
 
 @pytest.mark.asyncio
@@ -207,128 +207,126 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
     2. Format the attachment context with time-based age
     3. Provide the context for the LLM
     """
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create attachment registry
-        attachment_registry = AttachmentRegistry(
-            storage_path="/tmp/test_attachments", db_engine=db_engine
-        )
+    db = Database(engine=db_engine)
+    # Create attachment registry
+    attachment_registry = AttachmentRegistry(
+        storage_path="/tmp/test_attachments", db_engine=db_engine
+    )
 
-        # Store test attachments
-        attachment_1_data = b"\x89PNG\r\n\x1a\n"  # Minimal PNG header
-        attachment_2_data = b"PDF content here"
+    # Store test attachments
+    attachment_1_data = b"\x89PNG\r\n\x1a\n"  # Minimal PNG header
+    attachment_2_data = b"PDF content here"
 
-        attachment_1 = await attachment_registry.store_and_register_tool_attachment(
-            file_content=attachment_1_data,
-            filename="bird_statue.png",
-            content_type="image/png",
-            tool_name="get_camera_snapshot",
-            description="bird_statue.png",
+    attachment_1 = await attachment_registry.store_and_register_tool_attachment(
+        file_content=attachment_1_data,
+        filename="bird_statue.png",
+        content_type="image/png",
+        tool_name="get_camera_snapshot",
+        description="bird_statue.png",
+        conversation_id="test_chat_789",
+    )
+
+    attachment_2 = await attachment_registry.store_and_register_tool_attachment(
+        file_content=attachment_2_data,
+        filename="document.pdf",
+        content_type="application/pdf",
+        tool_name="attach_to_response",
+        description="document.pdf",
+        conversation_id="test_chat_789",
+    )
+
+    attachment_id_1 = attachment_1.attachment_id
+    attachment_id_2 = attachment_2.attachment_id
+
+    # Create thread messages with attachment IDs
+    root_msg = await db.message_history.add_message(
+        message=UserMessage(content="Can you highlight the eagle?"),
+        interface_type="telegram",
+        conversation_id="test_chat_789",
+        interface_message_id="300",
+        processing_profile_id="default_assistant",
+        timestamp=datetime.now(UTC),
+    )
+
+    assert root_msg is not None, "Failed to create root message"
+    root_internal_id = root_msg
+
+    # Tool message with attachment ID
+    await db.message_history.add_message(
+        message=ToolMessage(
+            tool_call_id="call_456",
+            content=f"Retrieved snapshot\n[Attachment ID: {attachment_id_1}]",
+            name="get_camera_snapshot",
+        ),
+        interface_type="telegram",
+        conversation_id="test_chat_789",
+        turn_id="turn_1",
+        thread_root_id=root_internal_id,
+        processing_profile_id="default_assistant",
+        timestamp=datetime.now(UTC),
+    )
+
+    # Another message with different attachment
+    await db.message_history.add_message(
+        message=AssistantMessage(
+            content=f"Here's the document\n[Attachment ID: {attachment_id_2}]"
+        ),
+        interface_type="telegram",
+        conversation_id="test_chat_789",
+        turn_id="turn_2",
+        thread_root_id=root_internal_id,
+        processing_profile_id="default_assistant",
+        timestamp=datetime.now(UTC),
+    )
+
+    # Create a minimal ProcessingService to test the helper method
+    service_config = ProcessingServiceConfig(
+        prompts={
+            "thread_attachments_context_header": "Recent Attachments in Conversation:\n{attachments_list}"
+        },
+        timezone=ZoneInfo("UTC"),
+        max_history_messages=10,
+        history_max_age_hours=2,
+        tools_config=ToolsConfig(),
+        delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        id="test_profile",
+    )
+
+    # Create real dependencies instead of mocks
+    llm_client = RuleBasedMockLLMClient(rules=[], default_response=None)
+    local_provider = LocalToolsProvider(definitions=[], implementations={})
+    mcp_provider = MCPToolsProvider(mcp_server_configs={})
+    tools_provider = CompositeToolsProvider(providers=[local_provider, mcp_provider])
+
+    processing_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=tools_provider,
+        service_config=service_config,
+        context_providers=[],
+        server_url="http://localhost:8000",
+        app_config=AppConfig(),
+        attachment_registry=attachment_registry,
+    )
+
+    # Extract attachment context from conversation
+    context = (
+        await processing_service.attachment_processor.extract_conversation_context(
+            db,
             conversation_id="test_chat_789",
+            max_age_hours=2,
+            prompts={},
+            acting_user_id=None,
         )
+    )
 
-        attachment_2 = await attachment_registry.store_and_register_tool_attachment(
-            file_content=attachment_2_data,
-            filename="document.pdf",
-            content_type="application/pdf",
-            tool_name="attach_to_response",
-            description="document.pdf",
-            conversation_id="test_chat_789",
-        )
-
-        attachment_id_1 = attachment_1.attachment_id
-        attachment_id_2 = attachment_2.attachment_id
-
-        # Create thread messages with attachment IDs
-        root_msg = await db.message_history.add_message(
-            message=UserMessage(content="Can you highlight the eagle?"),
-            interface_type="telegram",
-            conversation_id="test_chat_789",
-            interface_message_id="300",
-            processing_profile_id="default_assistant",
-            timestamp=datetime.now(UTC),
-        )
-
-        assert root_msg is not None, "Failed to create root message"
-        root_internal_id = root_msg
-
-        # Tool message with attachment ID
-        await db.message_history.add_message(
-            message=ToolMessage(
-                tool_call_id="call_456",
-                content=f"Retrieved snapshot\n[Attachment ID: {attachment_id_1}]",
-                name="get_camera_snapshot",
-            ),
-            interface_type="telegram",
-            conversation_id="test_chat_789",
-            turn_id="turn_1",
-            thread_root_id=root_internal_id,
-            processing_profile_id="default_assistant",
-            timestamp=datetime.now(UTC),
-        )
-
-        # Another message with different attachment
-        await db.message_history.add_message(
-            message=AssistantMessage(
-                content=f"Here's the document\n[Attachment ID: {attachment_id_2}]"
-            ),
-            interface_type="telegram",
-            conversation_id="test_chat_789",
-            turn_id="turn_2",
-            thread_root_id=root_internal_id,
-            processing_profile_id="default_assistant",
-            timestamp=datetime.now(UTC),
-        )
-
-        # Create a minimal ProcessingService to test the helper method
-        service_config = ProcessingServiceConfig(
-            prompts={
-                "thread_attachments_context_header": "Recent Attachments in Conversation:\n{attachments_list}"
-            },
-            timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
-            history_max_age_hours=2,
-            tools_config=ToolsConfig(),
-            delegation_security_level=DelegationSecurityLevel.BLOCKED,
-            id="test_profile",
-        )
-
-        # Create real dependencies instead of mocks
-        llm_client = RuleBasedMockLLMClient(rules=[], default_response=None)
-        local_provider = LocalToolsProvider(definitions=[], implementations={})
-        mcp_provider = MCPToolsProvider(mcp_server_configs={})
-        tools_provider = CompositeToolsProvider(
-            providers=[local_provider, mcp_provider]
-        )
-
-        processing_service = ProcessingService(
-            llm_client=llm_client,
-            tools_provider=tools_provider,
-            service_config=service_config,
-            context_providers=[],
-            server_url="http://localhost:8000",
-            app_config=AppConfig(),
-            attachment_registry=attachment_registry,
-        )
-
-        # Extract attachment context from conversation
-        context = (
-            await processing_service.attachment_processor.extract_conversation_context(
-                db,
-                conversation_id="test_chat_789",
-                max_age_hours=2,
-                prompts={},
-                acting_user_id=None,
-            )
-        )
-
-        # Verify context is formatted correctly
-        assert context, "Expected non-empty attachment context"
-        assert "Recent Attachments in Conversation:" in context
-        assert attachment_id_1 in context
-        assert attachment_id_2 in context
-        assert "bird_statue.png" in context
-        assert "document.pdf" in context
-        assert "image/png" in context
-        assert "application/pdf" in context
-        # Check time-based age formatting (should show "minutes ago" or "hours ago")
-        assert "ago" in context.lower()
+    # Verify context is formatted correctly
+    assert context, "Expected non-empty attachment context"
+    assert "Recent Attachments in Conversation:" in context
+    assert attachment_id_1 in context
+    assert attachment_id_2 in context
+    assert "bird_statue.png" in context
+    assert "document.pdf" in context
+    assert "image/png" in context
+    assert "application/pdf" in context
+    # Check time-based age formatting (should show "minutes ago" or "hours ago")
+    assert "ago" in context.lower()

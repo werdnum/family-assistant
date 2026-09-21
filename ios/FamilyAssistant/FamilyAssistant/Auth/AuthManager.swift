@@ -2,7 +2,9 @@ import AuthenticationServices
 import CryptoKit
 import Foundation
 import os
+#if os(iOS)
 import WebKit
+#endif
 
 @Observable
 final class AuthManager {
@@ -15,6 +17,12 @@ final class AuthManager {
     var isBootstrapping = false
     var isLoading = false
     var errorMessage: String?
+    private(set) var isLoggingOut = false
+    private(set) var companionSessionID = UserDefaults.standard.string(forKey: "fa_companion_session_id") ?? UUID().uuidString
+
+    @MainActor var watchPairingIdentity: String {
+        isAuthenticated && !authRequired && !isBootstrapping && !isLoggingOut ? companionSessionID : ""
+    }
 
     /// Wall-clock budget for ``bootstrapSession()``. If the refresh + session-bridge
     /// work (notably the `WKWebsiteDataStore` cookie hand-off, whose first access
@@ -100,7 +108,9 @@ final class AuthManager {
 
     private var codeVerifier: String?
     private var authSession: ASWebAuthenticationSession?
+    #if os(iOS)
     private var contextProvider: PresentationContextProvider?
+    #endif
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "auth")
 
     private enum Keys {
@@ -108,10 +118,12 @@ final class AuthManager {
         static let apiToken = "fa_api_token"
         static let refreshToken = "fa_refresh_token"
         static let tokenExpiry = "fa_token_expiry"
+        static let tokenLifetime = "fa_token_lifetime"
     }
 
     init(websiteDataCleaner: (@MainActor () async -> Void)? = nil) {
         self.websiteDataCleaner = websiteDataCleaner ?? Self.clearWebsiteData
+        UserDefaults.standard.set(companionSessionID, forKey: "fa_companion_session_id")
         serverURL = UserDefaults.standard.string(forKey: Keys.serverURL) ?? ""
         if KeychainHelper.readString(key: Keys.apiToken) != nil {
             isAuthenticated = true
@@ -187,9 +199,11 @@ final class AuthManager {
         }
 
         authSession?.prefersEphemeralWebBrowserSession = false
+        #if os(iOS)
         // Must retain the context provider — ASWebAuthenticationSession holds a weak reference
         contextProvider = PresentationContextProvider()
         authSession?.presentationContextProvider = contextProvider
+        #endif
 
         if authSession?.start() != true {
             logger.error("ASWebAuthenticationSession failed to start")
@@ -246,7 +260,12 @@ final class AuthManager {
             "code_verifier": codeVerifier,
         ])
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: AuthError.authWall
+        )
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw AuthError.exchangeFailed
         }
@@ -359,6 +378,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
         isAuthenticated = false
     }
 
@@ -367,13 +387,17 @@ final class AuthManager {
     @MainActor
     private func bumpAuthEpoch() {
         authEpoch += 1
+        companionSessionID = UUID().uuidString
+        UserDefaults.standard.set(companionSessionID, forKey: "fa_companion_session_id")
         // Every auth transition passes through here — logout, a terminal 401's
         // re-auth latch, and a fresh login (which may be a different account on
         // the same deployment, without the shell ever unmounting). Decoded
         // attachment images belong to the session that was authorized to fetch
         // them, so they go with it. Views keyed on the epoch re-fetch rather
         // than keep showing what they already decoded.
+        #if os(iOS)
         AttachmentImageCache.clear()
+        #endif
     }
 
     /// Mutate ``authRequired`` and, on an actual change, emit the matching
@@ -402,15 +426,23 @@ final class AuthManager {
     /// Atomically clear rejected credentials and latch the terminal ``authRequired``
     /// state, but only if the provided epoch still owns the current auth state.
     /// Called from callers (operation start-to-terminal-latch paths) that captured
-    /// their epoch at the start of a network operation; a stale rejection from a
-    /// superseded epoch (logout/re-login happened while the operation was in flight)
-    /// must not delete a freshly re-authenticated session's credentials.
+    /// their epoch and bearer token at the start of a network operation. A stale
+    /// rejection from a superseded epoch or token must not delete freshly rotated
+    /// or re-authenticated credentials.
     @MainActor
-    func markAuthRequiredIfCurrent(capturedEpoch: Int) {
-        guard isCurrentAuthEpoch(capturedEpoch) else {
-            return
+    @discardableResult
+    func markAuthRequiredIfCurrent(
+        capturedEpoch: Int,
+        rejectedAccessToken: String? = nil
+    ) -> Bool {
+        guard isCurrentAuthEpoch(capturedEpoch) else { return false }
+        if let rejectedAccessToken,
+           KeychainHelper.readString(key: Keys.apiToken) != rejectedAccessToken
+        {
+            return false
         }
         markAuthRequired()
+        return true
     }
 
     /// Clear only the stored credentials (keychain/defaults). Used for in-place
@@ -420,6 +452,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
     }
 
     /// Whether the bridge that captured `epoch` still owns the current auth state.
@@ -544,7 +577,11 @@ final class AuthManager {
                 throw AuthError.noCredentials
             }
 
-            if expiry.timeIntervalSinceNow > 3600 {
+            let storedLifetime = UserDefaults.standard.object(forKey: Keys.tokenLifetime) as? TimeInterval
+            if !Self.shouldRefresh(
+                remaining: expiry.timeIntervalSinceNow,
+                ttl: storedLifetime
+            ) {
                 return
             }
         }
@@ -595,7 +632,9 @@ final class AuthManager {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        } catch AuthError.authWall {
+            throw AuthError.authWall
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -603,6 +642,11 @@ final class AuthManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.transient(underlying: nil)
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: AuthError.authWall
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -656,9 +700,12 @@ final class AuthManager {
         request.timeoutInterval = authRequestTimeoutSeconds
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
 
+        let data: Data
         let response: URLResponse
         do {
-            (_, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        } catch AuthError.authWall {
+            throw AuthError.authWall
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -666,6 +713,11 @@ final class AuthManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.transient(underlying: nil)
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: AuthError.authWall
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -683,6 +735,7 @@ final class AuthManager {
             return
         }
 
+        #if os(iOS)
         if let headerFields = httpResponse.allHeaderFields as? [String: String],
            let responseURL = httpResponse.url
         {
@@ -708,12 +761,15 @@ final class AuthManager {
                 }
             }
         }
+        #endif
     }
 
     // MARK: - Logout
 
     @MainActor
     func logout() async {
+        isLoggingOut = true
+        defer { isLoggingOut = false }
         // Supersede any in-flight session bridge before clearing WebKit data, so a
         // watchdog-abandoned bootstrap cannot re-add the cookie after this cleanup.
         bumpAuthEpoch()
@@ -726,6 +782,7 @@ final class AuthManager {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+            // auth-wall-exempt: logout is a best-effort request with no response payload.
             _ = try? await URLSession.shared.data(for: request)
         }
 
@@ -733,6 +790,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
 
         // Clear WKWebView data before flipping the auth state, so a fast
         // re-login's fresh session cookie cannot be wiped by this cleanup.
@@ -744,13 +802,96 @@ final class AuthManager {
 
     @MainActor
     private static func clearWebsiteData() async {
+        #if os(iOS)
         let dataStore = WKWebsiteDataStore.default()
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let records = await dataStore.dataRecords(ofTypes: types)
         await dataStore.removeData(ofTypes: types, for: records)
+        #endif
     }
 
     // MARK: - Helpers
+
+    @MainActor
+    func provisionWatchCredentials() async throws -> WatchCredentials {
+        guard !watchPairingIdentity.isEmpty else { throw AuthError.noCredentials }
+        let epoch = authEpoch
+        guard let baseURL = validatedServerURL() else { throw AuthError.invalidServerURL }
+        var request = try await authorizedRequest(
+            url: baseURL.appendingPathComponent("api/auth/watch-credentials"), method: "POST"
+        )
+        guard isCurrentAuthEpoch(epoch), !isLoggingOut,
+              let refresh = KeychainHelper.readString(key: Keys.refreshToken)
+        else { throw AuthError.noCredentials }
+        request.timeoutInterval = authRequestTimeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["refresh_token": refresh])
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        try AuthWallDetection.rejectIfLikely(response: response, data: data, throwing: AuthError.authWall)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw AuthError.authRejected
+        }
+        guard isCurrentAuthEpoch(epoch), !watchPairingIdentity.isEmpty else { throw AuthError.noCredentials }
+        return try WatchCredentials(serverURL: baseURL.absoluteString, phoneSessionID: companionSessionID,
+                                    tokens: JSONDecoder().decode(TokenResponse.self, from: data))
+    }
+
+    @MainActor
+    func installWatchCredentials(_ credentials: WatchCredentials) throws {
+        guard let url = URL(string: credentials.serverURL),
+              ["https", "http"].contains(url.scheme), url.host != nil,
+              !credentials.phoneSessionID.isEmpty, !credentials.tokens.apiToken.isEmpty,
+              let refresh = credentials.tokens.refreshToken, !refresh.isEmpty,
+              let ttl = credentials.tokens.expiresIn, ttl > 0
+        else { throw AuthError.noCredentials }
+        clearLocalAuthState()
+        guard KeychainHelper.save(key: Keys.apiToken, string: credentials.tokens.apiToken),
+              KeychainHelper.save(key: Keys.refreshToken, string: refresh)
+        else {
+            clearLocalAuthState()
+            throw AuthError.noCredentials
+        }
+        serverURL = credentials.serverURL
+        saveServerURL()
+        UserDefaults.standard.set(ISO8601DateFormatter().string(from: Date().addingTimeInterval(Double(ttl))), forKey: Keys.tokenExpiry)
+        UserDefaults.standard.set(ttl, forKey: Keys.tokenLifetime)
+        isBootstrapping = false
+        isAuthenticated = true
+        setAuthRequired(false)
+    }
+
+    /// Return a usable access token, refreshing first when it is due. Components
+    /// that send outside ``authorizedRequest`` (such as error reporting) use this
+    /// so launch-time work cannot race bootstrap and attach an expired token.
+    @MainActor
+    func validAccessToken() async throws -> String {
+        let capturedEpoch = authEpoch
+        do {
+            try await refreshIfNeeded()
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            if isCurrentAuthEpoch(capturedEpoch) {
+                markAuthRequired()
+            }
+            throw AuthError.noCredentials
+        }
+
+        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
+            markAuthRequired()
+            throw AuthError.noCredentials
+        }
+        return apiToken
+    }
+
+    /// Return a usable access token only when an authenticated session already
+    /// exists. Best-effort callers such as error reporting must not turn the
+    /// absence of credentials during onboarding into an auth-required state.
+    @MainActor
+    func validAccessTokenIfPresent() async throws -> String? {
+        guard KeychainHelper.readString(key: Keys.apiToken) != nil else {
+            return nil
+        }
+        return try await validAccessToken()
+    }
 
     func validatedServerURL() -> URL? {
         var urlString = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -769,24 +910,7 @@ final class AuthManager {
 
     @MainActor
     func authorizedRequest(url: URL, method: String) async throws -> URLRequest {
-        let capturedEpoch = authEpoch
-        do {
-            try await refreshIfNeeded()
-        } catch AuthError.authRejected, AuthError.noCredentials {
-            // Only clear state if the epoch hasn't changed since we started. If
-            // logout/relogin bumped the epoch while we were in an in-flight refresh,
-            // don't clear the new session's credentials; let the error propagate so
-            // the caller can retry with the current credentials.
-            if isCurrentAuthEpoch(capturedEpoch) {
-                markAuthRequired()
-            }
-            throw AuthError.noCredentials
-        }
-
-        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
-            markAuthRequired()
-            throw AuthError.noCredentials
-        }
+        let apiToken = try await validAccessToken()
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
@@ -801,13 +925,30 @@ final class AuthManager {
         if let expiresIn = tokens.expiresIn {
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn))
             UserDefaults.standard.set(ISO8601DateFormatter().string(from: expiry), forKey: Keys.tokenExpiry)
+            UserDefaults.standard.set(expiresIn, forKey: Keys.tokenLifetime)
         }
+    }
+
+    /// The freshness threshold for a token with issued lifetime `ttl`: half the
+    /// lifetime, capped at an hour. A missing (or non-positive) lifetime — tokens
+    /// issued before the server reported `expires_in`, or tests that seed only an
+    /// expiry — falls back to the historical fixed one-hour threshold.
+    static func refreshThreshold(tokenTTL ttl: TimeInterval?) -> TimeInterval {
+        guard let ttl, ttl > 0 else { return 3600 }
+        return min(3600, ttl / 2)
+    }
+
+    /// Whether a token with `remaining` seconds left and issued lifetime `ttl` is
+    /// due for a proactive refresh. Mirrors the pre-proportional behaviour at the
+    /// fallback boundary (refresh when remaining ≤ threshold).
+    static func shouldRefresh(remaining: TimeInterval, ttl: TimeInterval?) -> Bool {
+        remaining <= refreshThreshold(tokenTTL: ttl)
     }
 }
 
 // MARK: - Supporting Types
 
-struct TokenResponse: Decodable {
+struct TokenResponse: Codable {
     let apiToken: String
     let refreshToken: String?
     let expiresIn: Int?
@@ -840,6 +981,7 @@ enum AuthError: LocalizedError {
     case exchangeFailed
     case authRejected
     case noCredentials
+    case authWall
     case transient(underlying: Error?)
 
     var errorDescription: String? {
@@ -848,6 +990,8 @@ enum AuthError: LocalizedError {
         case .exchangeFailed: "Failed to exchange authorization code"
         case .authRejected: "Server rejected stored credentials"
         case .noCredentials: "No stored credentials"
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .transient(let underlying):
             if let underlying { "Temporary failure: \(underlying.localizedDescription)" }
             else { "Temporary network or server error" }
@@ -857,6 +1001,7 @@ enum AuthError: LocalizedError {
 
 // MARK: - ASWebAuthenticationSession Presentation
 
+#if os(iOS)
 private final class PresentationContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         let windowScenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -864,6 +1009,8 @@ private final class PresentationContextProvider: NSObject, ASWebAuthenticationPr
         return allWindows.first { $0.isKeyWindow } ?? allWindows.first ?? UIWindow()
     }
 }
+
+#endif
 
 // MARK: - Base64URL Encoding
 

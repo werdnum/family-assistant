@@ -36,8 +36,10 @@ from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
+from family_assistant.storage.events import WORKER_COMPLETION_EVENT_TYPE
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
 
@@ -150,7 +152,8 @@ async def _save_raw_mail_webhook(
     content_type_header: str,
 ) -> None:
     """Save an accepted raw Mailgun webhook request for debugging/replay."""
-    try:
+
+    async def save_raw_request() -> None:
         os.makedirs(mailbox_raw_dir, exist_ok=True)
         now_dt = datetime.now(UTC)
         timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
@@ -165,6 +168,9 @@ async def _save_raw_mail_webhook(
         logger.info(
             f"Saved raw webhook request body ({len(raw_body_content)} bytes) to: {raw_filepath}"
         )
+
+    try:
+        await save_raw_request()
     except Exception as e:
         logger.exception(f"Failed to save raw webhook request body: {e}")
 
@@ -173,7 +179,7 @@ async def _save_raw_mail_webhook(
 @webhooks_router.post("/webhook/mail/mime")
 async def handle_mail_webhook(
     request: Request,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> Response:
     """
     Receives incoming email via webhook (expects multipart/form-data from Mailgun),
@@ -239,7 +245,7 @@ async def handle_mail_webhook(
         logger.warning("Rejecting oversized inbound email webhook: %s", exc)
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
-    try:
+    async def process_mail() -> Response:
         # FastAPI's request.form() will parse multipart/form-data
         form_data = await request.form()
 
@@ -365,16 +371,22 @@ async def handle_mail_webhook(
                 form_item = form_data.get(attachment_field_name)
 
                 if isinstance(form_item, StarletteUploadFile) and form_item.filename:
-                    try:
+
+                    async def save_attachment(
+                        current_form_item: StarletteUploadFile,
+                        attachment_index: int,
+                    ) -> None:
+                        nonlocal total_attachment_size
+                        assert current_form_item.filename is not None
                         os.makedirs(base_attachment_dir, exist_ok=True)
                         # Sanitize filename (basic)
-                        safe_filename = os.path.basename(form_item.filename)
+                        safe_filename = os.path.basename(current_form_item.filename)
                         # Prefix the saved filename with the attachment index
                         # so that two parts sharing the same filename don't
                         # overwrite each other on disk and don't collapse to
                         # the same email-attachment dedup key
                         # (message_id, storage_path).
-                        persisted_filename = f"{i}-{safe_filename}"
+                        persisted_filename = f"{attachment_index}-{safe_filename}"
                         # Disk I/O happens at the absolute path; the
                         # registry row stores the relative path so
                         # environment moves (mounts, restores) stay
@@ -389,8 +401,10 @@ async def handle_mail_webhook(
                         )
 
                         # Save the uploaded file
-                        await form_item.seek(0)  # Ensure pointer is at the start
-                        content = await form_item.read()
+                        await current_form_item.seek(
+                            0
+                        )  # Ensure pointer is at the start
+                        content = await current_form_item.read()
                         size = len(content)
                         total_attachment_size += size
                         enforce_attachment_size_limits(
@@ -403,7 +417,7 @@ async def handle_mail_webhook(
                             await f_out.write(content)
 
                         attachment_mime_type = (
-                            form_item.content_type or "application/octet-stream"
+                            current_form_item.content_type or "application/octet-stream"
                         )
                         processed_attachments.append(
                             AttachmentData(
@@ -417,6 +431,9 @@ async def handle_mail_webhook(
                             f"Saved attachment '{safe_filename}' to {disk_path} "
                             f"(stored path: {persisted_storage_path})"
                         )
+
+                    try:
+                        await save_attachment(form_item, i)
                     except EmailIntakePayloadTooLargeError:
                         raise
                     except Exception as e:
@@ -463,28 +480,38 @@ async def handle_mail_webhook(
             dkim_domain=authentication.dkim_domain if authentication else None,
         )
 
-        # Pass the Pydantic model instance to the storage function
-        email_db_id = await db_context.email.store_incoming(parsed_email_payload)
-        if (
-            email_db_id is not None
-            and email_intake_config.enable_actions
-            and target_user_id is not None
-        ):
-            await db_context.tasks.enqueue(
-                task_id=f"email_intake_action_{email_db_id}",
-                task_type=EMAIL_INTAKE_ACTION_TASK_TYPE,
-                payload={
-                    "email_db_id": email_db_id,
-                    "interface_type": "email",
-                    "conversation_id": f"email:{email_db_id}",
-                    "user_name": target_user_id,
-                },
-                original_task_id=f"email_intake_action_{email_db_id}",
-                max_retries_override=0,
-            )
+        async def _store_and_enqueue() -> int | None:
+            # Store the email and enqueue an action task atomically: if only the
+            # store commits and the enqueue fails, the delivery retry hits the
+            # duplicate Message-ID, gets None back, and the action is skipped forever.
+            email_db_id = await txn.email.store_incoming(parsed_email_payload)
+            if (
+                email_db_id is not None
+                and email_intake_config.enable_actions
+                and target_user_id is not None
+            ):
+                await txn.tasks.enqueue(
+                    task_id=f"email_intake_action_{email_db_id}",
+                    task_type=EMAIL_INTAKE_ACTION_TASK_TYPE,
+                    payload={
+                        "email_db_id": email_db_id,
+                        "interface_type": "email",
+                        "conversation_id": f"email:{email_db_id}",
+                        "user_name": target_user_id,
+                    },
+                    original_task_id=f"email_intake_action_{email_db_id}",
+                    max_retries_override=0,
+                    priority=TaskPriority.INTERACTIVE,
+                )
+            return email_db_id
+
+        async with db_context.transaction() as txn:
+            await _store_and_enqueue()
 
         return Response(status_code=200, content="Email received and processed.")
 
+    try:
+        return await process_mail()
     except EmailIntakePayloadTooLargeError as exc:
         logger.warning("Rejecting oversized inbound email webhook: %s", exc)
         raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -517,7 +544,7 @@ class WebhookEventResponse(BaseModel):
 async def handle_generic_webhook(
     request: Request,
     body: WebhookEventPayload,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     event_type: str | None = None,
     source: str | None = None,
 ) -> WebhookEventResponse:
@@ -573,7 +600,7 @@ async def handle_generic_webhook(
             # Compute expected signature
             raw_body = await request.body()
             expected = hmac.new(
-                source_secret.encode(),
+                source_secret.get_secret_value().encode(),
                 raw_body,
                 hashlib.sha256,
             ).hexdigest()
@@ -614,7 +641,7 @@ async def handle_generic_webhook(
             body.data,
             request.headers.get("X-Worker-Callback-Token"),
         )
-    elif effective_event_type == "worker_completion":
+    elif effective_event_type == WORKER_COMPLETION_EVENT_TYPE:
         await _handle_worker_completion(
             db_context,
             body.data,
@@ -636,7 +663,7 @@ async def handle_generic_webhook(
 
 
 async def _handle_worker_started(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
     callback_token: str | None,
@@ -680,7 +707,7 @@ async def _handle_worker_started(
 
 
 async def _handle_worker_completion(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
     notification_dispatcher: "Notifier | None" = None,
@@ -739,7 +766,7 @@ async def _handle_worker_completion(
     }
     status = status_map.get(outcome, "failed")
 
-    try:
+    async def update_task() -> None:
         # Update task status
         updated = await db_context.worker_tasks.update_task_status(
             task_id=task_id,
@@ -775,5 +802,7 @@ async def _handle_worker_completion(
         else:
             logger.warning(f"Worker task {task_id} not found for completion update")
 
+    try:
+        await update_task()
     except Exception as e:
         logger.exception(f"Failed to update worker task {task_id}: {e}")

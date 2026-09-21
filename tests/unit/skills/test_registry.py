@@ -4,6 +4,7 @@ from pathlib import Path
 
 from family_assistant.skills.registry import NoteRegistry
 from family_assistant.skills.types import ParsedSkill
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 
 
 def _skill(
@@ -23,13 +24,15 @@ def _skill(
 class TestNoteRegistry:
     def test_empty_registry(self) -> None:
         registry = NoteRegistry([])
-        assert registry.get_skill_catalog(None) == []
-        assert registry.get_skill_by_name("anything", None) is None
+        assert registry.get_skill_catalog(NoteReadPolicy.UNRESTRICTED) == []
+        assert (
+            registry.get_skill_by_name("anything", NoteReadPolicy.UNRESTRICTED) is None
+        )
 
     def test_get_catalog_no_filtering(self) -> None:
         skills = [_skill("Alpha"), _skill("Beta")]
         registry = NoteRegistry(skills)
-        catalog = registry.get_skill_catalog(None)
+        catalog = registry.get_skill_catalog(NoteReadPolicy.UNRESTRICTED)
         assert len(catalog) == 2
         names = {s.name for s in catalog}
         assert names == {"Alpha", "Beta"}
@@ -43,39 +46,53 @@ class TestNoteRegistry:
         registry = NoteRegistry(skills)
 
         # No grants: only public
-        catalog = registry.get_skill_catalog(set())
+        catalog = registry.get_skill_catalog(NoteReadPolicy(grants=frozenset()))
         assert [s.name for s in catalog] == ["Public"]
 
         # internal grant: public + internal
-        catalog = registry.get_skill_catalog({"internal"})
+        catalog = registry.get_skill_catalog(
+            NoteReadPolicy(grants=frozenset({"internal"}))
+        )
         names = {s.name for s in catalog}
         assert names == {"Public", "Internal"}
 
         # both grants: all
-        catalog = registry.get_skill_catalog({"internal", "sensitive"})
+        catalog = registry.get_skill_catalog(
+            NoteReadPolicy(grants=frozenset({"internal", "sensitive"}))
+        )
         assert len(catalog) == 3
 
     def test_get_skill_by_name(self) -> None:
         skills = [_skill("Meeting Notes"), _skill("Research")]
         registry = NoteRegistry(skills)
 
-        result = registry.get_skill_by_name("Meeting Notes", None)
+        result = registry.get_skill_by_name(
+            "Meeting Notes", NoteReadPolicy.UNRESTRICTED
+        )
         assert result is not None
         assert result.name == "Meeting Notes"
 
     def test_get_skill_by_name_not_found(self) -> None:
         registry = NoteRegistry([_skill("Alpha")])
-        assert registry.get_skill_by_name("Nonexistent", None) is None
+        assert (
+            registry.get_skill_by_name("Nonexistent", NoteReadPolicy.UNRESTRICTED)
+            is None
+        )
 
     def test_get_skill_by_name_access_denied(self) -> None:
         skills = [_skill("Secret", labels=frozenset({"sensitive"}))]
         registry = NoteRegistry(skills)
 
         # Without the grant, should return None
-        assert registry.get_skill_by_name("Secret", set()) is None
+        assert (
+            registry.get_skill_by_name("Secret", NoteReadPolicy(grants=frozenset()))
+            is None
+        )
 
         # With the grant, should return the skill
-        result = registry.get_skill_by_name("Secret", {"sensitive"})
+        result = registry.get_skill_by_name(
+            "Secret", NoteReadPolicy(grants=frozenset({"sensitive"}))
+        )
         assert result is not None
         assert result.name == "Secret"
 
@@ -85,6 +102,25 @@ class TestNoteRegistry:
             _skill("Dup", description="Second"),
         ]
         registry = NoteRegistry(skills)
-        result = registry.get_skill_by_name("Dup", None)
+        result = registry.get_skill_by_name("Dup", NoteReadPolicy.UNRESTRICTED)
         assert result is not None
         assert result.description == "Second"
+
+    def test_required_labels_exclude_a_label_less_skill(self) -> None:
+        """A file skill carries no labels, so grants alone always admit it.
+
+        The read floor is the only thing that keeps a confined profile -- the
+        memory curator -- out of the skill catalogue.
+        """
+        registry = NoteRegistry([
+            _skill("Email Drafting"),
+            _skill("Memory Handbook", labels=frozenset({"memory"})),
+        ])
+        confined = NoteReadPolicy(
+            grants=frozenset({"memory"}), required_labels=frozenset({"memory"})
+        )
+
+        assert [s.name for s in registry.get_skill_catalog(confined)] == [
+            "Memory Handbook"
+        ]
+        assert registry.get_skill_by_name("Email Drafting", confined) is None

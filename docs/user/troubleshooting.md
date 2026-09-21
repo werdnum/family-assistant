@@ -17,6 +17,14 @@ page covers the general cases.
 4. In Telegram, check notifications are enabled for the bot.
 5. Try the other interface. If Telegram is quiet, the web interface may still work.
 
+## The iOS app says "authentication wall detected"
+
+This means the app reached a sign-in page or network access screen instead of the Family Assistant
+API. Open your Family Assistant web address in Safari and complete any sign-in page, then return to
+the app and tap the Chat connection indicator to reconnect. If the web address does not open either,
+check your connection. If it opens but the message keeps returning, contact the person who manages
+Family Assistant so they can check the server and access gateway.
+
 ## It misunderstood you
 
 - **Rephrase.** Slightly different wording often makes a large difference.
@@ -81,10 +89,20 @@ It can read the application's source code, query its database, inspect error log
 and explain which tools each mode may use — including why a particular tool call was allowed,
 denied, or required confirmation.
 
-It deliberately cannot change data or send messages. Every action with a side effect — filing a
-GitHub issue, reconnecting an MCP server, launching or cancelling an isolated coding worker, handing
-work to another mode — asks for your approval first. If it tells you a tool isn't available to it,
-that's the intended safety configuration, not a fault.
+It can also look up the project's history on GitHub: the commits behind a recent change, the pull
+request that touched a component, and existing issues. That is how it answers "this worked last
+week" — it compares the version you are running against what has changed since, which is usually a
+faster explanation than the logs. It reads GitHub only; it cannot open, close or comment on
+anything, and filing an issue is still a separate step that asks you first.
+
+It deliberately cannot change data or send messages. It can run code in a throwaway sandbox to
+reproduce a failure, read a repository, or crunch data it exported from a diagnostic read. That
+sandbox cannot reach your information or change the running assistant: it holds only what the
+assistant puts into the command, which for that last case is the data it exported. Aligned handoffs
+to other modes, coding worker launches and sandbox runs are judged automatically by tool-call review
+without a prompt; filing a public GitHub issue and cancelling a worker still ask for your approval
+first. If it tells you a tool isn't available to it, that's the intended safety configuration, not a
+fault.
 
 ## Still stuck
 

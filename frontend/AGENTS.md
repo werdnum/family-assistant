@@ -39,7 +39,12 @@ const { http, HttpResponse } = await import('msw');
 ```
 
 Chat tests render via `renderChatApp()` from `src/test/utils/renderChatApp.tsx`. Prefer `waitFor()`
-over fixed timeouts when waiting for post-request DOM updates.
+over fixed timeouts when waiting for post-request DOM updates. For successive chat messages, wait
+for the send action to appear (the stream has ended), then for it to be enabled after typing.
+
+`ResumableStreaming.test.tsx` shortens the exported `streamResumeTuning` backoff delays and restores
+them after each test. It keeps the production retry count and liveness threshold, so failure and
+reconciliation paths exercise every attempt without spending seconds waiting between requests.
 
 If a request is not being intercepted, check that the handler URL and HTTP method match the call
 exactly.

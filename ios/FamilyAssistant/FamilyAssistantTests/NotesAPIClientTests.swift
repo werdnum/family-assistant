@@ -153,6 +153,49 @@ final class NotesAPIClientTests: XCTestCase {
         }
     }
 
+    func testHTMLResponseSurfacesAuthWallInsteadOfDecodeError() async throws {
+        MockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><head><title>Just a moment...</title></head><body></body></html>",
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listNotes()
+            XCTFail("Expected an HTML login page to throw authWall")
+        } catch NotesAPIError.authWall {}
+    }
+
+    func testMarkupBodyWithJSONContentTypeSurfacesAuthWall() async throws {
+        MockBackendURLProtocol.respond { _ in
+            .json(
+                "\n  <html><body>Sign in</body></html>",
+                headers: ["Content-Type": "application/json"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listNotes()
+            XCTFail("Expected HTML markup in the body to throw authWall")
+        } catch NotesAPIError.authWall {}
+    }
+
+    func testNonSuccessMarkupSurfacesAuthWallBeforeStatusError() async throws {
+        MockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Access denied</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "application/json"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listNotes()
+            XCTFail("Expected non-success markup to throw authWall")
+        } catch NotesAPIError.authWall {}
+    }
+
     private func makeClient() -> NotesAPIClient {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -235,9 +278,16 @@ private final class MockBackendURLProtocol: URLProtocol {
 private struct MockResponse {
     let statusCode: Int
     let data: Data
+    let headers: [String: String]
 
-    static func json(_ json: String, statusCode: Int = 200) -> MockResponse {
-        MockResponse(statusCode: statusCode, data: Data(json.utf8))
+    static func json(
+        _ json: String,
+        statusCode: Int = 200,
+        headers extraHeaders: [String: String] = [:]
+    ) -> MockResponse {
+        var headers = ["Content-Type": "application/json"]
+        headers.merge(extraHeaders) { _, new in new }
+        return MockResponse(statusCode: statusCode, data: Data(json.utf8), headers: headers)
     }
 
     func urlResponse(for request: URLRequest) -> HTTPURLResponse {
@@ -245,7 +295,7 @@ private struct MockResponse {
             url: request.url!,
             statusCode: statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: headers
         )!
     }
 }

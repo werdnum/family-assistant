@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import ToolMessage
+from family_assistant.llm.messages import ToolMessage, UserMessage
 from tests.mocks.mock_llm import (
     LLMOutput,
     MatcherArgs,
@@ -112,6 +112,16 @@ async def test_send_message_to_user_tool(
     original_providers = list(fix.processing_service.context_providers)
     fix.processing_service.context_providers.append(known_users_provider)
 
+    # Bob is only a legitimate target because he has already talked to the
+    # assistant -- the tool refuses conversations it has no user message for.
+    await fix.database.message_history.add_message(
+        UserMessage(content="Hi assistant"),
+        interface_type="telegram",
+        conversation_id=str(bob_chat_id),
+        timestamp=datetime.now(UTC),
+        user_id=str(bob_chat_id),
+    )
+
     user_a_text = (
         f"Hey assistant, please tell {bob_name} that 'the meeting is at 3 PM'."
     )
@@ -182,11 +192,11 @@ async def test_send_message_to_user_tool(
     try:
         await fix.handler.message_handler(update_alice, context_alice)
 
-        async with fix.get_db_context_func() as db_context:
-            bob_history_all = await db_context.message_history.get_recent_with_metadata(
-                interface_type="telegram",
-                conversation_id=str(bob_chat_id),
-            )
+        db_context = fix.database
+        bob_history_all = await db_context.message_history.get_recent_with_metadata(
+            interface_type="telegram",
+            conversation_id=str(bob_chat_id),
+        )
 
         # Assert - verify bot responses via telegram-test-api
         bot_responses = await wait_for_bot_response(
@@ -238,7 +248,7 @@ async def test_send_message_to_user_tool(
             assert_that([
                 msg["taint_metadata_version"] for msg in bob_assistant_rows
             ]).described_as("Taint metadata version on recorded rows").contains_only(
-                "runtime_v1"
+                "runtime_v2"
             )
     finally:
         # Restore original context providers

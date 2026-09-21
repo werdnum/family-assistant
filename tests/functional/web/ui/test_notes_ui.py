@@ -4,7 +4,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.web.app_creator import app as actual_app
 
@@ -12,22 +12,22 @@ from family_assistant.web.app_creator import app as actual_app
 @pytest.mark.asyncio
 async def test_notes_ui_endpoints_accessible(db_engine: AsyncEngine) -> None:
     """Test that notes UI endpoints are accessible and don't crash."""
-    # storage functions now accessed via DatabaseContext
+    # storage functions now accessed via Database
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Add test notes with different include_in_prompt values
-        await db_context.notes.add_or_update(
-            title="Test Note",
-            content="Test content",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        await db_context.notes.add_or_update(
-            title="Excluded Note",
-            content="Excluded content",
-            include_in_prompt=False,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db_context = Database(engine=db_engine)
+    # Add test notes with different include_in_prompt values
+    await db_context.notes.add_or_update(
+        title="Test Note",
+        content="Test content",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await db_context.notes.add_or_update(
+        title="Excluded Note",
+        content="Excluded content",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
     # Create test client
     transport = httpx.ASGITransport(app=actual_app)

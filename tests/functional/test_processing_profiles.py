@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.types import ToolResult
 from tests.mocks.mock_llm import (
@@ -143,34 +143,34 @@ async def test_reply_with_different_profile_includes_history(
         api_backend=None,
     )
     # --- 1. Simulate initial message from Profile A ---
-    async with get_db_context(db_engine) as db_context:
-        result = await profile_a_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="telegram",
-            conversation_id=str(chat_id),
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id=initial_message_id,
-            user_name=user_name,
+    db_context = Database(db_engine)
+    result = await profile_a_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="telegram",
+        conversation_id=str(chat_id),
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id=initial_message_id,
+        user_name=user_name,
+    )
+    # Manually update the interface_message_id for the assistant's reply
+    initial_assistant_message_id = result.assistant_message_internal_id
+    if initial_assistant_message_id:
+        await db_context.message_history.update_interface_id(
+            internal_id=initial_assistant_message_id,
+            interface_message_id="661",  # The bot replies with a new message id
         )
-        # Manually update the interface_message_id for the assistant's reply
-        initial_assistant_message_id = result.assistant_message_internal_id
-        if initial_assistant_message_id:
-            await db_context.message_history.update_interface_id(
-                internal_id=initial_assistant_message_id,
-                interface_message_id="661",  # The bot replies with a new message id
-            )
 
     # --- 2. Simulate a reply from the user, handled by Profile B ---
-    async with get_db_context(db_engine) as db_context:
-        await profile_b_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="telegram",
-            conversation_id=str(chat_id),
-            trigger_content_parts=[{"type": "text", "text": "Good job"}],
-            trigger_interface_message_id=reply_message_id,
-            user_name=user_name,
-            replied_to_interface_id=initial_message_id,
-        )
+    db_context = Database(db_engine)
+    await profile_b_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="telegram",
+        conversation_id=str(chat_id),
+        trigger_content_parts=[{"type": "text", "text": "Good job"}],
+        trigger_interface_message_id=reply_message_id,
+        user_name=user_name,
+        replied_to_interface_id=initial_message_id,
+    )
 
     # --- 3. Assertions ---
     # Check that Profile B's LLM was called

@@ -12,7 +12,7 @@ import logging
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     import builtins
@@ -69,7 +69,7 @@ class ScriptAttachment:
         self,
         metadata: AttachmentMetadata,
         registry: AttachmentRegistry,
-        db_context_getter: Callable,
+        db_context_getter: Callable[[], Database],
         user_id: str | None = None,
     ) -> None:
         """
@@ -78,7 +78,7 @@ class ScriptAttachment:
         Args:
             metadata: The attachment metadata
             registry: The attachment registry for content access
-            db_context_getter: Function that returns a DatabaseContext
+            db_context_getter: Function that returns a Database
             user_id: User ID for authorization checks
         """
         self._metadata = metadata
@@ -113,6 +113,29 @@ class ScriptAttachment:
         metadata_dict = self._metadata.to_dict()
         return metadata_dict.get("metadata", {}).get("original_filename")
 
+    async def _fetch_content(self) -> bytes | None:
+        # The handle owns no open connection and is used directly across calls.
+        db_context = self._db_context_getter()
+        return await self._registry.get_attachment_content(
+            db_context,
+            self._metadata.attachment_id,
+            acting_user_id=self._acting_user_id,
+        )
+
+    def _fetch_content_sync(self) -> bytes | None:
+        try:
+            loop = asyncio.get_running_loop()
+            logger.debug(
+                f"Running in async context, using run_coroutine_threadsafe for attachment {self._metadata.attachment_id}"
+            )
+            future = asyncio.run_coroutine_threadsafe(self._fetch_content(), loop)
+            return future.result(timeout=30)
+        except RuntimeError:
+            logger.debug(
+                f"No running loop, using asyncio.run for attachment {self._metadata.attachment_id}"
+            )
+            return asyncio.run(self._fetch_content())
+
     def get_content(self) -> bytes:
         """
         Get the attachment content as bytes.
@@ -127,38 +150,12 @@ class ScriptAttachment:
         """
         if self._content_cache is None:
             try:
-                # We need to run async code from sync context
-                # This will work in the script execution environment
-                async def _get_content() -> bytes:
-                    async with self._db_context_getter() as db_context:
-                        content = await self._registry.get_attachment_content(
-                            db_context,
-                            self._metadata.attachment_id,
-                            acting_user_id=self._acting_user_id,
-                        )
-                        if content is None:
-                            raise RuntimeError(
-                                f"Could not retrieve content for attachment {self._metadata.attachment_id}"
-                            )
-                        return content
-
-                # Try to get running loop, fall back to new loop if none
-                try:
-                    loop = asyncio.get_running_loop()
-                    # We're in an async context, but sync method called
-                    # This should not happen in normal script execution
-                    logger.debug(
-                        f"Running in async context, using run_coroutine_threadsafe for attachment {self._metadata.attachment_id}"
+                content = self._fetch_content_sync()
+                if content is None:
+                    raise RuntimeError(
+                        f"Could not retrieve content for attachment {self._metadata.attachment_id}"
                     )
-                    future = asyncio.run_coroutine_threadsafe(_get_content(), loop)
-                    self._content_cache = future.result(timeout=30)
-                except RuntimeError:
-                    # No running loop, use asyncio.run
-                    logger.debug(
-                        f"No running loop, using asyncio.run for attachment {self._metadata.attachment_id}"
-                    )
-                    self._content_cache = asyncio.run(_get_content())
-
+                self._content_cache = content
             except Exception as e:
                 raise RuntimeError(f"Failed to get attachment content: {e}") from e
 
@@ -177,17 +174,11 @@ class ScriptAttachment:
             RuntimeError: If the content cannot be retrieved
         """
         if self._content_cache is None:
+            logger.debug(
+                f"Retrieving content for attachment {self._metadata.attachment_id} using registry"
+            )
             try:
-                # Get the database context - it might already be active, so don't use 'async with'
-                db_context = self._db_context_getter()
-                logger.debug(
-                    f"Retrieving content for attachment {self._metadata.attachment_id} using registry"
-                )
-                content = await self._registry.get_attachment_content(
-                    db_context,
-                    self._metadata.attachment_id,
-                    acting_user_id=self._acting_user_id,
-                )
+                content = await self._fetch_content()
                 if content is None:
                     logger.error(
                         f"AttachmentRegistry returned None for attachment {self._metadata.attachment_id}"
@@ -195,12 +186,13 @@ class ScriptAttachment:
                     raise RuntimeError(
                         f"Could not retrieve content for attachment {self._metadata.attachment_id}"
                     )
-                logger.debug(
-                    f"Successfully retrieved {len(content)} bytes for attachment {self._metadata.attachment_id}"
-                )
-                self._content_cache = content
             except Exception as e:
                 raise RuntimeError(f"Failed to get attachment content: {e}") from e
+
+            logger.debug(
+                f"Successfully retrieved {len(content)} bytes for attachment {self._metadata.attachment_id}"
+            )
+            self._content_cache = content
 
         return self._content_cache
 
@@ -263,7 +255,7 @@ class AttachmentAPI:
         attachment_registry: AttachmentRegistry,
         conversation_id: str | None = None,
         db_engine: AsyncEngine | None = None,
-        db_context: DatabaseContext | None = None,
+        db_context: Database | None = None,
         user_id: str | None = None,
     ) -> None:
         """
@@ -272,7 +264,7 @@ class AttachmentAPI:
         Args:
             attachment_registry: The attachment registry service
             conversation_id: Current conversation ID for scoping
-            db_engine: Database engine for DatabaseContext (used as fallback)
+            db_engine: Database engine for Database (used as fallback)
             db_context: Existing database context to reuse (preferred over engine)
                        This allows reading attachments created in the same transaction.
             user_id: User ID for authorization checks
@@ -294,7 +286,7 @@ class AttachmentAPI:
     async def _read_async(self, attachment_id: str) -> str | None:
         """Read attachment content as a string."""
 
-        async def _do_read(db_ctx: DatabaseContext) -> str | None:
+        async def _do_read(db_ctx: Database) -> str | None:
             content = await self.attachment_registry.get_attachment_content(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
@@ -313,13 +305,13 @@ class AttachmentAPI:
             return await _do_read(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_read(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_read(db_context)
 
     async def _read_bytes_async(self, attachment_id: str) -> bytes | None:
         """Read attachment content as raw bytes without UTF-8 decoding."""
 
-        async def _do_read(db_ctx: DatabaseContext) -> bytes | None:
+        async def _do_read(db_ctx: Database) -> bytes | None:
             return await self.attachment_registry.get_attachment_content(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
@@ -329,13 +321,13 @@ class AttachmentAPI:
             return await _do_read(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_read(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_read(db_context)
 
     async def _get_async(self, attachment_id: str) -> AttachmentInfoDict | None:
         """Get attachment metadata by ID."""
 
-        async def _do_get(db_ctx: DatabaseContext) -> AttachmentInfoDict | None:
+        async def _do_get(db_ctx: Database) -> AttachmentInfoDict | None:
             attachment = await self.attachment_registry.get_attachment(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
@@ -361,8 +353,8 @@ class AttachmentAPI:
             return await _do_get(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_get(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_get(db_context)
 
     async def _list_async(
         self,
@@ -372,7 +364,7 @@ class AttachmentAPI:
         """List attachments in the current conversation."""
 
         async def _do_list(
-            db_ctx: DatabaseContext,
+            db_ctx: Database,
         ) -> builtins.list[AttachmentInfoDict]:
             attachments = await self.attachment_registry.list_attachments(
                 db_ctx,
@@ -403,25 +395,25 @@ class AttachmentAPI:
             return await _do_list(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_list(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_list(db_context)
 
     async def _send_async(self, attachment_id: str, message: str | None = None) -> str:
         """Send an attachment to the user."""
 
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            # Verify attachment exists and is accessible
-            attachment = await self.attachment_registry.get_attachment(
-                db_context, attachment_id, acting_user_id=self._acting_user_id
-            )
+        db_context = Database(engine=self._require_db_engine())
+        # Verify attachment exists and is accessible
+        attachment = await self.attachment_registry.get_attachment(
+            db_context, attachment_id, acting_user_id=self._acting_user_id
+        )
 
-            if not attachment:
-                return f"Attachment {attachment_id} not found"
+        if not attachment:
+            return f"Attachment {attachment_id} not found"
 
-            if message:
-                return f"Sent attachment {attachment_id} with message: {message}"
-            else:
-                return f"Sent attachment {attachment_id}"
+        if message:
+            return f"Sent attachment {attachment_id} with message: {message}"
+        else:
+            return f"Sent attachment {attachment_id}"
 
     async def _create_async(
         self,
@@ -439,9 +431,12 @@ class AttachmentAPI:
             file_content=content_bytes,
             filename=filename,
             content_type=mime_type,
+            # Script output, like tool output: the limit on what a model will
+            # accept is not a reason to throw away what the script produced.
+            media_limited=False,
         )
 
-        async def _do_register(db_ctx: DatabaseContext) -> AttachmentMetadata:
+        async def _do_register(db_ctx: Database) -> AttachmentMetadata:
             return await self.attachment_registry.register_attachment(
                 db_context=db_ctx,
                 attachment_id=file_metadata.attachment_id,
@@ -462,8 +457,8 @@ class AttachmentAPI:
             return await _do_register(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_register(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_register(db_context)
 
 
 def create_attachment_api(

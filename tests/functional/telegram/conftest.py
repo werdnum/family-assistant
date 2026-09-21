@@ -1,9 +1,9 @@
-import contextlib
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import AsyncMock
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 from telegram import Bot
@@ -13,7 +13,7 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMInterface
 from family_assistant.processing import ProcessingService
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.telegram.handler import TelegramUpdateHandler
 from family_assistant.telegram.interface import (
     TelegramChatInterface,
@@ -46,16 +46,29 @@ class TelegramHandlerTestFixture(NamedTuple):
     tools_provider: (
         ToolsProvider  # This is assistant.default_processing_service.tools_provider
     )
-    get_db_context_func: Callable[
-        ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
-    ]
+    database: Database
     telegram_client: "TelegramTestClient"  # For verifying bot responses
+
+
+@pytest.fixture
+# ast-grep-ignore: no-dict-any - config overrides mirror the raw AppConfig schema
+def telegram_config_overrides() -> dict[str, Any]:
+    """Top-level config keys a test file wants set differently.
+
+    Overridden by a test module that needs the assistant configured another way
+    -- ``users``, say, which is where a canonical user's display name lives.
+    Shallow: a key given here replaces the fixture's value for it outright,
+    which keeps the seam obvious rather than merging two shapes silently.
+    """
+    return {}
 
 
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
     db_engine: AsyncEngine,
     telegram_test_server_session: TelegramTestServer,
+    # ast-grep-ignore: no-dict-any - config overrides mirror the raw AppConfig schema
+    telegram_config_overrides: dict[str, Any],
 ) -> AsyncGenerator[TelegramHandlerTestFixture]:
     """
     Sets up the environment for testing TelegramUpdateHandler using the Assistant class.
@@ -144,6 +157,8 @@ async def telegram_handler_fixture(
         "willyweather_location_id": None,
     }
 
+    test_config.update(telegram_config_overrides)
+
     # 3. Instantiate Assistant with LLM Override and Database Engine
     assistant_app = Assistant(
         config=AppConfig.model_validate(test_config),
@@ -202,12 +217,6 @@ async def telegram_handler_fixture(
     assert assistant_app.telegram_service.update_handler is not None
     assistant_app.telegram_service.update_handler.confirmation_manager.request_confirmation = mock_request_confirmation_method
 
-    # Function to get DB context for the specific test engine
-    def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
-        DatabaseContext
-    ]:
-        return get_db_context(engine=db_engine)  # Explicitly pass test engine
-
     # 5. Yield Fixture Components
     # Ensure default_processing_service and its tools_provider are set
     assert assistant_app.default_processing_service is not None
@@ -225,7 +234,7 @@ async def telegram_handler_fixture(
         application=real_application,  # Real application
         processing_service=assistant_app.default_processing_service,
         tools_provider=assistant_app.default_processing_service.tools_provider,
-        get_db_context_func=get_test_db_context_func,
+        database=Database(engine=db_engine),
         telegram_client=telegram_client,  # For verifying bot responses
     )
     yield fixture_tuple

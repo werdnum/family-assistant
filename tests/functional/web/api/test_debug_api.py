@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_loader import resolve_all_service_profiles
 from family_assistant.config_models import (
@@ -47,7 +48,9 @@ def _make_sample_config() -> AppConfig:
             llm_model="gemini/gemini-3.1-pro-preview",
             provider="google",
             max_iterations=7,
-            home_assistant_token="super-secret-ha-token",  # should be redacted
+            home_assistant_token=SecretStr(
+                "super-secret-ha-token"
+            ),  # should be redacted
             prompts={
                 "system_prompt": "You are a helpful assistant for {user_name}.",
             },
@@ -80,7 +83,7 @@ def _make_sample_config() -> AppConfig:
         id="readonly",
         description="Read-only analysis profile.",
         processing_config=ProcessingConfig(
-            llm_model="gemini/gemini-3.6-flash",
+            llm_model="gemini/gemini-3.8-flash",
             provider="google",
             max_iterations=3,
         ),
@@ -181,7 +184,7 @@ async def test_dump_profiles_returns_full_config(
 async def test_dump_profiles_redacts_sensitive_fields(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """Token/password-like fields are replaced with [REDACTED]."""
+    """A declared credential is masked by SecretStr before the dump is built."""
     original_config = _install_test_config(_make_sample_config())
     original_registry = _install_registry({})
     try:
@@ -191,7 +194,9 @@ async def test_dump_profiles_redacts_sensitive_fields(
 
         trusted = data["profiles"][0]
         token = trusted["config"]["processing_config"]["home_assistant_token"]
-        assert token == "[REDACTED]"
+        # Pydantic's own mask, not the "[REDACTED]" this module writes for a
+        # credential it strips out of a larger value.
+        assert token == "**********"
         assert "super-secret-ha-token" not in response.text
     finally:
         _restore_registry(original_registry)
@@ -359,7 +364,7 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
             self.primary_client = _InnerClient()
             self.primary_model = "anthropic/claude-sonnet-4-6"
             self.fallback_client = _InnerClient()
-            self.fallback_model = "models/gemini-3.6-flash"
+            self.fallback_model = "models/gemini-3.8-flash"
 
     class _RetryingLocalService:
         kind = "local"
@@ -378,7 +383,7 @@ async def test_dump_profiles_runtime_info_for_retrying_llm_client(
         assert runtime["kind"] == "local"
         assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
         # Fallback's "models/" prefix is normalized too.
-        assert runtime["llm_fallback_model"] == "gemini-3.6-flash"
+        assert runtime["llm_fallback_model"] == "gemini-3.8-flash"
         assert runtime["llm_client_class"] == "_RetryingLikeClient"
     finally:
         _restore_registry(original_registry)
@@ -392,7 +397,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
     """Primary-only retry_config profiles must not falsely advertise a fallback.
 
     ``RetryingLLMClient.__init__`` always stores a default string on
-    ``self.fallback_model`` (currently ``"openai/gpt-5.5"``) even when
+    ``self.fallback_model`` (currently ``"openai/gpt-5.6-terra"``) even when
     ``fallback_client=None``, so a naive read of ``fallback_model`` would
     misrepresent every primary-only retry profile as having a fallback.
     """
@@ -403,9 +408,9 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
             self.primary_model = "anthropic/claude-sonnet-4-6"
             # Mirrors RetryingLLMClient: fallback_client=None but
             # fallback_model retains its default string because of the
-            # ``fallback_model or "openai/gpt-5.5"`` constructor logic.
+            # ``fallback_model or "openai/gpt-5.6-terra"`` constructor logic.
             self.fallback_client = None
-            self.fallback_model = "openai/gpt-5.5"
+            self.fallback_model = "openai/gpt-5.6-terra"
 
     class _PrimaryOnlyService:
         kind = "local"
@@ -426,7 +431,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
         assert runtime["llm_fallback_model"] is None
         # Sanity: the default fallback string must not leak into the response
         # anywhere, since no fallback_client is configured.
-        assert "openai/gpt-5.5" not in response.text
+        assert "openai/gpt-5.6-terra" not in response.text
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
@@ -467,7 +472,7 @@ async def test_dump_profiles_includes_operator_layer(
     profile = ServiceProfile(
         id="with_operator_overrides",
         description="Profile with operator-layer policy overrides.",
-        processing_config=ProcessingConfig(llm_model="gemini/gemini-3.6-flash"),
+        processing_config=ProcessingConfig(llm_model="gemini/gemini-3.8-flash"),
         tools_policy=ToolPolicyConfig(
             rules=[
                 PolicyRule(

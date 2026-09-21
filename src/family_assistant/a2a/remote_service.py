@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING, Literal
 from family_assistant.a2a.client import A2AClientError
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.a2a.types import Task, TaskState
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.processing.protocol import (
     PENDING,
     PendingPoll,
@@ -22,6 +26,7 @@ from family_assistant.security.taint import A2A_TAINT_METADATA_KEY, TurnTaintSta
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from family_assistant.a2a.attachments import A2AAttachmentTransfer
     from family_assistant.a2a.client import A2AClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
@@ -33,7 +38,8 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.security.taint import TaintSource
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.services.tool_call_review import TriggerReviewInput
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 logger = logging.getLogger(__name__)
@@ -48,9 +54,11 @@ class RemoteA2AService:
         self,
         service_config: RemoteServiceConfig,
         client: A2AClientWrapper,
+        attachments: A2AAttachmentTransfer | None = None,
     ) -> None:
         self._service_config = service_config
         self._client = client
+        self._attachments = attachments
 
     @property
     def service_config(self) -> RemoteServiceConfig:
@@ -58,7 +66,7 @@ class RemoteA2AService:
 
     async def handle_chat_interaction(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[ContentPartDict],
@@ -78,8 +86,10 @@ class RemoteA2AService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
-        save_history_with_isolated_context: bool | None = None,
+        reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult:
         """Send the request to the remote A2A agent and return the result."""
         from family_assistant.processing.types import (  # noqa: PLC0415 - runtime import for .error()
@@ -100,7 +110,19 @@ class RemoteA2AService:
         _ = trigger_is_internal
         _ = pinned_history_message_ids
         _ = trigger_role
-        _ = save_history_with_isolated_context
+        _ = reuse_existing_user_row
+        # Review trigger metadata is local authorization context. Remote A2A
+        # agents receive only the delegated request and taint metadata.
+        _ = tool_call_review_trigger
+        # Raises for any tier request: the remote picks its own model, and a
+        # caller that asked for one must not be told it was honoured. Its
+        # eligibility is the pinned one by construction, so the shared gate
+        # produces the refusal rather than a remote-specific rule.
+        resolve_model_selection(
+            self._service_config.tier_eligibility,
+            model_selection,
+            profile_id=self._service_config.id,
+        )
 
         metadata: dict[str, object] | None = None
         if initial_taint_sources:
@@ -111,6 +133,7 @@ class RemoteA2AService:
                 trigger_content_parts,
                 context_id=context_id,
                 metadata=metadata,
+                acting_user_id=user_id,
             )
         except A2AClientError as exc:
             logger.error(
@@ -123,7 +146,37 @@ class RemoteA2AService:
                 error_traceback=str(exc),
             )
 
-        return a2a_task_to_chat_result(task)
+        return await a2a_task_to_chat_result(
+            task,
+            attachments=self._attachments,
+            conversation_id=conversation_id,
+            owner_user_id=user_id,
+            turn_taint_sources=initial_taint_sources or (),
+        )
+
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        *,
+        db_context: Database,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        acting_user_id: str | None,
+    ) -> ResolvedModelSelection:
+        """Unchanged: a remote agent picks its own model, so there is nothing
+        here to route. Its eligibility is the pinned one by construction, and
+        ``handle_chat_interaction`` still refuses an envelope naming a tier."""
+        _ = (
+            db_context,
+            interface_type,
+            conversation_id,
+            subconversation_id,
+            trigger_content_parts,
+            acting_user_id,
+        )
+        return selection
 
     def _context_id(self, conversation_id: str, subconversation_id: str | None) -> str:
         base = subconversation_id or conversation_id
@@ -142,8 +195,10 @@ class RemoteA2AService:
         conversation_id: str,
         subconversation_id: str | None,
         user_name: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        acting_user_id: str | None = None,
+        initial_taint_state: TurnTaintState | None = None,
     ) -> RemoteSubmission:
         """Submit to the remote agent without blocking; the remote assigns the id.
 
@@ -153,11 +208,15 @@ class RemoteA2AService:
         poll. If the remote returned a terminal task on submit (a synchronous
         agent that ignored ``blocking=false``), the converted result is returned
         in ``terminal_result`` so the caller can complete without polling.
-        ``user_name`` and ``db_context`` are unused: the remote agent's own
-        context_id already carries continuity, unlike a local pollable target.
+        ``acting_user_id`` scopes the attachments this turn may send and owns
+        any file the remote returns terminally. ``user_name``, ``db_context``
+        and ``initial_taint_state`` are unused: the remote agent's own
+        context_id already carries continuity, unlike a local pollable target,
+        and this service reads attachments through its own registry handle.
         """
         _ = user_name
         _ = db_context
+        _ = initial_taint_state
         context_id = self._context_id(conversation_id, subconversation_id)
         logger.info(
             "Submitting async request to remote A2A agent '%s' (context_id=%s)",
@@ -173,8 +232,19 @@ class RemoteA2AService:
             content_parts,
             context_id=context_id,
             metadata=metadata,
+            acting_user_id=acting_user_id,
         )
-        terminal_result = None if _is_pending(task) else a2a_task_to_chat_result(task)
+        terminal_result = (
+            None
+            if _is_pending(task)
+            else await a2a_task_to_chat_result(
+                task,
+                attachments=self._attachments,
+                conversation_id=conversation_id,
+                owner_user_id=acting_user_id,
+                turn_taint_sources=initial_taint_sources or (),
+            )
+        )
         return RemoteSubmission(
             remote_task_id=task.id,
             remote_context_id=task.context_id,
@@ -186,12 +256,20 @@ class RemoteA2AService:
         remote_task_id: str,
         remote_context_id: str | None,
     ) -> ChatInteractionResult | PendingPoll:
-        """Poll the remote task once; return PENDING if it is not yet terminal."""
+        """Poll the remote task once; return PENDING if it is not yet terminal.
+
+        A polled run carries neither the acting user nor the originating turn's
+        taint (the worker polls on behalf of a persisted delegation, holding
+        only the remote task id), so files the remote returns here are
+        registered without an owner and with the conservative taint tier.
+        """
         _ = remote_context_id
         task = await self._client.get_task(remote_task_id)
         if _is_pending(task):
             return PENDING
-        return a2a_task_to_chat_result(task)
+        return await a2a_task_to_chat_result(
+            task, attachments=self._attachments, owner_user_id=None
+        )
 
     async def cancel_async(self, remote_task_id: str) -> None:
         """Best-effort cancellation of the remote task.

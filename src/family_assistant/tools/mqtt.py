@@ -80,7 +80,9 @@ def _get_mqtt_config(
                 mqtt_config.broker_host,
                 mqtt_config.broker_port,
                 mqtt_config.username,
-                mqtt_config.password,
+                mqtt_config.password.get_secret_value()
+                if mqtt_config.password
+                else None,
             )
 
     msg = (

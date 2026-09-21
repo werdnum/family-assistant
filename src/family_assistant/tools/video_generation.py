@@ -74,7 +74,7 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "model": {
                         "type": "string",
-                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-flash-preview) for fast conversational video. A `veo-*` id, or use of `negative_prompt` or `last_frame_image` without a model override, selects Veo for cinematic, higher-quality clips instead.",
+                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-1.1-flash) for fast conversational video. A `veo-*` id, or use of `negative_prompt` or `last_frame_image` without a model override, selects Veo for cinematic, higher-quality clips instead.",
                     },
                 },
                 "required": ["prompt"],
@@ -142,8 +142,11 @@ def _create_video_backend(
 
     app_config = _resolve_app_config(exec_context)
     backend_choice = app_config.video_generation_backend if app_config else None
-    api_key = (app_config.gemini_api_key if app_config else None) or os.getenv(
-        "GEMINI_API_KEY"
+    configured_key = app_config.gemini_api_key if app_config else None
+    api_key = (
+        configured_key.get_secret_value()
+        if configured_key
+        else os.getenv("GEMINI_API_KEY")
     )
 
     if backend_choice == "mock":

@@ -44,6 +44,12 @@ Providers use different mechanisms under the hood, so recordings land in differe
 - **Google Gemini**: the SDK's `DebugConfig` replay (JSON, with native streaming support) in
   `tests/cassettes/gemini/`, keyed by `<module>/<test name>/mldev` — see the `llm_replay_config`
   fixture in `tests/conftest.py`, which selects the mechanism from the test's `provider` parameter.
+- **Google's Interactions API** (Deep Research and Antigravity agents): VCR, not the `DebugConfig`
+  replay. These endpoints are served by a separate `_gaos` client inside the SDK, which the replay
+  layer wrapping `models.generate_content` does not intercept; VCR sits at the HTTP transport and
+  catches both. Such a test takes `@pytest.mark.vcr` and no `provider` parameter, so
+  `llm_replay_config` leaves it to VCR — see
+  `tests/integration/llm/test_google_antigravity_integration.py`.
 
 ### Home Assistant Integration Tests
 

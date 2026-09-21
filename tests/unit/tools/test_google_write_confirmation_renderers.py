@@ -7,9 +7,8 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from family_assistant.tools.confirmation import (
-    CONFIRMATION_VALUE_MAX_CHARS,
     TOOL_CONFIRMATION_RENDERERS,
-    confirmation_payload_block_reason,
+    confirmation_arguments_block_reason,
 )
 
 if TYPE_CHECKING:
@@ -83,46 +82,17 @@ async def test_drive_write_confirmation_shows_destination_and_source(
         assert "google_doc" not in prompt
 
 
-@pytest.mark.parametrize(
-    ("tool_name", "arguments", "field_name"),
-    [
-        (
-            "gmail_create_draft",
-            {"body": "x" * (CONFIRMATION_VALUE_MAX_CHARS + 1)},
-            "body",
-        ),
-        (
-            "gmail_create_draft",
-            {"subject": "x" * (CONFIRMATION_VALUE_MAX_CHARS + 1)},
-            "subject",
-        ),
-        (
-            "drive_write_file",
-            {"content": "x" * (CONFIRMATION_VALUE_MAX_CHARS + 1)},
-            "content",
-        ),
-    ],
-)
-def test_google_write_confirmation_blocks_hidden_payload_tails(
-    tool_name: str,
-    arguments: dict[str, object],
-    field_name: str,
-) -> None:
-    reason = confirmation_payload_block_reason(tool_name, arguments)
+def test_google_write_confirmation_shows_a_long_body_in_full() -> None:
+    # Authored content is rendered whole. The old per-field cap refused these
+    # calls outright, including on interfaces that render them fine; see
+    # docs/design/confirmation-prompt-capacity.md.
+    body = "x" * 20_000
 
-    assert reason is not None
-    assert field_name in reason
-    assert str(CONFIRMATION_VALUE_MAX_CHARS) in reason
-
-
-def test_drive_attachment_confirmation_does_not_apply_authored_content_limit() -> None:
     assert (
-        confirmation_payload_block_reason(
-            "drive_write_file",
-            {
-                "attachment_id": "attachment-2",
-                "content": "x" * (CONFIRMATION_VALUE_MAX_CHARS + 1),
-            },
-        )
+        confirmation_arguments_block_reason("gmail_create_draft", {"body": body})
+        is None
+    )
+    assert (
+        confirmation_arguments_block_reason("drive_write_file", {"content": body})
         is None
     )

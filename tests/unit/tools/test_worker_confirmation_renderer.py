@@ -15,11 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from family_assistant.tools.confirmation import (
-    CONFIRMATION_VALUE_MAX_CHARS,
-    MAX_WORKER_CONFIRMATION_PROMPT_CHARS,
-    MAX_WORKER_TASK_DESCRIPTION_CHARS,
     TOOL_CONFIRMATION_RENDERERS,
-    confirmation_payload_block_reason,
+    confirmation_arguments_block_reason,
     render_cancel_worker_task_confirmation,
     render_spawn_worker_confirmation,
 )
@@ -41,8 +38,9 @@ def _context_with_task(task: dict[str, object] | None) -> ToolExecutionContext:
 
 
 def test_worker_tools_have_confirmation_renderers() -> None:
-    # The engineer profile confirm-gates these tools, so the fallback
-    # "Confirm execution of tool: <name>" prompt would hide the payload.
+    # The engineer profile confirm-gates these tools. The generic fallback would
+    # dump their raw arguments; a dedicated renderer says what approving means
+    # and enforces the per-field caps this module tests.
     assert "spawn_worker" in TOOL_CONFIRMATION_RENDERERS
     assert "cancel_worker_task" in TOOL_CONFIRMATION_RENDERERS
 
@@ -69,12 +67,10 @@ async def test_spawn_worker_confirmation_shows_full_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_spawn_worker_confirmation_shows_description_above_generic_bound() -> (
-    None
-):
-    # The description must be shown in full up to the worker cap, not cut at
-    # the generic 1200-char field bound.
-    description = "x" * (CONFIRMATION_VALUE_MAX_CHARS + 200)
+async def test_spawn_worker_confirmation_shows_a_long_description_in_full() -> None:
+    # Nothing is truncated or capped by the renderer: how much of a prompt can
+    # be displayed is the delivering interface's call, not the renderer's.
+    description = "x" * 20_000
     prompt = await render_spawn_worker_confirmation(
         {"task_description": description},
         _no_context(),
@@ -82,20 +78,6 @@ async def test_spawn_worker_confirmation_shows_description_above_generic_bound()
 
     assert description in prompt
     assert "[truncated]" not in prompt
-
-
-@pytest.mark.asyncio
-async def test_spawn_worker_confirmation_refuses_over_limit_description() -> None:
-    description = "y" * (MAX_WORKER_TASK_DESCRIPTION_CHARS + 1)
-    prompt = await render_spawn_worker_confirmation(
-        {"task_description": description},
-        _no_context(),
-    )
-
-    # Never show a partial body the approver might rubber-stamp.
-    assert description not in prompt
-    assert "will not be launched" in prompt
-    assert str(MAX_WORKER_TASK_DESCRIPTION_CHARS) in prompt
 
 
 @pytest.mark.asyncio
@@ -144,51 +126,19 @@ async def test_cancel_worker_task_confirmation_hides_other_conversations_task() 
     assert "Some other conversation's private task" not in prompt
 
 
-def test_spawn_worker_block_reason_fires_only_above_caps() -> None:
-    # A description at the per-field cap is spawnable on its own; combined
-    # payloads are additionally bounded by the total prompt cap, so the
-    # description must leave room for the other fields.
-    max_description_alone = {
-        "task_description": "z" * MAX_WORKER_TASK_DESCRIPTION_CHARS,
-    }
-    assert confirmation_payload_block_reason("spawn_worker", max_description_alone) is (
-        None
+def test_spawn_worker_block_reason_ignores_payload_size() -> None:
+    # Size is not a reason to refuse: a huge description and many context paths
+    # are rendered in full and left to the interface to deliver.
+    assert (
+        confirmation_arguments_block_reason(
+            "spawn_worker",
+            {
+                "task_description": "z" * 20_000,
+                "context_paths": ["p" * 100 for _ in range(50)],
+            },
+        )
+        is None
     )
-
-    within = {
-        "task_description": "z" * 2800,
-        "context_paths": ["shared/data"],
-    }
-    assert confirmation_payload_block_reason("spawn_worker", within) is None
-
-    over_description = {
-        "task_description": "z" * (MAX_WORKER_TASK_DESCRIPTION_CHARS + 1)
-    }
-    reason = confirmation_payload_block_reason("spawn_worker", over_description)
-    assert reason is not None
-    assert "task_description" in reason
-
-    over_paths = {
-        "task_description": "ok",
-        "context_paths": ["p" * 100 for _ in range(20)],
-    }
-    reason = confirmation_payload_block_reason("spawn_worker", over_paths)
-    assert reason is not None
-    assert "context_paths" in reason
-
-
-def test_spawn_worker_block_reason_fires_on_combined_total_over_cap() -> None:
-    # Each field is individually under its own per-field cap, but the combined
-    # rendered prompt still exceeds Telegram's single-message confirmation
-    # budget, so the guard must catch the total rather than let it through.
-    within_field_caps = {
-        "task_description": "a" * 2900,
-        "context_paths": ["p" * 100 for _ in range(10)],
-    }
-    reason = confirmation_payload_block_reason("spawn_worker", within_field_caps)
-
-    assert reason is not None
-    assert str(MAX_WORKER_CONFIRMATION_PROMPT_CHARS) in reason
 
 
 def test_spawn_worker_block_reason_rejects_non_list_context_paths() -> None:
@@ -198,7 +148,7 @@ def test_spawn_worker_block_reason_rejects_non_list_context_paths() -> None:
         "task_description": "ok",
         "context_paths": {"shared/secret": True},
     }
-    reason = confirmation_payload_block_reason("spawn_worker", malformed)
+    reason = confirmation_arguments_block_reason("spawn_worker", malformed)
     assert reason is not None
     assert "context_paths" in reason
     assert "array" in reason
@@ -219,9 +169,11 @@ async def test_spawn_worker_confirmation_flags_non_list_context_paths() -> None:
     assert "will not be launched" in prompt
 
 
-def test_cancel_worker_task_is_not_size_capped() -> None:
+def test_cancel_worker_task_is_not_blocked() -> None:
     # Cancelling only carries an id; the guard must not constrain it.
     assert (
-        confirmation_payload_block_reason("cancel_worker_task", {"task_id": "task-123"})
+        confirmation_arguments_block_reason(
+            "cancel_worker_task", {"task_id": "task-123"}
+        )
         is None
     )

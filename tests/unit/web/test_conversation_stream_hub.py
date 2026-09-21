@@ -7,12 +7,14 @@ producer task lives in tests/functional/web/api/test_chat_streaming.py.
 """
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime
 
 import pytest
 
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
+    ConversationTurnRunningError,
     OutOfBufferError,
     TurnAlreadyExistsError,
 )
@@ -634,3 +636,166 @@ async def test_activity_overflow_drops_subscriber() -> None:
         await hub.publish_activity("conv", user_id="u1", reason="delegation")
 
     assert not hub.is_activity_subscribed(handle.queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_reject_if_running_refuses_a_rival_turn() -> None:
+    """``reject_if_running`` enforces one turn at a time per conversation.
+
+    The check runs under the same lock as the registration, so it is the
+    authoritative guard: a caller doing awaited setup between its own check and
+    ``start_turn`` still cannot admit a second turn.
+    """
+    hub = ConversationStreamHub()
+    first = await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    with pytest.raises(ConversationTurnRunningError) as exc_info:
+        await hub.start_turn(
+            "conv",
+            turn_id="t2",
+            user_id="u1",
+            started_at=_now(),
+            reject_if_running=True,
+        )
+
+    assert exc_info.value.turn.turn_id == first.turn_id
+    assert hub.get_turn("conv", "t2") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_reject_if_running_admits_a_turn_once_the_previous_ended() -> None:
+    """Only a RUNNING turn blocks. A completed one lingers in the hub for replay
+    and must not wedge the conversation shut."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.end_turn("conv", turn_id="t1", status="complete")
+
+    second = await hub.start_turn(
+        "conv",
+        turn_id="t2",
+        user_id="u1",
+        started_at=_now(),
+        reject_if_running=True,
+    )
+    assert second.turn_id == "t2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_reject_if_running_ignores_the_raw_user_id() -> None:
+    """A different raw user_id does not buy a second turn on one conversation.
+
+    The endpoint has already established a single canonical owner by this point,
+    but that person can arrive under more than one raw identity (web session vs
+    API token), and turn records carry the raw one. Matching on it would let the
+    second identity start the rival turn this guard exists to refuse.
+    """
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    with pytest.raises(ConversationTurnRunningError):
+        await hub.start_turn(
+            "conv",
+            turn_id="t2",
+            user_id="u2",
+            started_at=_now(),
+            reject_if_running=True,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_reject_if_running_still_reports_a_duplicate_turn_id() -> None:
+    """A retried kickoff is one turn resent, not a rival: it must keep getting
+    the idempotent ``TurnAlreadyExistsError`` rather than the conflict."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    with pytest.raises(TurnAlreadyExistsError):
+        await hub.start_turn(
+            "conv",
+            turn_id="t1",
+            user_id="u1",
+            started_at=_now(),
+            reject_if_running=True,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_discard_turn_frees_the_turn_id_for_a_retry() -> None:
+    """``discard_turn`` forgets an ended record entirely.
+
+    A non-streaming send holds its hub record only as the reservation. Keeping
+    it after the send would burn the ``turn_id``: ``start_turn`` refuses a
+    duplicate id, so a client retrying a turn that failed without persisting a
+    reply could never re-drive it.
+    """
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.end_turn("conv", turn_id="t1", status="failed")
+
+    await hub.discard_turn("conv", "t1")
+
+    assert hub.get_turn("conv", "t1") is None
+    retried = await hub.start_turn(
+        "conv",
+        turn_id="t1",
+        user_id="u1",
+        started_at=_now(),
+        reject_if_running=True,
+    )
+    assert retried.turn_id == "t1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_discard_turn_keeps_a_record_whose_producer_is_still_live() -> None:
+    """The record holds the hub's only strong reference to the producer task, so
+    discarding one still in flight would let that task be collected mid-turn."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    async def parks() -> None:
+        await asyncio.Event().wait()
+
+    task = asyncio.ensure_future(parks())
+    hub.attach_producer_task("conv", "t1", task)
+    try:
+        await hub.discard_turn("conv", "t1")
+        assert hub.get_turn("conv", "t1") is not None
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_discard_turn_is_a_no_op_for_unknown_ids() -> None:
+    """Safe in a ``finally`` that may run after the record was already dropped."""
+    hub = ConversationStreamHub()
+    await hub.discard_turn("nonexistent", "t1")
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.discard_turn("conv", "unknown")
+    assert hub.get_turn("conv", "t1") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_latest_seq_tracks_the_stream_head() -> None:
+    """``latest_seq`` is the floor the steer endpoint hands clients: every event
+    published after reading it carries a strictly greater seq."""
+    hub = ConversationStreamHub()
+    assert hub.latest_seq("conv") == -1
+
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    floor = hub.latest_seq("conv")
+
+    published = await hub.publish(
+        "conv", "text", turn_id="t1", payload={"content": "x"}
+    )
+    assert published.seq > floor
+    assert hub.latest_seq("conv") == published.seq

@@ -20,6 +20,14 @@ def main() -> int:
         shard_id = args[1]
         args = args[2:]
 
+    if len(args) == 2 and args[0] == "--adaptive-manifest":
+        manifest_nodeids = json.loads(Path(args[1]).read_text(encoding="utf-8"))
+        if not isinstance(manifest_nodeids, list) or not all(
+            isinstance(nodeid, str) for nodeid in manifest_nodeids
+        ):
+            raise TypeError("Adaptive shard manifest must be a JSON list of nodeids")
+        args = manifest_nodeids
+
     base_command_text = os.environ["PYTEST_ADAPTIVE_BASE_COMMAND"]
     base_command = json.loads(base_command_text)
     if not isinstance(base_command, list) or not all(

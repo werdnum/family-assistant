@@ -14,7 +14,7 @@ from family_assistant.security.taint import (
     TaintMetadata,
     TurnTaintState,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
@@ -40,6 +40,33 @@ class ToolExecutionRequest(BaseModel):
     profile_id: str | None = None
 
 
+def _serialize_tool_result(result: object) -> object:
+    if isinstance(result, ToolResult):
+        final_result: dict[str, object] = {}
+        if result.text is not None:
+            final_result["text"] = result.text
+        if result.data is not None:
+            final_result["data"] = result.data
+        if result.attachments:
+            final_result["attachments"] = [
+                {
+                    "mime_type": attachment.mime_type,
+                    "description": attachment.description,
+                    "has_content": attachment.content is not None,
+                    "content_length": len(attachment.content)
+                    if attachment.content
+                    else 0,
+                }
+                for attachment in result.attachments
+            ]
+        return final_result
+
+    if isinstance(result, str):
+        with contextlib.suppress(json.JSONDecodeError):
+            return json.loads(result)
+    return result
+
+
 @tools_api_router.post("/execute/{tool_name}", response_class=JSONResponse)
 async def execute_tool_api(
     tool_name: str,
@@ -48,7 +75,7 @@ async def execute_tool_api(
     current_user: Annotated[dict, Depends(get_current_user)],
     tools_provider: Annotated[ToolsProvider, Depends(get_tools_provider_dependency)],
     db_context: Annotated[
-        DatabaseContext, Depends(get_db)
+        Database, Depends(get_db)
     ],  # Inject DB context if tools need it
 ) -> JSONResponse:
     """Executes a specified tool with the given arguments."""
@@ -97,6 +124,14 @@ async def execute_tool_api(
     selected_tools_provider = (
         processing_service.tools_provider if processing_service else tools_provider
     )
+    # Dispatch through the live view so a voice session's `call_tool` resolves,
+    # while the context keeps the plain provider: a script started from here
+    # must still see every tool policy allows, not the voice declaration list.
+    dispatch_tools_provider = (
+        processing_service.live_tools_provider
+        if processing_service
+        else selected_tools_provider
+    )
     for service in processing_services.values():
         if service.kind == "remote":
             continue
@@ -114,8 +149,6 @@ async def execute_tool_api(
     )
 
     async def error_response(*, status_code: int, detail: str) -> JSONResponse:
-        if db_context.conn is not None:
-            await db_context.conn.rollback()
         return JSONResponse(
             content={
                 "detail": detail,
@@ -133,6 +166,9 @@ async def execute_tool_api(
         db_context=db_context,
         # Infrastructure fields (required - no defaults)
         processing_service=processing_service,
+        # A direct tool call is not a turn, so there is no run binding for a
+        # tool that calls a model to inherit: the profile's default tier.
+        llm_client=processing_service.llm_client if processing_service else None,
         clock=clock,
         home_assistant_client=processing_service.home_assistant_client
         if processing_service
@@ -164,6 +200,16 @@ async def execute_tool_api(
             if processing_service
             else None
         ),
+        required_note_read_labels=(
+            processing_service.service_config.required_note_read_labels
+            if processing_service
+            else None
+        ),
+        memory_read=(
+            processing_service.service_config.memory_read
+            if processing_service
+            else False
+        ),
         allowed_note_visibility_labels=(
             processing_service.service_config.allowed_note_visibility_labels
             if processing_service
@@ -185,37 +231,11 @@ async def execute_tool_api(
     )
 
     try:
-        result = await selected_tools_provider.execute_tool(
+        result = await dispatch_tools_provider.execute_tool(
             name=tool_name, arguments=payload.arguments, context=execution_context
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")
-
-        # Convert ToolResult to serializable format
-        final_result: Any
-        if isinstance(result, ToolResult):
-            final_result = {}
-            if result.text is not None:
-                final_result["text"] = result.text
-            if result.data is not None:
-                final_result["data"] = result.data
-            if result.attachments:
-                # Include attachment metadata but not binary content
-                final_result["attachments"] = [
-                    {
-                        "mime_type": att.mime_type,
-                        "description": att.description,
-                        "has_content": att.content is not None,
-                        "content_length": len(att.content) if att.content else 0,
-                    }
-                    for att in result.attachments
-                ]
-        elif isinstance(result, str):
-            # Attempt to parse result if it's a JSON string
-            final_result = result
-            with contextlib.suppress(json.JSONDecodeError):
-                final_result = json.loads(result)
-        else:
-            final_result = result
+        final_result = _serialize_tool_result(result)
 
         return JSONResponse(
             content={

@@ -124,6 +124,15 @@ async def chat_ui(request: Request) -> Response:
     return _serve_vite_html_file(request, "router.html")
 
 
+@vite_pages_router.get(
+    "/shared/conversations/{token:str}", name="shared_conversation_ui"
+)
+async def shared_conversation_ui(request: Request, token: str) -> Response:
+    """Serve the authenticated read-only shared conversation page."""
+    del token
+    return _serve_vite_html_file(request, "router.html")
+
+
 @vite_pages_router.get("/context", name="context_ui")
 async def context_ui(request: Request) -> Response:
     """Serve the React context page via router."""

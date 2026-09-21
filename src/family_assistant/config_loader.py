@@ -21,13 +21,14 @@ import os
 import pathlib
 import string
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from dotenv import find_dotenv, load_dotenv
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
-from .config_models import AppConfig
+from .config_inspection import redact_sensitive_config
+from .config_models import AppConfig, ProcessingConfig
 from .config_sources import deep_merge_dicts, load_yaml_file
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("DOCUMENT_STORAGE_PATH", "document_storage_path"),
     EnvVarMapping("ATTACHMENT_STORAGE_PATH", "attachment_storage_path"),
     EnvVarMapping("CHAT_ATTACHMENT_STORAGE_PATH", "chat_attachment_storage_path"),
+    EnvVarMapping("METRICS_ENABLED", "metrics_enabled", bool),
+    EnvVarMapping("METRICS_PORT", "metrics_port", int),
+    EnvVarMapping("METRICS_BIND_HOST", "metrics_bind_host"),
     # Model configuration
     EnvVarMapping("LLM_MODEL", "model"),
     EnvVarMapping("EMBEDDING_MODEL", "embedding_model"),
@@ -354,6 +358,11 @@ def expand_env_vars_in_dict(
         return {key: expand_env_vars_in_dict(value) for key, value in data.items()}
     elif isinstance(data, list):
         return [expand_env_vars_in_dict(item) for item in data]
+    elif isinstance(data, SecretStr):
+        # A credential field carries a placeholder like any other string, but
+        # the mask hides it from the isinstance(str) branch below. Expand the
+        # value it holds and re-wrap, so the secret never becomes a bare str.
+        return SecretStr(expand_env_vars_in_dict(data.get_secret_value()))
     elif isinstance(data, str):
         template = string.Template(data)
         try:
@@ -603,23 +612,24 @@ def load_prompts_yaml(
     try:
         with open(prompts_file_path, encoding="utf-8") as f:
             loaded_prompts = yaml.safe_load(f)
-            if isinstance(loaded_prompts, dict):
-                service_profiles = loaded_prompts.pop("service_profiles", {})
-                if service_profiles:
-                    logger.info(
-                        f"Found {len(service_profiles)} profile-specific prompt overrides in {prompts_file_path}"
-                    )
-                logger.info(f"Successfully loaded prompts from {prompts_file_path}")
-                return loaded_prompts, service_profiles
-            else:
-                logger.error(f"{prompts_file_path} is not a valid dictionary.")
-                return {}, {}
     except FileNotFoundError:
         logger.warning(f"{prompts_file_path} not found. Using default prompts.")
         return {}, {}
     except yaml.YAMLError as e:
         logger.error(f"Error parsing {prompts_file_path}: {e}")
         return {}, {}
+
+    if not isinstance(loaded_prompts, dict):
+        logger.error(f"{prompts_file_path} is not a valid dictionary.")
+        return {}, {}
+
+    service_profiles = loaded_prompts.pop("service_profiles", {})
+    if service_profiles:
+        logger.info(
+            f"Found {len(service_profiles)} profile-specific prompt overrides in {prompts_file_path}"
+        )
+    logger.info(f"Successfully loaded prompts from {prompts_file_path}")
+    return loaded_prompts, service_profiles
 
 
 def load_user_documentation(filenames: list[str]) -> str:
@@ -676,22 +686,213 @@ def load_user_documentation(filenames: list[str]) -> str:
         try:
             with open(file_path, encoding="utf-8") as f:
                 content = f.read().strip()
-                if content:
-                    header = f"\n\n# Included Documentation: {filename}\n\n"
-                    combined_content.append(header + content)
-                    logger.info(
-                        f"Loaded user documentation: '{filename}' ({len(content)} chars)"
-                    )
-                else:
-                    logger.warning(f"Documentation file is empty: '{filename}'")
         except FileNotFoundError:
             logger.warning(
                 f"Documentation file not found: '{filename}' in '{docs_user_dir}'"
             )
+            continue
         except Exception as e:
             logger.exception(f"Error reading documentation file '{filename}': {e}")
+            continue
+
+        if content:
+            header = f"\n\n# Included Documentation: {filename}\n\n"
+            combined_content.append(header + content)
+            logger.info(
+                f"Loaded user documentation: '{filename}' ({len(content)} chars)"
+            )
+        else:
+            logger.warning(f"Documentation file is empty: '{filename}'")
 
     return "\n".join(combined_content)
+
+
+# ProcessingConfig keys a profile may override by simple replacement. A field
+# absent from this set and not handled explicitly below is silently dropped from
+# a profile's processing_config -- it parses, validates, and then does nothing,
+# which for a field that gates behaviour means failing open.
+# `test_every_processing_config_field_is_accounted_for` fails when a new field is
+# added to neither this set nor PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS.
+PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
+    "provider",
+    "llm_model",
+    "review_guidance",
+    "timezone",
+    "max_history_messages",
+    "history_max_age_hours",
+    "web_max_history_messages",
+    "web_history_max_age_hours",
+    "max_iterations",
+    "context_pruning_min_turns",
+    "delegation_security_level",
+    "allowed_delegation_sources",
+    "retry_config",
+    "model_tier",
+    "model_selection",
+    "camera_config",
+    "default_note_visibility_labels",
+    "required_note_visibility_labels",
+    "allowed_note_visibility_labels",
+    "required_note_read_labels",
+    "memory_read",
+    "memory_contribute",
+    "allow_wake_llm",
+    "enable_computer_use",
+    "computer_use_excluded_functions",
+    "antigravity_config",
+    "taint_sink_class",
+    "excluded_context_providers",
+    "include_aggregated_context",
+    "poll_interval_seconds",
+    "max_async_seconds",
+    "calendar_config",
+    "home_assistant_api_url",
+    "home_assistant_token",
+    "home_assistant_context_template",
+    "home_assistant_verify_ssl",
+    "greeting_wav_path",
+)
+
+# Keys deliberately left out of the set above because a dedicated code path
+# below applies them. Keep this set honest: an entry here asserts that handling
+# exists, so exempting a field that nothing actually copies makes the
+# completeness test pass while the field stays silently discarded.
+PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
+    "prompts",  # deep-merged with the inherited prompts, not replaced
+    "include_system_docs",  # loaded into prompts.system_prompt_docs
+})
+
+
+# Top-level profile keys naming which tiers a profile may run on. They qualify a
+# `model_tier`, so they only mean something to a profile that has one: every rule
+# that drops a tier drops these alongside it, and stating them once is what keeps
+# those rules from diverging as the set grows.
+PROFILE_TIER_ELIGIBILITY_KEYS: tuple[str, ...] = (
+    "allowed_model_tiers",
+    "auto_model_tiers",
+)
+
+# Top-level profile keys holding a list that a profile replaces wholesale rather
+# than extending. Each is a closed statement about the profile -- the commands it
+# answers to, the labels it may read, the tiers it may run on, the global grants
+# it gives up -- so appending an inherited entry would widen it.
+PROFILE_REPLACED_LIST_KEYS: tuple[str, ...] = (
+    "slash_commands",
+    "visibility_grants",
+    *PROFILE_TIER_ELIGIBILITY_KEYS,
+    "excluded_global_tools",
+)
+
+# Top-level profile keys holding a single value a profile replaces outright.
+# `auto_routing_guidance` describes where one agent's routing threshold sits,
+# so merging it with another's would produce guidance describing neither.
+PROFILE_REPLACED_SCALAR_KEYS: tuple[str, ...] = ("auto_routing_guidance",)
+
+# Everything that qualifies a `model_tier` rather than standing on its own: the
+# tiers a profile may run on, the guidance the Auto classifier routes by, and --
+# in `processing_config` -- whether the profile routes at all. None of it means
+# anything to a profile with no tier, and `validate_profile_model_tier` refuses
+# a profile that keeps it without one, so every rule that drops a tier drops
+# these alongside it -- and stating them once here is what keeps those rules
+# from diverging as the set grows.
+PROFILE_TIER_QUALIFIER_KEYS: tuple[str, ...] = (
+    *PROFILE_TIER_ELIGIBILITY_KEYS,
+    "auto_routing_guidance",
+)
+PROFILE_TIER_QUALIFIER_PROCESSING_KEYS: tuple[str, ...] = ("model_selection",)
+
+# The two mutually exclusive ways a profile says which model it runs on.
+MODEL_SELECTION_KEYS: tuple[str, ...] = ("provider", "llm_model", "retry_config")
+
+
+def _unstated_tier_qualifiers(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    declared: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The tier qualifiers a definition did not state for itself.
+
+    Returns the top-level keys first, then the `processing_config` ones, which
+    is where a caller has to write each of them back.
+
+    These are the qualifiers a caller dropping a tier may drop with it. One the
+    definition stated is its own statement about a tier it names or has none of,
+    so it stays and `validate_profile_model_tier` refuses it by name rather than
+    it being quietly resolved away.
+    """
+    declared_processing = declared.get("processing_config") or {}
+    return (
+        tuple(key for key in PROFILE_TIER_QUALIFIER_KEYS if declared.get(key) is None),
+        tuple(
+            key
+            for key in PROFILE_TIER_QUALIFIER_PROCESSING_KEYS
+            if declared_processing.get(key) is None
+        ),
+    )
+
+
+def _tier_qualifier_default(key: str) -> str:
+    """What a `processing_config` tier qualifier says when nothing selects one.
+
+    Taken from the field itself so "reset" and "never set" are the same value:
+    a resolved `processing_config` is a full dump where every key exists, so
+    these cannot be removed the way a top-level qualifier is set to `None`.
+    """
+    return cast("str", ProcessingConfig.model_fields[key].default)
+
+
+def reject_conflicting_model_selection(
+    source: str,
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    declared: dict[str, Any],
+) -> None:
+    """Refuse a definition that names both a tier and an inline model.
+
+    Declaring both in the same block has no defensible resolution -- the tier's
+    chain and the inline model cannot both be what it runs on -- so it is a
+    startup error rather than a precedence question.
+    """
+    if declared.get("model_tier") is None:
+        return
+    named = ", ".join(key for key in MODEL_SELECTION_KEYS if declared.get(key))
+    if not named:
+        return
+    msg = (
+        f"{source} declares model_tier '{declared['model_tier']}' alongside "
+        f"{named}. A profile names either a tier or an inline model, not both: "
+        "the tier's chain and the inline model cannot both be what it runs on."
+    )
+    raise ValueError(msg)
+
+
+def _apply_model_selection_precedence(
+    profile_id: str,
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    declared: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    resolved: dict[str, Any],
+    *,
+    profile_declares_model: bool,
+) -> None:
+    """Let a profile's own model selection win over the inherited one.
+
+    A profile names either a tier or an inline model, and whichever it names
+    displaces the other kind inherited from ``default_profile_settings``.
+    Without this a profile declaring ``model_tier`` would keep the inherited
+    chain, which ``assistant.py`` cannot honour alongside a tier, and a profile
+    declaring an inline model would keep the inherited tier, which wins over the
+    model it declared -- the silent override the equivalent ``retry_config`` rule
+    above exists to prevent.
+    """
+    reject_conflicting_model_selection(f"Profile '{profile_id}'", declared)
+
+    declares_tier = declared.get("model_tier") is not None
+    declares_inline = profile_declares_model or declared.get("retry_config") is not None
+
+    if declares_tier:
+        for key in MODEL_SELECTION_KEYS:
+            resolved[key] = None
+    elif declares_inline:
+        resolved["model_tier"] = None
 
 
 def resolve_service_profile(
@@ -744,30 +945,7 @@ def resolve_service_profile(
         # Replace scalar values only if explicitly set (not None from Pydantic defaults)
         # This ensures profiles inherit values from default_profile_settings when they
         # don't explicitly override them.
-        scalar_keys = [
-            "provider",
-            "llm_model",
-            "timezone",
-            "max_history_messages",
-            "history_max_age_hours",
-            "web_max_history_messages",
-            "web_history_max_age_hours",
-            "max_iterations",
-            "context_pruning_min_turns",
-            "delegation_security_level",
-            "allowed_delegation_sources",
-            "retry_config",
-            "camera_config",
-            "default_note_visibility_labels",
-            "required_note_visibility_labels",
-            "allowed_note_visibility_labels",
-            "allow_wake_llm",
-            "enable_computer_use",
-            "computer_use_excluded_functions",
-            "poll_interval_seconds",
-            "max_async_seconds",
-        ]
-        for key in scalar_keys:
+        for key in PROFILE_OVERRIDABLE_PROCESSING_KEYS:
             if (
                 key in profile_def["processing_config"]
                 and profile_def["processing_config"][key] is not None
@@ -792,6 +970,13 @@ def resolve_service_profile(
             and "retry_config" not in profile_def["processing_config"]
         ):
             resolved["processing_config"]["retry_config"] = None
+
+        _apply_model_selection_precedence(
+            profile_id,
+            profile_def["processing_config"],
+            resolved["processing_config"],
+            profile_declares_model=profile_declares_model,
+        )
 
         # Handle include_system_docs
         if "include_system_docs" in profile_def["processing_config"]:
@@ -837,23 +1022,66 @@ def resolve_service_profile(
             profile_def["chat_id_to_name_map"],
         )
 
-    # Handle slash_commands (replace if present)
-    if "slash_commands" in profile_def and isinstance(
-        profile_def["slash_commands"], list
-    ):
-        resolved["slash_commands"] = profile_def["slash_commands"]
+    for key in PROFILE_REPLACED_LIST_KEYS:
+        if key in profile_def and isinstance(profile_def[key], list):
+            resolved[key] = profile_def[key]
 
-    # Handle visibility_grants (replace if present)
-    if "visibility_grants" in profile_def and isinstance(
-        profile_def["visibility_grants"], list
-    ):
-        resolved["visibility_grants"] = profile_def["visibility_grants"]
+    for key in PROFILE_REPLACED_SCALAR_KEYS:
+        if profile_def.get(key) is not None:
+            resolved[key] = profile_def[key]
+
+    # A qualifier the profile did not state for itself means nothing to one that
+    # names an inline model: an inherited eligibility list would only fail
+    # validation for a profile that said nothing about tiers, and an inherited
+    # `model_selection: auto` would ask the classifier to route to a tier the
+    # profile does not have.
+    if resolved["processing_config"].get("model_tier") is None:
+        unstated_top_level, unstated_processing = _unstated_tier_qualifiers(profile_def)
+        for key in unstated_top_level:
+            resolved[key] = None
+        for key in unstated_processing:
+            resolved["processing_config"][key] = _tier_qualifier_default(key)
 
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:
         resolved["remote_a2a"] = profile_def["remote_a2a"]
 
+    if resolved.get("remote_a2a"):
+        _clear_inherited_model_selection_for_remote(profile_def, resolved)
+
     return resolved
+
+
+def _clear_inherited_model_selection_for_remote(
+    profile_def: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    resolved: dict[str, Any],
+) -> None:
+    """A remote A2A profile inherits no model selection at all.
+
+    The remote agent chooses its own model, so a remote profile names none --
+    and then inherits whatever `default_profile_settings` selected. For the
+    inline fields that is merely untrue; for `model_tier` it is fatal, because
+    `validate_profile_model_tier` refuses a tier on a remote profile and would
+    reject every ordinary remote profile the shipped defaults' tier reached.
+
+    Only inherited values go. A tier the remote profile declared for itself
+    stays, so that refusal still fires by name at startup rather than being
+    quietly resolved away.
+
+    Nothing that qualifies a tier is inherited either: a remote profile runs no
+    routing policy of ours, so an inherited eligibility list or
+    `model_selection: auto` would describe a decision nothing here makes.
+    """
+    declared_processing = profile_def.get("processing_config") or {}
+    for key in (*MODEL_SELECTION_KEYS, "model_tier"):
+        if declared_processing.get(key) is None:
+            resolved["processing_config"][key] = None
+    unstated_top_level, unstated_processing = _unstated_tier_qualifiers(profile_def)
+    for key in unstated_top_level:
+        resolved[key] = None
+    for key in unstated_processing:
+        resolved["processing_config"][key] = _tier_qualifier_default(key)
 
 
 def resolve_all_service_profiles(
@@ -875,6 +1103,9 @@ def resolve_all_service_profiles(
         yaml_profiles = []
 
     default_settings = config_data["default_profile_settings"]
+    reject_conflicting_model_selection(
+        "default_profile_settings", default_settings.get("processing_config") or {}
+    )
     resolved_profiles = []
 
     for profile_def in yaml_profiles:
@@ -940,17 +1171,199 @@ def load_indexing_pipeline_config(
     if env_config:
         try:
             parsed = json.loads(env_config)
-            if isinstance(parsed, dict):
-                config_data["indexing_pipeline_config"] = parsed
-                logger.info(
-                    "Loaded indexing_pipeline_config from environment variable."
-                )
-            else:
-                logger.warning(
-                    "INDEXING_PIPELINE_CONFIG_JSON is not a valid dictionary."
-                )
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON: {e}")
+            return
+
+        if isinstance(parsed, dict):
+            config_data["indexing_pipeline_config"] = parsed
+            logger.info("Loaded indexing_pipeline_config from environment variable.")
+        else:
+            logger.warning("INDEXING_PIPELINE_CONFIG_JSON is not a valid dictionary.")
+
+
+def _superseded_shipped_selection(
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    shipped_processing: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    operator_processing: dict[str, Any],
+    source: str,
+) -> list[str]:
+    """The shipped model-selection keys the operator's own selection displaces.
+
+    An operator naming a `provider`/`llm_model` without their own `retry_config`
+    means "run this model". `assistant.py` prefers `retry_config` over those
+    fields, so a chain left behind by the shipped block silently wins and the
+    operator's choice never reaches the API. The same holds across the two kinds
+    of selection: a shipped `model_tier` survives an operator's inline model and
+    wins over it, and a shipped chain or model survives an operator's
+    `model_tier` and makes the merged block declare both -- which is a startup
+    error rather than the override the operator asked for.
+
+    `resolve_service_profile` already applies these rules to values inherited
+    from `default_profile_settings`, but it can only test whether the key is
+    present in the merged block -- and after the merge it always is, for any
+    block that ships its own selection. Provenance is only knowable while the
+    two layers are still separate, which is what this answers for both shapes a
+    `processing_config` arrives in: a service profile and
+    `default_profile_settings`.
+
+    An explicit `retry_config: null` is not the operator declaring a chain; it is
+    asking for no chain, so it drops the shipped one too. On its own it says
+    nothing about tiers, so it leaves a shipped `model_tier` alone.
+
+    A key the operator gives a value of its own is never reported: the operator's
+    value is what the merge keeps, and a caller that removes it would delete the
+    operator's declaration rather than the shipped one. An operator declaring
+    both kinds at once is left for `reject_conflicting_model_selection`, which
+    refuses it by name.
+    """
+    operator_declares_model = any(
+        operator_processing.get(key) is not None for key in ("provider", "llm_model")
+    )
+    operator_declares_chain = operator_processing.get("retry_config") is not None
+    operator_clears_chain = (
+        "retry_config" in operator_processing and not operator_declares_chain
+    )
+    operator_declares_tier = operator_processing.get("model_tier") is not None
+
+    superseded: set[str] = set()
+    if operator_declares_tier:
+        superseded.update(MODEL_SELECTION_KEYS)
+    if operator_declares_model or operator_declares_chain:
+        superseded.add("model_tier")
+    if not operator_declares_chain and (
+        operator_declares_model or operator_clears_chain
+    ):
+        superseded.add("retry_config")
+
+    operator_declared = {
+        key for key, value in operator_processing.items() if value is not None
+    }
+    dropped = sorted((superseded & set(shipped_processing)) - operator_declared)
+    if dropped:
+        logger.info(
+            "%s: operator selected its own model (tier=%s, model=%s/%s, "
+            "retry_config explicitly null: %s), so the shipped %s %s dropped "
+            "rather than overriding that choice.",
+            source,
+            operator_processing.get("model_tier"),
+            operator_processing.get("provider"),
+            operator_processing.get("llm_model"),
+            operator_clears_chain,
+            ", ".join(dropped),
+            "is" if len(dropped) == 1 else "are",
+        )
+    return dropped
+
+
+def _shipped_base_for_operator_override(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    shipped: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    operator: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+) -> dict[str, Any]:
+    """The shipped profile with the selection the operator's own supersedes gone.
+
+    The base the operator's definition is deep-merged onto, so that what the
+    operator selected is what the merged definition says. See
+    `_superseded_shipped_selection` for which keys go and why.
+
+    A shipped tier that goes takes the shipped qualifiers with it: they qualify
+    that tier, and nothing else in the merged definition records that they were
+    the shipped block's rather than the operator's, so left behind they read as
+    an operator naming eligible tiers -- or asking the Auto classifier to route
+    -- for a profile with no tier, which `validate_profile_model_tier` refuses
+    at startup. Qualifiers the operator stated for itself stay, and that refusal
+    still fires for them by name.
+    """
+    dropped = _superseded_shipped_selection(
+        shipped.get("processing_config") or {},
+        operator.get("processing_config") or {},
+        f"Profile '{shipped.get('id')}'",
+    )
+    if not dropped:
+        return shipped
+
+    without_superseded = copy.deepcopy(shipped)
+    for key in dropped:
+        without_superseded["processing_config"].pop(key, None)
+    if "model_tier" in dropped:
+        unstated_top_level, unstated_processing = _unstated_tier_qualifiers(operator)
+        for key in unstated_top_level:
+            without_superseded.pop(key, None)
+        for key in unstated_processing:
+            without_superseded["processing_config"].pop(key, None)
+    return without_superseded
+
+
+def _apply_default_profile_selection_provenance(
+    # ast-grep-ignore: no-dict-any - raw config dict before validation
+    config_data: dict[str, Any],
+    shipped_default_settings: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML config data before validation
+    operator_config_data: dict[str, Any],
+) -> None:
+    """Let an operator's `default_profile_settings` model selection win.
+
+    `default_profile_settings` reaches here already deep-merged, so an operator
+    who set an inline model or a retry chain there still carries the shipped
+    `model_tier` alongside it -- which every profile inheriting from the block
+    would run on, and which `reject_conflicting_model_selection` refuses
+    outright. This is the same provenance rule the service-profile merge applies,
+    on the one other block that names a model.
+
+    The superseded shipped values are cleared rather than removed: the merged
+    block is a `model_dump`, where every key exists and `None` is what "not
+    selected" looks like. A shipped tier that goes takes the shipped qualifiers
+    with it here too, so the block does not hand every heir an eligibility list
+    or an Auto routing policy for a tier it no longer has.
+    """
+    raw_operator_settings = operator_config_data.get("default_profile_settings")
+    operator_settings = (
+        raw_operator_settings if isinstance(raw_operator_settings, dict) else {}
+    )
+    dropped = _superseded_shipped_selection(
+        shipped_default_settings.get("processing_config") or {},
+        operator_settings.get("processing_config") or {},
+        "default_profile_settings",
+    )
+    merged_settings = config_data["default_profile_settings"]
+    merged_processing = merged_settings["processing_config"]
+    for key in dropped:
+        merged_processing[key] = None
+    if "model_tier" in dropped:
+        unstated_top_level, unstated_processing = _unstated_tier_qualifiers(
+            operator_settings
+        )
+        for key in unstated_top_level:
+            merged_settings[key] = None
+        for key in unstated_processing:
+            merged_processing[key] = _tier_qualifier_default(key)
+
+
+# ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+def _drop_explicitly_nulled_retry_config(merged: dict[str, Any]) -> dict[str, Any]:
+    """Turn an operator's `retry_config: null` into an absent key.
+
+    `resolve_service_profile` reads the merged definition, where it can only ask
+    whether the key is present -- a null counts as a declaration there, which
+    suppresses the rule that drops a chain inherited from
+    `default_profile_settings` when a model is declared. So an operator writing a
+    model alongside `retry_config: null` kept the inherited chain and had their
+    model ignored, which is the same silent override the rule exists to prevent.
+
+    Removing the key is what "no chain of my own" looks like to that rule. It
+    does not reach the inherited chain on its own: `retry_config: null` with no
+    model still inherits, because inheriting is what an absent key means.
+    """
+    processing = merged.get("processing_config")
+    if not isinstance(processing, dict):
+        return merged
+    if "retry_config" in processing and processing["retry_config"] is None:
+        processing.pop("retry_config")
+    return merged
 
 
 def _merge_service_profiles_by_id(
@@ -1020,10 +1433,19 @@ def _merge_service_profiles_by_id(
                     # Override: deep-merge operator's partial definition on
                     # top of the default so unmentioned fields are preserved.
                     result.append(
-                        deep_merge_dicts(defaults_by_id[pid], operator_by_id[pid])
+                        _drop_explicitly_nulled_retry_config(
+                            deep_merge_dicts(
+                                _shipped_base_for_operator_override(
+                                    defaults_by_id[pid], operator_by_id[pid]
+                                ),
+                                operator_by_id[pid],
+                            )
+                        )
                     )
                 else:
-                    result.append(operator_by_id[pid])
+                    result.append(
+                        _drop_explicitly_nulled_retry_config(operator_by_id[pid])
+                    )
             else:
                 result.append(prof_def)
 
@@ -1097,6 +1519,12 @@ def load_config(
     if not embedding_dimensions_configured:
         config_data.pop("embedding_dimensions", None)
 
+    _apply_default_profile_selection_provenance(
+        config_data,
+        defaults_only_config.default_profile_settings.model_dump(exclude_unset=True),
+        operator_config_data,
+    )
+
     default_policy_data = defaults_only_config.model_dump()["default_profile_settings"][
         "tools_policy"
     ]
@@ -1147,16 +1575,14 @@ def load_config(
         config_data, service_profile_prompts
     )
 
-    # 7. Log final config (excluding secrets)
-    _log_config(config_data)
-
-    # 8. Final validation
+    # 7. Final validation and logging
     try:
         validated_config = AppConfig.model_validate(config_data)
         logger.info("Configuration validated successfully.")
+        _log_config(validated_config.model_dump(mode="json"))
         return validated_config
     except ValidationError as e:
-        logger.error(f"Configuration validation failed: {e}")
+        logger.error("Configuration validation failed: %s", e)
         raise
 
 
@@ -1168,53 +1594,8 @@ def _log_config(
     Args:
         config_data: The configuration dictionary to log
     """
-    # Keys to exclude from logging
-    secret_keys = {
-        "telegram_token",
-        "openrouter_api_key",
-        "gemini_api_key",
-        "openai_api_key",
-        "embedding_api_key",
-        "willyweather_api_key",
-        "database_url",
-    }
-
-    loggable = copy.deepcopy({
-        k: v for k, v in config_data.items() if k not in secret_keys
-    })
-
-    # Remove password from calendar_config
-    if "calendar_config" in loggable and loggable["calendar_config"].get("caldav"):
-        loggable["calendar_config"]["caldav"].pop("password", None)
-
-    # Remove VAPID private key
-    if "pwa_config" in loggable:
-        loggable["pwa_config"] = {
-            k: v for k, v in loggable["pwa_config"].items() if k != "vapid_private_key"
-        }
-
-    # Remove APNs private key material
-    if "apns" in loggable:
-        loggable["apns"] = {
-            k: v for k, v in loggable["apns"].items() if k != "auth_key"
-        }
-
-    # Remove Google integration secret material
-    if "google_integration" in loggable:
-        loggable["google_integration"] = {
-            k: v
-            for k, v in loggable["google_integration"].items()
-            if k not in {"oauth_client_secret", "credential_encryption_key"}
-        }
-
-    # Remove UCP private key material
-    if "ucp_config" in loggable:
-        loggable["ucp_config"] = {
-            k: v
-            for k, v in loggable["ucp_config"].items()
-            if k != "signing_private_key"
-        }
-
+    redacted = redact_sensitive_config(config_data)
     logger.info(
-        f"Final configuration (excluding secrets): {json.dumps(loggable, indent=2, default=str)}"
+        "Final configuration (excluding secrets): %s",
+        json.dumps(redacted, indent=2, default=str),
     )

@@ -15,12 +15,13 @@ import aiofiles
 import aiofiles.os
 
 from family_assistant.services.worker_backend import WorkerStatus, get_worker_backend
+from family_assistant.storage.events import WORKER_COMPLETION_EVENT_TYPE
 from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
     from family_assistant.services.worker_backend import WorkerBackend
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -189,9 +190,7 @@ _STATUS_MAP = {
 _TERMINAL_DB_STATUSES = set(_STATUS_MAP.values())
 
 
-async def reconcile_stale_tasks(
-    db_context: DatabaseContext, backend: WorkerBackend
-) -> int:
+async def reconcile_stale_tasks(db_context: Database, backend: WorkerBackend) -> int:
     """Check active DB tasks against backend state and mark stale ones as failed.
 
     For each task with status "submitted" or "running" in the DB:
@@ -386,7 +385,7 @@ async def spawn_worker_tool(
     prompt_path = task_dir / "prompt.md"
     output_dir = task_dir / "output"
 
-    try:
+    async def spawn_worker() -> ToolResult:
         # Create task directory
         await aiofiles.os.makedirs(task_dir, exist_ok=True)
         await aiofiles.os.makedirs(output_dir, exist_ok=True)
@@ -402,17 +401,19 @@ async def spawn_worker_tool(
             for path in context_paths:
                 try:
                     validated = validate_workspace_path(path, workspace_root)
-                    if await aiofiles.os.path.exists(validated):
-                        validated_context_paths.append(path)
-                    else:
-                        skipped_context_paths.append({
-                            "path": path,
-                            "reason": "does not exist",
-                        })
-                        logger.warning(f"Context path does not exist: {path}")
                 except ValueError as e:
                     skipped_context_paths.append({"path": path, "reason": str(e)})
                     logger.warning(f"Invalid context path {path}: {e}")
+                    continue
+
+                if await aiofiles.os.path.exists(validated):
+                    validated_context_paths.append(path)
+                else:
+                    skipped_context_paths.append({
+                        "path": path,
+                        "reason": "does not exist",
+                    })
+                    logger.warning(f"Context path does not exist: {path}")
 
         # Build webhook URL (use configured URL or fall back to server_url)
         # Include event_type as query param so the worker doesn't need to know our event schema
@@ -422,45 +423,45 @@ async def spawn_worker_tool(
             server_url = app_config.server_url.rstrip("/")
             base_url = f"{server_url}/webhook/event"
         separator = "&" if "?" in base_url else "?"
-        webhook_url = f"{base_url}{separator}event_type=worker_completion"
+        webhook_url = f"{base_url}{separator}event_type={WORKER_COMPLETION_EVENT_TYPE}"
 
         # Generate callback token for webhook verification (32 bytes = 64 hex chars)
         callback_token = secrets.token_hex(32)
 
-        # Create database record
-        await db_context.worker_tasks.create_task(
-            task_id=task_id,
-            conversation_id=exec_context.conversation_id,
-            interface_type=exec_context.interface_type,
-            task_description=task_description,
-            model=agent,
-            context_files=validated_context_paths,
-            timeout_minutes=timeout_minutes,
-            user_name=exec_context.user_name,
-            callback_token=callback_token,
-        )
+        async def _create_worker_with_listener(txn: DatabaseTransaction) -> None:
+            await txn.worker_tasks.create_task(
+                task_id=task_id,
+                conversation_id=exec_context.conversation_id,
+                interface_type=exec_context.interface_type,
+                task_description=task_description,
+                model=agent,
+                context_files=validated_context_paths,
+                timeout_minutes=timeout_minutes,
+                user_name=exec_context.user_name,
+                callback_token=callback_token,
+            )
+            await txn.events.create_event_listener(
+                name=f"worker-{task_id}-completion",
+                source_id="webhook",
+                match_conditions={
+                    "event_type": WORKER_COMPLETION_EVENT_TYPE,
+                    "data.task_id": task_id,
+                },
+                conversation_id=exec_context.conversation_id,
+                interface_type=exec_context.interface_type,
+                description=f"Notification when worker task {task_id} completes",
+                action_type="wake_llm",
+                action_config={
+                    "context": (
+                        f"Worker task {task_id} has completed. "
+                        f"Use read_task_result('{task_id}') to see the results."
+                    ),
+                },
+                one_time=True,
+                enabled=True,
+            )
 
-        # Create event listener for completion notification
-        await db_context.events.create_event_listener(
-            name=f"worker-{task_id}-completion",
-            source_id="webhook",
-            match_conditions={
-                "event_type": "worker_completion",
-                "data.task_id": task_id,
-            },
-            conversation_id=exec_context.conversation_id,
-            interface_type=exec_context.interface_type,
-            description=f"Notification when worker task {task_id} completes",
-            action_type="wake_llm",
-            action_config={
-                "context": (
-                    f"Worker task {task_id} has completed. "
-                    f"Use read_task_result('{task_id}') to see the results."
-                ),
-            },
-            one_time=True,
-            enabled=True,
-        )
+        await db_context.atomic(_create_worker_with_listener)
 
         # Get backend and spawn task
         backend = get_worker_backend(
@@ -525,6 +526,8 @@ async def spawn_worker_tool(
 
         return ToolResult(data=result_data)
 
+    try:
+        return await spawn_worker()
     except Exception as e:
         logger.exception(f"Failed to spawn worker task: {e}")
         return ToolResult(data={"error": f"Failed to spawn worker: {e!s}"})
@@ -613,14 +616,18 @@ async def read_task_result_tool(
                     file_path = str(file_info)
 
                 if file_path:
-                    try:
-                        full_path = validate_workspace_path(file_path, workspace_root)
+
+                    async def read_output_file(
+                        output_path: str,
+                    ) -> str | dict[str, str]:
+                        full_path = validate_workspace_path(output_path, workspace_root)
                         if await aiofiles.os.path.exists(full_path):
                             async with aiofiles.open(full_path) as f:
-                                content = await f.read()
-                            file_contents[file_path] = content
-                        else:
-                            file_contents[file_path] = {"error": "File not found"}
+                                return await f.read()
+                        return {"error": "File not found"}
+
+                    try:
+                        file_contents[file_path] = await read_output_file(file_path)
                     except (ValueError, OSError) as e:
                         file_contents[file_path] = {"error": str(e)}
 

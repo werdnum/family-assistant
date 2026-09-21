@@ -41,6 +41,7 @@ from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
     add_calendar_event_tool,
     delete_calendar_event_tool,
+    list_calendars_tool,
     modify_calendar_event_tool,
     search_calendar_events_tool,
 )
@@ -87,6 +88,7 @@ from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     _format_event_details_for_confirmation,
     render_delete_calendar_event_confirmation,
+    render_generic_tool_confirmation,
     render_modify_calendar_event_confirmation,
 )
 from family_assistant.tools.data_manipulation import (
@@ -175,10 +177,22 @@ from family_assistant.tools.infrastructure import (
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
+from family_assistant.tools.live_meta import (
+    CALL_TOOL_DEFINITION,
+    CALL_TOOL_TOOL_NAME,
+    LIVE_META_TOOL_NAMES,
+    SEARCH_TOOLS_DEFINITION,
+    SEARCH_TOOLS_TOOL_NAME,
+    LiveMetaToolsProvider,
+)
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
     download_media_tool,
+)
+from family_assistant.tools.memory import (
+    MEMORY_TOOLS_DEFINITION,
+    propose_memory_edits_tool,
 )
 from family_assistant.tools.metadata import (
     LocalToolMetadata,
@@ -214,6 +228,7 @@ from family_assistant.tools.on_demand import (
 )
 from family_assistant.tools.policy import (
     DEFAULT_POLICY_PRIORITY_OFFSET,
+    MAX_POLICY_RULE_PRIORITY,
     OPERATOR_POLICY_PRIORITY_OFFSET,
     PROFILE_POLICY_PRIORITY_OFFSET,
     PolicyEngine,
@@ -295,6 +310,8 @@ __all__ = [
     "AVAILABLE_FUNCTIONS",
     # Browser DOM (semantic) tools
     "BROWSER_DOM_TOOLS_DEFINITION",
+    "CALL_TOOL_DEFINITION",
+    "CALL_TOOL_TOOL_NAME",
     # Camera tools
     "CAMERA_TOOLS_DEFINITION",
     "COMPUTER_USE_TOOLS_DEFINITION",
@@ -309,10 +326,13 @@ __all__ = [
     "HOME_ASSISTANT_TOOLS_DEFINITION",
     "IMAGE_GENERATION_TOOLS_DEFINITION",
     "IMAGE_TOOLS_DEFINITION",
+    "LIVE_META_TOOL_NAMES",
     "LOCAL_TOOL_DESCRIPTORS",
     "LOCAL_TOOL_METADATA_BY_NAME",
     "LOCAL_TOOL_REGISTRATIONS",
+    "MAX_POLICY_RULE_PRIORITY",
     "MEDIA_DOWNLOAD_TOOLS_DEFINITION",
+    "MEMORY_TOOLS_DEFINITION",
     "MOCK_IMAGE_TOOLS_DEFINITION",
     # MQTT tools
     "MQTT_TOOLS_DEFINITION",
@@ -322,6 +342,8 @@ __all__ = [
     "REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION",
     "SCRIPT_TESTING_TOOLS_DEFINITION",
     "SCRIPT_TOOLS_DEFINITION",
+    "SEARCH_TOOLS_DEFINITION",
+    "SEARCH_TOOLS_TOOL_NAME",
     # Shopping/UCP tools
     "SHOPPING_TOOLS_DEFINITION",
     # Stored scripts
@@ -337,6 +359,7 @@ __all__ = [
     "WORKSPACE_TOOLS_DEFINITION",
     "CompositeToolsProvider",
     "ConfirmationCallbackProtocol",
+    "LiveMetaToolsProvider",
     "LocalToolMetadata",
     "LocalToolsProvider",
     "MCPServerConfig",
@@ -446,6 +469,7 @@ __all__ = [
     "highlight_image_tool",
     "ingest_document_from_url_tool",
     "jq_query_tool",
+    "list_calendars_tool",
     "list_cameras_tool",
     "list_delegations_tool",
     "list_home_assistant_actions_tool",
@@ -457,6 +481,7 @@ __all__ = [
     "mock_camera_snapshot_tool",
     "modify_pending_callback_tool",
     "mqtt_publish_tool",
+    "propose_memory_edits_tool",
     "query_database",
     "query_recent_events_tool",
     "read_error_logs",
@@ -466,6 +491,7 @@ __all__ = [
     "reconnect_mcp_server",
     "reindex_email_tool",
     "render_delete_calendar_event_confirmation",
+    "render_generic_tool_confirmation",
     "render_home_assistant_template_tool",
     "render_modify_calendar_event_confirmation",
     "report_technical_problem_tool",
@@ -514,13 +540,24 @@ __all__ = [
 # Note: Runtime tool access is denied unless tools_policy allows it.
 
 
-def _metadata(*tags: ToolTag, summary: str | None = None) -> LocalToolMetadata:
+def _metadata(
+    *tags: ToolTag,
+    summary: str | None = None,
+    destination_argument_paths: tuple[str, ...] = (),
+    deferred_confirmation_eligible: bool = False,
+) -> LocalToolMetadata:
     """Create validated metadata for a local tool registration."""
-    return make_local_tool_metadata(list(tags), summary=summary)
+    return make_local_tool_metadata(
+        list(tags),
+        summary=summary,
+        destination_argument_paths=destination_argument_paths,
+        deferred_confirmation_eligible=deferred_confirmation_eligible,
+    )
 
 
 _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     NOTE_TOOLS_DEFINITION
+    + MEMORY_TOOLS_DEFINITION
     + SERVICE_TOOLS_DEFINITION
     + TASK_TOOLS_DEFINITION
     + DOCUMENT_TOOLS_DEFINITION
@@ -557,6 +594,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_note": get_note_tool,
     "list_notes": list_notes_tool,
     "delete_note": delete_note_tool,
+    "propose_memory_edits": propose_memory_edits_tool,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_reminder": schedule_reminder_tool,
     "schedule_action": schedule_action_tool,
@@ -569,6 +607,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "reindex_email": reindex_email_tool,
     "send_message_to_user": send_message_to_user_tool,
     # Calendar tools
+    "list_calendars": list_calendars_tool,
     "add_calendar_event": add_calendar_event_tool,
     "search_calendar_events": search_calendar_events_tool,
     "modify_calendar_event": modify_calendar_event_tool,
@@ -710,6 +749,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
 
 LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "add_or_update_note": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.SENSITIVE_DATA,
@@ -717,18 +757,28 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_note": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_notes": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    "propose_memory_edits": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
     "delete_note": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
@@ -744,13 +794,17 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DELEGATION,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: a completed run's result_text is included verbatim, and
+        # for a remote A2A run that text is the remote agent's own output.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "list_delegations": _metadata(
         ToolTag.DELEGATION,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: includes completed runs' result_text verbatim, remote
+        # A2A output among it.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "schedule_reminder": _metadata(
         ToolTag.STATE_CHANGING,
@@ -764,8 +818,10 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "list_pending_callbacks": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.SCHEDULING,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: returns stored callback text verbatim.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "modify_pending_callback": _metadata(
         ToolTag.STATE_CHANGING,
@@ -785,12 +841,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_documents": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_full_document_content": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
@@ -802,6 +860,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DOCUMENTS,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url_to_ingest",),
     ),
     "reindex_email": _metadata(
         ToolTag.STATE_CHANGING,
@@ -809,11 +868,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DOCUMENTS,
     ),
     "get_user_documentation_content": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.DOCUMENTS,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "query_recent_events": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
@@ -832,14 +893,23 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_automations": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: automation definitions are returned verbatim without the
+        # per-record provenance resolution that firing-time definition taint
+        # computes, so a definition shaped by untrusted content reads as trusted.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_automation": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: returns an automation's inline script and config
+        # verbatim, with no per-record provenance resolution on read.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "update_automation": _metadata(
         ToolTag.STATE_CHANGING,
@@ -867,11 +937,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_automation_stats": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "download_state_history": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
@@ -879,6 +952,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "render_home_assistant_template": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
@@ -894,17 +968,20 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "list_home_assistant_entities": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_home_assistant_actions": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "call_home_assistant_action": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.HOME_AUTOMATION,
         ToolTag.EXTERNAL_COMM,
@@ -958,7 +1035,16 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    "list_calendars": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CALENDAR,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
     "add_calendar_event": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
@@ -966,13 +1052,17 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_calendar_events": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
         ToolTag.SCHEDULING,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: queries both internal CalDAV calendars and external
+        # subscribed iCal feeds where event summaries may be externally authored.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "modify_calendar_event": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
@@ -980,6 +1070,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "delete_calendar_event": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
@@ -992,12 +1083,23 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # The target must be an existing conversation owned by an authorized user,
+    # rejected server-side otherwise, so the model cannot name a destination of
+    # its own choosing. EXTERNAL_COMM is kept so tool policies matching it are
+    # unaffected; KNOWN_USER_COMM refines the taint sink class.
     "send_message_to_user": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.EXTERNAL_COMM,
+        ToolTag.KNOWN_USER_COMM,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
+        # The send is complete without consuming its result, so an unattended
+        # reviewer confirmation may safely execute it later as a durable outbox
+        # item. Other tools fail closed unless they opt in just as explicitly.
+        deferred_confirmation_eligible=True,
     ),
     "get_attachment_info": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.MEDIA,
@@ -1015,14 +1117,19 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_scripts": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_script": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "delete_script": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
@@ -1033,11 +1140,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNSPECIFIED,
     ),
     "attach_to_response": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.USER_FACING_MEDIA,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "read_text_attachment": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
@@ -1049,15 +1158,19 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # The image backends take a prompt and a style; the endpoint is fixed at
+    # construction and no argument selects a recipient. A fixed recipient is
+    # what LOW_BANDWIDTH_EXTERNAL denotes, whereas EXTERNAL_COMM means the
+    # model controls the destination -- which these tools cannot do.
     "generate_image": _metadata(
         ToolTag.STATE_CHANGING,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "transform_image": _metadata(
         ToolTag.STATE_CHANGING,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1068,21 +1181,27 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "jq_query": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # Fixed vendor endpoint with no recipient argument, as for generate_image.
     "generate_video": _metadata(
         ToolTag.STATE_CHANGING,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # Unlike the generation tools above, this one takes a URL: the model picks
+    # the destination, so it is EXTERNAL_COMM and must stay that way.
     "download_media": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.EXTERNAL_COMM,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url",),
     ),
     "mock_camera_snapshot": _metadata(
         ToolTag.READ_ONLY,
@@ -1191,6 +1310,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url",),
     ),
     "go_back": _metadata(
         ToolTag.BROWSER,
@@ -1207,6 +1327,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "take_screenshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1223,10 +1344,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url",),
     ),
     "browser_snapshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1251,18 +1374,21 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "browser_wait": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_extract": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_screenshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1283,6 +1409,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.EXTERNAL_COMM,
     ),
     "workspace_read": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
@@ -1296,12 +1423,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "workspace_glob": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "workspace_delete": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.DESTRUCTIVE,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
@@ -1310,6 +1439,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "workspace_mkdir": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.FILE_SYSTEM,
@@ -1350,9 +1480,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "list_worker_tasks": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.WORKER,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: returns stored task descriptions and results, which are
+        # authored by whoever's content shaped the task.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_source_file": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
@@ -1360,6 +1493,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_source_code": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
@@ -1370,20 +1504,27 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: SELECTs return message, note and intake rows verbatim,
+        # including ingested email. The tool is a trusted read; its content is
+        # whatever anyone ever sent the assistant.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_error_logs": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
         ToolTag.DOCUMENTS,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: log lines embed whatever was logged -- request bodies,
+        # exception messages built from external input -- verbatim.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_llm_request_history": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: replays prior LLM requests verbatim, so it returns the
+        # browser snapshots and email bodies those turns read.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_frontend_telemetry": _metadata(
         ToolTag.READ_ONLY,
@@ -1433,11 +1574,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_system_info": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.OUTPUT_TRUSTED,
     ),
     # MQTT tools
     "mqtt_publish": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         # Publishes only to the operator-configured home broker, so runtime
         # taint treats it as a home_local sink rather than arbitrary external
         # messaging (which the external_comm tag would imply).
@@ -1446,18 +1589,22 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "ucp_add_to_cart": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "ucp_get_cart": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "ucp_transfer_checkout_to_human": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.SHOPPING,
@@ -1474,30 +1621,35 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     # read-only + sensitive tags make a second read after untrusted content a
     # gated sensitive_read_broadening sink.
     "gmail_search": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "gmail_get_message": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "gmail_get_attachment": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "drive_search": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "drive_get_file": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,

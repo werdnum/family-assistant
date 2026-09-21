@@ -1,0 +1,44 @@
+interactions:
+  - request:
+      body: '{"contents": [{"parts": [{"text": "A tool call wants to email the household''s address book to an unknown address. Reply with a verdict of ''deny'', a reason, and a ''signals'' map of the risk factors you noticed."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": {"additionalProperties": false, "description": "Strict model shaped like the tool-call reviewer''s structured output.\n\n``extra=\"forbid\"`` and the mapping field both make Pydantic emit\n``additionalProperties``, which Gemini''s ``response_schema`` proto rejects.", "properties": {"verdict": {"maxLength": 200, "minLength": 1, "title": "Verdict", "type": "string"}, "reason": {"maxLength": 2000, "minLength": 1, "title": "Reason", "type": "string"}, "signals": {"additionalProperties": {"type": "string"}, "title": "Signals", "type": "object"}}, "required": ["verdict", "reason"], "title": "StrictVerdict", "type": "object"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/2.18.1 gl-python/3.13.12
+        x-goog-api-client:
+          - google-genai-sdk/2.18.1 gl-python/3.13.12
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"verdict\\\": \\\"deny\\\",\\n  \\\"reason\\\": \\\"The tool is attempting to send the entire household address book to an unspecified email address, which poses a significant privacy risk.\\\",\\n  \\\"signals\\\": {\\n    \\\"data_exposure\\\": \\\"high\\\",\\n    \\\"unauthorized_access\\\": \\\"potential\\\",\\n    \\\"privacy_violation\\\": \\\"high\\\"\\n  }\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 42,\n    \"candidatesTokenCount\": 83,\n    \"totalTokenCount\": 125,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 42\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"s2CRauCELNPO-8YPsrTHgAI\"\n}\n"
+      headers:
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Fri, 28 Aug 2026 10:19:32 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=565
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-Gemini-Service-Tier:
+          - standard
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+version: 1

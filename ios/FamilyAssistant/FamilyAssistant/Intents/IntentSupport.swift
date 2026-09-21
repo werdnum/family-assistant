@@ -9,12 +9,17 @@ enum AssistantIntentError: Error, LocalizedError {
     /// No stored credentials. A background intent cannot run the interactive
     /// `ASWebAuthenticationSession` login, so we ask the user to open the app.
     case needsSignIn
+    /// The device is locked and not connected to CarPlay. See
+    /// ``VoiceHandsFreeAccess``.
+    case handsFreeAccessDenied
     case requestFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .needsSignIn:
             "Open Family Assistant and sign in before using this shortcut."
+        case .handsFreeAccessDenied:
+            "Unlock your phone to ask Family Assistant."
         case .requestFailed(let detail):
             detail
         }
@@ -127,7 +132,7 @@ enum IntentSupport {
             switch authError {
             case .authRejected, .noCredentials, .invalidServerURL:
                 return .needsSignIn
-            case .exchangeFailed, .transient:
+            case .authWall, .exchangeFailed, .transient:
                 return .requestFailed(authError.localizedDescription)
             }
         }

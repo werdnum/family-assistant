@@ -6,10 +6,22 @@ for tools that require user confirmation before execution.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Protocol, cast
 
 from family_assistant import calendar_integration
+from family_assistant.calendar_integration import CalendarSource
+from family_assistant.google_calendar import (
+    GoogleCalendarClient,
+    google_calendar_id_from_source_id,
+    google_event_to_calendar_event,
+    is_google_source_id,
+)
+from family_assistant.services.api_backend import ApiBackendError
+from family_assistant.services.google_api import GoogleApiError
+from family_assistant.services.oauth_credentials import OAuthCredentialError
+from family_assistant.tools.calendar import resolve_target_caldav_url
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 
 if TYPE_CHECKING:
@@ -25,33 +37,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-CONFIRMATION_VALUE_MAX_CHARS = 1200
-
-# A delegation hand-off is approved against its confirmation prompt, so the
-# approver must be able to read the ENTIRE delegated request — not a silently cut
-# slice. We therefore show the full request (well above the generic 1200-char
-# field bound) and refuse, rather than truncate, anything longer. The cap keeps
-# the whole prompt within Telegram's single-message confirmation budget
-# (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800 in telegram/ui.py), reserving
-# headroom for the source prefix, field labels, the target id, attachment ids,
-# and code fences. Bulk content belongs in an attachment, not the request string.
-MAX_DELEGATION_REQUEST_CHARS = 3000
-
-# Approving spawn_worker launches a code-running agent against the shared
-# workspace, so the approver must see the ENTIRE task description — the same
-# full-review contract as delegation, with the same Telegram-budget cap. There
-# is no side channel for bulk content (the worker sandbox mounts only its own
-# task directory; backends do not mount context_paths), so a longer brief must
-# be shortened or split into smaller worker tasks.
-MAX_WORKER_TASK_DESCRIPTION_CHARS = 3000
-
-# The per-field caps alone cannot guarantee the WHOLE spawn_worker prompt fits
-# Telegram's single-message confirmation budget (3800 chars in telegram/ui.py):
-# a near-cap description plus context paths would render over it and be
-# truncated, letting an approver approve fields they never saw. The payload
-# guard therefore also refuses on the total rendered prompt, with headroom
-# under 3800 for the interface's own additions (e.g. the source prefix).
-MAX_WORKER_CONFIRMATION_PROMPT_CHARS = 3400
 
 
 def _markdown_code_block(text: str) -> str:
@@ -62,20 +47,19 @@ def _markdown_code_block(text: str) -> str:
     return f"{fence}\n{text}\n{fence}"
 
 
-def _confirmation_value(value: object, *, max_chars: int = 1200) -> str:
-    """Return a bounded value for confirmation prompts."""
-    text = "" if value is None else str(value)
-    if len(text) > max_chars:
-        text = text[:max_chars] + "... [truncated]"
-    return text
+def _confirmation_value(value: object) -> str:
+    """Render a value for a confirmation prompt.
+
+    Never truncates: an approver must see the whole payload they are approving,
+    and whether it can be displayed is the delivering interface's call, not a
+    renderer's (see docs/design/confirmation-prompt-capacity.md).
+    """
+    return "" if value is None else str(value)
 
 
 def _confirmation_field(label: str, value: object) -> str:
     """Format a single confirmation field."""
-    return (
-        f"- {label}:\n"
-        f"{_markdown_code_block(_confirmation_value(value, max_chars=CONFIRMATION_VALUE_MAX_CHARS))}"
-    )
+    return f"- {label}:\n{_markdown_code_block(_confirmation_value(value))}"
 
 
 def _extract_calendar_config_from_provider(
@@ -139,6 +123,18 @@ class ConfirmationRenderer(Protocol):
         ...
 
 
+def append_review_reason_to_confirmation(
+    prompt: str,
+    context: ToolExecutionContext,
+) -> str:
+    """Append the automatic judge's reason to a human confirmation prompt."""
+    reason = context.tool_call_review_confirmation_reason
+    if not reason:
+        return prompt
+    quoted_reason = "\n".join(f"> {line}" for line in reason.splitlines())
+    return f"{prompt}\n\nAutomatic review reason:\n{quoted_reason}"
+
+
 def _format_event_details_for_confirmation(
     details: CalendarEvent | None,
     timezone: ZoneInfo,
@@ -167,6 +163,70 @@ def _format_event_details_for_confirmation(
         return f"'{summary}' ({start_str} - {end_str})"
 
 
+async def _fetch_event_details_for_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+    *,
+    operation_verb: str,
+) -> CalendarEvent | None:
+    """Look up the event a modify/delete call targets, or None if not found."""
+    raw_uid = args.get("uid")
+    raw_calendar_url = args.get("calendar_url")
+    raw_calendar_id = args.get("calendar_id")
+    uid = raw_uid if isinstance(raw_uid, str) else None
+    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
+    if uid is None:
+        return None
+
+    if calendar_id and is_google_source_id(calendar_id):
+        return await _fetch_google_event_for_confirmation(context, calendar_id, uid)
+
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+    if (calendar_url or calendar_id) and calendar_config:
+        resolved_url, err = resolve_target_caldav_url(
+            calendar_config=calendar_config,
+            calendar_url=calendar_url,
+            calendar_id=calendar_id,
+            operation_verb=operation_verb,
+        )
+        calendar_url = resolved_url if not err else None
+
+    if not calendar_url or not calendar_config:
+        return None
+    return await calendar_integration.fetch_event_details_for_confirmation(
+        uid=uid,
+        calendar_url=calendar_url,
+        calendar_config=calendar_config,
+        timezone=context.timezone,
+    )
+
+
+async def _fetch_google_event_for_confirmation(
+    context: ToolExecutionContext, source_id: str, uid: str
+) -> CalendarEvent | None:
+    client = GoogleCalendarClient.from_exec_context(context)
+    calendar_id = google_calendar_id_from_source_id(source_id)
+    if client is None or calendar_id is None:
+        return None
+    try:
+        item = await client.get_event(calendar_id, uid)
+    except (OAuthCredentialError, GoogleApiError, ApiBackendError) as exc:
+        logger.info("Could not fetch Google event for confirmation: %s", exc)
+        return None
+    source = CalendarSource(
+        source_id=source_id,
+        name=source_id,
+        kind="google",
+        url="",
+        writable=True,
+        google_calendar_id=calendar_id,
+    )
+    return google_event_to_calendar_event(item, source, context.timezone)
+
+
 async def render_delete_calendar_event_confirmation(
     args: ToolArgumentsView,
     context: ToolExecutionContext,
@@ -180,28 +240,9 @@ async def render_delete_calendar_event_confirmation(
         context: Execution context with calendar config and timezone
     """
     # Fetch event details to show the user what they're deleting
-    event_details = None
-    raw_uid = args.get("uid")
-    raw_calendar_url = args.get("calendar_url")
-    uid = raw_uid if isinstance(raw_uid, str) else None
-    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
-
-    if uid and calendar_url:
-        # Get calendar config from the tools provider
-        calendar_config = _extract_calendar_config_from_provider(
-            getattr(context, "tools_provider", None)
-        )
-
-        if calendar_config:
-            # fetch_event_details_for_confirmation returns None on error
-            event_details = (
-                await calendar_integration.fetch_event_details_for_confirmation(
-                    uid=uid,
-                    calendar_url=calendar_url,
-                    calendar_config=calendar_config,
-                    timezone=context.timezone,
-                )
-            )
+    event_details = await _fetch_event_details_for_confirmation(
+        args, context, operation_verb="delete"
+    )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -226,28 +267,9 @@ async def render_modify_calendar_event_confirmation(
         context: Execution context with calendar config and timezone
     """
     # Fetch event details to show the user what they're modifying
-    event_details = None
-    raw_uid = args.get("uid")
-    raw_calendar_url = args.get("calendar_url")
-    uid = raw_uid if isinstance(raw_uid, str) else None
-    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
-
-    if uid and calendar_url:
-        # Get calendar config from the tools provider
-        calendar_config = _extract_calendar_config_from_provider(
-            getattr(context, "tools_provider", None)
-        )
-
-        if calendar_config:
-            # fetch_event_details_for_confirmation returns None on error
-            event_details = (
-                await calendar_integration.fetch_event_details_for_confirmation(
-                    uid=uid,
-                    calendar_url=calendar_url,
-                    calendar_config=calendar_config,
-                    timezone=context.timezone,
-                )
-            )
+    event_details = await _fetch_event_details_for_confirmation(
+        args, context, operation_verb="modify"
+    )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -292,13 +314,52 @@ async def render_add_calendar_event_confirmation(
     context: ToolExecutionContext,
 ) -> str:
     """Render a confirmation prompt for creating a calendar event."""
-    _ = context
     fields = [
         _confirmation_field("Title", args.get("summary")),
+    ]
+
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+    raw_calendar_id = args.get("calendar_id")
+    raw_calendar_url = args.get("calendar_url")
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
+    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+
+    calendar_label: str | None = None
+    if calendar_config:
+        sources = calendar_integration.resolve_calendar_sources(calendar_config)
+        target_source: calendar_integration.CalendarSource | None = None
+        if calendar_id:
+            target_source = next(
+                (s for s in sources if s.source_id == calendar_id), None
+            )
+        elif calendar_url:
+            target_source = next((s for s in sources if s.url == calendar_url), None)
+        elif sources:
+            target_source = next(
+                (s for s in sources if s.writable and s.is_default), None
+            )
+
+        if target_source:
+            calendar_label = f"{target_source.name} ({target_source.source_id})"
+        elif calendar_id:
+            calendar_label = calendar_id
+        elif calendar_url:
+            calendar_label = calendar_url
+    elif calendar_id:
+        calendar_label = calendar_id
+    elif calendar_url:
+        calendar_label = calendar_url
+
+    if calendar_label:
+        fields.append(_confirmation_field("Calendar", calendar_label))
+
+    fields.extend([
         _confirmation_field("Start", args.get("start_time")),
         _confirmation_field("End", args.get("end_time")),
         _confirmation_field("All day", args.get("all_day", False)),
-    ]
+    ])
     if args.get("location"):
         fields.append(_confirmation_field("Location", args.get("location")))
     if args.get("recurrence_rule"):
@@ -352,6 +413,7 @@ async def _effective_note_labels(
     # (repositories/__init__ -> schedule_automations -> task_worker -> tools),
     # so a top-level import here would be circular.
     from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+        NoteReadPolicy,
         NoteWritePolicyError,
     )
 
@@ -360,7 +422,7 @@ async def _effective_note_labels(
     existing = None
     if isinstance(title, str) and context.db_context is not None:
         existing = await context.db_context.notes.get_by_title(
-            title, visibility_grants=None
+            title, read_policy=NoteReadPolicy.UNRESTRICTED
         )
         # Mirror the repository's see-before-overwrite check so the approver
         # sees the rejection up front instead of approving a write that
@@ -368,7 +430,7 @@ async def _effective_note_labels(
         # note it cannot see.
         if existing is not None and write_policy.visibility_grants is not None:
             visible_existing = await context.db_context.notes.get_by_title(
-                title, visibility_grants=write_policy.visibility_grants
+                title, read_policy=write_policy.see_before_overwrite_read_policy()
             )
             if visible_existing is None:
                 return (
@@ -532,25 +594,23 @@ async def render_delegate_to_service_confirmation(
     )
 
     _ = context
-    if len(user_request) > MAX_DELEGATION_REQUEST_CHARS:
-        # A confirm-gated delegation over this length is refused before it runs
-        # (see confirmation_payload_block_reason), so never show a partial body
-        # the approver might rubber-stamp — say plainly that it will be refused.
-        request_field = (
-            f"- Request: ⚠️ This request is {len(user_request)} characters, longer than the "
-            f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable here. "
-            "The delegation will be refused — ask the delegating profile to shorten the request or "
-            "move bulk content into an attachment."
-        )
-    else:
-        request_field = f"- Request:\n{_markdown_code_block(user_request)}"
-
     fields = [
         _confirmation_field("Target profile", target_service_id or "target service"),
-        request_field,
+        f"- Request:\n{_markdown_code_block(user_request)}",
     ]
     if attachment_ids:
         fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
+    model_tier = str(args.get("model_tier", "")).strip()
+    if model_tier:
+        # Named because it is a spending decision the approver is being asked
+        # to make alongside the delegation itself.
+        fields.append(
+            _confirmation_field(
+                "Intelligence",
+                f"{model_tier} — the target profile runs this request on that "
+                "model tier rather than its usual one.",
+            )
+        )
     resume_delegation_id = str(args.get("resume_delegation_id", "")).strip()
     if resume_delegation_id:
         fields.append(
@@ -565,32 +625,12 @@ async def render_delegate_to_service_confirmation(
 
 
 def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
-    """Build the full spawn_worker confirmation prompt.
-
-    Shared by the async renderer and the payload guard so the total-length
-    refusal in ``confirmation_payload_block_reason`` measures exactly the
-    prompt the approver would see.
-    """
+    """Build the full spawn_worker confirmation prompt."""
     task_description = str(arguments.get("task_description", "")).strip()
-
-    if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
-        # An over-length spawn is refused before it runs (see
-        # confirmation_payload_block_reason), so never show a partial body the
-        # approver might rubber-stamp — say plainly that it will be refused.
-        description_field = (
-            f"- Task description: ⚠️ This description is {len(task_description)} characters, "
-            f"longer than the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that keeps it "
-            "fully reviewable here. The worker will not be launched — shorten the task "
-            "description or split the work into smaller worker tasks."
-        )
-    else:
-        description_field = (
-            f"- Task description:\n{_markdown_code_block(task_description)}"
-        )
 
     fields = [
         _confirmation_field("Agent", arguments.get("agent", "claude")),
-        description_field,
+        f"- Task description:\n{_markdown_code_block(task_description)}",
     ]
     raw_context_paths = arguments.get("context_paths")
     if isinstance(raw_context_paths, (list, tuple)):
@@ -604,7 +644,7 @@ def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
         # Script callers bypass JSON-schema validation, so a non-list value
         # (e.g. a mapping whose keys the tool would later iterate as paths)
         # must not be silently omitted from the prompt: the guard refuses the
-        # call (see confirmation_payload_block_reason), and the prompt says so.
+        # call (see confirmation_arguments_block_reason), and the prompt says so.
         fields.append(
             f"- Context paths: ⚠️ Malformed value of type "
             f"{type(raw_context_paths).__name__} — context_paths must be an array of "
@@ -666,56 +706,50 @@ async def render_cancel_worker_task_confirmation(
     return "Do you want to *cancel* this worker task?\n" + "\n".join(fields)
 
 
-def over_length_delegation_block_reason(user_request: str) -> str | None:
-    """Return an error if a delegation request is too long to confirm, else None.
+def _generic_arguments_json(arguments: Mapping[str, object]) -> str:
+    """Serialize arbitrary tool arguments for a confirmation prompt."""
+    return json.dumps(dict(arguments), indent=2, sort_keys=True, default=str)
 
-    A confirm-gated hand-off is approved against its confirmation prompt, so a
-    request that cannot be shown there in full must be refused rather than
-    delegated on the strength of a partial preview. This applies only to
-    delegations that are actually confirm-gated; unconfirmed hand-offs are not
-    size-capped (bulk content there is legitimate and never shown for approval).
+
+def render_generic_tool_confirmation(
+    tool_name: str,
+    arguments: Mapping[str, object],
+) -> str:
+    """Render the confirmation prompt for a tool with no dedicated renderer.
+
+    Every interface falls back to this when ``TOOL_CONFIRMATION_RENDERERS`` has
+    no entry for the tool, which is every MCP tool: their names and schemas come
+    from the server, so no static renderer can exist for them. Naming the tool
+    alone would let an approver authorize arguments they never saw -- a shell
+    command, a request body -- so the arguments themselves are the prompt.
     """
-    if len(user_request) <= MAX_DELEGATION_REQUEST_CHARS:
-        return None
+    arguments_json = _generic_arguments_json(arguments)
     return (
-        f"Error: delegation request is {len(user_request)} characters, which exceeds the "
-        f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable in a "
-        "confirmation prompt. Shorten the request, or move bulk content into an attachment and "
-        "reference it via attachment_ids."
+        "Do you want to run this tool call? It runs with the arguments below, "
+        "exactly as shown:\n"
+        f"{_confirmation_field('Tool', tool_name)}\n"
+        f"- Arguments:\n{_markdown_code_block(arguments_json)}"
     )
 
 
-def confirmation_payload_block_reason(
+def confirmation_arguments_block_reason(
     tool_name: str,
     arguments: Mapping[str, object],
 ) -> str | None:
-    """Return why a confirm-gated tool call must be refused before prompting, else None.
+    """Return why a confirm-gated call cannot be rendered faithfully, else None.
 
-    Lets the policy and safety layers refuse a call whose confirmation prompt
-    could not show the approver the full payload they would be approving,
-    instead of rendering a truncated or misleading prompt. Only invoked once a
-    call is known to be confirm-gated, so it never constrains unconfirmed calls.
-    Delegations, worker spawns, authored Google writes, and every executable
-    computer-use argument must remain fully reviewable.
+    This is not a size rule. How much of a prompt an approver can read is a
+    property of the interface that renders it, and only that interface may
+    refuse on those grounds -- see
+    docs/design/confirmation-prompt-capacity.md. What is left here are
+    arguments no interface could show correctly at any length, because the
+    prompt they produce would not describe what the tool would do.
     """
-    if tool_name == "delegate_to_service":
-        return over_length_delegation_block_reason(
-            str(arguments.get("user_request", ""))
-        )
     if tool_name == "spawn_worker":
-        task_description = str(arguments.get("task_description", ""))
-        if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
-            return (
-                f"Error: the worker task_description is {len(task_description)} characters, "
-                f"which exceeds the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that "
-                "keeps it fully reviewable in a confirmation prompt. Shorten it or split "
-                "the work into smaller worker tasks."
-            )
-        # The context paths scope what the worker can read, so they must be
-        # fully reviewable too. Script callers bypass JSON-schema validation,
-        # so a present-but-non-list value is refused outright: the tool would
-        # later iterate it (a mapping's keys would become paths) while the
-        # prompt showed the approver no paths at all.
+        # The context paths scope what the worker can read. Script callers
+        # bypass JSON-schema validation, so a present-but-non-list value is
+        # refused outright: the tool would later iterate it (a mapping's keys
+        # would become paths) while the prompt showed the approver no paths.
         raw_context_paths = arguments.get("context_paths")
         if raw_context_paths is not None and not isinstance(
             raw_context_paths, (list, tuple)
@@ -725,59 +759,6 @@ def confirmation_payload_block_reason(
                 f"got {type(raw_context_paths).__name__}. Pass the paths as a JSON "
                 'array (e.g. ["shared/data/input.csv"]).'
             )
-        if isinstance(raw_context_paths, (list, tuple)):
-            rendered_paths = ", ".join(str(path) for path in raw_context_paths)
-            if len(rendered_paths) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the worker context_paths render to {len(rendered_paths)} "
-                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
-                    "confirmation limit. Pass fewer paths (e.g. a shared parent directory)."
-                )
-        # The per-field caps can individually pass while the combined prompt
-        # still exceeds Telegram's single-message budget (and gets truncated),
-        # so also refuse on the total rendered prompt.
-        rendered_prompt = _spawn_worker_confirmation_prompt(arguments)
-        if len(rendered_prompt) > MAX_WORKER_CONFIRMATION_PROMPT_CHARS:
-            return (
-                f"Error: the spawn_worker confirmation prompt renders to "
-                f"{len(rendered_prompt)} characters, which exceeds the "
-                f"{MAX_WORKER_CONFIRMATION_PROMPT_CHARS}-character limit that keeps the "
-                "whole prompt reviewable in a single confirmation message. Shorten the "
-                "task description or pass fewer context paths."
-            )
-    if tool_name == "gmail_create_draft":
-        for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):
-            rendered = str(arguments.get(field, ""))
-            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the Gmail draft '{field}' field is {len(rendered)} "
-                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
-                    "confirmation limit. Shorten it or move bulk content into an attachment."
-                )
-    if tool_name == "drive_write_file" and not arguments.get("attachment_id"):
-        for field in ("name", "content"):
-            rendered = str(arguments.get(field, ""))
-            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the Drive write '{field}' field is {len(rendered)} characters, "
-                    f"which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character confirmation "
-                    "limit. Shorten it or upload the content as an attachment."
-                )
-    if tool_name in COMPUTER_USE_FUNCTION_NAMES:
-        # Every executable argument must be fully reviewable: a truncated
-        # navigate URL or typed text would let the user approve payload they
-        # never saw. safety_decision is display-only metadata, not executed.
-        for key, value in sorted(arguments.items()):
-            if key == "safety_decision":
-                continue
-            rendered = str(value)
-            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the '{key}' argument is {len(rendered)} characters, which "
-                    f"exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character limit that keeps "
-                    "it fully reviewable in a confirmation prompt. Shorten it (for typed "
-                    "text, type the content in smaller pieces)."
-                )
     return None
 
 

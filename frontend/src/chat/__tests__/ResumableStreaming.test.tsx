@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
@@ -14,10 +14,20 @@ import { streamResumeTuning } from '../useStreamingResponse';
  * resubscribe, interrupted streams, acks, and already_complete history reload.
  */
 describe('Resumable streaming client', () => {
+  const originalTuning = { ...streamResumeTuning };
+
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
     window.history.replaceState({}, '', '/chat');
+    // Exercise every resume attempt without waiting through production backoff.
+    // Keep the liveness threshold and retry bound unchanged.
+    streamResumeTuning.initialDelayMs = 1;
+    streamResumeTuning.maxDelayMs = 2;
+  });
+
+  afterEach(() => {
+    Object.assign(streamResumeTuning, originalTuning);
   });
 
   const sse = (frames: string[]) => {

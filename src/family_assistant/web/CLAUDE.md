@@ -7,8 +7,9 @@ Assistant.
 
 - **`app_creator.py`**: sets up the FastAPI app with middleware, routers, static files, and the
   Jinja2 template environment
-- **`auth.py`**: OIDC session auth and API-token auth, plus the `AuthMiddleware` and its
-  `PUBLIC_PATHS` regex list of endpoints that bypass authentication
+- **`auth.py`**: OIDC session auth and API-token auth, plus the fail-closed `AuthMiddleware`
+- **`route_auth.py`**: the shared classification for `/api` routes that do not use the default
+  middleware authentication
 - **`dependencies.py`**: FastAPI dependency injection for database context, services, and the
   current user
 - **`models.py`**: Pydantic models for API requests and responses
@@ -24,18 +25,17 @@ Routers live in `routers/`, one per feature area. `api.py` is the aggregator tha
 3. Register the router. An ordinary `*_api.py` router is registered on `api_router` in
    `routers/api.py` with its prefix and tags, so it lands under `/api`; register directly in
    `app_creator.py` only for a router that is deliberately mounted outside `/api`.
-4. Enforce auth with a dependency such as `get_current_user`, and document the requirement in the
-   endpoint docstring. Do not reach for `PUBLIC_PATHS` here: it already matches `^/api(/.*)?$`, so
-   `AuthMiddleware` bypasses every `/api` request and a route-specific pattern changes nothing.
-   Under `/api`, a route is protected precisely when it declares the dependency, and a deliberately
-   public receiver simply omits it.
+4. `/api` routes require `AuthMiddleware` authentication by default. A route that must use a scoped
+   dependency or remain public must be classified in `route_auth.NO_DEFAULT_AUTH_ROUTES`; that
+   registry also drives the published edge-gateway contract and bootstrap body limits. Scoped routes
+   still declare their route-specific dependency. `PUBLIC_PATHS` is only for non-API page routes.
 5. Add the endpoint to the appropriate test files in `tests/functional/web/`.
 
 ## Notable Behaviours
 
 - **Auth flow**: requests hit `AuthMiddleware` for path-based checking; OIDC users get session-based
-  auth, API clients present Bearer tokens validated against the database, and public paths bypass
-  authentication entirely.
+  auth, API clients present Bearer tokens validated against the database, and explicitly classified
+  page/API routes use their narrower authentication policy.
 - **Chat API**: routes requests to different processing service profiles, keys context off
   conversation IDs, and supports response streaming.
 - **Vector search**: hybrid search combining vector similarity with full-text search via RRF

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -29,6 +30,12 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import (
+    ModelTierClientMissing,
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.attachments import (
     AttachmentProcessor,
@@ -36,8 +43,12 @@ from family_assistant.processing.attachments import (
 )
 from family_assistant.processing.context import ContextPreparer
 from family_assistant.processing.types import ToolExecutionResult
-from family_assistant.storage.context import get_db_context
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.storage.database import Database
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolCallReviewTurnState,
+    ToolResult,
+)
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
@@ -76,7 +87,7 @@ def _make_service(
     max_iterations: int = 5,
 ) -> ProcessingService:
     config = ProcessingServiceConfig(
-        prompts={"system_prompt": "You are a helper. {current_time}"},
+        prompts={"system_prompt": "You are a helper."},
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
@@ -100,6 +111,34 @@ def _make_service(
 
 
 @pytest.mark.asyncio
+async def test_a_tier_with_no_client_built_is_an_internal_error_not_a_refusal(
+    db_engine: AsyncEngine,
+) -> None:
+    """A deployment that admits more tiers than it built is a defect, not a no.
+
+    The gate already admitted this tier, so telling the requester to choose
+    differently would blame them for something only an operator can fix -- and
+    the web layer would render it as a 400 rather than the 500 it is.
+    """
+    service = _make_service()
+    service.service_config.tier_eligibility = ModelTierEligibility(
+        default_tier="standard",
+        selectable=(ModelTierOption(id="standard", label="Standard"),),
+        auto=frozenset({"standard"}),
+    )
+
+    with pytest.raises(ModelTierClientMissing, match="standard"):
+        await service.handle_chat_interaction(
+            db_context=Database(db_engine),
+            interface_type="web",
+            conversation_id="conversation-missing-tier-client",
+            trigger_content_parts=[{"type": "text", "text": "Hello"}],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
+
+
+@pytest.mark.asyncio
 async def test_sync_forwards_chat_interfaces_to_process_message(
     db_engine: AsyncEngine,
 ) -> None:
@@ -107,16 +146,16 @@ async def test_sync_forwards_chat_interfaces_to_process_message(
     process_message_mock = AsyncMock(return_value=([], None, None))
     service.process_message = process_message_mock  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_sync_forwarding",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-1",
-            user_name="tester",
-            chat_interfaces={"web": MagicMock()},
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_sync_forwarding",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-1",
+        user_name="tester",
+        chat_interfaces={"web": MagicMock()},
+    )
 
     assert process_message_mock.await_args is not None
     captured_kwargs = process_message_mock.await_args.kwargs
@@ -143,19 +182,19 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
 
     service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        events: list[LLMStreamEvent] = []
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_stream_forwarding",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-2",
-            user_name="tester",
-            user_id="user-123",
-            subconversation_id="sub-abc",
-        ):
-            events.append(event)
+    db_context = Database(db_engine)
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_stream_forwarding",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-2",
+        user_name="tester",
+        user_id="user-123",
+        subconversation_id="sub-abc",
+    ):
+        events.append(event)
 
     assert events
     assert captured_kwargs.get("user_id") == "user-123"
@@ -163,47 +202,6 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
 
 
 @pytest.mark.no_db
-@pytest.mark.asyncio
-async def test_prepare_turn_messages_uses_isolated_writes() -> None:
-    service = _make_service()
-    save_history_mock = AsyncMock(return_value=123)
-    service._save_history_message = save_history_mock  # type: ignore[method-assign]
-    service._resolve_thread_root_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    service._build_initial_messages_for_llm = AsyncMock(  # type: ignore[method-assign]
-        return_value=([], "")
-    )
-    service.context_preparer.aggregate_context = AsyncMock(return_value="")
-    service._render_system_prompt = MagicMock(return_value=("", None))  # type: ignore[method-assign]
-    service.attachment_processor.process_content_parts = AsyncMock(return_value=[])
-    service.attachment_processor.convert_message_urls = AsyncMock(
-        side_effect=lambda db_context, messages, acting_user_id=None: messages
-    )
-
-    (
-        thread_root_id,
-        typed_messages,
-        context_taint_sources,
-    ) = await service._prepare_turn_messages_for_llm(
-        db_context=MagicMock(),
-        interface_type="test",
-        conversation_id="conv_prepare_isolated",
-        trigger_content_parts=[{"type": "text", "text": "hello"}],
-        trigger_interface_message_id="msg-prepare-1",
-        user_name="tester",
-        turn_id="turn-prepare-1",
-        user_id="user-prepare-1",
-        replied_to_interface_id=None,
-        trigger_attachments=None,
-        subconversation_id=None,
-    )
-
-    assert thread_root_id == 123
-    assert typed_messages == []
-    assert context_taint_sources == ()
-    assert save_history_mock.await_args is not None
-    assert save_history_mock.await_args.kwargs["save_with_isolated_context"] is True
-
-
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_sync_and_stream_share_error_persistence_helper() -> None:
@@ -217,7 +215,8 @@ async def test_sync_and_stream_share_error_persistence_helper() -> None:
     async def fake_process_message_stream(
         **kwargs: object,
     ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
-        if False:  # pragma: no cover - keeps this as an async generator
+        # An unreachable yield is what makes this an async generator.
+        if False:  # pylint: disable=using-constant-test
             yield (LLMStreamEvent(type="done"), None)
         raise RuntimeError("stream boom")
 
@@ -258,28 +257,28 @@ async def test_sync_persists_errors_as_error_messages(db_engine: AsyncEngine) ->
     service = _make_service()
     service.process_message = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_sync_error_message",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-3",
-            user_name="tester",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_sync_error_message",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-3",
+        user_name="tester",
+    )
 
-        assert result.has_error
+    assert result.has_error
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_sync_error_message",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_sync_error_message",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.asyncio
@@ -289,36 +288,92 @@ async def test_stream_persists_errors_as_error_messages(db_engine: AsyncEngine) 
     async def fake_process_message_stream(
         **kwargs: object,
     ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
-        if False:  # pragma: no cover - keeps this as an async generator
+        # An unreachable yield is what makes this an async generator.
+        if False:  # pylint: disable=using-constant-test
             yield (LLMStreamEvent(type="done"), None)
         raise RuntimeError("stream boom")
 
     service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        events: list[LLMStreamEvent] = []
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_stream_error_message",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-4",
-            user_name="tester",
-        ):
-            events.append(event)
+    db_context = Database(db_engine)
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_stream_error_message",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-4",
+        user_name="tester",
+    ):
+        events.append(event)
 
-        assert any(event.type == "error" for event in events)
+    assert any(event.type == "error" for event in events)
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_stream_error_message",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_stream_error_message",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+
+
+async def test_steer_echo_is_published_only_after_it_is_persisted(
+    db_engine: AsyncEngine,
+) -> None:
+    """A user_input echo must not reach the client before its row is written.
+
+    The web client treats the echo as proof its steering message was delivered
+    and stops tracking it for recovery. Publishing before the save would let a
+    failed write leave the message existing nowhere -- neither persisted nor
+    acted on, and no longer recoverable by the sender.
+    """
+    service = _make_service()
+    steer_text = "actually, focus on tomorrow"
+
+    async def fake_process_message_stream(
+        **kwargs: object,
+    ) -> AsyncIterator[tuple[LLMStreamEvent, UserMessage | AssistantMessage | None]]:
+        yield (
+            LLMStreamEvent(type="user_input", content=steer_text, input_id="input-1"),
+            UserMessage(content=steer_text),
         )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+        yield (
+            LLMStreamEvent(type="content", content="done"),
+            AssistantMessage(content="done"),
+        )
+
+    service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
+
+    original_save = service._save_history_message
+
+    async def failing_save(*args: object, **kwargs: object) -> object:
+        message = kwargs.get("message")
+        if isinstance(message, UserMessage) and message.content == steer_text:
+            raise RuntimeError("history write failed")
+        return await original_save(*args, **kwargs)  # type: ignore[arg-type]
+
+    service._save_history_message = failing_save  # type: ignore[method-assign]
+
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=Database(db_engine),
+        interface_type="test",
+        conversation_id="conv_steer_echo_order",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-echo",
+        user_name="tester",
+    ):
+        events.append(event)
+
+    assert not any(event.type == "user_input" for event in events), (
+        "The echo was published even though its row was never written, so the "
+        "client would treat an unpersisted message as delivered"
+    )
+    assert any(event.type == "error" for event in events)
 
 
 @pytest.mark.no_db
@@ -367,15 +422,15 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     )
     service = _make_service(llm_client=llm_client, max_iterations=1)
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_final_iteration_tool_calls",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-final-1",
-            user_name="tester",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_final_iteration_tool_calls",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-final-1",
+        user_name="tester",
+    )
 
     assert not result.has_error
 
@@ -398,30 +453,30 @@ async def test_sync_fails_fast_when_tool_executor_raises_unexpected_exception(
         side_effect=RuntimeError("unexpected tool executor crash")
     )
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_executor_crash_sync",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-executor-crash-sync",
-            user_name="tester",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_executor_crash_sync",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-executor-crash-sync",
+        user_name="tester",
+    )
 
-        assert result.has_error
-        assert result.error_traceback is not None
-        assert "unexpected tool executor crash" in result.error_traceback
+    assert result.has_error
+    assert result.error_traceback is not None
+    assert "unexpected tool executor crash" in result.error_traceback
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_executor_crash_sync",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_executor_crash_sync",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.asyncio
@@ -442,30 +497,30 @@ async def test_stream_emits_error_when_tool_executor_raises_unexpected_exception
         side_effect=RuntimeError("unexpected tool executor crash")
     )
 
-    async with get_db_context(db_engine) as db_context:
-        events: list[LLMStreamEvent] = []
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_executor_crash_stream",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-executor-crash-stream",
-            user_name="tester",
-        ):
-            events.append(event)
+    db_context = Database(db_engine)
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_executor_crash_stream",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-executor-crash-stream",
+        user_name="tester",
+    ):
+        events.append(event)
 
-        assert any(event.type == "error" for event in events)
+    assert any(event.type == "error" for event in events)
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_executor_crash_stream",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_executor_crash_stream",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.no_db
@@ -474,7 +529,7 @@ async def test_context_aggregate_context_raises_on_provider_failure() -> None:
     class BrokenProvider:
         name = "broken-provider"
 
-        async def get_context_fragments(self) -> list[str]:
+        async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
             raise RuntimeError("provider failed")
 
     config = ProcessingServiceConfig(
@@ -496,7 +551,7 @@ async def test_context_aggregate_context_raises_on_provider_failure() -> None:
         RuntimeError,
         match="Context provider 'broken-provider' failed to provide fragments",
     ):
-        await preparer.aggregate_context()
+        await preparer.aggregate_context(acting_user_id=None)
 
 
 @pytest.mark.no_db
@@ -510,7 +565,7 @@ def test_render_system_prompt_raises_on_unknown_placeholder() -> None:
         ValueError,
         match="System prompt template contains unknown placeholders: automation_id",
     ):
-        service._render_system_prompt("tester", "")
+        service.format_system_prompt(user_name="tester")
 
 
 @pytest.mark.no_db
@@ -520,7 +575,7 @@ def test_render_system_prompt_allows_escaped_literal_braces() -> None:
         "Link: {server_url}/automations/{{automation_id}}"
     )
 
-    rendered_prompt, _ = service._render_system_prompt("tester", "")
+    rendered_prompt = service.format_system_prompt(user_name="tester")
 
     assert "http://testserver/automations/{automation_id}" in rendered_prompt
 
@@ -530,13 +585,14 @@ def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() 
     service = _make_service()
     service.service_config.prompts["system_prompt"] = "Wrapped: {{{server_url}}}"
 
-    rendered_prompt, _ = service._render_system_prompt("tester", "")
+    rendered_prompt = service.format_system_prompt(user_name="tester")
 
     assert "{http://testserver}" in rendered_prompt
 
 
 @pytest.mark.no_db
 def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
+    """What startup validation checks, over every shipped profile."""
     app_config = load_config(load_dotenv_file=False)
 
     profile_processing_configs = [
@@ -555,14 +611,9 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
         service.service_config.id = profile_id
         service.service_config.prompts = processing_config.prompts
 
-        rendered_prompt, _ = service._render_system_prompt(
-            "tester", "Context with literal braces: {name}"
-        )
+        service.validate_system_prompt_renders()
 
-        assert rendered_prompt
-
-        if profile_id == "automation_creation":
-            assert 'f"Hello {name}"' in rendered_prompt
+        assert service.format_system_prompt(user_name="tester"), profile_id
 
 
 @pytest.mark.no_db
@@ -571,9 +622,11 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
     with defaults_path.open(encoding="utf-8") as defaults_file:
         config = yaml.safe_load(defaults_file)
 
+    # current_time and aggregated_other_context are deliberately absent: they
+    # moved into the trailing turn-context block, and a template that reaches for
+    # either would put volatile text back ahead of the conversation history and
+    # silently cost the prompt cache. See docs/design/prompt-cache-turn-context.md.
     allowed_placeholders = {
-        "aggregated_other_context",
-        "current_time",
         "profile_id",
         "server_url",
         "user_name",
@@ -621,11 +674,33 @@ def _registry_with_profiles() -> Any:  # noqa: ANN401 - test stub registry
         {
             "browser_profile": SimpleNamespace(
                 service_config=SimpleNamespace(
-                    id="browser_profile", description="Drives a web browser."
+                    id="browser_profile",
+                    description="Drives a web browser.",
+                    tier_eligibility=ModelTierEligibility(),
+                )
+            ),
+            "tiered_profile": SimpleNamespace(
+                service_config=SimpleNamespace(
+                    id="tiered_profile",
+                    description="Thinks hard.",
+                    tier_eligibility=ModelTierEligibility(
+                        default_tier="standard",
+                        selectable=(
+                            ModelTierOption(id="standard", label="Standard"),
+                            ModelTierOption(
+                                id="deep", label="Deep", description="Hard problems."
+                            ),
+                        ),
+                        auto=frozenset({"standard", "deep"}),
+                    ),
                 )
             ),
             "bare_profile": SimpleNamespace(
-                service_config=SimpleNamespace(id="bare_profile", description="")
+                service_config=SimpleNamespace(
+                    id="bare_profile",
+                    description="",
+                    tier_eligibility=ModelTierEligibility(),
+                )
             ),
         },
     )
@@ -647,6 +722,20 @@ def test_render_available_service_profiles_lists_registry_profiles() -> None:
 
     assert "- ID: browser_profile, Description: Drives a web browser." in rendered
     assert "- ID: bare_profile, Description: No description available." in rendered
+
+
+@pytest.mark.no_db
+def test_the_catalog_advertises_only_tiers_a_delegation_may_actually_ask_for() -> None:
+    """A tier the target would refuse from another profile is not a suggestion."""
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
+    rendered = service.render_available_service_profiles()
+
+    assert "- deep (Deep): Hard problems." in rendered
+    # The target's own default needs no naming, and a pinned profile has none.
+    assert "standard" not in rendered
+    assert "model_tier" not in rendered.split("tiered_profile")[0]
 
 
 @pytest.mark.no_db
@@ -676,7 +765,6 @@ async def test_delegation_catalog_addition_lists_profiles_when_advertised() -> N
 async def test_process_content_parts_missing_attachment_id_raises() -> None:
     processor = AttachmentProcessor(
         attachment_registry=AsyncMock(),
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -687,6 +775,7 @@ async def test_process_content_parts_missing_attachment_id_raises() -> None:
             conversation_id="conv",
             content_parts=cast("list[ContentPartDict]", [{"type": "attachment"}]),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -697,7 +786,6 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
     mock_registry.get_attachment.return_value = None
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -711,6 +799,7 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -722,7 +811,6 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
     mock_registry.get_attachment_content.return_value = None
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -736,6 +824,7 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -745,7 +834,6 @@ async def test_convert_urls_to_data_uris_invalid_internal_url_raises() -> None:
     mock_registry = MagicMock()
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -772,7 +860,6 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -801,7 +888,6 @@ async def test_extract_conversation_context_propagates_registry_failures() -> No
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -846,8 +932,7 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             yield LLMStreamEvent(type="content", content="final answer")
             yield LLMStreamEvent(type="done", metadata={})
 
-    service = _make_service()
-    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
+    service = _make_service(llm_client=cast("Any", TwoStepToolThenContentLLM()))
     service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
         return_value=ToolExecutionResult(
             stream_event=LLMStreamEvent(
@@ -882,9 +967,116 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             user_name="tester",
             turn_id="turn",
             chat_interface=None,
+            llm_client=service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
             processing_service=service,
         ):
             pass
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_denial_escalation_ends_after_complete_tool_result_batch_without_model() -> (
+    None
+):
+    class ModelCallMustNotRepeat:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate_response_stream(
+            self,
+            *,
+            messages: list[object],
+            tools: list[dict[str, object]] | None,
+            tool_choice: str,
+        ) -> AsyncIterator[LLMStreamEvent]:
+            del messages, tools, tool_choice
+            self.call_count += 1
+            if self.call_count > 1:
+                raise AssertionError("termination must prevent another model call")
+            for call_id in ("denied-call", "batch-peer-call"):
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id=call_id,
+                        type="function",
+                        function=ToolCallFunction(name="example_tool", arguments="{}"),
+                    ),
+                )
+            yield LLMStreamEvent(type="done", metadata={})
+
+    llm_client = ModelCallMustNotRepeat()
+    service = _make_service(llm_client=cast("Any", llm_client))
+
+    async def execute_with_terminal_escalation(
+        tool_call: ToolCallItem,
+        **kwargs: object,
+    ) -> ToolExecutionResult:
+        review_state = cast("ToolCallReviewTurnState", kwargs["tool_call_review_state"])
+        if tool_call.id == "denied-call":
+            review_state.terminal_denial_escalation_message = (
+                "Automatic review stopped this turn after repeated denials."
+            )
+            # Let the peer finish first to prove termination waits for the full
+            # parallel batch rather than returning with an unanswered tool call.
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - Yield to the peer task.
+            await asyncio.sleep(0)
+        return ToolExecutionResult(
+            stream_event=LLMStreamEvent(
+                type="tool_result",
+                tool_call_id=tool_call.id,
+                tool_result=f"result for {tool_call.id}",
+            ),
+            llm_message=ToolMessage(
+                tool_call_id=tool_call.id,
+                content=f"result for {tool_call.id}",
+                name="example_tool",
+            ),
+        )
+
+    service.tool_executor.execute = execute_with_terminal_escalation  # type: ignore[method-assign]
+    emitted: list[tuple[LLMStreamEvent, object | None]] = []
+    async for event, message in service.llm_loop.run_stream(
+        db_context=MagicMock(),
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="hello"),
+        ],
+        interface_type="test",
+        conversation_id="conv",
+        user_name="tester",
+        turn_id="turn",
+        chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
+        processing_service=service,
+    ):
+        emitted.append((event, message))
+
+    tool_results = [
+        (index, event.tool_call_id)
+        for index, (event, _message) in enumerate(emitted)
+        if event.type == "tool_result"
+    ]
+    terminal_content_index = next(
+        index
+        for index, (event, _message) in enumerate(emitted)
+        if event.type == "content"
+        and event.content
+        == "Automatic review stopped this turn after repeated denials."
+    )
+    assert {call_id for _index, call_id in tool_results} == {
+        "denied-call",
+        "batch-peer-call",
+    }
+    assert all(index < terminal_content_index for index, _call_id in tool_results)
+    assert llm_client.call_count == 1
+    final_message = emitted[-1][1]
+    assert isinstance(final_message, AssistantMessage)
+    assert (
+        final_message.content
+        == "Automatic review stopped this turn after repeated denials."
+    )
 
 
 @pytest.mark.no_db
@@ -925,10 +1117,9 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
             yield LLMStreamEvent(type="content", content="final answer")
             yield LLMStreamEvent(type="done", metadata={})
 
-    service = _make_service()
+    service = _make_service(llm_client=cast("Any", TwoStepToolThenContentLLM()))
     service.app_config.attachment_selection_threshold = 0
     service.app_config.max_response_attachments = 1
-    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
     service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
             ToolExecutionResult(
@@ -977,6 +1168,8 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
         user_name="tester",
         turn_id="turn",
         chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         processing_service=service,
     ):
         if event.type == "done":
@@ -1087,3 +1280,22 @@ async def test_tool_executor_rejects_missing_tool_call_id() -> None:
             chat_interface=None,
             request_confirmation_callback=None,
         )
+
+
+def test_large_result_attachments_are_not_queued_for_display() -> None:
+    """Auto-converted oversized results stay out of the response attachments."""
+    result = ToolExecutionResult(
+        stream_event=LLMStreamEvent(type="tool_result", tool_call_id="call-1"),
+        llm_message=ToolMessage(
+            tool_call_id="call-1",
+            content="ok",
+            name="example_tool",
+        ),
+        auto_attachment_ids=["chart-1"],
+        large_result_attachment_ids=["large-1"],
+    )
+    pending_attachment_ids: list[str] = []
+
+    result.apply_attachment_updates(pending_attachment_ids)
+
+    assert pending_attachment_ids == ["chart-1"]

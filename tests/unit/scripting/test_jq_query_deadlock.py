@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import (
@@ -55,39 +55,39 @@ async def test_jq_query_from_script_no_deadlock(
     4. → creates nested _run_async() call while already in async context
     5. → deadlock: main loop blocked, can't process the new coroutine
     """
-    async with DatabaseContext(engine=db_engine) as db:
-        local_provider = LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS)
+    db = Database(engine=db_engine)
+    local_provider = LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS)
 
-        # Wrap it in PolicyEnforcingToolsProvider. This doesn't have
-        # get_raw_tool_definitions(), which previously triggered the deadlock.
-        policy_provider = PolicyEnforcingToolsProvider(
-            wrapped_provider=local_provider,
-            policy_engine=PolicyEngine.from_policy_config(
-                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
-            ),
-        )
+    # Wrap it in PolicyEnforcingToolsProvider. This doesn't have
+    # get_raw_tool_definitions(), which previously triggered the deadlock.
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=local_provider,
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+        ),
+    )
 
-        ctx = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-conv",
-            user_name="test",
-            turn_id=None,
-            db_context=db,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=attachment_registry,
-            camera_backend=None,
-            processing_service=None,
-            tools_provider=policy_provider,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        processing_service=None,
+        tools_provider=policy_provider,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Script that creates an attachment and then calls jq_query() on it
-        # This will trigger the deadlock in _process_attachment_arguments
-        script = """
+    # Script that creates an attachment and then calls jq_query() on it
+    # This will trigger the deadlock in _process_attachment_arguments
+    script = """
 # Create a JSON attachment (use text/plain since application/json isn't in allowed list)
 test_data = [
     {"name": "Alice", "age": 30},
@@ -110,10 +110,10 @@ result = jq_query(
 result
 """
 
-        # This should complete without timeout
-        # Currently it will timeout after 30s due to the deadlock
-        result = await execute_script_tool(ctx, script)
+    # This should complete without timeout
+    # Currently it will timeout after 30s due to the deadlock
+    result = await execute_script_tool(ctx, script)
 
-        # Verify the script executed successfully
-        assert result.text is not None
-        assert "Charlie" in result.text or "35" in result.text
+    # Verify the script executed successfully
+    assert result.text is not None
+    assert "Charlie" in result.text or "35" in result.text

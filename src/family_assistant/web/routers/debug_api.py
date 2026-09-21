@@ -11,9 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
 from family_assistant.config_inspection import (
-    SENSITIVE_FIELD_NAMES,
     dump_profile_like,
-    is_sensitive_field_name,
     redact_sensitive_config,
 )
 from family_assistant.tool_inventory import (
@@ -34,9 +32,7 @@ debug_api_router = APIRouter()
 # Re-export shared helpers from config_inspection so existing call sites and
 # tests that imported them from this module keep working.
 __all__ = [
-    "SENSITIVE_FIELD_NAMES",
     "debug_api_router",
-    "is_sensitive_field_name",
     "redact_sensitive_config",
 ]
 
@@ -300,7 +296,7 @@ async def dump_profiles(
     - ``tools_config`` — enabled local tools (with eager/on-demand loading mode),
       enabled MCP servers, tools requiring confirmation, timeouts.
     - ``tools_policy`` — the full policy matrix: each rule's matcher (names,
-      tags, MCP server ids, argument equality), decision (allow/deny/confirm),
+      tags, MCP server ids, argument equality), decision (allow/deny/confirm/review),
       priority, and description; plus the default decision.
     - ``slash_commands``, ``visibility_grants``, and ``remote_a2a`` delegation
       config if configured.

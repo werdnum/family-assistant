@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig
 from family_assistant.tools.image_backends import (
@@ -54,7 +55,9 @@ async def test_generate_image_with_real_api() -> None:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
     # Create mock context with real API configuration
-    mock_context = MockExecutionContext(AppConfig(gemini_api_key=api_key))
+    mock_context = MockExecutionContext(
+        AppConfig(gemini_api_key=SecretStr(api_key) if api_key else None)
+    )
 
     # Test image generation
     result = await generate_image_tool(

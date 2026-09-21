@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+
+# Fetch pinned public corpora into the private review-eval tree.
+#
+# This deliberately fetches only the files needed by the adapters. The output
+# path is fixed below the current worktree's .review-eval-local directory, so
+# an invocation cannot accidentally place raw corpus content in a tracked or
+# caller-selected directory.
+# Both source revisions default to the verified manifest commits below; the
+# script never follows a moving branch such as main.
+
+set -Eeuo pipefail
+
+die() {
+    printf 'error: %s\n' "$1" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+Usage: fetch_review_eval_corpora.sh \
+  [--deepset-revision <40-character-commit-sha>] \
+  [--injecagent-revision <40-character-commit-sha>]
+
+Fetch the required files from both corpora at immutable commits. The default
+commits are recorded in the script; flags override them for an intentional run.
+EOF
+}
+
+# These are the verified manifest commits. Keep them as full commit SHAs so a
+# bare invocation is reproducible without caller input.
+DEEPSET_REV="4f61ecb038e9c3fb77e21034b22511b523772cdd"
+INJECAGENT_REV="f19c9f2c79a41046eb13c03c51a24c567a8ffa07"
+while (($# > 0)); do
+    case "$1" in
+        --deepset-revision)
+            (($# >= 2)) || die "--deepset-revision requires a commit SHA"
+            DEEPSET_REV="$2"
+            shift 2
+            ;;
+        --injecagent-revision)
+            (($# >= 2)) || die "--injecagent-revision requires a commit SHA"
+            INJECAGENT_REV="$2"
+            shift 2
+            ;;
+        --help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown argument $1 (use --help for usage)"
+            ;;
+    esac
+done
+
+[[ "$DEEPSET_REV" =~ ^[0-9a-f]{40}$ ]] || die \
+    "--deepset-revision must be a 40-character lowercase commit SHA"
+[[ "$INJECAGENT_REV" =~ ^[0-9a-f]{40}$ ]] || die \
+    "--injecagent-revision must be a 40-character lowercase commit SHA"
+
+command -v git >/dev/null 2>&1 || die "git is required"
+git lfs version >/dev/null 2>&1 || die "git-lfs is required"
+command -v shasum >/dev/null 2>&1 || die "shasum is required"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel)"
+LOCAL_ROOT="$REPO_ROOT/.review-eval-local"
+CORPUS_ROOT="$LOCAL_ROOT/upstream"
+MANIFEST="$CORPUS_ROOT/manifest.txt"
+
+[[ ! -L "$LOCAL_ROOT" ]] || die "refusing symlinked private eval root $LOCAL_ROOT"
+mkdir -p "$LOCAL_ROOT"
+[[ ! -L "$LOCAL_ROOT" ]] || die "private eval root became a symlink: $LOCAL_ROOT"
+
+DEEPSET_REMOTE="https://huggingface.co/datasets/deepset/prompt-injections.git"
+INJECAGENT_REMOTE="https://github.com/uiuc-kang-lab/InjecAgent.git"
+
+[[ ! -e "$CORPUS_ROOT" && ! -L "$CORPUS_ROOT" ]] || die "refusing to overwrite existing $CORPUS_ROOT"
+
+STAGING_ROOT="$(mktemp -d "$LOCAL_ROOT/.upstream-staging.XXXXXX")"
+cleanup() {
+    if [[ -n "${STAGING_ROOT:-}" && -e "$STAGING_ROOT" ]]; then
+        rm -rf -- "$STAGING_ROOT"
+    fi
+}
+trap cleanup EXIT
+
+DEEPSET_STAGE="$STAGING_ROOT/deepset"
+INJECAGENT_STAGE="$STAGING_ROOT/InjecAgent"
+STAGING_MANIFEST="$STAGING_ROOT/manifest.txt"
+
+GIT_LFS_SKIP_SMUDGE=1 git clone \
+    --filter=blob:none \
+    --no-checkout \
+    --quiet \
+    "$DEEPSET_REMOTE" \
+    "$DEEPSET_STAGE"
+git -C "$DEEPSET_STAGE" sparse-checkout init --no-cone
+git -C "$DEEPSET_STAGE" sparse-checkout set \
+    '/data/*.parquet' \
+    '/README.md'
+git -C "$DEEPSET_STAGE" fetch --depth=1 --quiet origin "$DEEPSET_REV"
+git -C "$DEEPSET_STAGE" checkout --quiet --detach "$DEEPSET_REV"
+git -C "$DEEPSET_STAGE" lfs pull --include='data/*.parquet'
+
+git clone \
+    --filter=blob:none \
+    --no-checkout \
+    --quiet \
+    "$INJECAGENT_REMOTE" \
+    "$INJECAGENT_STAGE"
+git -C "$INJECAGENT_STAGE" sparse-checkout init --no-cone
+git -C "$INJECAGENT_STAGE" sparse-checkout set \
+    /data/test_cases_dh_base.json \
+    /data/test_cases_ds_base.json \
+    /data/test_cases_dh_enhanced.json \
+    /data/test_cases_ds_enhanced.json \
+    /README.md \
+    /LICENCE
+git -C "$INJECAGENT_STAGE" checkout --quiet --detach "$INJECAGENT_REV"
+
+sha256_for() {
+    local file="$1"
+    local relative="$2"
+    printf '%s  ' "$relative"
+    shasum -a 256 "$file" | awk '{print $1}'
+}
+
+{
+    printf '# Review-eval corpus fetch manifest\n'
+    printf 'deepset.revision=%s\n' "$DEEPSET_REV"
+    printf 'deepset.upstream=%s\n' "https://huggingface.co/datasets/deepset/prompt-injections"
+    for file in "$DEEPSET_STAGE"/data/*.parquet; do
+        [[ -f "$file" ]] || die "deepset Parquet download produced no data files"
+        sha256_for "$file" "deepset/data/${file##*/}"
+    done
+    [[ -f "$DEEPSET_STAGE/README.md" ]] || die "deepset README download failed"
+    sha256_for "$DEEPSET_STAGE/README.md" "deepset/README.md"
+    if [[ -f "$DEEPSET_STAGE/LICENSE" ]]; then
+        sha256_for "$DEEPSET_STAGE/LICENSE" "deepset/LICENSE"
+    else
+        printf 'deepset.license_file=absent-at-revision\n'
+    fi
+    printf 'injecagent.revision=%s\n' "$INJECAGENT_REV"
+    printf 'injecagent.upstream=%s\n' "$INJECAGENT_REMOTE"
+    for file in \
+        test_cases_dh_base.json \
+        test_cases_dh_enhanced.json \
+        test_cases_ds_base.json \
+        test_cases_ds_enhanced.json; do
+        [[ -f "$INJECAGENT_STAGE/data/$file" ]] || die "InjecAgent $file download failed"
+        sha256_for "$INJECAGENT_STAGE/data/$file" "InjecAgent/data/$file"
+    done
+    [[ -f "$INJECAGENT_STAGE/README.md" ]] || die "InjecAgent README download failed"
+    [[ -f "$INJECAGENT_STAGE/LICENCE" ]] || die "InjecAgent LICENCE download failed"
+    sha256_for "$INJECAGENT_STAGE/README.md" "InjecAgent/README.md"
+    sha256_for "$INJECAGENT_STAGE/LICENCE" "InjecAgent/LICENCE"
+} >"$STAGING_MANIFEST"
+
+mv "$STAGING_ROOT" "$CORPUS_ROOT"
+STAGING_ROOT=""
+
+printf 'Fetched pinned review-eval corpora under %s\n' "$CORPUS_ROOT"
+printf 'Recorded revisions and SHA-256 checksums in %s\n' "$MANIFEST"

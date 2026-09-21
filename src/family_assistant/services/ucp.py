@@ -640,7 +640,11 @@ def _without_none_values(data: dict[str, object | None]) -> dict[str, object]:
 def _load_signing_private_key(
     ucp_config: UCPConfig,
 ) -> ec.EllipticCurvePrivateKey | None:
-    private_key_pem = ucp_config.signing_private_key
+    private_key_pem = (
+        ucp_config.signing_private_key.get_secret_value()
+        if ucp_config.signing_private_key
+        else None
+    )
     if not private_key_pem and ucp_config.signing_private_key_path:
         private_key_pem = Path(ucp_config.signing_private_key_path).read_text(
             encoding="utf-8"

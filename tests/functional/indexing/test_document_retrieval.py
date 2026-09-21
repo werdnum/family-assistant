@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.ingestion import process_document_ingestion_request
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.vector import add_embedding
 from family_assistant.tools.documents import (
     get_full_document_content_tool,
@@ -88,85 +89,85 @@ class TestDocumentRetrieval:
     ) -> None:
         """Test uploading a PDF and retrieving it with multimodal support."""
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conv",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=pg_vector_db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Ingest PDF document
-            result = await process_document_ingestion_request(
-                db_context=db_context,
-                document_storage_path=temp_storage_path,
-                source_type="test_pdf",
-                source_id="test_pdf_001",
-                source_uri="file://test.pdf",
-                title="Test PDF Document",
-                uploaded_file_content=sample_pdf_content,
-                uploaded_file_filename="test.pdf",
-                uploaded_file_content_type="application/pdf",
-            )
+        # Ingest PDF document
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=temp_storage_path,
+            source_type="test_pdf",
+            source_id="test_pdf_001",
+            source_uri="file://test.pdf",
+            title="Test PDF Document",
+            uploaded_file_content=sample_pdf_content,
+            uploaded_file_filename="test.pdf",
+            uploaded_file_content_type="application/pdf",
+        )
 
-            document_id = result.get("document_id")
-            assert document_id is not None
-            assert result.get("task_enqueued") is True
+        document_id = result.get("document_id")
+        assert document_id is not None
+        assert result.get("task_enqueued") is True
 
-            # Add a test embedding for search to work
+        # Add a test embedding for search to work
 
-            embedding_result = await mock_embedding_generator.generate_embeddings([
-                "test PDF document"
-            ])
-            test_embedding = embedding_result.embeddings[0]
-            await add_embedding(
-                db_context=db_context,
-                document_id=document_id,
-                chunk_index=0,
-                embedding_type="full_text",
-                embedding=test_embedding,
-                embedding_model="mock-embedding-model",
-                content="Test PDF document content",
-            )
+        embedding_result = await mock_embedding_generator.generate_embeddings([
+            "test PDF document"
+        ])
+        test_embedding = embedding_result.embeddings[0]
+        await add_embedding(
+            db_context=db_context,
+            document_id=document_id,
+            chunk_index=0,
+            embedding_type="full_text",
+            embedding=test_embedding,
+            embedding_model="mock-embedding-model",
+            content="Test PDF document content",
+        )
 
-            # Search for the document
-            search_results = await search_documents_tool(
-                exec_context=exec_context,
-                embedding_generator=mock_embedding_generator,
-                query="test PDF document",
-                limit=5,
-            )
+        # Search for the document
+        search_results = await search_documents_tool(
+            exec_context=exec_context,
+            embedding_generator=mock_embedding_generator,
+            query="test PDF document",
+            limit=5,
+        )
 
-            # Should indicate original file is available
-            assert "📎 Original file available" in search_results
-            assert "test.pdf" in search_results
-            assert str(document_id) in search_results
+        # Should indicate original file is available
+        assert "📎 Original file available" in search_results
+        assert "test.pdf" in search_results
+        assert str(document_id) in search_results
 
-            # Retrieve full document content
-            content_result = await get_full_document_content_tool(
-                exec_context=exec_context, document_id=document_id
-            )
+        # Retrieve full document content
+        content_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
 
-            # Should return ToolResult with attachment for PDF
-            assert isinstance(content_result, ToolResult)
-            assert content_result.attachments and len(content_result.attachments) > 0
+        # Should return ToolResult with attachment for PDF
+        assert isinstance(content_result, ToolResult)
+        assert content_result.attachments and len(content_result.attachments) > 0
 
-            attachment = content_result.attachments[0]
-            assert isinstance(attachment, ToolAttachment)
-            assert attachment.mime_type == "application/pdf"
-            assert attachment.content == sample_pdf_content
-            assert "Test PDF Document" in attachment.description
+        attachment = content_result.attachments[0]
+        assert isinstance(attachment, ToolAttachment)
+        assert attachment.mime_type == "application/pdf"
+        assert attachment.content == sample_pdf_content
+        assert "Test PDF Document" in attachment.description
 
     @pytest.mark.postgres
     async def test_image_document_upload_and_retrieval(
@@ -178,71 +179,71 @@ class TestDocumentRetrieval:
     ) -> None:
         """Test uploading an image and retrieving it with multimodal support."""
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conv",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=pg_vector_db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Ingest image document
-            result = await process_document_ingestion_request(
-                db_context=db_context,
-                document_storage_path=temp_storage_path,
-                source_type="test_image",
-                source_id="test_image_001",
-                source_uri="file://test.png",
-                title="Test Image",
-                uploaded_file_content=sample_image_content,
-                uploaded_file_filename="test.png",
-                uploaded_file_content_type="image/png",
-            )
+        # Ingest image document
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=temp_storage_path,
+            source_type="test_image",
+            source_id="test_image_001",
+            source_uri="file://test.png",
+            title="Test Image",
+            uploaded_file_content=sample_image_content,
+            uploaded_file_filename="test.png",
+            uploaded_file_content_type="image/png",
+        )
 
-            document_id = result.get("document_id")
-            assert document_id is not None
+        document_id = result.get("document_id")
+        assert document_id is not None
 
-            # Add a test embedding for the image
+        # Add a test embedding for the image
 
-            embedding_result = await mock_embedding_generator.generate_embeddings([
-                "test image"
-            ])
-            test_embedding = embedding_result.embeddings[0]
-            await add_embedding(
-                db_context=db_context,
-                document_id=document_id,
-                chunk_index=0,
-                embedding_type="full_text",
-                embedding=test_embedding,
-                embedding_model="mock-embedding-model",
-                content="Test Image content",
-            )
+        embedding_result = await mock_embedding_generator.generate_embeddings([
+            "test image"
+        ])
+        test_embedding = embedding_result.embeddings[0]
+        await add_embedding(
+            db_context=db_context,
+            document_id=document_id,
+            chunk_index=0,
+            embedding_type="full_text",
+            embedding=test_embedding,
+            embedding_model="mock-embedding-model",
+            content="Test Image content",
+        )
 
-            # Retrieve full document content
-            content_result = await get_full_document_content_tool(
-                exec_context=exec_context, document_id=document_id
-            )
+        # Retrieve full document content
+        content_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
 
-            # Should return ToolResult with attachment for image
-            assert isinstance(content_result, ToolResult)
-            assert content_result.attachments and len(content_result.attachments) > 0
+        # Should return ToolResult with attachment for image
+        assert isinstance(content_result, ToolResult)
+        assert content_result.attachments and len(content_result.attachments) > 0
 
-            attachment = content_result.attachments[0]
-            assert isinstance(attachment, ToolAttachment)
-            assert attachment.mime_type == "image/png"
-            assert attachment.content == sample_image_content
-            assert "Test Image" in attachment.description
+        attachment = content_result.attachments[0]
+        assert isinstance(attachment, ToolAttachment)
+        assert attachment.mime_type == "image/png"
+        assert attachment.content == sample_image_content
+        assert "Test Image" in attachment.description
 
     @pytest.mark.postgres
     async def test_text_only_document_retrieval(
@@ -253,75 +254,75 @@ class TestDocumentRetrieval:
     ) -> None:
         """Test retrieving a document that has no original file."""
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conv",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=pg_vector_db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Ingest text-only document (no file)
-            result = await process_document_ingestion_request(
-                db_context=db_context,
-                document_storage_path=temp_storage_path,
-                source_type="test_text",
-                source_id="test_text_001",
-                source_uri="content://manual",
-                title="Test Text Document",
-                content_parts={"content": "This is a test text document."},
-            )
+        # Ingest text-only document (no file)
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=temp_storage_path,
+            source_type="test_text",
+            source_id="test_text_001",
+            source_uri="content://manual",
+            title="Test Text Document",
+            content_parts={"content": "This is a test text document."},
+        )
 
-            document_id = result.get("document_id")
-            assert document_id is not None
+        document_id = result.get("document_id")
+        assert document_id is not None
 
-            # Add a test embedding for the text document
+        # Add a test embedding for the text document
 
-            embedding_result = await mock_embedding_generator.generate_embeddings([
-                "test text document"
-            ])
-            test_embedding = embedding_result.embeddings[0]
-            await add_embedding(
-                db_context=db_context,
-                document_id=document_id,
-                chunk_index=0,
-                embedding_type="raw_note_text",  # Use a type that _get_text_content_fallback recognizes
-                embedding=test_embedding,
-                embedding_model="mock-embedding-model",
-                content="This is a test text document.",
-            )
+        embedding_result = await mock_embedding_generator.generate_embeddings([
+            "test text document"
+        ])
+        test_embedding = embedding_result.embeddings[0]
+        await add_embedding(
+            db_context=db_context,
+            document_id=document_id,
+            chunk_index=0,
+            embedding_type="raw_note_text",  # Use a type that _get_text_content_fallback recognizes
+            embedding=test_embedding,
+            embedding_model="mock-embedding-model",
+            content="This is a test text document.",
+        )
 
-            # Search should not show file attachment
-            search_results = await search_documents_tool(
-                exec_context=exec_context,
-                embedding_generator=mock_embedding_generator,
-                query="test text document",
-                limit=5,
-            )
+        # Search should not show file attachment
+        search_results = await search_documents_tool(
+            exec_context=exec_context,
+            embedding_generator=mock_embedding_generator,
+            query="test text document",
+            limit=5,
+        )
 
-            # Should NOT indicate original file is available
-            assert "📎 Original file available" not in search_results
-            assert str(document_id) in search_results
+        # Should NOT indicate original file is available
+        assert "📎 Original file available" not in search_results
+        assert str(document_id) in search_results
 
-            # Retrieve full document content - should return string (no multimodal)
-            content_result = await get_full_document_content_tool(
-                exec_context=exec_context, document_id=document_id
-            )
+        # Retrieve full document content - should return string (no multimodal)
+        content_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
 
-            # Should return string for text-only documents
-            assert isinstance(content_result, str)
-            assert "test text document" in content_result.lower()
+        # Should return string for text-only documents
+        assert isinstance(content_result, str)
+        assert "test text document" in content_result.lower()
 
     @pytest.mark.postgres
     async def test_missing_file_fallback(
@@ -333,72 +334,72 @@ class TestDocumentRetrieval:
     ) -> None:
         """Test that retrieval falls back to text when file is missing."""
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conv",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=pg_vector_db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Ingest PDF document
-            result = await process_document_ingestion_request(
-                db_context=db_context,
-                document_storage_path=temp_storage_path,
-                source_type="test_pdf_missing",
-                source_id="test_pdf_missing_001",
-                source_uri="file://missing.pdf",
-                title="Missing PDF Document",
-                uploaded_file_content=sample_pdf_content,
-                uploaded_file_filename="missing.pdf",
-                uploaded_file_content_type="application/pdf",
-            )
+        # Ingest PDF document
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=temp_storage_path,
+            source_type="test_pdf_missing",
+            source_id="test_pdf_missing_001",
+            source_uri="file://missing.pdf",
+            title="Missing PDF Document",
+            uploaded_file_content=sample_pdf_content,
+            uploaded_file_filename="missing.pdf",
+            uploaded_file_content_type="application/pdf",
+        )
 
-            document_id = result.get("document_id")
-            assert document_id is not None
+        document_id = result.get("document_id")
+        assert document_id is not None
 
-            # Add a test embedding for the document
+        # Add a test embedding for the document
 
-            embedding_result = await mock_embedding_generator.generate_embeddings([
-                "missing PDF document"
-            ])
-            test_embedding = embedding_result.embeddings[0]
-            await add_embedding(
-                db_context=db_context,
-                document_id=document_id,
-                chunk_index=0,
-                embedding_type="full_text",
-                embedding=test_embedding,
-                embedding_model="mock-embedding-model",
-                content="Missing PDF Document content",
-            )
+        embedding_result = await mock_embedding_generator.generate_embeddings([
+            "missing PDF document"
+        ])
+        test_embedding = embedding_result.embeddings[0]
+        await add_embedding(
+            db_context=db_context,
+            document_id=document_id,
+            chunk_index=0,
+            embedding_type="full_text",
+            embedding=test_embedding,
+            embedding_model="mock-embedding-model",
+            content="Missing PDF Document content",
+        )
 
-            # Remove the file to simulate missing file
-            stored_files = [
-                p async for p in anyio.Path(temp_storage_path).glob("*missing.pdf")
-            ]
-            for file_path in stored_files:
-                await anyio.Path(file_path).unlink()
+        # Remove the file to simulate missing file
+        stored_files = [
+            p async for p in anyio.Path(temp_storage_path).glob("*missing.pdf")
+        ]
+        for file_path in stored_files:
+            await anyio.Path(file_path).unlink()
 
-            # Retrieve should fall back to text content
-            content_result = await get_full_document_content_tool(
-                exec_context=exec_context, document_id=document_id
-            )
+        # Retrieve should fall back to text content
+        content_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
 
-            # Should fall back to string when file is missing
-            # (PDF processing would have extracted text during indexing)
-            assert isinstance(content_result, str)
+        # Should fall back to string when file is missing
+        # (PDF processing would have extracted text during indexing)
+        assert isinstance(content_result, str)
 
     @pytest.mark.postgres
     async def test_file_size_limit_fallback(
@@ -409,67 +410,67 @@ class TestDocumentRetrieval:
     ) -> None:
         """Test that large files fall back to text content."""
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conv",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=pg_vector_db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Create large dummy file content (over 20MB)
-            large_content = b"x" * (21 * 1024 * 1024)  # 21MB
+        # Create large dummy file content (over 20MB)
+        large_content = b"x" * (21 * 1024 * 1024)  # 21MB
 
-            # Ingest large document
-            result = await process_document_ingestion_request(
-                db_context=db_context,
-                document_storage_path=temp_storage_path,
-                source_type="test_large",
-                source_id="test_large_001",
-                source_uri="file://large.txt",
-                title="Large Document",
-                uploaded_file_content=large_content,
-                uploaded_file_filename="large.txt",
-                uploaded_file_content_type="text/plain",
-            )
+        # Ingest large document
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=temp_storage_path,
+            source_type="test_large",
+            source_id="test_large_001",
+            source_uri="file://large.txt",
+            title="Large Document",
+            uploaded_file_content=large_content,
+            uploaded_file_filename="large.txt",
+            uploaded_file_content_type="text/plain",
+        )
 
-            document_id = result.get("document_id")
-            assert document_id is not None
+        document_id = result.get("document_id")
+        assert document_id is not None
 
-            # Add a test embedding for the large document
+        # Add a test embedding for the large document
 
-            embedding_result = await mock_embedding_generator.generate_embeddings([
-                "large document"
-            ])
-            test_embedding = embedding_result.embeddings[0]
-            await add_embedding(
-                db_context=db_context,
-                document_id=document_id,
-                chunk_index=0,
-                embedding_type="full_text",
-                embedding=test_embedding,
-                embedding_model="mock-embedding-model",
-                content="Large Document content",
-            )
+        embedding_result = await mock_embedding_generator.generate_embeddings([
+            "large document"
+        ])
+        test_embedding = embedding_result.embeddings[0]
+        await add_embedding(
+            db_context=db_context,
+            document_id=document_id,
+            chunk_index=0,
+            embedding_type="full_text",
+            embedding=test_embedding,
+            embedding_model="mock-embedding-model",
+            content="Large Document content",
+        )
 
-            # Retrieve should fall back to text due to size limit
-            content_result = await get_full_document_content_tool(
-                exec_context=exec_context, document_id=document_id
-            )
+        # Retrieve should fall back to text due to size limit
+        content_result = await get_full_document_content_tool(
+            exec_context=exec_context, document_id=document_id
+        )
 
-            # Should fall back to string for large files
-            assert isinstance(content_result, str)
+        # Should fall back to string for large files
+        assert isinstance(content_result, str)
 
     @pytest.mark.postgres
     async def test_file_path_persistence(
@@ -480,28 +481,68 @@ class TestDocumentRetrieval:
     ) -> None:
         """Test that file paths are correctly stored in the database."""
 
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            # Ingest PDF document
-            result = await process_document_ingestion_request(
-                db_context=db_context,
-                document_storage_path=temp_storage_path,
-                source_type="test_path_persistence",
-                source_id="test_path_001",
-                source_uri="file://path_test.pdf",
-                title="Path Test Document",
-                uploaded_file_content=sample_pdf_content,
-                uploaded_file_filename="path_test.pdf",
-                uploaded_file_content_type="application/pdf",
-            )
+        db_context = Database(engine=pg_vector_db_engine)
+        # Ingest PDF document
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=temp_storage_path,
+            source_type="test_path_persistence",
+            source_id="test_path_001",
+            source_uri="file://path_test.pdf",
+            title="Path Test Document",
+            uploaded_file_content=sample_pdf_content,
+            uploaded_file_filename="path_test.pdf",
+            uploaded_file_content_type="application/pdf",
+        )
 
-            document_id = result.get("document_id")
-            assert document_id is not None
+        document_id = result.get("document_id")
+        assert document_id is not None
 
-            # Check that file_path is stored in database
-            query = text("SELECT file_path FROM documents WHERE id = :doc_id")
-            doc_result = await db_context.fetch_one(query, {"doc_id": document_id})
+        # Check that file_path is stored in database
+        query = text("SELECT file_path FROM documents WHERE id = :doc_id")
+        doc_result = await db_context.fetch_one(query, {"doc_id": document_id})
 
-            assert doc_result is not None
-            assert doc_result["file_path"] is not None
-            assert "path_test.pdf" in doc_result["file_path"]
-            assert await anyio.Path(doc_result["file_path"]).exists()
+        assert doc_result is not None
+        assert doc_result["file_path"] is not None
+        assert "path_test.pdf" in doc_result["file_path"]
+        assert await anyio.Path(doc_result["file_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_ingestion_leaves_no_document_when_the_task_cannot_be_queued(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A document that cannot be queued for processing is not left behind.
+
+    Committed on its own, it would never be indexed, and the retry that would
+    fix it collides with the source identity already in the table.
+    """
+
+    async def fail_enqueue(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(TasksRepository, "enqueue", fail_enqueue)
+
+    db_context = Database(db_engine)
+    with tempfile.TemporaryDirectory() as storage_dir:
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=pathlib.Path(storage_dir),
+            source_type="test_doc",
+            source_id="unqueueable_001",
+            source_uri="file://unqueueable.txt",
+            title="Unqueueable",
+            content_parts={"text": "some content"},
+        )
+
+    assert result.get("document_id") is None
+    assert result.get("task_enqueued") is False
+
+    monkeypatch.undo()
+    rows = await db_context.fetch_all(
+        text("SELECT id FROM documents WHERE source_id = :source_id"),
+        {"source_id": "unqueueable_001"},
+    )
+    assert rows == [], "the document must roll back with its unqueued task"

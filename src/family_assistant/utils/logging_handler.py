@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database, spawn_detached
 from family_assistant.storage.error_logs import error_logs_table
 
 
@@ -76,26 +76,29 @@ class SQLAlchemyErrorHandler(logging.Handler):
             return
 
         try:
-            # Get current event loop
-            loop = asyncio.get_running_loop()
+            # Detached spawning still needs a running loop.
+            asyncio.get_running_loop()
         except RuntimeError:
             # No event loop running - can't log to database
             # This might happen during shutdown or in sync contexts
             return
 
-        # Create task and track it
-        task = loop.create_task(self._async_emit(record))
+        # Detached: an ERROR logged from inside a transaction would otherwise
+        # inherit its ambient token, and the handle write would be refused --
+        # silently, since the failure is swallowed and counted toward the
+        # circuit breaker that disables database logging entirely.
+        task = spawn_detached(self._async_emit(record))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
 
     async def _async_emit(self, record: logging.LogRecord) -> None:
         """Write log record to database."""
         try:
-            async with DatabaseContext(engine=self.engine) as db_context:
-                error_log = self._create_error_log_dict(record)
-                stmt = insert(error_logs_table).values(**error_log)
-                await db_context.execute_with_retry(stmt)
-                self.consecutive_failures = 0  # Reset on success
+            db_context = Database(engine=self.engine)
+            error_log = self._create_error_log_dict(record)
+            stmt = insert(error_logs_table).values(**error_log)
+            await db_context.execute(stmt)
+            self.consecutive_failures = 0  # Reset on success
         except Exception as e:
             self.consecutive_failures += 1
             # Log to stderr as fallback

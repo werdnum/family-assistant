@@ -1,7 +1,6 @@
+@testable import FamilyAssistant
 import Foundation
 import XCTest
-
-@testable import FamilyAssistant
 
 @MainActor
 final class AuthManagerTests: XCTestCase {
@@ -28,6 +27,144 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(authManager.validatedServerURL()?.absoluteString, serverURL)
     }
 
+    func testInstallWatchCredentialsReplacesServerAndOldTokens() throws {
+        seedStoredAuth(apiToken: "old", refreshToken: "old-refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        let epoch = auth.authEpoch
+        try auth.installWatchCredentials(WatchCredentials(
+            serverURL: "https://new.example.test", phoneSessionID: "phone-session",
+            tokens: TokenResponse(apiToken: "watch-token", refreshToken: "watch-refresh", expiresIn: 1800)
+        ))
+        XCTAssertEqual(auth.serverURL, "https://new.example.test")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "watch-token")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "watch-refresh")
+        XCTAssertTrue(auth.isAuthenticated)
+        XCTAssertFalse(auth.authRequired)
+        XCTAssertFalse(auth.isBootstrapping)
+        XCTAssertGreaterThan(auth.authEpoch, epoch)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "fa_token_lifetime"), 1800)
+    }
+
+    func testInstallWatchCredentialsRejectsIncompleteReplyWithoutClearingAuth() {
+        seedStoredAuth(apiToken: "old", refreshToken: "old-refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        XCTAssertThrowsError(try auth.installWatchCredentials(WatchCredentials(
+            serverURL: serverURL, phoneSessionID: "phone-session",
+            tokens: TokenResponse(apiToken: "watch-token", refreshToken: nil, expiresIn: 1800)
+        )))
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "old")
+    }
+
+    func testProvisionWatchUsesPhoneAuthButDoesNotReplaceIt() async throws {
+        seedStoredAuth(apiToken: "phone-token", refreshToken: "phone-refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        auth.isBootstrapping = false
+        AuthBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/watch-credentials")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer phone-token")
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: String])
+            XCTAssertEqual(payload["refresh_token"], "phone-refresh")
+            return .json(#"{"api_token":"watch-token","refresh_token":"watch-refresh","expires_in":1800}"#)
+        }
+        let credentials = try await auth.provisionWatchCredentials()
+        XCTAssertEqual(credentials.tokens.apiToken, "watch-token")
+        XCTAssertEqual(credentials.phoneSessionID, auth.companionSessionID)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "phone-token")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "phone-refresh")
+    }
+
+    func testWatchPairingIdentityIsStableAcrossLaunchButInvalidatedByReauth() {
+        seedStoredAuth(apiToken: "phone-token", refreshToken: "phone-refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        auth.isBootstrapping = false
+        XCTAssertFalse(auth.watchPairingIdentity.isEmpty)
+        XCTAssertEqual(AuthManager().companionSessionID, auth.companionSessionID)
+        let identity = auth.companionSessionID
+        auth.markAuthRequired()
+        XCTAssertTrue(auth.watchPairingIdentity.isEmpty)
+        XCTAssertNotEqual(auth.companionSessionID, identity)
+    }
+
+    func testWatchSetupInstallsInteractiveReply() throws {
+        let auth = makeAuthManager()
+        let data = try watchReply()
+        let pairing = WatchAuthentication(auth: auth, session: nil, requestCredentials: { reply in
+            reply(data, nil)
+        })
+        pairing.connect()
+        XCTAssertTrue(auth.isAuthenticated)
+        XCTAssertFalse(pairing.isConnecting)
+        XCTAssertNil(pairing.message)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "fa_paired_phone_session"), "phone-session")
+    }
+
+    func testWatchSetupUnavailablePhoneShowsActionableMessage() {
+        let pairing = WatchAuthentication(auth: makeAuthManager(), session: nil)
+        pairing.connect()
+        XCTAssertFalse(pairing.isConnecting)
+        XCTAssertTrue(pairing.message?.contains("paired iPhone") == true)
+    }
+
+    func testWatchSetupAcceptsLiveReplyAfterCachedSignedOutContext() throws {
+        let auth = makeAuthManager()
+        let data = try watchReply()
+        let pairing = WatchAuthentication(auth: auth, session: nil, requestCredentials: { reply in
+            reply(data, nil)
+        })
+        pairing.receivePhoneState("")
+        pairing.connect()
+        XCTAssertTrue(auth.isAuthenticated)
+        XCTAssertNil(pairing.message)
+    }
+
+    func testPhoneSignOutClearsWatchAndIgnoresPendingReply() throws {
+        let auth = makeAuthManager()
+        try auth.installWatchCredentials(JSONDecoder().decode(WatchCredentials.self, from: watchReply()))
+        UserDefaults.standard.set("phone-session", forKey: "fa_paired_phone_session")
+        var completion: (@MainActor (Data?, String?) -> Void)?
+        let pairing = WatchAuthentication(auth: auth, session: nil, requestCredentials: { reply in
+            completion = reply
+        })
+        pairing.connect()
+        pairing.receivePhoneState("")
+        try completion?(watchReply(), nil)
+        XCTAssertTrue(auth.authRequired)
+        XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+        XCTAssertFalse(pairing.isConnecting)
+    }
+
+    func testPhoneAccountChangeDuringFirstSetupRejectsOldReply() throws {
+        let auth = makeAuthManager()
+        var completion: (@MainActor (Data?, String?) -> Void)?
+        let pairing = WatchAuthentication(auth: auth, session: nil, requestCredentials: { reply in
+            completion = reply
+        })
+        pairing.connect()
+        pairing.receivePhoneState("different-phone-session")
+        try completion?(watchReply(), nil)
+        XCTAssertFalse(auth.isAuthenticated)
+        XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+        XCTAssertNotNil(pairing.message)
+    }
+
+    func testSamePhoneSessionUpdateDoesNotClearWatch() throws {
+        let auth = makeAuthManager()
+        try auth.installWatchCredentials(JSONDecoder().decode(WatchCredentials.self, from: watchReply()))
+        UserDefaults.standard.set("phone-session", forKey: "fa_paired_phone_session")
+        let pairing = WatchAuthentication(auth: auth, session: nil)
+        pairing.receivePhoneState("phone-session")
+        XCTAssertFalse(auth.authRequired)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "watch-token")
+    }
+
+    private func watchReply() throws -> Data {
+        try JSONEncoder().encode(WatchCredentials(
+            serverURL: serverURL, phoneSessionID: "phone-session",
+            tokens: TokenResponse(apiToken: "watch-token", refreshToken: "watch-refresh", expiresIn: 1800)
+        ))
+    }
+
     func testSaveServerURLPersistsForNextManager() {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -51,6 +188,7 @@ final class AuthManagerTests: XCTestCase {
 
     func testRefreshIfNeededPostsRefreshTokenAndStoresReturnedCredentials() async throws {
         seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
+        UserDefaults.standard.set(1800, forKey: "fa_token_lifetime")
         let authManager = makeAuthManager()
         AuthBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -64,7 +202,7 @@ final class AuthManagerTests: XCTestCase {
                 {
                   "api_token": "new-api-token",
                   "refresh_token": "new-refresh-token",
-                  "expires_in": 7200
+                  "expires_in": 3600
                 }
                 """
             )
@@ -76,6 +214,50 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "new-api-token")
         XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "new-refresh-token")
         XCTAssertNotNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
+        XCTAssertEqual(UserDefaults.standard.object(forKey: "fa_token_lifetime") as? Int, 3600)
+    }
+
+    func testValidAccessTokenRefreshesExpiredStoredToken() async throws {
+        seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"fresh-api-token","refresh_token":"fresh-refresh","expires_in":3600}"#)
+        }
+
+        let token = try await authManager.validAccessToken()
+
+        XCTAssertEqual(token, "fresh-api-token")
+        XCTAssertEqual(AuthBackendURLProtocol.requests.count, 1)
+        XCTAssertEqual(AuthBackendURLProtocol.requests.first?.url?.path, "/api/auth/refresh")
+    }
+
+    func testValidAccessTokenSurfacesRefreshAuthWallWithoutClearingCredentials() async throws {
+        seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("<html><body>Sign in</body></html>")
+        }
+
+        do {
+            _ = try await authManager.validAccessToken()
+            XCTFail("Expected refresh markup to surface as an authentication wall")
+        } catch AuthError.authWall {}
+
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "expired-api-token")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "stored-refresh-token")
+        XCTAssertFalse(authManager.authRequired)
+    }
+
+    func testValidAccessTokenIfPresentDoesNotLatchAuthRequiredWithoutCredentials() async throws {
+        let authManager = makeAuthManager()
+        let initialEpoch = authManager.authEpoch
+
+        let token = try await authManager.validAccessTokenIfPresent()
+
+        XCTAssertNil(token)
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(authManager.authEpoch, initialEpoch)
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
     }
 
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
@@ -353,6 +535,18 @@ final class AuthManagerTests: XCTestCase {
         }
     }
 
+    func testEstablishSessionSurfacesAuthWallBeforeStatusHandling() async throws {
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("<html><body>Sign in</body></html>", statusCode: 403)
+        }
+
+        do {
+            try await authManager.establishSession(apiToken: "valid-token")
+            XCTFail("Expected session bridge markup to surface as an authentication wall")
+        } catch AuthError.authWall {}
+    }
+
     func testBootstrapSessionClearsLocalStateWhenRefreshIsRejected() async {
         seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
         let authManager = makeAuthManager()
@@ -457,6 +651,7 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(AuthError.exchangeFailed.errorDescription, "Failed to exchange authorization code")
         XCTAssertEqual(AuthError.authRejected.errorDescription, "Server rejected stored credentials")
         XCTAssertEqual(AuthError.noCredentials.errorDescription, "No stored credentials")
+        XCTAssertTrue(AuthError.authWall.errorDescription?.contains("authentication wall detected") == true)
         XCTAssertEqual(
             AuthError.transient(underlying: nil).errorDescription,
             "Temporary network or server error"
@@ -465,7 +660,67 @@ final class AuthManagerTests: XCTestCase {
             AuthError.transient(underlying: URLError(.timedOut)).errorDescription?
                 .contains("Temporary failure") == true
         )
-        XCTAssertEqual(Data([0xfb, 0xff]).base64URLEncoded, "-_8")
+        XCTAssertEqual(Data([0xFB, 0xFF]).base64URLEncoded, "-_8")
+    }
+
+    func testRefreshThresholdIsProportionalToTokenLifetime() {
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: nil), 3600)
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: 0), 3600)
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: 7200), 3600, "a long-lived token caps at the historical hour")
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: 1800), 900)
+
+        XCTAssertTrue(AuthManager.shouldRefresh(remaining: 900, ttl: 1800))
+        XCTAssertTrue(AuthManager.shouldRefresh(remaining: 899, ttl: 1800))
+        XCTAssertFalse(AuthManager.shouldRefresh(remaining: 901, ttl: 1800))
+    }
+
+    func testShortLivedTokenRefreshesAtHalfLifetimeNotFixedHour() async throws {
+        // A one-hour token with 45 minutes left is fresh under a proportional
+        // half-lifetime threshold, though the old fixed check would have
+        // refreshed it on nearly every call.
+        seedStoredAuth(apiToken: "short-lived", refreshToken: "the-refresh", expiresIn: 2700)
+        UserDefaults.standard.set(3600, forKey: "fa_token_lifetime")
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            XCTFail("A token past its proportional threshold must not be refreshed early")
+            return .json("{}")
+        }
+
+        try await authManager.refreshIfNeeded()
+
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
+    }
+
+    func testShortLivedTokenPastHalfLifetimeStillRefreshes() async throws {
+        // Half of the one-hour lifetime has elapsed: the token is due even
+        // though it still has ~29 minutes left.
+        seedStoredAuth(apiToken: "short-lived", refreshToken: "the-refresh", expiresIn: 1740)
+        UserDefaults.standard.set(3600, forKey: "fa_token_lifetime")
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":3600}"#)
+        }
+
+        try await authManager.refreshIfNeeded()
+
+        let refreshPosts = AuthBackendURLProtocol.requests.filter { $0.url?.path == "/api/auth/refresh" }
+        XCTAssertEqual(refreshPosts.count, 1)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+    }
+
+    func testMissingLifetimeFallsBackToHistoricalHourThreshold() async throws {
+        // No stored lifetime (pre-proportional credentials): remaining time above
+        // an hour must skip the refresh exactly as before.
+        seedStoredAuth(apiToken: "legacy", refreshToken: "the-refresh", expiresIn: 5400)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            XCTFail("A legacy token over an hour from expiry must not be refreshed")
+            return .json("{}")
+        }
+
+        try await authManager.refreshIfNeeded()
+
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
     }
 
     private func waitUntil(
@@ -498,9 +753,12 @@ final class AuthManagerTests: XCTestCase {
     }
 
     private func resetStoredAuth() {
+        UserDefaults.standard.removeObject(forKey: "fa_paired_phone_session")
+        UserDefaults.standard.removeObject(forKey: "fa_companion_session_id")
         KeychainHelper.delete(key: "fa_api_token")
         KeychainHelper.delete(key: "fa_refresh_token")
         UserDefaults.standard.removeObject(forKey: "fa_token_expiry")
+        UserDefaults.standard.removeObject(forKey: "fa_token_lifetime")
         UserDefaults.standard.removeObject(forKey: "fa_server_url")
     }
 
@@ -533,15 +791,15 @@ private final class AuthBackendURLProtocol: URLProtocol {
 
     static func installResponseGate() -> DispatchSemaphore {
         let gate = DispatchSemaphore(value: 0)
-        lock.withLock { responseGate = gate }
+        lock.withLock { self.responseGate = gate }
         return gate
     }
 
     static func reset() {
         lock.withLock {
-            handler = nil
-            recordedRequests = []
-            responseGate = nil
+            self.handler = nil
+            self.recordedRequests = []
+            self.responseGate = nil
         }
     }
 

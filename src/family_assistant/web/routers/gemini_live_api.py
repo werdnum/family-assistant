@@ -14,13 +14,18 @@ from collections.abc import Sequence
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.turn_context import (
+    render_turn_context_block,
+    turn_context_guidance,
+)
 from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
-from family_assistant.web.dependencies import get_processing_service
+from family_assistant.web.dependencies import get_current_user, get_processing_service
+from family_assistant.web.live_tools import resolve_live_tools
 from family_assistant.web.models import GeminiLiveConfig
 
 logger = logging.getLogger(__name__)
@@ -52,6 +57,15 @@ class EphemeralTokenResponse(BaseModel):
     system_instruction: str
     model: str
     config: GeminiLiveConfig
+    profile_id: str = Field(
+        description=(
+            "The profile the session actually runs under, after resolving the "
+            "request's profile_id (which is absent, or names an unknown profile, "
+            "when the default is used). The client sends this back when it "
+            "persists the transcript, so the saved conversation is tagged with "
+            "the profile whose tools and prompt produced it."
+        )
+    )
 
 
 class EphemeralTokenRequest(BaseModel):
@@ -177,54 +191,117 @@ def convert_tools_to_gemini_format(
 async def _get_formatted_system_prompt(
     request: Request,
     processing_service: ProcessingService,
+    *,
+    acting_user_id: str | None,
+    tools_addition: str | None = None,
 ) -> str:
     """Get the formatted system prompt with context injected."""
     try:
-        # Get aggregated context from providers
-        aggregated_context = (
-            await processing_service.context_preparer.aggregate_context()
+        return await _format_system_prompt(
+            request,
+            processing_service,
+            acting_user_id=acting_user_id,
+            tools_addition=tools_addition,
         )
-
-        # Get system prompt template
-        system_prompt_template = processing_service.service_config.prompts.get(
-            "system_prompt", "You are a helpful assistant."
-        )
-
-        # Get user info
-        user = get_user_from_request(request)
-        user_name = user.get("name") if user else "User"
-
-        # Format the system prompt
-        now = datetime.datetime.now(datetime.UTC)
-        local_now = now.astimezone(processing_service.service_config.timezone)
-        format_args = {
-            "user_name": user_name,
-            "current_time": local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            "aggregated_other_context": aggregated_context,
-            "server_url": processing_service.server_url,
-            "profile_id": processing_service.service_config.id,
-        }
-
-        # Simple placeholder replacement
-        formatted = system_prompt_template
-        for key, value in format_args.items():
-            formatted = formatted.replace(f"{{{key}}}", str(value))
-
-        delegation_addition = await processing_service.delegation_catalog_addition()
-        if delegation_addition:
-            formatted = f"{formatted}\n\n{delegation_addition}"
-
-        # Add voice mode specific instruction
-        voice_instruction = (
-            "\n\n[Voice Mode Active] You are currently in voice conversation mode. "
-            "Keep responses concise and conversational. Speak naturally as if talking to the user."
-        )
-
-        return formatted.strip() + voice_instruction
 
     except Exception as e:
         logger.exception(f"Error getting system prompt: {e}")
         return "You are a helpful voice assistant. Keep responses concise and conversational."
+
+
+async def _format_system_prompt(
+    request: Request,
+    processing_service: ProcessingService,
+    *,
+    acting_user_id: str | None,
+    tools_addition: str | None = None,
+) -> str:
+    service_config = processing_service.service_config
+
+    aggregated_context = ""
+    if service_config.include_aggregated_context:
+        aggregated_context = (
+            await processing_service.context_preparer.aggregate_context(acting_user_id)
+        )
+
+    system_prompt_template = service_config.prompts.get(
+        "system_prompt", "You are a helpful assistant."
+    )
+    user = get_user_from_request(request)
+    user_name = user.get("name") if user else "User"
+    format_args = {
+        "user_name": user_name,
+        "server_url": processing_service.server_url,
+        "profile_id": service_config.id,
+    }
+
+    formatted = system_prompt_template
+    for key, value in format_args.items():
+        formatted = formatted.replace(f"{{{key}}}", str(value))
+
+    delegation_addition = await processing_service.delegation_catalog_addition()
+    if delegation_addition:
+        formatted = f"{formatted}\n\n{delegation_addition}"
+    if tools_addition:
+        formatted = f"{formatted}\n\n{tools_addition}"
+
+    voice_instruction = (
+        "[Voice Mode Active] You are currently in voice conversation mode. "
+        "Keep responses concise and conversational. Speak naturally as if talking to the user.\n"
+        "The user hears nothing while you look things up, and silence sounds like a "
+        "dropped call. Before you call a tool, briefly say what you are doing, such as "
+        '"Let me check the pool." If answering takes more than one tool call, give a '
+        "short update between steps. If the user asks whether you are still there while "
+        "you are working, tell them you are still on it rather than starting the lookup "
+        "again. Keep these updates to a few words, and never state a result, progress "
+        "or estimate you do not actually have."
+    )
+    guidance = turn_context_guidance(
+        includes_aggregated_context=service_config.include_aggregated_context,
+        placement="inline",
+    )
+    turn_context = render_turn_context_block(
+        current_time_str=processing_service.current_time_str(),
+        aggregated_context=aggregated_context,
+    )
+
+    return f"{formatted.strip()}\n\n{voice_instruction}\n\n{guidance}\n\n{turn_context}"
+
+
+def _create_token_response(
+    *,
+    api_key: str,
+    gemini_tools: list[GeminiToolDeclaration],
+    system_instruction: str,
+    gemini_live_config: GeminiLiveConfig,
+    profile_id: str,
+) -> EphemeralTokenResponse:
+    from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
+        genai,
+    )
+
+    client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
+
+    now = datetime.datetime.now(tz=datetime.UTC)
+    token_response = client.auth_tokens.create(
+        config={
+            "uses": 1,
+            "expire_time": now + datetime.timedelta(minutes=30),
+            "new_session_expire_time": now + datetime.timedelta(minutes=1),
+        }
+    )
+    expires_at = (now + datetime.timedelta(minutes=30)).isoformat()
+
+    logger.info("Successfully created Gemini Live ephemeral token")
+    return EphemeralTokenResponse(
+        token=token_response.name,
+        expires_at=expires_at,
+        tools=gemini_tools,
+        system_instruction=system_instruction,
+        model=gemini_live_config.model,
+        config=gemini_live_config,
+        profile_id=profile_id,
+    )
 
 
 @gemini_live_router.post("/ephemeral-token")
@@ -232,6 +309,7 @@ async def create_ephemeral_token(
     request: Request,
     payload: EphemeralTokenRequest,
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> EphemeralTokenResponse:
     """
     Generate an ephemeral token for Gemini Live API access.
@@ -276,8 +354,17 @@ async def create_ephemeral_token(
                 f"Profile ID '{profile_id}' not found, using default service"
             )
 
+    # Get Gemini Live configuration from app state
+    gemini_live_config = get_gemini_live_config(request)
+
+    # A Live session cannot be handed a new tool declaration once it has
+    # started, so on-demand tools are reached through search_tools/call_tool
+    # rather than being flattened into the declaration list.
+    live_provider, tools_addition = await resolve_live_tools(
+        target_service, on_demand=gemini_live_config.tools.on_demand
+    )
     tool_definitions = await get_tool_definitions_for_advertisement(
-        target_service.tools_provider,
+        live_provider,
         can_confirm=False,
     )
 
@@ -290,41 +377,22 @@ async def create_ephemeral_token(
     logger.info(f"Converted {tool_count} tools to Gemini format for voice mode")
 
     # Get formatted system prompt with context
-    system_instruction = await _get_formatted_system_prompt(request, target_service)
-
-    # Get Gemini Live configuration from app state
-    gemini_live_config = get_gemini_live_config(request)
+    system_instruction = await _get_formatted_system_prompt(
+        request,
+        target_service,
+        acting_user_id=current_user["user_identifier"],
+        tools_addition=tools_addition,
+    )
 
     # Create ephemeral token via Google GenAI SDK
     try:
-        from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
-            genai,
-        )
-
-        client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
-
-        now = datetime.datetime.now(tz=datetime.UTC)
-        token_response = client.auth_tokens.create(
-            config={
-                "uses": 1,  # Single use token
-                "expire_time": now + datetime.timedelta(minutes=30),
-                "new_session_expire_time": now + datetime.timedelta(minutes=1),
-            }
-        )
-
-        expires_at = (now + datetime.timedelta(minutes=30)).isoformat()
-
-        logger.info("Successfully created Gemini Live ephemeral token")
-
-        return EphemeralTokenResponse(
-            token=token_response.name,
-            expires_at=expires_at,
-            tools=gemini_tools,
+        return _create_token_response(
+            api_key=api_key,
+            gemini_tools=gemini_tools,
             system_instruction=system_instruction,
-            model=gemini_live_config.model,
-            config=gemini_live_config,
+            gemini_live_config=gemini_live_config,
+            profile_id=target_service.service_config.id,
         )
-
     except ImportError as e:
         logger.error(f"google-genai SDK not available: {e}")
         raise HTTPException(

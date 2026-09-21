@@ -13,24 +13,36 @@ import logging
 import mimetypes
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import aiofiles
+import sqlalchemy as sa
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, delete, insert, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import (
+    Database,
+    DatabaseExecutor,
+    DatabaseTransaction,
+)
 from family_assistant.storage.email import (
     parse_attachment_infos_with_raw,
     received_emails_table,
 )
+from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.notes import notes_table
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
     from sqlalchemy.sql.elements import ColumnElement
+
+# How long an unreferenced attachment is left alone before it is collected, so
+# an upload whose message is still being composed (or still queued) survives.
+DEFAULT_ATTACHMENT_GRACE_PERIOD = timedelta(hours=24)
 
 
 class AttachmentRegistryConfig(TypedDict, total=False):
@@ -46,7 +58,6 @@ class AttachmentRegistryConfig(TypedDict, total=False):
     # relatively still resolve after a restart.
     email_attachment_base_path: str
     large_tool_result_threshold_kb: int
-    allowed_mime_types: list[str]
 
 
 class AttachmentRowDict(TypedDict):
@@ -107,26 +118,25 @@ logger = logging.getLogger(__name__)
 # Default configuration values (fallbacks if not specified in config.yaml)
 DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
-# NOTE: In production, allowed_mime_types is configured in config.yaml under
-# attachments.allowed_mime_types. This default is only used when config is not provided
-# (e.g., in tests). To add new MIME types, update config.yaml.
-DEFAULT_ALLOWED_MIME_TYPES: set[str] = {
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "text/plain",
-    "text/markdown",
-    "application/json",
-    "application/pdf",
-    "video/mp4",
-    "video/webm",
-    "video/ogg",
-    "audio/mpeg",
-    "audio/wav",
-    "audio/ogg",
-    "audio/webm",
-}
+
+# MIME classes with no use except being handed to a model, so
+# `max_multimodal_size` is the binding limit on them rather than `max_file_size`.
+#
+# PDFs are deliberately absent even though the Responses API is now sent their
+# bytes: a PDF too large for a model is still useful to `read_text_attachment`,
+# which extracts its text without a model seeing the file at all. Bounding them
+# here would refuse an upload that has a working use.
+MULTIMODAL_MIME_PREFIXES = ("image/", "audio/", "video/")
+
+
+class AttachmentTooLargeError(ValueError):
+    """An attachment exceeded the size limit that applies to its MIME type.
+
+    Distinct from any other `ValueError` the registry raises so a route can
+    answer with the limit and the actual size, which is the only part of the
+    refusal a user can act on. Handed back as a generic 500, the same refusal
+    reads as the server having broken.
+    """
 
 
 class AttachmentMetadata:
@@ -221,7 +231,7 @@ class AttachmentMetadata:
 
 async def _clear_email_attachment_id(
     *,
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     message_id_header: str,
     attachment_id: str,
 ) -> None:
@@ -260,7 +270,7 @@ async def _clear_email_attachment_id(
             new_entries.append(raw)
 
     if updated:
-        await db_context.execute_with_retry(
+        await db_context.execute(
             update(received_emails_table)
             .where(received_emails_table.c.id == row["id"])
             .values(attachment_info=new_entries)
@@ -269,6 +279,11 @@ async def _clear_email_attachment_id(
 
 class AttachmentRegistry:
     """Registry for managing attachment metadata and file storage."""
+
+    # Candidates examined per reference scan while reaping. Each page costs one
+    # pass over the message and note JSON, so this trades a larger page against
+    # holding more ids in one IN list.
+    REAP_PAGE_SIZE: int = 500
 
     def __init__(
         self,
@@ -296,12 +311,6 @@ class AttachmentRegistry:
         self.max_multimodal_size = attachment_config.get(
             "max_multimodal_size", DEFAULT_MAX_MULTIMODAL_SIZE
         )
-        allowed_types = attachment_config.get("allowed_mime_types")
-        if allowed_types and isinstance(allowed_types, list):
-            self.allowed_mime_types = set(allowed_types)
-        else:
-            self.allowed_mime_types = DEFAULT_ALLOWED_MIME_TYPES
-
         email_base = attachment_config.get("email_attachment_base_path")
         self.email_attachment_base_path: Path | None = (
             Path(email_base).resolve() if email_base else None
@@ -310,9 +319,28 @@ class AttachmentRegistry:
         logger.info(
             f"AttachmentRegistry initialized with storage path: {self.storage_path}, "
             f"max_file_size: {self.max_file_size // (1024 * 1024)}MB, "
-            f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB, "
-            f"allowed_types: {len(self.allowed_mime_types)} types"
+            f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB"
         )
+
+    @property
+    def media_size_limit(self) -> int:
+        """The bound on any MIME type in ``MULTIMODAL_MIME_PREFIXES``."""
+        return min(self.max_file_size, self.max_multimodal_size)
+
+    def size_limit_for_mime(self, content_type: str | None) -> int:
+        """The largest accepted size for an attachment of this MIME type.
+
+        Media is bounded by ``max_multimodal_size`` because there is nothing to do
+        with an oversized image, recording or video but send it to a model, and the
+        provider rejects it there. Enforcing the bound at registration turns that
+        into an explicit size error at upload rather than a failed turn later.
+
+        A document keeps ``max_file_size``: its text can be extracted without a
+        model, so a size only a model objects to is not a reason to refuse it.
+        """
+        if content_type and content_type.startswith(MULTIMODAL_MIME_PREFIXES):
+            return self.media_size_limit
+        return self.max_file_size
 
     @staticmethod
     def _owner_visibility_clause(acting_user_id: str | None) -> ColumnElement[bool]:
@@ -333,7 +361,7 @@ class AttachmentRegistry:
 
     async def register_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         source_type: str,
         source_id: str,
@@ -352,7 +380,7 @@ class AttachmentRegistry:
         Register a new attachment in the metadata database.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Unique attachment identifier
             source_type: Source of attachment ("user", "tool", "script", "email")
             source_id: Source identifier (user_id, tool_name, email message-id,
@@ -411,7 +439,7 @@ class AttachmentRegistry:
             metadata=attachment_metadata.metadata,
         )
 
-        await db_context.execute_with_retry(insert_stmt)
+        await db_context.execute(insert_stmt)
 
         logger.info(
             f"Registered attachment {attachment_id} from {source_type}:{source_id}"
@@ -421,7 +449,7 @@ class AttachmentRegistry:
 
     async def get_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         *,
         acting_user_id: str | None,
@@ -430,7 +458,7 @@ class AttachmentRegistry:
         Get attachment metadata by ID, enforcing owner scoping.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. An owned attachment is returned only when it
@@ -455,7 +483,7 @@ class AttachmentRegistry:
 
     async def get_attachments(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_ids: list[str],
         *,
         acting_user_id: str | None,
@@ -486,7 +514,7 @@ class AttachmentRegistry:
 
     async def list_attachments(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         *,
         acting_user_id: str | None,
         conversation_id: str | None = None,
@@ -497,7 +525,7 @@ class AttachmentRegistry:
         List attachments with optional filtering.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             acting_user_id: Acts as an owner filter — owned rows appear only for
                 a matching actor, ownerless rows for everyone, ``None`` for
                 ownerless only.
@@ -532,7 +560,7 @@ class AttachmentRegistry:
 
     async def get_recent_attachments_for_conversation(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         conversation_id: str,
         max_age: datetime,
         *,
@@ -542,7 +570,7 @@ class AttachmentRegistry:
         Get recent attachments for a conversation within a time window.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             conversation_id: Conversation identifier
             max_age: Cutoff time - only attachments created after this time are returned
             acting_user_id: Acts as an owner filter — owned rows appear only for
@@ -567,7 +595,7 @@ class AttachmentRegistry:
 
     async def register_user_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         content: bytes,
         filename: str,
         mime_type: str,
@@ -580,7 +608,7 @@ class AttachmentRegistry:
         Register a user-uploaded attachment.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             content: File content bytes
             filename: Original filename
             mime_type: MIME type
@@ -593,7 +621,9 @@ class AttachmentRegistry:
             AttachmentMetadata object
         """
         # Store the attachment file
-        attachment_data = await self._store_file_only(content, filename, mime_type)
+        attachment_data = await self._store_file_only(
+            content, filename, mime_type, media_limited=True
+        )
 
         # Register in metadata database
         return await self.register_attachment(
@@ -613,7 +643,7 @@ class AttachmentRegistry:
 
     async def register_tool_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         tool_name: str,
         mime_type: str,
@@ -631,7 +661,7 @@ class AttachmentRegistry:
         Register a tool-generated attachment.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier (from AttachmentService)
             tool_name: Name of the tool that created it
             mime_type: MIME type
@@ -666,7 +696,7 @@ class AttachmentRegistry:
 
     async def get_attachment_content(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         *,
         acting_user_id: str | None,
@@ -675,7 +705,7 @@ class AttachmentRegistry:
         Get attachment content by ID, enforcing owner scoping.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. Owned content is returned only for a matching
@@ -710,7 +740,7 @@ class AttachmentRegistry:
 
     async def delete_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         *,
         acting_user_id: str | None,
@@ -719,7 +749,7 @@ class AttachmentRegistry:
         Delete an attachment (metadata and file), enforcing owner scoping.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. An owned attachment is deleted only by a matching
@@ -745,31 +775,38 @@ class AttachmentRegistry:
             self._owner_visibility_clause(acting_user_id),
         ]
 
-        # Atomic delete
         delete_stmt = delete(attachment_metadata_table).where(and_(*conditions))
-        result = await db_context.execute_with_retry(delete_stmt)
 
-        success = result.rowcount > 0
+        async def _delete_row_and_references(txn: DatabaseTransaction) -> bool:
+            """Remove the registry row and any back-reference to it, together.
+
+            For an email attachment the ``received_emails.attachment_info`` JSON
+            still names the deleted ``attachment_id``; if that cleanup were a
+            separate commit, a failure would leave the email advertising a
+            handle that no longer resolves.
+            """
+            result = await txn.execute(delete_stmt)
+            if result.rowcount == 0:
+                return False
+            if source_type == "email" and source_id:
+                await _clear_email_attachment_id(
+                    db_context=txn,
+                    message_id_header=source_id,
+                    attachment_id=attachment_id,
+                )
+            return True
+
+        success = await db_context.atomic(_delete_row_and_references)
         file_deleted = False
 
         if success:
-            # Only delete file if database deletion succeeded
+            # The file is deleted only once the database state is consistent,
+            # since this part cannot be rolled back.
             file_deleted = self._delete_attachment_file(
                 attachment_id,
                 stored_path=stored_path,
                 source_type=source_type,
             )
-            # For email attachments the file is externally owned and the
-            # ``received_emails.attachment_info`` JSON still references the
-            # deleted ``attachment_id``. Clear that reference so subsequent
-            # reads/downloads no longer surface a broken ID. A later reindex
-            # will re-register the attachment with a fresh ID.
-            if source_type == "email" and source_id:
-                await _clear_email_attachment_id(
-                    db_context=db_context,
-                    message_id_header=source_id,
-                    attachment_id=attachment_id,
-                )
             logger.info(
                 f"Deleted attachment {attachment_id} (db: {success}, file: {file_deleted})"
             )
@@ -782,7 +819,7 @@ class AttachmentRegistry:
 
     async def _update_access_time(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         acting_user_id: str | None,
     ) -> None:
@@ -802,7 +839,7 @@ class AttachmentRegistry:
                 )
                 .values(accessed_at=datetime.now(UTC))
             )
-            await db_context.execute_with_retry(update_stmt)
+            await db_context.execute(update_stmt)
         except asyncio.CancelledError:
             # Operation cancelled during shutdown - this is fine, access time isn't critical
             pass
@@ -829,36 +866,277 @@ class AttachmentRegistry:
                 user context. An owned row is touched only for a matching actor.
         """
         try:
-            async with DatabaseContext(engine=self.db_engine) as db:
-                await self._update_access_time(db, attachment_id, acting_user_id)
+            db = Database(engine=self.db_engine)
+            await self._update_access_time(db, attachment_id, acting_user_id)
         except Exception as e:
             # Log but don't fail - access time tracking is not critical
             logger.debug(
                 f"Background access time update failed for {attachment_id}: {e}"
             )
 
-    async def cleanup_orphaned_attachments(self, db_context: DatabaseContext) -> int:
-        """
-        Clean up file system attachments that are no longer referenced in the database.
-        Uses AttachmentService to clean up orphaned files based on current database references.
+    async def cleanup_orphaned_attachments(
+        self,
+        db_context: DatabaseExecutor,
+        *,
+        min_age: timedelta = DEFAULT_ATTACHMENT_GRACE_PERIOD,
+    ) -> int:
+        """Delete registry-managed files that have no ``attachment_metadata`` row.
+
+        This is the file-level half of attachment cleanup: it collects files a
+        store wrote before its row was committed, and the files of rows deleted
+        without their unlink succeeding. Rows nothing references are collected
+        by :meth:`reap_unreferenced_attachments`, which runs first — every row
+        that survives it is by definition still referenced, so "has a row" is
+        the right liveness test here.
+
+        The traversal walks the whole store, which is unbounded in the number
+        of files and entirely blocking, so it runs on a worker thread: a task
+        worker shares the server's event loop, and holding it through a large
+        store would stall web and Telegram traffic — and the handler timeout
+        that is supposed to catch exactly that.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
+            min_age: Only files older than this are collected, so an upload
+                writing its file while the sweep runs is not deleted before it
+                gets to commit its row.
 
         Returns:
-            Number of attachments cleaned up
+            Number of files deleted
         """
-        # Get attachment IDs that are still referenced in the database
         referenced_query = select(attachment_metadata_table.c.attachment_id).distinct()
         referenced_rows = await db_context.fetch_all(referenced_query)
         referenced_ids = {row["attachment_id"] for row in referenced_rows}
 
-        # Clean up orphaned files directly
-        return self._cleanup_orphaned_files(referenced_ids)
+        return await asyncio.to_thread(
+            self._cleanup_orphaned_files, referenced_ids, min_age=min_age
+        )
+
+    async def reap_unreferenced_attachments(
+        self,
+        db_context: DatabaseExecutor,
+        *,
+        grace_period: timedelta = DEFAULT_ATTACHMENT_GRACE_PERIOD,
+        limit: int = 500,
+    ) -> int:
+        """Delete user attachments that nothing references, with their files.
+
+        An upload commits its row before the message that would reference it
+        exists, so every send that never persists a message — an abandoned
+        compose, a failed kickoff, a refused concurrent turn — leaves the row
+        and file behind. Rows older than ``grace_period`` that no message and
+        no note names are collected here.
+
+        Only ``source_type="user"`` rows are candidates. Tool, script and email
+        attachments are referenced from places this reaper does not read
+        (delegation runs, scripts, ``received_emails.attachment_info``), so
+        they are never collected.
+
+        Candidates are walked oldest-first in pages, and each page's references
+        are resolved with one scan of the message and note JSON rather than a
+        correlated subquery per row. Nothing back-fills
+        ``attachment_metadata.message_id``, so every upload a message
+        references stays a candidate forever; the limit therefore bounds rows
+        actually collected, and paging keeps a pass that collects nothing to
+        one scan per page instead of one per historical attachment.
+
+        Args:
+            db_context: DatabaseExecutor context
+            grace_period: Rows younger than this are left alone, so an
+                in-progress compose is not collected out from under the user.
+            limit: Maximum rows collected in one pass; a backlog drains over
+                successive passes rather than in one long transaction.
+
+        Returns:
+            Number of attachments deleted
+        """
+        cutoff = datetime.now(UTC) - grace_period
+        orphans: dict[str, str | None] = {}
+        cursor: tuple[datetime, str] | None = None
+
+        while len(orphans) < limit:
+            page = await db_context.fetch_all(
+                self._candidate_page_query(cutoff, cursor, self.REAP_PAGE_SIZE)
+            )
+            if not page:
+                break
+            cursor = (page[-1]["created_at"], page[-1]["attachment_id"])
+
+            referenced = await self._referenced_attachment_ids(
+                db_context, [row["attachment_id"] for row in page]
+            )
+            for row in page:
+                if row["attachment_id"] in referenced:
+                    continue
+                orphans[row["attachment_id"]] = row["storage_path"]
+                if len(orphans) == limit:
+                    break
+
+        if not orphans:
+            return 0
+
+        await db_context.execute(
+            delete(attachment_metadata_table).where(
+                attachment_metadata_table.c.attachment_id.in_(list(orphans))
+            )
+        )
+
+        # Files are unlinked only once the rows are gone, since the unlink
+        # cannot be rolled back. A file left behind by a failed unlink is
+        # collected by ``cleanup_orphaned_attachments``.
+        for attachment_id, stored_path in orphans.items():
+            self._delete_attachment_file(
+                attachment_id,
+                stored_path=stored_path,
+                source_type="user",
+            )
+
+        logger.info(
+            f"Reaped {len(orphans)} unreferenced attachments older than {grace_period}"
+        )
+        return len(orphans)
+
+    @staticmethod
+    def _candidate_page_query(
+        cutoff: datetime,
+        cursor: tuple[datetime, str] | None,
+        page_size: int,
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """One page of reapable candidates, keyed on ``(created_at, id)``.
+
+        The keyset cursor rather than an OFFSET means a page costs the same
+        whether it is the first or the hundredth, and deleting rows from an
+        earlier page cannot shift a later one past the reader.
+        """
+        conditions = [
+            attachment_metadata_table.c.source_type == "user",
+            attachment_metadata_table.c.message_id.is_(None),
+            attachment_metadata_table.c.created_at < cutoff,
+        ]
+        if cursor is not None:
+            conditions.append(
+                sa.tuple_(
+                    attachment_metadata_table.c.created_at,
+                    attachment_metadata_table.c.attachment_id,
+                )
+                > sa.tuple_(sa.literal(cursor[0]), sa.literal(cursor[1]))
+            )
+
+        return (
+            select(
+                attachment_metadata_table.c.attachment_id,
+                attachment_metadata_table.c.storage_path,
+                attachment_metadata_table.c.created_at,
+            )
+            .where(and_(*conditions))
+            .order_by(
+                attachment_metadata_table.c.created_at,
+                attachment_metadata_table.c.attachment_id,
+            )
+            .limit(page_size)
+        )
+
+    async def _referenced_attachment_ids(
+        self, db_context: DatabaseExecutor, attachment_ids: list[str]
+    ) -> set[str]:
+        """Return the subset of ``attachment_ids`` some message or note names.
+
+        Nothing back-fills ``attachment_metadata.message_id`` for user
+        attachments, so the message reference lives in the
+        ``message_history.attachments`` JSON; the notes tool records its own
+        references in ``notes.attachment_ids``.
+        """
+        if not attachment_ids:
+            return set()
+
+        referenced: set[str] = set()
+        for query in (
+            self._message_reference_query(db_context.dialect_name, attachment_ids),
+            self._note_reference_query(db_context.dialect_name, attachment_ids),
+        ):
+            rows = await db_context.fetch_all(query)
+            referenced.update(
+                row["attachment_id"] for row in rows if row["attachment_id"]
+            )
+        return referenced
+
+    @staticmethod
+    def _message_reference_query(
+        dialect_name: str,
+        attachment_ids: list[str],
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Query yielding the given ids that appear in a message's attachments.
+
+        ``message_history.attachments`` holds a JSON array of objects keyed by
+        ``attachment_id``. A row whose value is not an array (including the
+        ``NULL`` of a message with no attachments) is expanded as an empty
+        array rather than being allowed to fail expansion.
+        """
+        attachments = message_history_table.c.attachments
+        if dialect_name == "postgresql":
+            array_value = sa.case(
+                (sa.func.jsonb_typeof(attachments) == "array", attachments),
+                else_=sa.cast(sa.literal("[]"), JSONB),
+            )
+            elements = sa.func.jsonb_array_elements(array_value).table_valued(
+                "value", joins_implicitly=True
+            )
+            attachment_id_expr = sa.func.jsonb_extract_path_text(
+                elements.c.value, "attachment_id"
+            )
+        else:
+            array_value = sa.case(
+                (sa.func.json_type(attachments) == "array", attachments),
+                else_=sa.literal("[]"),
+            )
+            elements = sa.func.json_each(array_value).table_valued(
+                "value", joins_implicitly=True
+            )
+            attachment_id_expr = sa.func.json_extract(
+                elements.c.value, "$.attachment_id"
+            )
+
+        return (
+            sa
+            .select(attachment_id_expr.label("attachment_id"))
+            .select_from(message_history_table)
+            .where(attachment_id_expr.in_(attachment_ids))
+            .distinct()
+        )
+
+    @staticmethod
+    def _note_reference_query(
+        dialect_name: str,
+        attachment_ids: list[str],
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Query yielding the given ids that appear in a note's attachment ids.
+
+        ``notes.attachment_ids`` holds a JSON array of attachment id strings.
+        The notes tool can attach an uploaded file to a note that outlives the
+        message that carried it.
+        """
+        note_attachments = notes_table.c.attachment_ids
+        if dialect_name == "postgresql":
+            elements = sa.func.jsonb_array_elements_text(
+                sa.cast(note_attachments, JSONB)
+            ).table_valued("value", joins_implicitly=True)
+        else:
+            elements = sa.func.json_each(note_attachments).table_valued(
+                "value", joins_implicitly=True
+            )
+        attachment_id_expr = elements.c.value
+
+        return (
+            sa
+            .select(attachment_id_expr.label("attachment_id"))
+            .select_from(notes_table)
+            .where(attachment_id_expr.in_(attachment_ids))
+            .distinct()
+        )
 
     async def update_attachment_conversation(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         conversation_id: str,
         *,
@@ -868,7 +1146,7 @@ class AttachmentRegistry:
         Update an attachment's conversation_id for security linking.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             conversation_id: New conversation ID to link to
             acting_user_id: Canonical id of the acting user, or ``None`` for no
@@ -888,7 +1166,7 @@ class AttachmentRegistry:
             .values(conversation_id=conversation_id)
         )
 
-        result = await db_context.execute_with_retry(update_stmt)
+        result = await db_context.execute(update_stmt)
         success = result.rowcount > 0
 
         if success:
@@ -900,7 +1178,7 @@ class AttachmentRegistry:
 
     async def claim_unlinked_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         conversation_id: str,
         *,
@@ -914,7 +1192,7 @@ class AttachmentRegistry:
         that only succeeds if the attachment is still unlinked and matches criteria.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             conversation_id: Conversation to link the attachment to
             acting_user_id: Canonical id of the acting user, or ``None`` for no
@@ -945,29 +1223,26 @@ class AttachmentRegistry:
             )
         )
 
-        result = await db_context.execute_with_retry(update_stmt)
+        async def _claim(txn: DatabaseTransaction) -> AttachmentMetadata | None:
+            """Atomically claim and fetch the attachment in one statement.
 
-        if result.rowcount == 0:
-            # Either attachment doesn't exist, already claimed, or access denied
+            UPDATE ... RETURNING makes the claim and metadata read one operation,
+            so a retry can't find the attachment already claimed (conversation_id
+            no longer NULL) — preventing orphaned claims on fetch failure.
+            """
+            stmt_with_returning = update_stmt.returning(attachment_metadata_table)
+            result = await txn.execute(stmt_with_returning)
+            row = result.one_or_none()
+
+            if row:
+                logger.info(
+                    f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
+                )
+                return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
+
             return None
 
-        # Successfully claimed, now fetch the updated record
-        query = select(attachment_metadata_table).where(
-            and_(
-                attachment_metadata_table.c.attachment_id == attachment_id,
-                self._owner_visibility_clause(acting_user_id),
-            )
-        )
-        row = await db_context.fetch_one(query)
-
-        if row:
-            logger.info(
-                f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
-            )
-            # Note: accessed_at is updated by the claim UPDATE statement above
-            return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
-
-        return None
+        return await db_context.atomic(_claim)
 
     # Convenience methods that create their own database contexts
 
@@ -989,24 +1264,24 @@ class AttachmentRegistry:
         """
         Register a tool-generated attachment using internal database context.
 
-        This is a convenience method that creates its own DatabaseContext.
+        This is a convenience method that creates its own Database.
         Use this from processing.py and other places that don't already have a context.
         """
-        async with DatabaseContext(self.db_engine) as db_context:
-            return await self.register_tool_attachment(
-                db_context=db_context,
-                attachment_id=attachment_id,
-                tool_name=tool_name,
-                mime_type=mime_type,
-                description=description,
-                size=size,
-                content_url=content_url,
-                storage_path=storage_path,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                owner_user_id=owner_user_id,
-                metadata=metadata,
-            )
+        db_context = Database(self.db_engine)
+        return await self.register_tool_attachment(
+            db_context=db_context,
+            attachment_id=attachment_id,
+            tool_name=tool_name,
+            mime_type=mime_type,
+            description=description,
+            size=size,
+            content_url=content_url,
+            storage_path=storage_path,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            owner_user_id=owner_user_id,
+            metadata=metadata,
+        )
 
     async def get_attachment_with_context(
         self,
@@ -1017,17 +1292,17 @@ class AttachmentRegistry:
         """
         Get attachment metadata by ID using internal database context.
 
-        This is a convenience method that creates its own DatabaseContext.
+        This is a convenience method that creates its own Database.
 
         Args:
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. Owned rows are visible only to a matching actor.
         """
-        async with DatabaseContext(self.db_engine) as db_context:
-            return await self.get_attachment(
-                db_context, attachment_id, acting_user_id=acting_user_id
-            )
+        db_context = Database(self.db_engine)
+        return await self.get_attachment(
+            db_context, attachment_id, acting_user_id=acting_user_id
+        )
 
     async def store_and_register_tool_attachment(
         self,
@@ -1041,7 +1316,7 @@ class AttachmentRegistry:
         owner_user_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
-        db_context: DatabaseContext | None = None,
+        db_context: DatabaseExecutor | None = None,
     ) -> AttachmentMetadata:
         """
         Store file content and register as a tool attachment in one operation.
@@ -1059,7 +1334,7 @@ class AttachmentRegistry:
             owner_user_id: Canonical owner (personal-data tools set this;
                 ``None`` keeps the attachment ownerless).
             metadata: Additional metadata
-            db_context: Optional DatabaseContext to use for registration
+            db_context: Optional Database to use for registration
 
         Returns:
             AttachmentMetadata for the stored and registered attachment
@@ -1069,6 +1344,7 @@ class AttachmentRegistry:
             file_content=file_content,
             filename=filename,
             content_type=content_type,
+            media_limited=False,
         )
 
         # Merge metadata from file storage (contains original_filename) with provided metadata
@@ -1137,7 +1413,7 @@ class AttachmentRegistry:
 
     def _validate_file(self, file: UploadFile) -> None:
         """
-        Validate uploaded file for type and size restrictions.
+        Validate uploaded file for size restrictions.
 
         Args:
             file: The uploaded file to validate
@@ -1145,14 +1421,6 @@ class AttachmentRegistry:
         Raises:
             HTTPException: If file validation fails
         """
-        # Check MIME type
-        if file.content_type not in self.allowed_mime_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File type '{file.content_type}' not allowed. "
-                f"Allowed types: {', '.join(self.allowed_mime_types)}",
-            )
-
         # Check file size
         if hasattr(file.file, "seek") and hasattr(file.file, "tell"):
             # Get current position
@@ -1163,10 +1431,11 @@ class AttachmentRegistry:
             # Seek back to original position
             file.file.seek(current_pos)
 
-            if file_size > self.max_file_size:
+            size_limit = self.size_limit_for_mime(file.content_type)
+            if file_size > size_limit:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {self.max_file_size} bytes",
+                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {size_limit} bytes",
                 )
 
     def _sanitize_filename(self, filename: str) -> str:
@@ -1203,6 +1472,8 @@ class AttachmentRegistry:
         file_content: bytes,
         filename: str,
         content_type: str = "image/jpeg",
+        *,
+        media_limited: bool,
     ) -> AttachmentMetadata:
         """
         Store raw bytes as an attachment file (private method for internal use).
@@ -1211,6 +1482,11 @@ class AttachmentRegistry:
             file_content: Raw file content bytes
             filename: Original filename
             content_type: MIME type of the file
+            media_limited: Whether `max_multimodal_size` applies. True for what a
+                user sends in, since oversized media has nowhere to go but a model
+                that will refuse it. False for what a tool produces: a generated
+                video too large to inject is still the result the user asked for,
+                and discarding it to protect a later injection would lose the work.
 
         Returns:
             AttachmentMetadata object
@@ -1219,14 +1495,14 @@ class AttachmentRegistry:
             ValueError: If file validation fails
         """
         # Basic validation
-        if len(file_content) > self.max_file_size:
-            raise ValueError(
-                f"File size {len(file_content)} bytes exceeds maximum allowed size of {self.max_file_size} bytes"
-            )
-
-        if content_type not in self.allowed_mime_types:
-            raise ValueError(
-                f"File type '{content_type}' not allowed. Allowed types: {', '.join(self.allowed_mime_types)}"
+        size_limit = (
+            self.size_limit_for_mime(content_type)
+            if media_limited
+            else self.max_file_size
+        )
+        if len(file_content) > size_limit:
+            raise AttachmentTooLargeError(
+                f"File size {len(file_content)} bytes exceeds maximum allowed size of {size_limit} bytes"
             )
 
         # Generate unique attachment ID
@@ -1245,7 +1521,11 @@ class AttachmentRegistry:
             # Write file to disk asynchronously
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(file_content)
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise ValueError(f"Failed to store attachment: {e}") from e
 
+        try:
             # Create minimal attachment metadata object (caller should provide proper metadata)
             attachment_metadata = AttachmentMetadata(
                 attachment_id=attachment_id,
@@ -1261,16 +1541,14 @@ class AttachmentRegistry:
                     "storage_method": "file_only",
                 },
             )
-
-            logger.info(
-                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
-            )
-
-            return attachment_metadata
-
         except Exception as e:
             logger.error(f"Failed to store attachment: {e}")
             raise ValueError(f"Failed to store attachment: {e}") from e
+
+        logger.info(
+            f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+        )
+        return attachment_metadata
 
     async def store_attachment(self, file: UploadFile) -> AttachmentMetadata:
         """
@@ -1307,7 +1585,13 @@ class AttachmentRegistry:
             # Write file to disk asynchronously
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(file_content)
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to store attachment: {e!s}"
+            ) from e
 
+        try:
             # Create attachment metadata
             attachment_metadata = AttachmentMetadata(
                 attachment_id=attachment_id,
@@ -1320,22 +1604,21 @@ class AttachmentRegistry:
                 storage_path=str(file_path.relative_to(self.storage_path)),
                 metadata={"original_filename": safe_filename, "upload_method": "api"},
             )
-
-            logger.info(
-                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
-            )
-            return attachment_metadata
-
         except Exception as e:
             logger.error(f"Failed to store attachment: {e}")
             raise HTTPException(
                 status_code=500, detail=f"Failed to store attachment: {e!s}"
             ) from e
 
+        logger.info(
+            f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+        )
+        return attachment_metadata
+
     async def resolve_attachment_path(
         self,
         attachment_id: str,
-        db_context: DatabaseContext | None = None,
+        db_context: DatabaseExecutor | None = None,
         *,
         acting_user_id: str | None,
     ) -> Path | None:
@@ -1350,10 +1633,10 @@ class AttachmentRegistry:
         """
         metadata: AttachmentMetadata | None = None
         if db_context is None:
-            async with DatabaseContext(engine=self.db_engine) as own_db_context:
-                metadata = await self.get_attachment(
-                    own_db_context, attachment_id, acting_user_id=acting_user_id
-                )
+            own_db_context = Database(engine=self.db_engine)
+            metadata = await self.get_attachment(
+                own_db_context, attachment_id, acting_user_id=acting_user_id
+            )
         else:
             metadata = await self.get_attachment(
                 db_context, attachment_id, acting_user_id=acting_user_id
@@ -1537,17 +1820,25 @@ class AttachmentRegistry:
             return False
         return True
 
-    def _cleanup_orphaned_files(self, referenced_attachment_ids: set[str]) -> int:
+    def _cleanup_orphaned_files(
+        self,
+        referenced_attachment_ids: set[str],
+        *,
+        min_age: timedelta = DEFAULT_ATTACHMENT_GRACE_PERIOD,
+    ) -> int:
         """
         Clean up attachment files that are no longer referenced in the database.
 
         Args:
             referenced_attachment_ids: Set of attachment IDs that are still referenced
+            min_age: Only files last modified longer ago than this are deleted,
+                so a file whose row has not been committed yet survives.
 
         Returns:
             Number of files deleted
         """
         deleted_count = 0
+        cutoff = datetime.now(UTC) - min_age
 
         # Iterate through hash-prefixed directories (00-ff)
         for hash_dir in self.storage_path.glob("*/"):
@@ -1562,15 +1853,30 @@ class AttachmentRegistry:
                 file_stem = file_path.stem
                 try:
                     uuid.UUID(file_stem)  # Validate it's a UUID
-                    if file_stem not in referenced_attachment_ids:
-                        file_path.unlink()
-                        deleted_count += 1
-                        logger.info(f"Deleted orphaned attachment: {file_stem}")
-                except (ValueError, OSError) as e:
-                    logger.warning(
-                        f"Skipping non-UUID file or deletion error: {file_path}: {e}"
-                    )
+                except ValueError:
+                    logger.warning(f"Skipping non-UUID file: {file_path}")
                     continue
+
+                if file_stem in referenced_attachment_ids:
+                    continue
+
+                try:
+                    stat_result = file_path.stat()
+                except OSError as e:
+                    logger.warning(f"Skipping unreadable file {file_path}: {e}")
+                    continue
+
+                if datetime.fromtimestamp(stat_result.st_mtime, tz=UTC) >= cutoff:
+                    continue
+
+                try:
+                    file_path.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to delete orphaned file {file_path}: {e}")
+                    continue
+
+                deleted_count += 1
+                logger.info(f"Deleted orphaned attachment: {file_stem}")
 
         logger.info(f"Cleaned up {deleted_count} orphaned attachment files")
         return deleted_count

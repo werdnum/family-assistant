@@ -25,6 +25,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.types import TaskDict
 from family_assistant.tools import ToolNotFoundError
 
@@ -113,15 +114,16 @@ class MockContextProvider:
     def name(self) -> str:
         return self._name
 
-    async def get_context_fragments(self) -> list[str]:
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         return self._fragments
 
 
 def _make_processing_service(
     context_providers: list[MockContextProvider] | None = None,
+    llm_client: object | None = None,
 ) -> ProcessingService:
     """Build a minimal ProcessingService with mocked dependencies."""
-    mock_llm = MagicMock()
+    mock_llm = llm_client if llm_client is not None else MagicMock()
     mock_tools = MagicMock()
     service_config = ProcessingServiceConfig(
         prompts={"system": "test"},
@@ -168,6 +170,7 @@ def _make_task_dict(
         max_retries=3,
         recurrence_rule=None,
         original_task_id=None,
+        priority=TaskPriority.INTERACTIVE,
     )
 
 
@@ -187,7 +190,7 @@ class TestContextAggregateSpan:
             ]
         )
 
-        result = await service.context_preparer.aggregate_context()
+        result = await service.context_preparer.aggregate_context(acting_user_id=None)
 
         assert "fragment1" in result
         spans = processing_span_exporter.get_finished_spans()
@@ -204,7 +207,7 @@ class TestContextAggregateSpan:
     ) -> None:
         service = _make_processing_service(context_providers=[])
 
-        result = await service.context_preparer.aggregate_context()
+        result = await service.context_preparer.aggregate_context(acting_user_id=None)
 
         assert not result
         spans = processing_span_exporter.get_finished_spans()
@@ -226,7 +229,7 @@ class TestContextAggregateSpan:
         ]
         service = _make_processing_service(context_providers=providers)
 
-        result = await service.context_preparer.aggregate_context()
+        result = await service.context_preparer.aggregate_context(acting_user_id=None)
 
         assert "a" in result
         assert "d" in result
@@ -245,7 +248,9 @@ class TestContextAggregateSpan:
         class FailingProvider:
             name = "failing"
 
-            async def get_context_fragments(self) -> list[str]:
+            async def get_context_fragments(
+                self, acting_user_id: str | None
+            ) -> list[str]:
                 raise RuntimeError("provider broke")
 
         service = _make_processing_service()
@@ -258,7 +263,7 @@ class TestContextAggregateSpan:
             RuntimeError,
             match="Context provider 'failing' failed to provide fragments",
         ):
-            await service.context_preparer.aggregate_context()
+            await service.context_preparer.aggregate_context(acting_user_id=None)
 
         spans = processing_span_exporter.get_finished_spans()
         agg_spans = [s for s in spans if s.name == "context.aggregate"]
@@ -438,12 +443,10 @@ class TestConversationProcessSpan:
     async def test_conversation_process_creates_span(
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
-        service = _make_processing_service()
-        service.context_providers = []
-
         mock_llm = AsyncMock()
         mock_llm.generate_response_stream = _fake_llm_stream
-        service.llm_client = mock_llm
+        service = _make_processing_service(llm_client=mock_llm)
+        service.context_providers = []
 
         mock_db_context = AsyncMock()
         mock_db_context.engine = MagicMock()
@@ -477,12 +480,10 @@ class TestConversationProcessSpan:
     async def test_conversation_process_sets_subconversation_id(
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
-        service = _make_processing_service()
-        service.context_providers = []
-
         mock_llm = AsyncMock()
         mock_llm.generate_response_stream = _fake_llm_stream
-        service.llm_client = mock_llm
+        service = _make_processing_service(llm_client=mock_llm)
+        service.context_providers = []
 
         mock_db_context = AsyncMock()
         mock_db_context.engine = MagicMock()
@@ -608,7 +609,7 @@ class TestTelegramProcessBatchSpan:
         handler.debug_mode = False
         handler.processing_service = AsyncMock()
         handler.telegram_service = MagicMock()
-        handler.get_db_context = MagicMock()
+        handler.Database = MagicMock()
         handler.developer_chat_id = None
         handler.confirmation_manager = MagicMock()
 

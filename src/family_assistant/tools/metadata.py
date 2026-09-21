@@ -24,11 +24,18 @@ _OUTPUT_SAFETY_TAGS = {
 class ToolTag(StrEnum):
     """Security-relevant tags for tools."""
 
+    # Opt-in: unknown tools remain independent script review boundaries.
+    SCRIPT_DETERMINISTIC = "script_deterministic"
     READ_ONLY = "read_only"
     SENSITIVE_DATA = "sensitive_data"
     STATE_CHANGING = "state_changing"
     STATE_PERSISTING = "state_persisting"
     EXTERNAL_COMM = "external_comm"
+    # Refines EXTERNAL_COMM: the tool communicates outward, but the server
+    # validates the recipient against configured users, so the destination is
+    # not model-selectable. Carry it alongside EXTERNAL_COMM rather than
+    # instead of it, so tool policies matching the broader tag still apply.
+    KNOWN_USER_COMM = "known_user_comm"
     LOW_BANDWIDTH_EXTERNAL = "low_bandwidth_external"
     DESTRUCTIVE = "destructive"
     CODE_EXECUTION = "code_execution"
@@ -62,6 +69,8 @@ class LocalToolMetadata:
 
     tags: frozenset[ToolTag]
     summary: str | None = None
+    destination_argument_paths: tuple[str, ...] = ()
+    deferred_confirmation_eligible: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +102,8 @@ class ToolDescriptor:
     origin: ToolOrigin
     mcp_server_id: str | None = None
     summary: str | None = None
+    destination_argument_paths: tuple[str, ...] = ()
+    deferred_confirmation_eligible: bool = False
 
 
 def normalize_tool_tags(
@@ -113,9 +124,16 @@ def make_local_tool_metadata(
     tags: list[str | ToolTag] | tuple[str | ToolTag, ...],
     *,
     summary: str | None = None,
+    destination_argument_paths: tuple[str, ...] = (),
+    deferred_confirmation_eligible: bool = False,
 ) -> LocalToolMetadata:
     """Create validated local tool metadata."""
-    return LocalToolMetadata(tags=normalize_tool_tags(tags), summary=summary)
+    return LocalToolMetadata(
+        tags=normalize_tool_tags(tags),
+        summary=summary,
+        destination_argument_paths=destination_argument_paths,
+        deferred_confirmation_eligible=deferred_confirmation_eligible,
+    )
 
 
 def get_tool_name(definition: ToolDefinition) -> str:
@@ -148,6 +166,8 @@ def build_tool_descriptor(
     origin: ToolOrigin,
     mcp_server_id: str | None = None,
     summary: str | None = None,
+    destination_argument_paths: tuple[str, ...] = (),
+    deferred_confirmation_eligible: bool = False,
 ) -> ToolDescriptor:
     """Build a tool descriptor from a definition and tag set."""
     return ToolDescriptor(
@@ -157,6 +177,8 @@ def build_tool_descriptor(
         origin=origin,
         mcp_server_id=mcp_server_id,
         summary=summary or extract_tool_summary(definition),
+        destination_argument_paths=destination_argument_paths,
+        deferred_confirmation_eligible=deferred_confirmation_eligible,
     )
 
 
@@ -220,6 +242,12 @@ def build_local_tool_descriptors(
             registration.tags,
             origin="local",
             summary=registration.metadata.summary,
+            destination_argument_paths=(
+                registration.metadata.destination_argument_paths
+            ),
+            deferred_confirmation_eligible=(
+                registration.metadata.deferred_confirmation_eligible
+            ),
         )
         for registration in registrations
     ]
@@ -235,6 +263,14 @@ def build_local_tool_descriptors_from_definitions(
             definition,
             metadata_by_name[get_tool_name(definition)].tags,
             origin="local",
+            destination_argument_paths=(
+                metadata_by_name[get_tool_name(definition)].destination_argument_paths
+            ),
+            deferred_confirmation_eligible=(
+                metadata_by_name[
+                    get_tool_name(definition)
+                ].deferred_confirmation_eligible
+            ),
         )
         for definition in definitions
     ]

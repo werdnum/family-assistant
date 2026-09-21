@@ -25,6 +25,7 @@ if [ "$1" = "--fast" ]; then
     shift # Remove --fast from arguments
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_BIN="${VIRTUAL_ENV:-.venv}/bin"
 PYTHON_BIN="${VENV_BIN}/python"
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -56,6 +57,11 @@ categorize_files() {
             case "$arg" in
                 *.py) PYTHON_FILES+=("$arg") ;;
                 *.js|*.jsx|*.ts|*.tsx|*.vue) JS_TS_FILES+=("$arg") ;;
+                # Provider model mirrors are other people's pages, copied
+                # verbatim. Skipped even when named explicitly, so that a
+                # targeted run cannot reformat what the mirror exists to keep
+                # byte-identical.
+                *.agents/skills/*/references/current-models.md) ;;
                 *.md) MARKDOWN_FILES+=("$arg") ;;
                 *.sh|*.bash) OTHER_FILES+=("$arg") ;;
                 *) OTHER_FILES+=("$arg") ;;
@@ -73,15 +79,18 @@ if [ $# -eq 0 ]; then
         JS_TS_FILES=("frontend")
     fi
     # Find tracked markdown files. This avoids generated or vendored build
-    # output such as ignored iOS DerivedData checkouts.
+    # output such as ignored iOS DerivedData checkouts, and the provider model
+    # mirrors, which are other people's pages copied verbatim -- reformatting
+    # them would make every refresh a diff against our own formatting.
     if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         while IFS= read -r -d '' file; do
             MARKDOWN_FILES+=("$file")
-        done < <(git ls-files -z -- "*.md" ":(exclude).claude/*")
+        done < <(git ls-files -z -- "*.md" ":(exclude).claude/*" \
+            ":(exclude).agents/skills/*/references/current-models.md")
     else
         while IFS= read -r -d '' file; do
             MARKDOWN_FILES+=("$file")
-        done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -not -path "*/build/*" -print0 2>/dev/null)
+        done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -not -path "*/build/*" -not -path "./.agents/skills/*/references/current-models.md" -print0 2>/dev/null)
     fi
 else
     categorize_files "$@"
@@ -145,14 +154,14 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
         fi
     fi
     
-    # Pylint (errors only)
+    # Pylint, through the shared entry point so this agrees with scripts/run-tests.sh.
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running pylint...${NC}"
         timer_start
-        if ! "${VIRTUAL_ENV:-.venv}"/bin/pylint --errors-only "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "$SCRIPT_DIR/run-pylint.sh" "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
-            echo "${RED}❌ pylint found errors${NC}"
+            echo "${RED}❌ pylint found problems${NC}"
             HAS_ERRORS=1
         else
             echo -n "${GREEN} ✓${NC}"

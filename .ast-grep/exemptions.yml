@@ -97,6 +97,51 @@ exemptions:
     ticket: null
 
   # ===========================================================================
+  # NoteReadPolicy.UNRESTRICTED exemptions - Reads made on nobody's behalf
+  # ===========================================================================
+  - rule: no-unrestricted-note-read-policy
+    files:
+      - src/family_assistant/storage/repositories/notes.py
+      - src/family_assistant/web/routers/notes_api.py
+      - src/family_assistant/web/routers/vector_search_api.py
+      - src/family_assistant/indexing/notes_indexer.py
+      - src/family_assistant/tools/confirmation.py
+      - .ast-grep/tests/conformance/no-unrestricted-note-read-policy-positive.py
+      - test_*.py
+    reason: |
+      Each of these reads on nobody's behalf, so there is no profile whose read
+      confinement could apply.
+
+      notes.py defines the sentinel, and its write paths look a title up to find
+      out whether the row exists at all; the visibility-sensitive half of that
+      check goes through NoteWritePolicy.see_before_overwrite_read_policy().
+      notes_api.py is the admin management UI, which already bypasses write
+      confinement for the same reason, and vector_search_api.py is the same UI's
+      document search. notes_indexer.py indexes a note by id for every future
+      reader; per-reader filtering happens at search time, in the vector store,
+      which is where a profile's read policy is applied to indexed content.
+      confirmation.py's existence lookup mirrors the repository's
+      unconditional one so the approver is shown the same preflight the write
+      will run.
+
+      The positive fixture exists to violate the rule; test files (test_*.py, at
+      any depth) exercise both confined and unconfined reads.
+    ticket: null
+
+  # ===========================================================================
+  # Raw visibility-grant reads - assembling a context, not performing a read
+  # ===========================================================================
+  - rule: no-raw-visibility-grants-read
+    files:
+      - .ast-grep/tests/conformance/no-raw-visibility-grants-read-positive.py
+      - test_*.py
+    reason: |
+      The positive fixture exists to violate the rule. Test files (test_*.py, at any
+      depth) build execution contexts and assert on the grants they were given, which
+      is assembling a context rather than reading on a profile's behalf.
+    ticket: null
+
+  # ===========================================================================
   # dict[str, Any] exemptions - Hook scripts with arbitrary JSON
   # ===========================================================================
   - rule: no-dict-any
@@ -108,3 +153,54 @@ exemptions:
       tools have different structures. Creating typed structures for this would be overly
       rigid and doesn't provide value since the hook only extracts specific fields.
     ticket: null
+
+  # ===========================================================================
+  # Raw create_async_engine() exemptions - the factory itself and its fixture
+  # ===========================================================================
+  - rule: no-raw-create-async-engine
+    files:
+      - src/family_assistant/storage/base.py
+      - .ast-grep/tests/conformance/no-raw-create-async-engine-positive.py
+    reason: |
+      storage/base.py defines create_engine_with_sqlite_optimizations, the one place
+      allowed to call SQLAlchemy's constructor. The positive rule fixture intentionally
+      contains raw calls so .ast-grep/test-rules.py can verify the rule catches them.
+    ticket: null
+
+
+  # ===========================================================================
+  # Raw transaction management - the storage layer implements the primitives
+  # ===========================================================================
+  - rule: no-raw-transaction-management
+    files:
+      - src/family_assistant/storage/database.py
+      - src/family_assistant/storage/__init__.py
+      - .ast-grep/tests/conformance/no-raw-transaction-management-positive.py
+    reason: |
+      database.py is where Database/DatabaseTransaction are implemented, so it is the
+      one place allowed to call engine.begin(). storage/__init__.py runs schema
+      creation before any application code exists to hold a transaction.
+    ticket: null
+
+  # ===========================================================================
+  # Definition-record chokepoint exemptions - rule test fixtures
+  # ===========================================================================
+  - rule: no-unstamped-executable-definition-write
+    files:
+      - .ast-grep/tests/conformance/no-unstamped-executable-definition-write-positive.py
+    reason: |
+      The positive fixture exists to violate the rule. It is what proves the rule
+      still fires; exempting it keeps the conformance run clean without weakening
+      the rule.
+    ticket: null
+
+  - rule: no-dict-any
+    files:
+      - .ast-grep/tests/conformance/no-unstamped-executable-definition-write-positive.py
+      - .ast-grep/tests/conformance/no-unstamped-executable-definition-write-negative.py
+    reason: |
+      The fixtures stand in for SQLAlchemy values() mappings, whose contents are
+      genuinely heterogeneous column values. Naming a real typed structure here
+      would obscure the shape the rule is matching on.
+    ticket: null
+

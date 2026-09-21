@@ -407,7 +407,10 @@ async def test_default_batcher_cancel_clears_pending_state_when_no_buffer() -> N
 
     await wait_for_condition(
         lambda: processor.process_batch.await_count >= 1,
-        timeout=1.0,
+        # The flush itself is a short debounce, but a loaded CI box can take
+        # longer than 1s just to schedule it; the assertion below still pins the
+        # count, so a longer ceiling costs nothing when the behaviour is right.
+        timeout=10.0,
         description="plain text after cancel flushes via short delay",
     )
     assert processor.process_batch.await_count == 1

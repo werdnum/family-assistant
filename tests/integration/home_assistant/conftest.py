@@ -10,7 +10,7 @@ import tempfile
 import time
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import pytest
@@ -25,6 +25,12 @@ from tests.integration.home_assistant.vcr_patches import (
 _ = patch_vcr_mock_client_response
 
 logger = logging.getLogger(__name__)
+
+
+class OnboardingResponse(TypedDict, total=False):
+    """Fields consumed from the Home Assistant onboarding response."""
+
+    auth_code: str
 
 
 @pytest.fixture(scope="session")
@@ -149,22 +155,72 @@ def _find_free_port() -> int:
     return port
 
 
+def _log_ha_tail(log_file_path: Path, max_lines: int) -> None:
+    if log_file_path.exists():
+        with open(log_file_path, encoding="utf-8") as f:
+            lines = f.readlines()
+            last_lines = lines[-max_lines:]
+            logger.error(
+                "Home Assistant log (last %d lines):\n%s",
+                len(last_lines),
+                "".join(last_lines),
+            )
+    else:
+        logger.error(f"Log file not found: {log_file_path}")
+
+
 def _dump_ha_logs(log_file_path: Path, max_lines: int = 50) -> None:
     """Dump the last N lines of HA logs for debugging."""
     try:
-        if log_file_path.exists():
-            with open(log_file_path, encoding="utf-8") as f:
-                lines = f.readlines()
-                last_lines = lines[-max_lines:]
-                logger.error(
-                    "Home Assistant log (last %d lines):\n%s",
-                    len(last_lines),
-                    "".join(last_lines),
-                )
-        else:
-            logger.error(f"Log file not found: {log_file_path}")
+        _log_ha_tail(log_file_path, max_lines)
     except Exception as e:
         logger.error(f"Failed to read HA logs: {e}")
+
+
+def _poll_ha_entity_once(
+    base_url: str,
+    headers: dict[str, str],
+    entity_id: str,
+    last_log_time: float,
+) -> tuple[bool, float]:
+    response = requests.get(
+        f"{base_url}/api/states/{entity_id}",
+        headers=headers,
+        timeout=2,
+    )
+    if response.status_code == 200:
+        logger.info(f"Entity {entity_id} is available - integrations loaded!")
+        return True, last_log_time
+
+    current_time = time.time()
+    if current_time - last_log_time >= 5:
+        logger.info(
+            f"Entity {entity_id} not yet available (status {response.status_code}), waiting..."
+        )
+        last_log_time = current_time
+    return False, last_log_time
+
+
+def _log_available_entities(
+    base_url: str, headers: dict[str, str], entity_id: str
+) -> None:
+    response = requests.get(
+        f"{base_url}/api/states",
+        headers=headers,
+        timeout=5,
+    )
+    if response.status_code == 200:
+        all_states = response.json()
+        entity_ids = [state["entity_id"] for state in all_states]
+        logger.error(
+            f"Timeout waiting for entity '{entity_id}'. "
+            f"Found {len(entity_ids)} entities: {entity_ids[:20]}"
+        )
+    else:
+        logger.error(
+            f"Timeout waiting for entity '{entity_id}'. "
+            f"Failed to retrieve entity list (status {response.status_code})"
+        )
 
 
 def _wait_for_ha_entity(
@@ -197,26 +253,11 @@ def _wait_for_ha_entity(
 
     while time.time() < deadline:
         try:
-            # Use direct HTTP request to check entity state
-            response = requests.get(
-                f"{base_url}/api/states/{entity_id}",
-                headers=headers,
-                timeout=2,
+            entity_available, last_log_time = _poll_ha_entity_once(
+                base_url, headers, entity_id, last_log_time
             )
-
-            if response.status_code == 200:
-                # Entity exists and is available
-                logger.info(f"Entity {entity_id} is available - integrations loaded!")
+            if entity_available:
                 return
-
-            # Log every 5 seconds to avoid spam
-            current_time = time.time()
-            if current_time - last_log_time >= 5:
-                logger.info(
-                    f"Entity {entity_id} not yet available (status {response.status_code}), waiting..."
-                )
-                last_log_time = current_time
-
         except requests.RequestException as e:
             # Log errors sparingly
             current_time = time.time()
@@ -229,29 +270,63 @@ def _wait_for_ha_entity(
 
     # Timeout reached - log all available entities for debugging
     try:
-        response = requests.get(
-            f"{base_url}/api/states",
-            headers=headers,
-            timeout=5,
-        )
-        if response.status_code == 200:
-            all_states = response.json()
-            entity_ids = [state["entity_id"] for state in all_states]
-            logger.error(
-                f"Timeout waiting for entity '{entity_id}'. "
-                f"Found {len(entity_ids)} entities: {entity_ids[:20]}"
-            )
-        else:
-            logger.error(
-                f"Timeout waiting for entity '{entity_id}'. "
-                f"Failed to retrieve entity list (status {response.status_code})"
-            )
+        _log_available_entities(base_url, headers, entity_id)
     except Exception as e:
         logger.error(f"Failed to retrieve entity list on timeout: {e}")
 
     raise TimeoutError(
         f"Home Assistant entity '{entity_id}' did not become available within {timeout_seconds} seconds"
     )
+
+
+def _complete_onboarding(
+    endpoint: str,
+    onboarding_data: dict[str, str],
+    log_file_path: Path,
+    process: subprocess.Popen[str],
+) -> OnboardingResponse:
+    response = requests.post(endpoint, json=onboarding_data, timeout=10)
+    if response.status_code == 200:
+        logger.info("Onboarding completed successfully")
+        return cast("OnboardingResponse", response.json())
+
+    logger.warning(f"Onboarding returned {response.status_code}: {response.text}")
+    _dump_ha_logs(log_file_path)
+    process.terminate()
+    raise RuntimeError(f"Onboarding failed with status {response.status_code}")
+
+
+def _request_access_token(
+    endpoint: str,
+    auth_data: dict[str, str],
+    process: subprocess.Popen[str],
+) -> str:
+    token_response = requests.post(endpoint, data=auth_data, timeout=10)
+    if token_response.status_code != 200:
+        process.terminate()
+        raise RuntimeError(
+            f"Token request failed with status {token_response.status_code}: {token_response.text}"
+        )
+
+    token_data = token_response.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        process.terminate()
+        raise RuntimeError(f"No access_token in response: {token_data}")
+    logger.info("Access token obtained successfully")
+    return cast("str", access_token)
+
+
+def _terminate_ha_process(process: subprocess.Popen[str]) -> None:
+    logger.info(f"Terminating Home Assistant process {process.pid}")
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Forcefully killing Home Assistant process {process.pid}")
+        process.kill()
+        process.wait()
+    logger.info("Home Assistant process terminated")
 
 
 @pytest.fixture(scope="session")
@@ -396,23 +471,9 @@ def home_assistant_service(
         }
 
         try:
-            response = requests.post(
-                onboarding_endpoint,
-                json=onboarding_data,
-                timeout=10,
+            onboarding_response = _complete_onboarding(
+                onboarding_endpoint, onboarding_data, log_file_path, process
             )
-            if response.status_code == 200:
-                logger.info("Onboarding completed successfully")
-                onboarding_response = response.json()
-            else:
-                logger.warning(
-                    f"Onboarding returned {response.status_code}: {response.text}"
-                )
-                _dump_ha_logs(log_file_path)
-                process.terminate()
-                raise RuntimeError(
-                    f"Onboarding failed with status {response.status_code}"
-                )
         except requests.RequestException as e:
             logger.error(f"Failed to complete onboarding: {e}")
             process.terminate()
@@ -430,23 +491,9 @@ def home_assistant_service(
         }
 
         try:
-            token_response = requests.post(
-                auth_token_endpoint,
-                data=auth_data,
-                timeout=10,
+            access_token = _request_access_token(
+                auth_token_endpoint, auth_data, process
             )
-            if token_response.status_code == 200:
-                token_data = token_response.json()
-                access_token = token_data.get("access_token")
-                if not access_token:
-                    process.terminate()
-                    raise RuntimeError(f"No access_token in response: {token_data}")
-                logger.info("Access token obtained successfully")
-            else:
-                process.terminate()
-                raise RuntimeError(
-                    f"Token request failed with status {token_response.status_code}: {token_response.text}"
-                )
         except requests.RequestException as e:
             logger.error(f"Failed to get access token: {e}")
             process.terminate()
@@ -469,17 +516,7 @@ def home_assistant_service(
         logger.info("Cleaning up Home Assistant fixture")
         try:
             if "process" in locals() and process.poll() is None:
-                logger.info(f"Terminating Home Assistant process {process.pid}")
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    logger.warning(
-                        f"Forcefully killing Home Assistant process {process.pid}"
-                    )
-                    process.kill()
-                    process.wait()
-                logger.info("Home Assistant process terminated")
+                _terminate_ha_process(process)
         except Exception as e:
             logger.error(f"Error terminating Home Assistant: {e}")
 

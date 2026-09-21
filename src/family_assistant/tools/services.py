@@ -10,19 +10,28 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy.exc import IntegrityError
 
 from family_assistant.llm.content_parts import attachment_content, text_content
-from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
-from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
-from family_assistant.tools.confirmation import (
-    MAX_DELEGATION_REQUEST_CHARS,
-    over_length_delegation_block_reason,
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+    resolve_model_selection,
 )
+from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
+from family_assistant.services.tool_call_review import (
+    TriggerReviewInput,
+    build_delegation_review_trigger,
+)
+from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.tools.types import (
     ConfirmationOutcome,
+    ToolArguments,
     ToolAttachment,
     ToolDefinition,
     ToolResult,
@@ -35,11 +44,16 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm.content_parts import ContentPartDict
+    from family_assistant.processing.protocol import DelegatableService
+    from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
         DelegationRunSummary,
     )
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import (
+        ToolConfirmationAuthorization,
+        ToolExecutionContext,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -132,6 +146,42 @@ def _taint_sources_from_metadata(
     return TurnTaintState.from_metadata(metadata).sources
 
 
+async def _delegation_review_trigger(
+    exec_context: ToolExecutionContext,
+    *,
+    definition: str,
+) -> TriggerReviewInput:
+    """Build the delegated subconversation's trigger from the delegating turn.
+
+    The goal is composed by this turn's model, so it carries this turn's taint
+    and renders as trusted intent only when nothing untrusted entered. The
+    human request behind it is propagated separately and judged on its own
+    provenance, which is what keeps a delegation off a tainted turn reviewable
+    rather than blind. Delegating from an unattended turn carries forward only
+    what this turn itself inherited: its own rows hold composed text -- a goal,
+    a wake's result data, an event payload -- never a human request.
+
+    The turn's rows come from history rather than from
+    ``tool_call_review_messages``, which carries prior turns as well: an earlier
+    request must not arrive labelled as the one that authorized this delegation.
+    """
+    return await build_delegation_review_trigger(
+        exec_context.db_context,
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition=definition,
+        definition_taint_metadata=_current_taint_metadata(exec_context),
+        payload_present=False,
+        source_turn_id=exec_context.turn_id,
+        # An unattended turn -- a delegated run, a delegation-completion wake, an
+        # event, a schedule, a script -- is exactly one carrying a review
+        # trigger. An interactive turn carries none, and only it holds a human
+        # message.
+        source_started_by_human=exec_context.tool_call_review_trigger is None,
+        inherited=exec_context.tool_call_review_trigger,
+    )
+
+
 def _terminal_delegation_run(run: DelegationRunDict | None) -> bool:
     return run is not None and run["status"] in TERMINAL_DELEGATION_STATUSES
 
@@ -139,8 +189,9 @@ def _terminal_delegation_run(run: DelegationRunDict | None) -> bool:
 async def _load_delegation_run(
     exec_context: ToolExecutionContext, delegation_id: str
 ) -> DelegationRunDict | None:
-    async with exec_context.db_context.create_isolated_context() as isolated_db:
-        return await isolated_db.delegation_runs.get_by_delegation_id(delegation_id)
+    return await exec_context.db_context.delegation_runs.get_by_delegation_id(
+        delegation_id
+    )
 
 
 def _resume_already_in_progress_result(resume_delegation_id: str) -> ToolResult:
@@ -344,6 +395,7 @@ async def _synchronous_delegation_result(
     target_service: Any,  # noqa: ANN401 - target is a registry-resolved processing service
     target_service_id: str,
     content_parts: list[ContentPartDict],
+    model_selection: ResolvedModelSelection,
 ) -> ToolResult:
     """Run a delegated request inline and return its result as a tool result.
 
@@ -373,6 +425,12 @@ async def _synchronous_delegation_result(
             trigger_content_parts=content_parts,
             trigger_interface_message_id=None,
             user_name=exec_context.user_name,
+            # The delegated turn acts for the same person the delegating turn
+            # does, as the queued path already records on its run. Without it
+            # the target resolves this request's attachments as an anonymous
+            # actor, which sees only ownerless ones -- so an owned file is
+            # neither described to the target's routing nor injectable.
+            user_id=exec_context.user_id,
             replied_to_interface_id=None,
             chat_interface=exec_context.chat_interface,
             chat_interfaces=exec_context.chat_interfaces,
@@ -382,6 +440,11 @@ async def _synchronous_delegation_result(
             initial_taint_sources=_taint_sources_from_metadata(
                 _current_taint_metadata(exec_context)
             ),
+            tool_call_review_trigger=await _delegation_review_trigger(
+                exec_context,
+                definition=json.dumps(content_parts, sort_keys=True),
+            ),
+            model_selection=model_selection,
         )
     except Exception as e:
         logger.exception(
@@ -469,12 +532,11 @@ async def _mark_delegation_delivered_inline(
     the cleanup sweep's ``find_terminal_unnotified`` backstop from re-delivering
     the same result into the conversation once the run ages past its window.
     """
-    async with exec_context.db_context.create_isolated_context() as isolated_db:
-        await isolated_db.delegation_runs.mark_notified(
-            delegation_id=delegation_id,
-            result_message_internal_id=None,
-            notified_at=_now(exec_context),
-        )
+    await exec_context.db_context.delegation_runs.mark_notified(
+        delegation_id=delegation_id,
+        result_message_internal_id=None,
+        notified_at=_now(exec_context),
+    )
 
 
 async def _inline_delegation_result(
@@ -547,6 +609,540 @@ def _format_delegation_summary(summary: DelegationRunSummary) -> str:
     return json.dumps(summary, indent=2, default=str)
 
 
+@dataclass(frozen=True)
+class _QueuedDelegation:
+    delegation_id: str
+    target_service_id: str
+    wait_seconds: float
+
+
+def _resolve_delegation_target(
+    exec_context: ToolExecutionContext,
+    target_service_id: str,
+) -> tuple[DelegatableService | None, str | None, ToolResult | None]:
+    """Resolve the target and enforce its source-profile delegation boundary."""
+    processing_service = exec_context.processing_service
+    if not processing_service or not processing_service.processing_services_registry:
+        logger.error(
+            "Processing services registry not available in the current execution context."
+        )
+        return (
+            None,
+            None,
+            ToolResult(
+                text="Error: Service registry is not available to delegate the task.",
+                attachments=None,
+            ),
+        )
+
+    target_service = processing_service.processing_services_registry.get(
+        target_service_id
+    )
+    if not target_service:
+        logger.error(
+            "Target service profile ID '%s' not found in the registry.",
+            target_service_id,
+        )
+        return (
+            None,
+            None,
+            ToolResult(
+                text=f"Error: Target service profile '{target_service_id}' not found.",
+                attachments=None,
+            ),
+        )
+
+    source_service_id = processing_service.service_config.id
+    allowed_sources = getattr(
+        target_service.service_config,
+        "allowed_delegation_sources",
+        None,
+    )
+    if allowed_sources is not None and source_service_id not in allowed_sources:
+        logger.warning(
+            "Delegation from '%s' to '%s' blocked by target allowed_delegation_sources.",
+            source_service_id,
+            target_service_id,
+        )
+        return (
+            None,
+            None,
+            ToolResult(
+                text=(
+                    "Error: Tool 'delegate_to_service' is not allowed. "
+                    f"Profile '{source_service_id}' is not permitted to delegate "
+                    f"to '{target_service_id}'."
+                ),
+                attachments=None,
+            ),
+        )
+    return target_service, source_service_id, None
+
+
+async def _resolve_requested_subconversation(
+    exec_context: ToolExecutionContext,
+    *,
+    resume_delegation_id: str | None,
+    source_service_id: str,
+    target_service_id: str,
+) -> tuple[str | None, str | None, ToolResult | None]:
+    """Normalize a resume reference and validate the history it selects."""
+    normalized_delegation_id = (resume_delegation_id or "").strip() or None
+    if normalized_delegation_id is None:
+        return None, None, None
+    subconversation_id, error = await _resolve_resume_subconversation(
+        exec_context,
+        resume_delegation_id=normalized_delegation_id,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+    )
+    return normalized_delegation_id, subconversation_id, error
+
+
+def _durable_authorization_matches(
+    durable_authorization: ToolConfirmationAuthorization | None,
+    effective_arguments: dict[str, object],
+) -> bool:
+    if durable_authorization is None:
+        return False
+    if durable_authorization.tool_name != "delegate_to_service":
+        return False
+    if not {"target_service_id", "user_request"}.issubset(
+        durable_authorization.tool_args
+    ):
+        return False
+
+    for key, value in durable_authorization.tool_args.items():
+        if key not in effective_arguments:
+            return False
+        normalized_value = value
+        if key == "resume_delegation_id" and isinstance(value, str):
+            normalized_value = value.strip() or None
+        if normalized_value != effective_arguments[key]:
+            return False
+    return True
+
+
+def _confirmation_tool_arguments(
+    *,
+    target_service_id: str,
+    user_request: str,
+    confirm_delegation: bool,
+    attachment_ids: list[str] | None,
+    resume_delegation_id: str | None,
+    model_tier: str | None,
+) -> ToolArguments:
+    arguments: ToolArguments = {
+        "target_service_id": target_service_id,
+        "user_request": user_request,
+        "confirm_delegation": confirm_delegation,
+    }
+    if attachment_ids is not None:
+        arguments["attachment_ids"] = attachment_ids
+    if resume_delegation_id is not None:
+        arguments["resume_delegation_id"] = resume_delegation_id
+    if model_tier is not None:
+        # Only when set, so a stored approval from before tier selection still
+        # matches a call that names no tier. `_durable_authorization_matches`
+        # requires every stored argument to be present and equal in the
+        # effective ones, so an approval that carries a tier can only be
+        # re-used by a call at that same tier.
+        arguments["model_tier"] = model_tier
+    return arguments
+
+
+async def _request_delegation_confirmation(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    call_id: str,
+    tool_args: ToolArguments,
+) -> ConfirmationOutcome | ToolResult:
+    callback = exec_context.request_confirmation_callback
+    assert callback is not None
+    try:
+        return await callback(
+            interface_type=exec_context.interface_type,
+            conversation_id=exec_context.conversation_id,
+            turn_id=exec_context.turn_id,
+            tool_name="delegate_to_service",
+            call_id=call_id,
+            tool_args=tool_args,
+            timeout_seconds=_tools_config(exec_context).confirmation_timeout_seconds,
+            context=exec_context,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Confirmation for delegating to '%s' timed out.", target_service_id
+        )
+        return ToolResult(
+            text=f"Error: Confirmation timed out for delegating to '{target_service_id}'.",
+            attachments=None,
+        )
+    except Exception as error:
+        logger.exception(
+            "Error during confirmation for delegating to '%s': %s",
+            target_service_id,
+            error,
+        )
+        return ToolResult(
+            text=f"Error during confirmation for delegating to '{target_service_id}': {error}",
+            attachments=None,
+        )
+
+
+async def _confirm_delegation_if_required(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    user_request: str,
+    confirm_delegation: bool,
+    attachment_ids: list[str] | None,
+    handoff_after_seconds: float | None,
+    delivery_hint: Literal["auto", "background"],
+    resume_delegation_id: str | None,
+    model_tier: str | None,
+) -> ToolResult | None:
+    """Apply the delegation's durable authorization and confirmation gate."""
+    if not confirm_delegation:
+        return None
+
+    confirmation_tool_args = _confirmation_tool_arguments(
+        target_service_id=target_service_id,
+        user_request=user_request,
+        confirm_delegation=confirm_delegation,
+        attachment_ids=attachment_ids,
+        resume_delegation_id=resume_delegation_id,
+        model_tier=model_tier,
+    )
+    durable_authorization = exec_context.tool_confirmation_authorization
+    durable_authorization_matches = _durable_authorization_matches(
+        durable_authorization,
+        {
+            "target_service_id": target_service_id,
+            "user_request": user_request,
+            "confirm_delegation": confirm_delegation,
+            "attachment_ids": attachment_ids,
+            "handoff_after_seconds": handoff_after_seconds,
+            "delivery_hint": delivery_hint,
+            "resume_delegation_id": resume_delegation_id,
+            "model_tier": model_tier,
+        },
+    )
+    matched_authorization = (
+        durable_authorization if durable_authorization_matches else None
+    )
+    if matched_authorization is not None:
+        confirmation_tool_args = dict(matched_authorization.tool_args)
+        if matched_authorization.consumed:
+            logger.info(
+                "Durable approval already satisfied confirmation for exact "
+                "delegate_to_service call %s",
+                matched_authorization.call_id,
+            )
+            return None
+
+    callback = exec_context.request_confirmation_callback
+    if not callback:
+        logger.error(
+            "Confirmation required for delegating to '%s', but no confirmation "
+            "callback is available. Aborting delegation.",
+            target_service_id,
+        )
+        return ToolResult(
+            text=f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available.",
+            attachments=None,
+        )
+
+    call_id = (
+        matched_authorization.call_id
+        if matched_authorization is not None
+        else f"delegate_to_service_{uuid.uuid4()}"
+    )
+    confirmation_outcome = await _request_delegation_confirmation(
+        exec_context,
+        target_service_id=target_service_id,
+        call_id=call_id,
+        tool_args=confirmation_tool_args,
+    )
+    if isinstance(confirmation_outcome, ToolResult):
+        return confirmation_outcome
+    if confirmation_outcome.kind == "approved":
+        return None
+    return _delegation_confirmation_outcome_result(
+        target_service_id,
+        confirmation_outcome,
+    )
+
+
+async def _delegation_content_parts(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    user_request: str,
+    attachment_ids: list[str] | None,
+) -> tuple[list[ContentPartDict], ToolResult | None]:
+    """Build delegated content after validating attachment ownership.
+
+    Returns the content parts and any refusal. The parts carry each attachment
+    as a reference: what the target's classifier is told about it is resolved
+    from that reference on the target's side, alongside every other ingress
+    that hands a turn a file it can only name.
+    """
+    content_parts: list[ContentPartDict] = [text_content(user_request)]
+    if not attachment_ids:
+        return content_parts, None
+    if not exec_context.attachment_registry:
+        logger.warning(
+            "Attachment IDs provided but AttachmentRegistry not available - ignoring attachments"
+        )
+        return content_parts, None
+
+    found = await exec_context.attachment_registry.get_attachments(
+        exec_context.db_context,
+        attachment_ids,
+        acting_user_id=exec_context.user_id,
+    )
+    missing = [
+        attachment_id for attachment_id in attachment_ids if attachment_id not in found
+    ]
+    if missing:
+        return (
+            content_parts,
+            ToolResult(
+                text=(
+                    f"Error: Cannot delegate to '{target_service_id}': "
+                    f"attachment(s) {', '.join(missing)} do not exist or "
+                    "belong to another user."
+                ),
+                attachments=None,
+            ),
+        )
+    content_parts.extend(
+        attachment_content(attachment_id) for attachment_id in attachment_ids
+    )
+    return content_parts, None
+
+
+async def _synchronous_result_if_required(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service: DelegatableService,
+    target_service_id: str,
+    content_parts: list[ContentPartDict],
+    resume_delegation_id: str | None,
+    resumed_subconversation_id: str | None,
+    model_selection: ResolvedModelSelection,
+) -> ToolResult | None:
+    """Run inline when async delivery cannot be used, rejecting unsafe resumes."""
+    if not (
+        exec_context.in_script
+        or not _tools_config(exec_context).async_delegation_enabled
+    ):
+        return None
+    if resumed_subconversation_id is not None:
+        return ToolResult(
+            text=(
+                f"Error: Cannot resume delegation '{resume_delegation_id}' here: "
+                "resuming is only supported for asynchronous delegations. This "
+                "call runs synchronously (inside a script, or async delegation is "
+                "disabled). Start a fresh delegation instead (omit "
+                "resume_delegation_id)."
+            ),
+            attachments=None,
+        )
+    return await _synchronous_delegation_result(
+        exec_context,
+        target_service=target_service,
+        target_service_id=target_service_id,
+        content_parts=content_parts,
+        model_selection=model_selection,
+    )
+
+
+async def _enqueue_delegation(
+    exec_context: ToolExecutionContext,
+    *,
+    source_service_id: str,
+    target_service_id: str,
+    user_request: str,
+    content_parts: list[ContentPartDict],
+    handoff_after_seconds: float | None,
+    delivery_hint: Literal["auto", "background"],
+    resume_delegation_id: str | None,
+    subconversation_id: str,
+    model_selection: ResolvedModelSelection,
+) -> _QueuedDelegation | ToolResult:
+    """Atomically persist a delegated run and its task, including resume claims.
+
+    ``subconversation_id`` is allocated by the caller rather than here, because
+    the target is routed against the history that id selects before the run
+    exists; minting it here would route one history and run another.
+    """
+    delegation_id = f"delegation_{uuid.uuid4().hex}"
+    task_id = f"{DELEGATED_PROFILE_RUN_TASK_TYPE}_{uuid.uuid4().hex}"
+    wait_seconds = _resolve_handoff_wait_seconds(
+        exec_context,
+        handoff_after_seconds,
+        delivery_hint,
+    )
+    taint_state_json = _current_taint_metadata(exec_context)
+
+    logger.info(
+        "Enqueuing delegated request to service profile '%s' with %d content parts "
+        "(delegation_id=%s, subconversation_id=%s, wait_seconds=%.2f)",
+        target_service_id,
+        len(content_parts),
+        delegation_id,
+        subconversation_id,
+        wait_seconds,
+    )
+
+    async def _enqueue_delegated_run(txn: DatabaseTransaction) -> None:
+        await txn.delegation_runs.create_run({
+            "delegation_id": delegation_id,
+            "task_id": task_id,
+            "source_profile_id": source_service_id,
+            "target_service_id": target_service_id,
+            "interface_type": exec_context.interface_type,
+            "conversation_id": exec_context.conversation_id,
+            "user_id": exec_context.user_id,
+            "user_name": exec_context.user_name,
+            "source_turn_id": exec_context.turn_id,
+            "source_subconversation_id": exec_context.subconversation_id,
+            "subconversation_id": subconversation_id,
+            "request_text": user_request,
+            "content_parts_json": content_parts,
+            "taint_state_json": taint_state_json,
+            # Frozen here rather than re-resolved by the worker: a restart or a
+            # configuration deployment between enqueue and execution must not
+            # change the models of a run that was already authorized.
+            "model_selection_json": model_selection.to_json(),
+        })
+        await txn.tasks.enqueue(
+            task_id=task_id,
+            task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
+            payload={
+                "delegation_id": delegation_id,
+                "interface_type": exec_context.interface_type,
+                "conversation_id": exec_context.conversation_id,
+                "user_name": exec_context.user_name,
+            },
+            max_retries_override=1,
+            priority=TaskPriority.INTERACTIVE,
+        )
+
+    try:
+        await exec_context.db_context.atomic(_enqueue_delegated_run)
+    except IntegrityError:
+        if resume_delegation_id is not None:
+            logger.info(
+                "Concurrent resume of delegation %s rejected by the unique "
+                "active-subconversation constraint (subconversation=%s).",
+                resume_delegation_id,
+                subconversation_id,
+            )
+            return _resume_already_in_progress_result(resume_delegation_id)
+        logger.exception(
+            "Failed to delegate request to service '%s' due to a constraint violation.",
+            target_service_id,
+        )
+        return ToolResult(
+            text=f"Error: Failed to delegate task to service '{target_service_id}'.",
+            attachments=None,
+        )
+    except Exception as error:
+        logger.exception(
+            "Failed to delegate request to service '%s': %s",
+            target_service_id,
+            error,
+        )
+        return ToolResult(
+            text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {error}",
+            attachments=None,
+        )
+    return _QueuedDelegation(
+        delegation_id=delegation_id,
+        target_service_id=target_service_id,
+        wait_seconds=wait_seconds,
+    )
+
+
+async def _await_or_handoff_delegation(
+    exec_context: ToolExecutionContext,
+    queued: _QueuedDelegation,
+) -> ToolResult:
+    """Race-safely return a fast result or hand its delivery to the worker."""
+    delegation_id = queued.delegation_id
+
+    async def await_inline_result() -> ToolResult | str:
+        run = await _wait_for_delegation_run(
+            exec_context,
+            delegation_id=delegation_id,
+            wait_seconds=queued.wait_seconds,
+        )
+        inline_result = await _inline_delegation_result(
+            exec_context,
+            target_service_id=queued.target_service_id,
+            run=run,
+        )
+        if inline_result is not None:
+            return inline_result
+
+        handed_off = await exec_context.db_context.delegation_runs.mark_handed_off(
+            delegation_id,
+            _now(exec_context),
+        )
+        if not handed_off:
+            run = await _load_delegation_run(exec_context, delegation_id)
+            inline_result = await _inline_delegation_result(
+                exec_context,
+                target_service_id=queued.target_service_id,
+                run=run,
+            )
+            if inline_result is not None:
+                return inline_result
+        return run["status"] if run is not None else "queued"
+
+    try:
+        inline_outcome = await await_inline_result()
+        if isinstance(inline_outcome, ToolResult):
+            return inline_outcome
+        run_status = inline_outcome
+    except Exception:
+        logger.exception(
+            "Error awaiting inline result for delegation %s; returning async "
+            "reference. Claiming the handoff so the worker delivers the result.",
+            delegation_id,
+        )
+        try:
+            await exec_context.db_context.delegation_runs.mark_handed_off(
+                delegation_id,
+                _now(exec_context),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to claim handoff for delegation %s after wait error; the "
+                "cleanup sweep is the backstop.",
+                delegation_id,
+            )
+        run_status = "running"
+
+    return ToolResult(
+        text=_delegation_reference_text(
+            delegation_id=delegation_id,
+            target_service_id=queued.target_service_id,
+            status=run_status,
+        ),
+        attachments=None,
+        data={
+            "delegation_id": delegation_id,
+            "target_service_id": queued.target_service_id,
+            "status": run_status,
+        },
+    )
+
+
 # Tool Definitions
 SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
@@ -590,7 +1186,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "attachment_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of attachment UUIDs to include with the delegated request. These attachments must be accessible in the current conversation and will be passed to the target service for processing.",
+                        "description": "Optional list of attachment UUIDs to include with the delegated request. These attachments must be accessible in the current conversation and are passed to the target service for processing -- including a service running on a remote agent, which receives the file itself rather than a reference. Files the service produces come back attached to its result, so you can pass them on or work with them by id.",
                     },
                     "handoff_after_seconds": {
                         "type": "number",
@@ -605,6 +1201,10 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "resume_delegation_id": {
                         "type": "string",
                         "description": "Optional. Reference ID of a previous finished delegation (from delegate_to_service or list_delegations) to continue instead of starting a fresh conversation. The target profile resumes that delegation's history and retains its context. Must reference a completed or failed delegation to the same target_service_id in this conversation.",
+                    },
+                    "model_tier": {
+                        "type": "string",
+                        "description": "Optional. Run the target on a specific model tier (listed with the target profile in your system prompt). Only tiers the target admits without confirmation are accepted; omit to use the target's default.",
                     },
                 },
                 "required": ["target_service_id", "user_request"],
@@ -669,6 +1269,7 @@ async def delegate_to_service_tool(
     handoff_after_seconds: float | None = None,
     delivery_hint: Literal["auto", "background"] = "auto",
     resume_delegation_id: str | None = None,
+    model_tier: str | None = None,
 ) -> ToolResult:
     """
     Delegates a user request to another specialized assistant profile (service).
@@ -685,6 +1286,8 @@ async def delegate_to_service_tool(
             the same target profile. When set, the delegated profile continues that
             delegation's isolated history instead of starting fresh, so it retains
             the earlier exchange's context.
+        model_tier: Optional model tier to run the target on. Only tiers the
+            target admits without a confirmation are accepted.
 
     Returns:
         ToolResult with response text from the target service and any attachments it generated
@@ -693,208 +1296,83 @@ async def delegate_to_service_tool(
         f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
     )
 
-    if (
-        not exec_context.processing_service
-        or not exec_context.processing_service.processing_services_registry
-    ):
-        logger.error(
-            "Processing services registry not available in the current execution context."
-        )
-        return ToolResult(
-            text="Error: Service registry is not available to delegate the task.",
-            attachments=None,
-        )
-
-    registry = exec_context.processing_service.processing_services_registry
-    target_service = registry.get(target_service_id)
-
-    if not target_service:
-        logger.error(
-            f"Target service profile ID '{target_service_id}' not found in the registry."
-        )
-        return ToolResult(
-            text=f"Error: Target service profile '{target_service_id}' not found.",
-            attachments=None,
-        )
-
-    source_service_id = exec_context.processing_service.service_config.id
-    allowed_sources = getattr(
-        target_service.service_config,
-        "allowed_delegation_sources",
-        None,
+    target_service, source_service_id, target_error = _resolve_delegation_target(
+        exec_context,
+        target_service_id,
     )
-    if allowed_sources is not None and source_service_id not in allowed_sources:
-        logger.warning(
-            "Delegation from '%s' to '%s' blocked by target allowed_delegation_sources.",
-            source_service_id,
+    if target_error is not None:
+        return target_error
+    target_service = cast("DelegatableService", target_service)
+    source_service_id = cast("str", source_service_id)
+
+    # Resolved against the *target's* eligibility, before the confirmation
+    # prompt and before any durable run exists: a tier the target does not
+    # admit must not become a question put to the user, nor a queued run that
+    # fails when a worker picks it up.
+    try:
+        model_selection = resolve_model_selection(
+            target_service.service_config.tier_eligibility,
+            ModelSelectionRequest(tier=model_tier, source="model")
+            if model_tier is not None
+            else None,
+            profile_id=target_service.service_config.id,
+        )
+    except ModelTierNotPermitted as refusal:
+        logger.info(
+            "Refusing delegation to '%s' at model tier '%s': %s",
             target_service_id,
+            model_tier,
+            refusal,
         )
-        return ToolResult(
-            text=(
-                "Error: Tool 'delegate_to_service' is not allowed. "
-                f"Profile '{source_service_id}' is not permitted to delegate "
-                f"to '{target_service_id}'."
-            ),
-            attachments=None,
-        )
+        return ToolResult(text=f"Error: {refusal}", attachments=None)
 
-    # The /tools JSON editor posts every schema property, so an unset
-    # resume_delegation_id arrives as "" rather than being omitted. Treat a blank
-    # (or whitespace-only) value as absent so a normal fresh delegation is not
-    # rejected as an attempt to resume delegation ''.
-    resume_delegation_id = (resume_delegation_id or "").strip() or None
+    (
+        resume_delegation_id,
+        resumed_subconversation_id,
+        resume_error,
+    ) = await _resolve_requested_subconversation(
+        exec_context,
+        resume_delegation_id=resume_delegation_id,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+    )
+    if resume_error is not None:
+        return resume_error
 
-    resumed_subconversation_id: str | None = None
-    if resume_delegation_id is not None:
-        (
-            resumed_subconversation_id,
-            resume_error,
-        ) = await _resolve_resume_subconversation(
-            exec_context,
-            resume_delegation_id=resume_delegation_id,
-            source_service_id=source_service_id,
-            target_service_id=target_service_id,
-        )
-        if resume_error is not None:
-            return resume_error
+    confirmation_error = await _confirm_delegation_if_required(
+        exec_context,
+        target_service_id=target_service_id,
+        user_request=user_request,
+        confirm_delegation=confirm_delegation,
+        attachment_ids=attachment_ids,
+        handoff_after_seconds=handoff_after_seconds,
+        delivery_hint=delivery_hint,
+        resume_delegation_id=resume_delegation_id,
+        model_tier=model_tier,
+    )
+    if confirmation_error is not None:
+        return confirmation_error
 
-    confirmation_timeout_seconds = exec_context.processing_service.service_config.tools_config.confirmation_timeout_seconds
-    actual_confirm_delegation = confirm_delegation
+    content_parts, attachment_error = await _delegation_content_parts(
+        exec_context,
+        target_service_id=target_service_id,
+        user_request=user_request,
+        attachment_ids=attachment_ids,
+    )
+    if attachment_error is not None:
+        return attachment_error
 
-    if actual_confirm_delegation:
-        # This hand-off will be approved against a confirmation prompt, so refuse
-        # a request too long to show there in full rather than ask the user to
-        # approve a payload they cannot fully review. (Policy-confirm-gated calls
-        # are bounded earlier, in PolicyEnforcingToolsProvider.) Unconfirmed
-        # delegations are intentionally not size-capped.
-        over_length_reason = over_length_delegation_block_reason(user_request)
-        if over_length_reason is not None:
-            logger.warning(
-                "Refusing confirm-gated delegation to '%s': request is %d chars (limit %d).",
-                target_service_id,
-                len(user_request),
-                MAX_DELEGATION_REQUEST_CHARS,
-            )
-            return ToolResult(text=over_length_reason, attachments=None)
-
-        if not exec_context.request_confirmation_callback:
-            logger.error(
-                f"Confirmation required for delegating to '{target_service_id}', but no confirmation callback is available. Aborting delegation."
-            )
-            return ToolResult(
-                text=f"Error: Confirmation required to delegate to '{target_service_id}', but no confirmation mechanism is available.",
-                attachments=None,
-            )
-        else:
-            try:
-                confirmation_outcome = await exec_context.request_confirmation_callback(
-                    interface_type=exec_context.interface_type,
-                    conversation_id=exec_context.conversation_id,
-                    turn_id=exec_context.turn_id,
-                    tool_name="delegate_to_service",
-                    call_id=f"delegate_to_service_{uuid.uuid4()}",
-                    tool_args={
-                        "target_service_id": target_service_id,
-                        "user_request": user_request,
-                        "confirm_delegation": actual_confirm_delegation,
-                        **(
-                            {"attachment_ids": attachment_ids}
-                            if attachment_ids is not None
-                            else {}
-                        ),
-                        **(
-                            {"resume_delegation_id": resume_delegation_id}
-                            if resume_delegation_id is not None
-                            else {}
-                        ),
-                    },
-                    timeout_seconds=confirmation_timeout_seconds,
-                    context=exec_context,
-                )
-                if confirmation_outcome.kind != "approved":
-                    return _delegation_confirmation_outcome_result(
-                        target_service_id,
-                        confirmation_outcome,
-                    )
-            except TimeoutError:
-                logger.warning(
-                    f"Confirmation for delegating to '{target_service_id}' timed out."
-                )
-                return ToolResult(
-                    text=f"Error: Confirmation timed out for delegating to '{target_service_id}'.",
-                    attachments=None,
-                )
-            except Exception as e:
-                logger.exception(
-                    f"Error during confirmation for delegating to '{target_service_id}': {e}"
-                )
-                return ToolResult(
-                    text=f"Error during confirmation for delegating to '{target_service_id}': {e}",
-                    attachments=None,
-                )
-
-    # Process attachments if provided
-    content_parts: list[ContentPartDict] = [text_content(user_request)]
-
-    if attachment_ids:
-        if not exec_context.attachment_registry:
-            logger.warning(
-                "Attachment IDs provided but AttachmentRegistry not available - ignoring attachments"
-            )
-        else:
-            # Validate against a committed view (an isolated context) so the
-            # background worker — which runs on its own connection and cannot see
-            # the caller's uncommitted turn — sees exactly the attachments
-            # validated here. A referenced attachment that is not yet committed
-            # is reported now rather than failing opaquely inside the worker.
-            async with exec_context.db_context.create_isolated_context() as isolated_db:
-                found = await exec_context.attachment_registry.get_attachments(
-                    isolated_db, attachment_ids, acting_user_id=exec_context.user_id
-                )
-            missing = [aid for aid in attachment_ids if aid not in found]
-            if missing:
-                return ToolResult(
-                    text=(
-                        f"Error: Cannot delegate to '{target_service_id}': "
-                        f"attachment(s) {', '.join(missing)} are not available to "
-                        "the delegated run. They may not be saved yet — try again "
-                        "once they are committed."
-                    ),
-                    attachments=None,
-                )
-            content_parts.extend(
-                attachment_content(attachment_id) for attachment_id in attachment_ids
-            )
-
-    # A script is synchronous code: an async handoff that delivers the result via a
-    # later conversation message is useless to it (and surprising). Run inline so
-    # the script receives the result directly. The global flag is the broader
-    # operator kill switch.
-    if (
-        exec_context.in_script
-        or not _tools_config(exec_context).async_delegation_enabled
-    ):
-        if resumed_subconversation_id is not None:
-            # The synchronous path creates no durable run row, so it cannot claim
-            # the resumed subconversation against concurrent runs via the unique
-            # active-subconversation index. Refuse rather than run an unserialized
-            # resume that could interleave with another in the same history.
-            return ToolResult(
-                text=(
-                    f"Error: Cannot resume delegation '{resume_delegation_id}' here: "
-                    "resuming is only supported for asynchronous delegations. This "
-                    "call runs synchronously (inside a script, or async delegation is "
-                    "disabled). Start a fresh delegation instead (omit "
-                    "resume_delegation_id)."
-                ),
-                attachments=None,
-            )
-        return await _synchronous_delegation_result(
-            exec_context,
-            target_service=target_service,
-            target_service_id=target_service_id,
-            content_parts=content_parts,
-        )
+    synchronous_result = await _synchronous_result_if_required(
+        exec_context,
+        target_service=target_service,
+        target_service_id=target_service_id,
+        content_parts=content_parts,
+        resume_delegation_id=resume_delegation_id,
+        resumed_subconversation_id=resumed_subconversation_id,
+        model_selection=model_selection,
+    )
+    if synchronous_result is not None:
+        return synchronous_result
 
     if delivery_hint not in {"auto", "background"}:
         return ToolResult(
@@ -902,151 +1380,45 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
-    delegation_id = f"delegation_{uuid.uuid4().hex}"
-    task_id = f"{DELEGATED_PROFILE_RUN_TASK_TYPE}_{uuid.uuid4().hex}"
+    # Allocated before routing, not inside the enqueue: the classifier reads
+    # the history this id selects, and `None` selects the main conversation
+    # rather than nothing -- so a fresh delegation routed under it would be
+    # decided on the target's unrelated direct-chat turns and then run on the
+    # empty history of a subconversation minted afterwards. One id, allocated
+    # once, routed and persisted.
     subconversation_id = resumed_subconversation_id or str(uuid.uuid4())
-    wait_seconds = _resolve_handoff_wait_seconds(
+
+    # Routed here, before the run row exists, rather than when a worker picks
+    # it up: the persisted envelope is the run's authorization, so a run
+    # enqueued unrouted reaches the worker with nothing to replay and takes the
+    # target's default silently -- while the synchronous path, which routes
+    # inside the turn, would have routed the same request.
+    model_selection = await target_service.resolve_model_selection_for_run(
+        model_selection,
+        db_context=exec_context.db_context,
+        interface_type=exec_context.interface_type,
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=subconversation_id,
+        trigger_content_parts=content_parts,
+        acting_user_id=exec_context.user_id,
+    )
+
+    enqueue_result = await _enqueue_delegation(
         exec_context,
-        handoff_after_seconds,
-        delivery_hint,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+        user_request=user_request,
+        content_parts=content_parts,
+        handoff_after_seconds=handoff_after_seconds,
+        delivery_hint=delivery_hint,
+        resume_delegation_id=resume_delegation_id,
+        subconversation_id=subconversation_id,
+        model_selection=model_selection,
     )
-    taint_state_json = _current_taint_metadata(exec_context)
+    if isinstance(enqueue_result, ToolResult):
+        return enqueue_result
 
-    logger.info(
-        "Enqueuing delegated request to service profile '%s' with %d content parts "
-        "(delegation_id=%s, subconversation_id=%s, wait_seconds=%.2f)",
-        target_service_id,
-        len(content_parts),
-        delegation_id,
-        subconversation_id,
-        wait_seconds,
-    )
-    try:
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            await isolated_db.delegation_runs.create_run({
-                "delegation_id": delegation_id,
-                "task_id": task_id,
-                "source_profile_id": source_service_id,
-                "target_service_id": target_service_id,
-                "interface_type": exec_context.interface_type,
-                "conversation_id": exec_context.conversation_id,
-                "user_id": exec_context.user_id,
-                "user_name": exec_context.user_name,
-                "source_turn_id": exec_context.turn_id,
-                "source_subconversation_id": exec_context.subconversation_id,
-                "subconversation_id": subconversation_id,
-                "request_text": user_request,
-                "content_parts_json": content_parts,
-                "taint_state_json": taint_state_json,
-            })
-            await isolated_db.tasks.enqueue(
-                task_id=task_id,
-                task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
-                payload={
-                    "delegation_id": delegation_id,
-                    "interface_type": exec_context.interface_type,
-                    "conversation_id": exec_context.conversation_id,
-                    "user_name": exec_context.user_name,
-                },
-                max_retries_override=1,
-            )
-    except IntegrityError:
-        if resumed_subconversation_id is not None:
-            # The unique active-subconversation index rejected this insert: a
-            # concurrent resume of the same delegation won the atomic claim while
-            # this one was between its preflight check and its insert (e.g. one
-            # resume waited on confirmation). Serialize by refusing this one.
-            logger.info(
-                "Concurrent resume of delegation %s rejected by the unique "
-                "active-subconversation constraint (subconversation=%s).",
-                resume_delegation_id,
-                subconversation_id,
-            )
-            return _resume_already_in_progress_result(cast("str", resume_delegation_id))
-        logger.exception(
-            "Failed to delegate request to service '%s' due to a constraint violation.",
-            target_service_id,
-        )
-        return ToolResult(
-            text=f"Error: Failed to delegate task to service '{target_service_id}'.",
-            attachments=None,
-        )
-    except Exception as e:
-        logger.exception(
-            f"Failed to delegate request to service '{target_service_id}': {e}"
-        )
-        return ToolResult(
-            text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
-            attachments=None,
-        )
-
-    # The run is durably enqueued: from here it will be executed and delivered by
-    # the worker (or recovered by the cleanup sweep). An error while waiting for an
-    # inline result must therefore NOT be reported as a delegation failure — fall
-    # back to the async reference and let the background run notify the conversation.
-    try:
-        run = await _wait_for_delegation_run(
-            exec_context,
-            delegation_id=delegation_id,
-            wait_seconds=wait_seconds,
-        )
-        inline_result = await _inline_delegation_result(
-            exec_context, target_service_id=target_service_id, run=run
-        )
-        if inline_result is not None:
-            return inline_result
-
-        # The run is not terminal within the handoff window. Atomically claim the
-        # handoff; if the run reached a terminal state in the race, the claim
-        # fails and we deliver the result inline instead of stranding it.
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            handed_off = await isolated_db.delegation_runs.mark_handed_off(
-                delegation_id,
-                _now(exec_context),
-            )
-        if not handed_off:
-            run = await _load_delegation_run(exec_context, delegation_id)
-            inline_result = await _inline_delegation_result(
-                exec_context, target_service_id=target_service_id, run=run
-            )
-            if inline_result is not None:
-                return inline_result
-        run_status = run["status"] if run is not None else "queued"
-    except Exception:
-        logger.exception(
-            "Error awaiting inline result for delegation %s; returning async "
-            "reference. Claiming the handoff so the worker delivers the result.",
-            delegation_id,
-        )
-        # Best-effort handoff claim so the worker's handed-off-gated notification
-        # delivers the result promptly rather than waiting for the cleanup sweep.
-        try:
-            async with exec_context.db_context.create_isolated_context() as isolated_db:
-                await isolated_db.delegation_runs.mark_handed_off(
-                    delegation_id,
-                    _now(exec_context),
-                )
-        except Exception:
-            logger.exception(
-                "Failed to claim handoff for delegation %s after wait error; the "
-                "cleanup sweep is the backstop.",
-                delegation_id,
-            )
-        run_status = "running"
-
-    return ToolResult(
-        text=_delegation_reference_text(
-            delegation_id=delegation_id,
-            target_service_id=target_service_id,
-            status=run_status,
-        ),
-        attachments=None,
-        data={
-            "delegation_id": delegation_id,
-            "target_service_id": target_service_id,
-            "status": run_status,
-        },
-    )
+    return await _await_or_handoff_delegation(exec_context, enqueue_result)
 
 
 async def get_delegation_status_tool(

@@ -3,6 +3,8 @@ export interface Conversation {
   last_message: string;
   last_timestamp: string;
   message_count: number;
+  /** Present only on search results: a snippet of a message that matched. */
+  match_excerpt?: string | null;
 }
 
 export interface ConversationSidebarProps {
@@ -18,6 +20,19 @@ export interface ConversationSidebarProps {
 
 export interface ChatAppProps {
   profileId?: string;
+}
+
+/**
+ * What is known about the LLM call that produced a message: the serving model
+ * and, where the profile offers a choice of them, the model tier it ran at.
+ * `model_tier_source` says who chose that tier — the user, the Auto router
+ * (`model`), or the profile default.
+ */
+export interface MessageReasoningInfo {
+  model?: string | null;
+  model_tier?: string | null;
+  model_tier_source?: 'user' | 'model' | 'default' | null;
+  model_tier_requested?: string | null;
 }
 
 export interface Message {
@@ -40,6 +55,7 @@ export interface Message {
     file?: File;
   }>;
   processing_profile_id?: string;
+  reasoning_info?: MessageReasoningInfo;
 }
 
 export interface MessageContent {
@@ -97,6 +113,7 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   tool_calls?: BackendToolCall[];
   tool_call_id?: string;
   processing_profile_id?: string | null;
+  reasoning_info?: MessageReasoningInfo | null;
 }
 
 export interface ActiveTurnInfo {
@@ -114,6 +131,8 @@ export interface ConversationMessagesResponse {
   // sets include_conversation_profile=true; used to adopt the conversation's
   // profile on open.
   latest_user_profile_id?: string | null;
+  // Whether the conversation has messages older than the returned page.
+  has_more_before?: boolean;
   // Recently retained turn states for this conversation, when the backend has them.
   active_turns?: ActiveTurnInfo[];
 }

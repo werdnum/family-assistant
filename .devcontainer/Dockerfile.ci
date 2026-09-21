@@ -1,6 +1,18 @@
 # Multi-stage build for the CI container.
 # Stage 1: Base image setup (from the old Dockerfile.base)
 
+# Pinned tool versions; keep these in step with .devcontainer/Dockerfile, which
+# builds the same base. PLAYWRIGHT_VERSION must match the playwright pin in
+# pyproject.toml so rebrowser-playwright and playwright share browser binaries.
+ARG UV_VERSION=0.12.15
+ARG NODE_MAJOR=22
+ARG AST_GREP_VERSION=0.45.3
+ARG YQ_VERSION=v4.47.1
+ARG PLAYWRIGHT_VERSION=1.52.0
+
+# COPY --from cannot expand a build arg, but FROM can: name the stage here.
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
 FROM ubuntu:24.04 AS base
 
 # Prevent interactive prompts during package installation
@@ -29,14 +41,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         postgresql-17-pgvector
 
 # Node.js
+ARG NODE_MAJOR
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && apt-get install -y nodejs
 
 # Binary tools
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
+ARG AST_GREP_VERSION
+ARG YQ_VERSION
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
         AST_GREP_ARCH="x86_64"; \
@@ -45,13 +60,12 @@ RUN ARCH=$(dpkg --print-architecture) && \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    curl -sSL "https://github.com/ast-grep/ast-grep/releases/latest/download/app-${AST_GREP_ARCH}-unknown-linux-gnu.zip" \
+    curl -sSL "https://github.com/ast-grep/ast-grep/releases/download/${AST_GREP_VERSION}/app-${AST_GREP_ARCH}-unknown-linux-gnu.zip" \
     -o /tmp/ast-grep.zip && \
     unzip /tmp/ast-grep.zip -d /tmp/ && \
     install -m 0755 /tmp/ast-grep /usr/local/bin/ast-grep && \
     install -m 0755 /tmp/sg /usr/local/bin/sg && \
     rm /tmp/ast-grep /tmp/sg /tmp/ast-grep.zip && \
-    YQ_VERSION="v4.47.1" && \
     curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
@@ -74,8 +88,6 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 # User-specific installations
 USER claude
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
-RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
-    npm install -g playwright@1.55.0
 
 # System-level Playwright setup (using rebrowser-playwright for Python)
 # Note: We install deps manually to handle renamed packages in newer Debian/Ubuntu
@@ -112,9 +124,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Python venv with rebrowser-playwright and playwright pinned to same version
 # so they share browser binaries. rebrowser-playwright is used by app code,
 # playwright is used by pytest-playwright-asyncio for functional tests.
+ARG PLAYWRIGHT_VERSION
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv venv /venv && \
-    uv pip install -p /venv/bin/python --system "rebrowser-playwright==1.52.0" "playwright==1.52.0" "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
+    uv pip install -p /venv/bin/python --system \
+        "rebrowser-playwright==${PLAYWRIGHT_VERSION}" \
+        "playwright==${PLAYWRIGHT_VERSION}" \
+        "markitdown[html]>=0.1.0" "jsonmerge>=1.9.0" && \
     chown -R claude:claude /venv && \
     chmod -R 755 /venv
 

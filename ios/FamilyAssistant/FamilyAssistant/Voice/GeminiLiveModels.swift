@@ -17,6 +17,34 @@ struct EphemeralToken: Equatable {
     /// in the setup message.
     let tools: [JSONValue]
     let config: VoiceLiveConfig
+    /// The profile the backend resolved this session onto: the requested profile
+    /// when it names a real one, the default profile otherwise — so the token
+    /// reports the profile whose prompt and tools it actually carries, not the one
+    /// that was asked for. Sent back when the transcript is persisted so the saved
+    /// conversation is filed under the profile that produced it.
+    ///
+    /// Nil against a server that predates the field. The caller then falls back to
+    /// the profile it requested, which is what such a server resolves too, and a
+    /// nil all the way down means the default profile at both ends.
+    let profileID: String?
+
+    init(
+        token: String,
+        expiresAt: Date?,
+        model: String,
+        systemInstruction: String,
+        tools: [JSONValue],
+        config: VoiceLiveConfig,
+        profileID: String? = nil
+    ) {
+        self.token = token
+        self.expiresAt = expiresAt
+        self.model = model
+        self.systemInstruction = systemInstruction
+        self.tools = tools
+        self.config = config
+        self.profileID = profileID
+    }
 }
 
 extension EphemeralToken: Decodable {
@@ -27,6 +55,7 @@ extension EphemeralToken: Decodable {
         case systemInstruction = "system_instruction"
         case tools
         case config
+        case profileID = "profile_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -36,6 +65,7 @@ extension EphemeralToken: Decodable {
         systemInstruction = try container.decode(String.self, forKey: .systemInstruction)
         tools = try container.decodeIfPresent([JSONValue].self, forKey: .tools) ?? []
         config = try container.decode(VoiceLiveConfig.self, forKey: .config)
+        profileID = try container.decodeIfPresent(String.self, forKey: .profileID)
         let expiresRaw = try container.decodeIfPresent(String.self, forKey: .expiresAt)
         expiresAt = expiresRaw.flatMap(VoiceLiveDateParser.date(from:))
     }
@@ -47,21 +77,36 @@ struct VoiceLiveConfig: Equatable, Decodable {
     let maxSessionMinutes: Int
     let inputTranscriptionEnabled: Bool
     let outputTranscriptionEnabled: Bool
+    /// BCP-47 codes for the user's speech. Empty lets Gemini auto-detect, which
+    /// misreads short or noisy phrases as another language.
+    let inputTranscriptionLanguageCodes: [String]
+    let activityDetection: VoiceActivityDetectionConfig
+    /// Replaces ``activityDetection`` when the audio runs through a car, whose
+    /// microphone hears the assistant from the cabin speakers.
+    let carAudioActivityDetection: VoiceActivityDetectionConfig
 
     init(
         voiceName: String,
         maxSessionMinutes: Int,
         inputTranscriptionEnabled: Bool,
-        outputTranscriptionEnabled: Bool
+        outputTranscriptionEnabled: Bool,
+        inputTranscriptionLanguageCodes: [String] = [],
+        activityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig(),
+        carAudioActivityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig()
     ) {
         self.voiceName = voiceName
         self.maxSessionMinutes = maxSessionMinutes
         self.inputTranscriptionEnabled = inputTranscriptionEnabled
         self.outputTranscriptionEnabled = outputTranscriptionEnabled
+        self.inputTranscriptionLanguageCodes = inputTranscriptionLanguageCodes
+        self.activityDetection = activityDetection
+        self.carAudioActivityDetection = carAudioActivityDetection
     }
 
     private enum CodingKeys: String, CodingKey {
         case voice, session, transcription
+        case vad
+        case carAudioVAD = "car_audio_vad"
     }
 
     private enum VoiceKeys: String, CodingKey { case name }
@@ -69,6 +114,7 @@ struct VoiceLiveConfig: Equatable, Decodable {
     private enum TranscriptionKeys: String, CodingKey {
         case inputEnabled = "input_enabled"
         case outputEnabled = "output_enabled"
+        case languageCodes = "language_codes"
     }
 
     init(from decoder: Decoder) throws {
@@ -93,14 +139,100 @@ struct VoiceLiveConfig: Equatable, Decodable {
         ) {
             inputTranscriptionEnabled = try transcription.decodeIfPresent(Bool.self, forKey: .inputEnabled) ?? true
             outputTranscriptionEnabled = try transcription.decodeIfPresent(Bool.self, forKey: .outputEnabled) ?? true
+            inputTranscriptionLanguageCodes = try transcription.decodeIfPresent(
+                [String].self,
+                forKey: .languageCodes
+            ) ?? []
         } else {
             inputTranscriptionEnabled = true
             outputTranscriptionEnabled = true
+            inputTranscriptionLanguageCodes = []
         }
+
+        activityDetection = try container.decodeIfPresent(VoiceActivityDetectionConfig.self, forKey: .vad)
+            ?? VoiceActivityDetectionConfig()
+        carAudioActivityDetection = try container.decodeIfPresent(
+            VoiceActivityDetectionConfig.self,
+            forKey: .carAudioVAD
+        ) ?? activityDetection
     }
 
     static let defaultVoiceName = "Puck"
     static let defaultMaxSessionMinutes = 15
+}
+
+/// The backend's voice activity detection block, which decides when the user
+/// has started talking (interrupting the assistant) and when they have finished.
+/// Sensitivities are the backend's strings, validated when they are put on the
+/// wire so a value this client does not know is reported rather than dropped.
+struct VoiceActivityDetectionConfig: Equatable, Decodable {
+    var automatic = true
+    var startOfSpeechSensitivity = "DEFAULT"
+    var endOfSpeechSensitivity = "DEFAULT"
+    var prefixPaddingMs: Int?
+    var silenceDurationMs: Int?
+
+    init(
+        automatic: Bool = true,
+        startOfSpeechSensitivity: String = "DEFAULT",
+        endOfSpeechSensitivity: String = "DEFAULT",
+        prefixPaddingMs: Int? = nil,
+        silenceDurationMs: Int? = nil
+    ) {
+        self.automatic = automatic
+        self.startOfSpeechSensitivity = startOfSpeechSensitivity
+        self.endOfSpeechSensitivity = endOfSpeechSensitivity
+        self.prefixPaddingMs = prefixPaddingMs
+        self.silenceDurationMs = silenceDurationMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case automatic
+        case startOfSpeechSensitivity = "start_of_speech_sensitivity"
+        case endOfSpeechSensitivity = "end_of_speech_sensitivity"
+        case prefixPaddingMs = "prefix_padding_ms"
+        case silenceDurationMs = "silence_duration_ms"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        automatic = try container.decodeIfPresent(Bool.self, forKey: .automatic) ?? true
+        startOfSpeechSensitivity = try container.decodeIfPresent(String.self, forKey: .startOfSpeechSensitivity)
+            ?? "DEFAULT"
+        endOfSpeechSensitivity = try container.decodeIfPresent(String.self, forKey: .endOfSpeechSensitivity)
+            ?? "DEFAULT"
+        prefixPaddingMs = try container.decodeIfPresent(Int.self, forKey: .prefixPaddingMs)
+        silenceDurationMs = try container.decodeIfPresent(Int.self, forKey: .silenceDurationMs)
+    }
+}
+
+/// A setting in ``VoiceActivityDetectionConfig`` that could not be honoured.
+/// The session still starts, on Gemini's default for that setting.
+enum VoiceActivityDetectionIssue: LocalizedError, Equatable {
+    case unknownStartSensitivity(String)
+    case unknownEndSensitivity(String)
+    /// Push-to-talk needs the client to mark speech itself, which this client
+    /// has no control for.
+    case manualDetectionUnsupported
+
+    var telemetryName: String {
+        switch self {
+        case .unknownStartSensitivity: "unknown_start_sensitivity"
+        case .unknownEndSensitivity: "unknown_end_sensitivity"
+        case .manualDetectionUnsupported: "manual_detection_unsupported"
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .unknownStartSensitivity(let value):
+            "Unknown start_of_speech_sensitivity '\(value)'; using Gemini's default."
+        case .unknownEndSensitivity(let value):
+            "Unknown end_of_speech_sensitivity '\(value)'; using Gemini's default."
+        case .manualDetectionUnsupported:
+            "vad.automatic is false, which the native app does not support; keeping automatic detection."
+        }
+    }
 }
 
 /// A function call requested by Gemini during a live turn.

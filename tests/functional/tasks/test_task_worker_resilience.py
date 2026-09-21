@@ -16,9 +16,11 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.llm.messages import UserMessage
+from family_assistant.storage.database import Database
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.tasks import TasksRepository
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.types import ActionConfig, TaskDict
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
@@ -37,10 +39,10 @@ async def _get_tasks_for_automation(
     engine: AsyncEngine,
     automation_id: int,
 ) -> list[TaskDict]:
-    async with DatabaseContext(engine=engine) as db_context:
-        rows = await db_context.fetch_all(
-            select(tasks_table).order_by(tasks_table.c.created_at)
-        )
+    db_context = Database(engine=engine)
+    rows = await db_context.fetch_all(
+        select(tasks_table).order_by(tasks_table.c.created_at)
+    )
 
     tasks: list[TaskDict] = []
     for row in rows:
@@ -52,10 +54,10 @@ async def _get_tasks_for_automation(
 
 
 async def _get_task(engine: AsyncEngine, task_id: str) -> TaskDict | None:
-    async with DatabaseContext(engine=engine) as db_context:
-        row = await db_context.fetch_one(
-            select(tasks_table).where(tasks_table.c.task_id == task_id)
-        )
+    db_context = Database(engine=engine)
+    row = await db_context.fetch_one(
+        select(tasks_table).where(tasks_table.c.task_id == task_id)
+    )
     if row is None:
         return None
     return cast("TaskDict", dict(row))
@@ -73,12 +75,12 @@ async def _make_schedule_task_due_now(
     assert len(pending_tasks) == 1
     task = pending_tasks[0]
 
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task["task_id"])
-            .values(scheduled_at=scheduled_at, max_retries=max_retries)
-        )
+    db_context = Database(engine=engine)
+    await db_context.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task["task_id"])
+        .values(scheduled_at=scheduled_at, max_retries=max_retries)
+    )
 
     updated_task = await _get_task(engine, task["task_id"])
     assert updated_task is not None
@@ -106,16 +108,16 @@ async def _create_schedule_automation(
     action_config: dict[str, str | bool],
     conversation_id: str,
 ) -> int:
-    async with DatabaseContext(engine=engine) as db_context:
-        return await db_context.schedule_automations.create(
-            name=f"Resilience {action_type} {conversation_id}",
-            recurrence_rule="FREQ=MINUTELY",
-            action_type=action_type,
-            action_config=cast("ActionConfig", action_config),
-            conversation_id=conversation_id,
-            interface_type="telegram",
-            timezone=ZoneInfo("UTC"),
-        )
+    db_context = Database(engine=engine)
+    return await db_context.schedule_automations.create(
+        name=f"Resilience {action_type} {conversation_id}",
+        recurrence_rule="FREQ=MINUTELY",
+        action_type=action_type,
+        action_config=cast("ActionConfig", action_config),
+        conversation_id=conversation_id,
+        interface_type="telegram",
+        timezone=ZoneInfo("UTC"),
+    )
 
 
 async def _wait_for_one_next_schedule_task(
@@ -194,14 +196,15 @@ async def test_task_handler_timeout(
     await asyncio.sleep(0.1)
 
     # Create a task with 0 retries allowed to avoid retry delays
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id="timeout_test",
-            task_type="hang",
-            payload={},
-            max_retries_override=0,  # No retries to avoid retry delays in test
-        )
-        logger.info("Created test task with ID: timeout_test")
+    db_context = Database(engine=db_engine)
+    await db_context.tasks.enqueue(
+        task_id="timeout_test",
+        task_type="hang",
+        payload={},
+        max_retries_override=0,  # No retries to avoid retry delays in test
+        priority=TaskPriority.INTERACTIVE,
+    )
+    logger.info("Created test task with ID: timeout_test")
 
     # Wake up worker to process task immediately
     new_task_event.set()
@@ -229,23 +232,23 @@ async def test_task_handler_timeout(
             await worker_task
 
     # Check task was marked as failed due to timeout
-    async with DatabaseContext(engine=db_engine) as db_context:
-        stmt = select(tasks_table).where(tasks_table.c.task_id == "timeout_test")
-        tasks = await db_context.fetch_all(stmt)
-        task = tasks[0] if tasks else None
+    db_context = Database(engine=db_engine)
+    stmt = select(tasks_table).where(tasks_table.c.task_id == "timeout_test")
+    tasks = await db_context.fetch_all(stmt)
+    task = tasks[0] if tasks else None
 
-        assert task is not None, "Task not found in database"
-        # Task should have failed immediately since max_retries=0
-        assert task["status"] == "failed", (
-            f"Expected status 'failed', got '{task['status']}'"
-        )
-        assert task["retry_count"] == 0, (
-            f"Expected retry_count 0, got {task['retry_count']}"
-        )  # No retries were allowed
-        assert "TimeoutError" in (task["error"] or ""), (
-            f"Expected 'TimeoutError' in error, got: {task['error']}"
-        )
-        logger.info(f"Task correctly failed with timeout: {task['error']}")
+    assert task is not None, "Task not found in database"
+    # Task should have failed immediately since max_retries=0
+    assert task["status"] == "failed", (
+        f"Expected status 'failed', got '{task['status']}'"
+    )
+    assert task["retry_count"] == 0, (
+        f"Expected retry_count 0, got {task['retry_count']}"
+    )  # No retries were allowed
+    assert "TimeoutError" in (task["error"] or ""), (
+        f"Expected 'TimeoutError' in error, got: {task['error']}"
+    )
+    logger.info(f"Task correctly failed with timeout: {task['error']}")
 
 
 @pytest.mark.asyncio
@@ -273,12 +276,13 @@ async def test_successful_handler_completes(
     worker.register_task_handler("quick", quick_handler)
 
     # Create a task
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id="success_test",
-            task_type="quick",
-            payload={},
-        )
+    db_context = Database(engine=engine)
+    await db_context.tasks.enqueue(
+        task_id="success_test",
+        task_type="quick",
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     # Small delay to ensure task is committed (important for postgres)
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
@@ -295,15 +299,13 @@ async def test_successful_handler_completes(
     )
 
     # Check task completed
-    async with DatabaseContext(engine=engine) as db_context:
-        stmt = select(tasks_table).where(tasks_table.c.task_id == "success_test")
-        tasks = await db_context.fetch_all(stmt)
-        task = tasks[0] if tasks else None
+    db_context = Database(engine=engine)
+    stmt = select(tasks_table).where(tasks_table.c.task_id == "success_test")
+    tasks = await db_context.fetch_all(stmt)
+    task = tasks[0] if tasks else None
 
-        assert task is not None, "Task not found in database"
-        assert task["status"] == "done", (
-            f"Expected status 'done', got '{task['status']}'"
-        )
+    assert task is not None, "Task not found in database"
+    assert task["status"] == "done", f"Expected status 'done', got '{task['status']}'"
 
 
 @pytest.mark.asyncio
@@ -329,12 +331,13 @@ async def test_task_worker_context_includes_taint_tracker(
 
     worker.register_task_handler("captures_context", handler)
 
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id="taint_context_test",
-            task_type="captures_context",
-            payload={},
-        )
+    db_context = Database(engine=engine)
+    await db_context.tasks.enqueue(
+        task_id="taint_context_test",
+        task_type="captures_context",
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
     await asyncio.sleep(0.1)
@@ -377,13 +380,14 @@ async def test_retry_exhaustion_leads_to_failure(
     worker.register_task_handler("timeout", timeout_handler)
 
     # Create task with NO retries allowed
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id="no_retry_test",
-            task_type="timeout",
-            payload={},
-            max_retries_override=0,  # No retries
-        )
+    db_context = Database(engine=engine)
+    await db_context.tasks.enqueue(
+        task_id="no_retry_test",
+        task_type="timeout",
+        payload={},
+        max_retries_override=0,  # No retries
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     # Small delay to ensure task is committed (important for postgres)
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
@@ -417,14 +421,14 @@ async def test_retry_exhaustion_leads_to_failure(
             await wake_task
 
     # Check task failed
-    async with DatabaseContext(engine=engine) as db_context:
-        stmt = select(tasks_table).where(tasks_table.c.task_id == "no_retry_test")
-        tasks = await db_context.fetch_all(stmt)
-        task = tasks[0] if tasks else None
+    db_context = Database(engine=engine)
+    stmt = select(tasks_table).where(tasks_table.c.task_id == "no_retry_test")
+    tasks = await db_context.fetch_all(stmt)
+    task = tasks[0] if tasks else None
 
-        assert task is not None
-        assert task["status"] == "failed"
-        assert "TimeoutError" in (task["error"] or "")
+    assert task is not None
+    assert task["status"] == "failed"
+    assert "TimeoutError" in (task["error"] or "")
 
 
 @pytest.mark.asyncio
@@ -478,8 +482,8 @@ async def test_failed_schedule_script_reschedules_after_retry_exhaustion(
     )
     assert next_task["task_type"] == "script_execution"
 
-    async with DatabaseContext(engine=engine) as db_context:
-        automation = await db_context.schedule_automations.get_by_id(automation_id)
+    db_context = Database(engine=engine)
+    automation = await db_context.schedule_automations.get_by_id(automation_id)
     assert automation is not None
     assert automation["execution_count"] == 1
     assert automation["last_execution_at"] is not None
@@ -605,8 +609,8 @@ async def test_retryable_schedule_failure_does_not_reschedule_next_run(
     tasks = await _get_tasks_for_automation(engine, automation_id)
     assert [task for task in tasks if task["task_id"] != original_task["task_id"]] == []
 
-    async with DatabaseContext(engine=engine) as db_context:
-        automation = await db_context.schedule_automations.get_by_id(automation_id)
+    db_context = Database(engine=engine)
+    automation = await db_context.schedule_automations.get_by_id(automation_id)
     assert automation is not None
     assert automation["execution_count"] == 0
     assert automation["last_execution_at"] is None
@@ -641,28 +645,29 @@ async def test_schedule_advance_enqueued_when_retry_reschedule_fails(
         max_retries=1,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
+    db_context = Database(engine=db_engine)
 
-        async def fail_retry_reschedule(
-            task_id: str,
-            next_scheduled_at: datetime,
-            new_retry_count: int,
-            error: str,
-        ) -> None:
-            raise RuntimeError("retry reschedule failed")
+    async def fail_retry_reschedule(
+        task_id: str,
+        next_scheduled_at: datetime,
+        new_retry_count: int,
+        error: str,
+    ) -> None:
+        raise RuntimeError("retry reschedule failed")
 
-        monkeypatch.setattr(
-            db_context.tasks,
-            "reschedule_for_retry",
-            fail_retry_reschedule,
-        )
+    monkeypatch.setattr(
+        db_context.tasks,
+        "reschedule_for_retry",
+        fail_retry_reschedule,
+    )
 
-        advance_request = await worker._handle_task_failure(
-            db_context,
-            original_task,
-            RuntimeError("handler failed"),
-        )
-        assert advance_request is not None
+    advance_request = await worker._handle_task_failure(
+        db_context,
+        original_task,
+        RuntimeError("handler failed"),
+        0.0,
+    )
+    assert advance_request is not None
 
     completed_task = await _get_task(db_engine, original_task["task_id"])
     assert completed_task is not None
@@ -671,11 +676,11 @@ async def test_schedule_advance_enqueued_when_retry_reschedule_fails(
     assert completed_task["payload"] is not None
     assert "_schedule_automation_advance" in completed_task["payload"]
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        flushed = await worker._flush_schedule_automation_advance_outbox(
-            db_context,
-            advance_request.source_task_id,
-        )
+    db_context = Database(engine=db_engine)
+    flushed = await worker._flush_schedule_automation_advance_outbox(
+        db_context,
+        advance_request.source_task_id,
+    )
     assert flushed is True
 
     tasks = await _get_tasks_for_automation(db_engine, automation_id)
@@ -744,6 +749,8 @@ async def test_schedule_advance_enqueue_failure_does_not_retry_completed_action(
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
+        *,
+        priority: TaskPriority,
     ) -> None:
         if task_type == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE:
             advance_enqueue_attempted.set()
@@ -757,6 +764,7 @@ async def test_schedule_advance_enqueue_failure_does_not_retry_completed_action(
             max_retries_override,
             recurrence_rule,
             original_task_id,
+            priority=priority,
         )
 
     monkeypatch.setattr(TasksRepository, "enqueue", fail_advance_enqueue)
@@ -833,6 +841,8 @@ async def test_schedule_advance_enqueue_failure_preserves_failed_source_status(
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
+        *,
+        priority: TaskPriority,
     ) -> None:
         if task_type == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE:
             advance_enqueue_attempted.set()
@@ -846,6 +856,7 @@ async def test_schedule_advance_enqueue_failure_preserves_failed_source_status(
             max_retries_override,
             recurrence_rule,
             original_task_id,
+            priority=priority,
         )
 
     monkeypatch.setattr(TasksRepository, "enqueue", fail_advance_enqueue)
@@ -913,20 +924,20 @@ async def test_schedule_advance_outbox_drains_after_source_commit(
     assert isinstance(outbox, dict)
     outbox["schedule_next"] = False
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.tasks.update_status(
-            task_id=original_task["task_id"],
-            status="done",
-            payload=payload,
-        )
-        await db_context.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == original_task["task_id"])
-            .values(created_at=datetime(2026, 6, 23, 12, tzinfo=UTC))
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.tasks.update_status(
+        task_id=original_task["task_id"],
+        status="done",
+        payload=payload,
+    )
+    await db_context.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == original_task["task_id"])
+        .values(created_at=datetime(2026, 6, 23, 12, tzinfo=UTC))
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        drained = await worker._drain_schedule_automation_advance_outbox(db_context)
+    db_context = Database(engine=db_engine)
+    drained = await worker._drain_schedule_automation_advance_outbox(db_context)
     assert drained == 1
 
     completed_task = await _get_task(db_engine, original_task["task_id"])
@@ -979,29 +990,30 @@ async def test_schedule_advance_outbox_drain_finds_buried_entries(
     )
     assert advance_request is not None
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        for index in range(25):
-            task_id = f"noise_terminal_task_{index}"
-            await db_context.tasks.enqueue(
-                task_id=task_id,
-                task_type="script_execution",
-                payload={"noise": index},
-            )
-            await db_context.tasks.update_status(
-                task_id=task_id,
-                status="done",
-            )
-        await db_context.tasks.update_status(
-            task_id=original_task["task_id"],
-            status="done",
-            payload=worker._payload_with_schedule_automation_advance_outbox(
-                original_task,
-                advance_request,
-            ),
+    db_context = Database(engine=db_engine)
+    for index in range(25):
+        task_id = f"noise_terminal_task_{index}"
+        await db_context.tasks.enqueue(
+            task_id=task_id,
+            task_type="script_execution",
+            payload={"noise": index},
+            priority=TaskPriority.INTERACTIVE,
         )
+        await db_context.tasks.update_status(
+            task_id=task_id,
+            status="done",
+        )
+    await db_context.tasks.update_status(
+        task_id=original_task["task_id"],
+        status="done",
+        payload=worker._payload_with_schedule_automation_advance_outbox(
+            original_task,
+            advance_request,
+        ),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        drained = await worker._drain_schedule_automation_advance_outbox(db_context)
+    db_context = Database(engine=db_engine)
+    drained = await worker._drain_schedule_automation_advance_outbox(db_context)
     assert drained == 1
 
     completed_task = await _get_task(db_engine, original_task["task_id"])
@@ -1033,17 +1045,18 @@ async def test_schedule_advance_uses_source_execution_time(
     )
 
     advance_task_id = "schedule_advance_source_time"
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id=advance_task_id,
-            task_type=SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
-            payload={
-                "automation_id": str(automation_id),
-                "source_task_id": "source-schedule-task",
-                "execution_time": source_execution_time.isoformat(),
-            },
-            max_retries_override=0,
-        )
+    db_context = Database(engine=engine)
+    await db_context.tasks.enqueue(
+        task_id=advance_task_id,
+        task_type=SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
+        payload={
+            "automation_id": str(automation_id),
+            "source_task_id": "source-schedule-task",
+            "execution_time": source_execution_time.isoformat(),
+        },
+        max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     new_task_event.set()
     await wait_for_tasks_to_complete(
@@ -1056,8 +1069,8 @@ async def test_schedule_advance_uses_source_execution_time(
     assert completed_advance is not None
     assert completed_advance["status"] == "done"
 
-    async with DatabaseContext(engine=engine) as db_context:
-        automation = await db_context.schedule_automations.get_by_id(automation_id)
+    db_context = Database(engine=engine)
+    automation = await db_context.schedule_automations.get_by_id(automation_id)
     assert automation is not None
     assert automation["execution_count"] == 1
     assert automation["last_execution_at"] == source_execution_time
@@ -1113,10 +1126,124 @@ async def test_successful_schedule_llm_callback_reschedules_once(
     assert next_task["task_type"] == "llm_callback"
     chat_interface.send_message.assert_awaited_once()
 
-    async with DatabaseContext(engine=engine) as db_context:
-        automation = await db_context.schedule_automations.get_by_id(automation_id)
+    db_context = Database(engine=engine)
+    automation = await db_context.schedule_automations.get_by_id(automation_id)
     assert automation is not None
     assert automation["execution_count"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("genuine_response", [False, True])
+async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response(
+    db_engine: AsyncEngine,
+    mock_clock: MockClock,
+    genuine_response: bool,
+) -> None:
+    """A retry ignores only its trigger, while a real response still cancels."""
+    callback_turn_id = "retrying-follow-up-reminder-turn"
+    conversation_id = "retrying-follow-up-reminder-conversation"
+    processing_service = _processing_service_with_callback_result(
+        SimpleNamespace(
+            text_reply="Reminder delivered after retry.",
+            assistant_message_internal_id=None,
+            reasoning_info=None,
+            error_traceback=None,
+            attachment_ids=[],
+        )
+    )
+    processing_service.service_config.allow_wake_llm = True
+    successful_result = processing_service.handle_chat_interaction.return_value
+    processing_service.handle_chat_interaction.side_effect = [
+        RuntimeError("fail after persisting trigger"),
+        successful_result,
+    ]
+    chat_interface = AsyncMock()
+    chat_interface.send_message.return_value = "delivered-reminder-id"
+    db_context = Database(engine=db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="telegram",
+        conversation_id=conversation_id,
+        user_name="Reminder User",
+        turn_id=callback_turn_id,
+        db_context=db_context,
+        task_priority=TaskPriority.INTERACTIVE,
+        processing_service=processing_service,
+        clock=mock_clock,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        chat_interface=chat_interface,
+    )
+    payload = {
+        "interface_type": "telegram",
+        "conversation_id": conversation_id,
+        "user_name": "Reminder User",
+        "callback_context": "Take the medication",
+        "scheduling_timestamp": (mock_clock.now() - timedelta(minutes=1)).isoformat(),
+        "reminder_config": {
+            "is_reminder": True,
+            "follow_up": True,
+            "follow_up_interval": "30 minutes",
+            "max_follow_ups": 2,
+            "current_attempt": 1,
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="fail after persisting trigger"):
+        await handle_llm_callback(exec_context, cast("Any", payload))
+
+    trigger_rows_after_failure = await db_context.fetch_all(
+        select(message_history_table.c.internal_id).where(
+            message_history_table.c.turn_id == callback_turn_id,
+            message_history_table.c.role == "user",
+            message_history_table.c.interface_message_id.is_(None),
+        )
+    )
+    assert len(trigger_rows_after_failure) == 1
+
+    if genuine_response:
+        await db_context.message_history.add_message(
+            UserMessage(content="I handled the reminder already."),
+            interface_type="telegram",
+            conversation_id=conversation_id,
+            interface_message_id="genuine-user-response-id",
+            turn_id=callback_turn_id,
+            timestamp=mock_clock.now() + timedelta(seconds=1),
+            user_id="reminder-user",
+        )
+
+    await handle_llm_callback(exec_context, cast("Any", payload))
+
+    trigger_rows_after_retry = await db_context.fetch_all(
+        select(message_history_table.c.internal_id).where(
+            message_history_table.c.turn_id == callback_turn_id,
+            message_history_table.c.role == "user",
+            message_history_table.c.interface_message_id.is_(None),
+        )
+    )
+    assert trigger_rows_after_retry == trigger_rows_after_failure
+    follow_ups = await db_context.fetch_all(
+        select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+        )
+    )
+    if genuine_response:
+        assert processing_service.handle_chat_interaction.await_count == 1
+        chat_interface.send_message.assert_not_awaited()
+        assert follow_ups == []
+    else:
+        assert processing_service.handle_chat_interaction.await_count == 2
+        chat_interface.send_message.assert_awaited_once()
+        assert chat_interface.send_message.await_args.kwargs["text"] == (
+            "Reminder delivered after retry."
+        )
+        assert len(follow_ups) == 1
+        assert follow_ups[0]["payload"]["reminder_config"]["current_attempt"] == 2
 
 
 @pytest.mark.asyncio
@@ -1147,12 +1274,13 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
 
     worker.register_task_handler("simple", simple_handler)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.tasks.enqueue(
-            task_id="activity_test",
-            task_type="simple",
-            payload={},
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.tasks.enqueue(
+        task_id="activity_test",
+        task_type="simple",
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     # Small delay to ensure task is committed (important for postgres)
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior

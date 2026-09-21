@@ -58,18 +58,53 @@ export type ToolCategory =
 /**
  * Category metadata for styling and display
  */
-export const categoryInfo: Record<ToolCategory, { color: string; label: string }> = {
-  notes: { color: 'text-yellow-600 dark:text-yellow-400', label: 'Notes' },
-  calendar: { color: 'text-blue-600 dark:text-blue-400', label: 'Calendar' },
-  documents: { color: 'text-purple-600 dark:text-purple-400', label: 'Documents' },
-  tasks: { color: 'text-green-600 dark:text-green-400', label: 'Tasks' },
-  communication: { color: 'text-cyan-600 dark:text-cyan-400', label: 'Communication' },
-  events: { color: 'text-orange-600 dark:text-orange-400', label: 'Events' },
-  home_assistant: { color: 'text-indigo-600 dark:text-indigo-400', label: 'Home' },
-  scripting: { color: 'text-pink-600 dark:text-pink-400', label: 'Scripting' },
-  attachments: { color: 'text-gray-600 dark:text-gray-400', label: 'Attachments' },
-  images: { color: 'text-rose-600 dark:text-rose-400', label: 'Images' },
-  other: { color: 'text-slate-600 dark:text-slate-400', label: 'Other' },
+export const categoryInfo: Record<
+  ToolCategory,
+  { color: string; label: string; singularLabel: string }
+> = {
+  notes: {
+    color: 'text-yellow-600 dark:text-yellow-400',
+    label: 'Notes',
+    singularLabel: 'Note',
+  },
+  calendar: {
+    color: 'text-blue-600 dark:text-blue-400',
+    label: 'Calendar',
+    singularLabel: 'Calendar',
+  },
+  documents: {
+    color: 'text-purple-600 dark:text-purple-400',
+    label: 'Documents',
+    singularLabel: 'Document',
+  },
+  tasks: { color: 'text-green-600 dark:text-green-400', label: 'Tasks', singularLabel: 'Task' },
+  communication: {
+    color: 'text-cyan-600 dark:text-cyan-400',
+    label: 'Communication',
+    singularLabel: 'Communication',
+  },
+  events: {
+    color: 'text-orange-600 dark:text-orange-400',
+    label: 'Events',
+    singularLabel: 'Event',
+  },
+  home_assistant: {
+    color: 'text-indigo-600 dark:text-indigo-400',
+    label: 'Home',
+    singularLabel: 'Home',
+  },
+  scripting: {
+    color: 'text-pink-600 dark:text-pink-400',
+    label: 'Scripting',
+    singularLabel: 'Scripting',
+  },
+  attachments: {
+    color: 'text-gray-600 dark:text-gray-400',
+    label: 'Attachments',
+    singularLabel: 'Attachment',
+  },
+  images: { color: 'text-rose-600 dark:text-rose-400', label: 'Images', singularLabel: 'Image' },
+  other: { color: 'text-slate-600 dark:text-slate-400', label: 'Other', singularLabel: 'Other' },
 };
 
 /**
@@ -198,6 +233,11 @@ export function formatToolCount(count: number, singular: string = 'tool', plural
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+function describeCategoryCount(category: ToolCategory, count: number): string {
+  const { label, singularLabel } = categoryInfo[category];
+  return `${count} ${(count === 1 ? singularLabel : label).toLowerCase()}`;
+}
+
 /**
  * Generate a summary text for a tool group
  * Examples:
@@ -211,21 +251,14 @@ export function generateToolGroupSummary(toolNames: string[]): string {
 
   // If only one category, show specific category name
   if (categoryEntries.length === 1) {
-    const [category, tools] = categoryEntries[0];
-    const categoryLabel = categoryInfo[category].label.toLowerCase();
-    const count = tools.length;
-    // Proper pluralization: "1 note" or "2 notes"
-    return count === 1 ? `1 ${categoryLabel.slice(0, -1)}` : `${count} ${categoryLabel}`;
+    return describeCategoryCount(categoryEntries[0][0], categoryEntries[0][1].length);
   }
 
   // If 2-3 categories, list them
   if (categoryEntries.length <= 3) {
-    const parts = categoryEntries.map(([category, tools]) => {
-      const categoryLabel = categoryInfo[category].label.toLowerCase();
-      const count = tools.length;
-      // Proper pluralization for each category
-      return count === 1 ? `1 ${categoryLabel.slice(0, -1)}` : `${count} ${categoryLabel}`;
-    });
+    const parts = categoryEntries.map(([category, tools]) =>
+      describeCategoryCount(category, tools.length)
+    );
 
     if (parts.length === 2) {
       return `${parts[0]} and ${parts[1]}`;

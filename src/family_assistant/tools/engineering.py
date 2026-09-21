@@ -22,6 +22,7 @@ import httpx
 import sqlparse
 from sqlalchemy import text
 
+from family_assistant.build_info import get_build_date, get_git_commit
 from family_assistant.config_inspection import (
     dump_profile_like,
     redact_sensitive_config,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
+    from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.tools.policy import PolicyEvaluation, ResolvedPolicyRule
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -275,21 +277,20 @@ async def query_database(
     if not _is_select_only(query):
         return ToolResult(data={"error": "Only SELECT queries are allowed"})
 
-    engine = exec_context.db_context.engine
+    # Goes through the transaction API rather than engine.begin(): on SQLite
+    # every scope shares one connection, so a raw block would bypass the
+    # engine lock, read another unit of work's uncommitted rows, and commit
+    # them on exit.
+    # ast-grep-ignore: no-dict-any - diagnostic rows have whatever columns the query selected
+    async def _run(txn: DatabaseTransaction) -> list[dict[str, object]]:
+        if txn.dialect_name == "postgresql":
+            await txn.connection.execute(text("SET TRANSACTION READ ONLY"))
+        result = await txn.connection.execute(text(query))
+        # Bounded fetch: a diagnostic query must not materialize a whole table.
+        return [dict(row) for row in result.mappings().fetchmany(_MAX_QUERY_ROWS + 1)]
 
     try:
-        # Use a separate connection to avoid interfering with the active
-        # transaction in db_context (which may have already executed queries,
-        # making SET TRANSACTION READ ONLY fail on PostgreSQL).
-        async with engine.begin() as conn:
-            dialect = engine.dialect.name
-            if dialect == "postgresql":
-                await conn.execute(text("SET TRANSACTION READ ONLY"))
-
-            result = await conn.execute(text(query))
-            rows = [
-                dict(row) for row in result.mappings().fetchmany(_MAX_QUERY_ROWS + 1)
-            ]
+        rows = await exec_context.db_context.atomic(_run)
 
         if len(rows) > _MAX_QUERY_ROWS:
             rows = rows[:_MAX_QUERY_ROWS]
@@ -419,6 +420,15 @@ async def get_llm_request_history(
     minutes: int | None = None,
 ) -> ToolResult:
     """Get recent LLM request/response history from the in-memory ring buffer.
+
+    Each record carries the request (messages, tools, payload size), the
+    response, and the timing and identity of the call: ``duration_ms``,
+    ``time_to_first_output_ms`` for streamed turns, ``provider``, the requested
+    ``model_id`` next to the ``resolved_model_id`` the provider actually served,
+    ``finish_reason``, ``response_id`` and token ``usage``. For a slow turn,
+    compare time to first output against the total duration -- a late first
+    token points at the provider or a large prompt, while a late finish with a
+    prompt first token points at output length.
 
     Args:
         limit: Maximum number of records to return (default 5, max 100).
@@ -584,9 +594,19 @@ async def get_mcp_server_status(
 
     Includes per-server status (``connected`` / ``failed`` / ``cancelled`` /
     ``pending`` / ``connecting``), transport, the discovered tool list, and
-    whether a session is currently active. Tokens are omitted; URLs and stdio
-    commands are included verbatim so the engineer can correlate against the
-    deployment config.
+    whether a session is currently active. Tokens are omitted, and credentials
+    embedded in a server's URL or stdio arguments (userinfo passwords,
+    ``token=``-style query parameters) are redacted; the rest of the URL and
+    the stdio command are included so the engineer can correlate against the
+    deployment config. Credentials configured outside the supported path
+    (``env`` for stdio servers, ``token`` for remote ones) are not guaranteed
+    to be redacted — see ``MCPServerStatus``.
+
+    ``reconnect_attempts`` and ``next_reconnect_in_seconds`` describe the
+    retry backoff: a server that has been down for a while is retried less
+    and less often (up to half an hour between attempts), so a failed server
+    with a long window ahead of it is being paced, not ignored.
+    ``reconnect_mcp_server`` bypasses that window.
     """
     logger.info("get_mcp_server_status: dumping live MCP server statuses")
 
@@ -1101,7 +1121,7 @@ async def resolve_tool_policy(
 async def get_system_info(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
-    """Return runtime environment info (Python, platform, database dialect).
+    """Return runtime environment info (Python, platform, database, build).
 
     Mirrors the ``system_info`` block of the ``/api/diagnostics/export``
     endpoint so the engineer profile can include it in bug reports without
@@ -1109,18 +1129,24 @@ async def get_system_info(
     """
     logger.info("get_system_info: gathering runtime environment info")
 
-    db_dialect = "unknown"
     db_context = exec_context.db_context
-    engine = getattr(db_context, "engine", None)
-    if engine is not None:
-        dialect = getattr(engine, "dialect", None)
-        db_dialect = getattr(dialect, "name", "unknown")
+    db_dialect = (
+        "unknown"
+        if db_context is None
+        else getattr(db_context, "dialect_name", "unknown")
+    )
 
     return ToolResult(
         data={
             "python_version": sys.version.split()[0],
             "platform": platform.platform(),
             "database_dialect": db_dialect,
+            # The revision this deployment was built from. The image has no
+            # repository, so this is what a history query must be anchored
+            # against: "what changed since" means since this commit, not since
+            # whatever is on main today.
+            "git_commit": get_git_commit(),
+            "build_date": get_build_date(),
         }
     )
 
@@ -1476,7 +1502,7 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "resolve_tool_policy",
             "description": (
-                "Resolve the live tool-policy decision (allow/deny/confirm) for "
+                "Resolve the live tool-policy decision (allow/deny/confirm/review) for "
                 "a tool name against a profile's policy engine, explaining which "
                 "rule matched (layer, priority, description) and the resolved "
                 "default decision. Use it to check whether and why a tool is "
@@ -1529,9 +1555,12 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "get_system_info",
             "description": (
-                "Return runtime environment info (Python version, OS platform, "
-                "database dialect). Mirrors the system_info block of "
-                "/api/diagnostics/export so it can be included in bug reports."
+                "Return runtime environment info: Python version, OS platform, "
+                "database dialect, and the git commit and build date this "
+                "deployment was built from. Mirrors the system_info block of "
+                "/api/diagnostics/export so it can be included in bug reports. "
+                "Call this before querying repository history, so 'what changed "
+                "since' is anchored to the running build rather than to HEAD."
             ),
             "parameters": {
                 "type": "object",

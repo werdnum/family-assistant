@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared setup for dev-container CLI wrappers (claude, gemini, codex).
+# Shared setup for dev-container CLI wrappers (claude, codex).
 # Source this script from a tool-specific wrapper; it performs the shared
 # workspace setup (git auto-pull, Python venv activation, frontend deps)
 # so every tool inherits the same environment.
@@ -83,6 +83,25 @@ wrapper_common_install_frontend() {
         echo "Installing frontend dependencies..."
         npm install --prefix frontend
     fi
+}
+
+# Resolve the Claude Code binary.
+#
+# Claude Code ships a native installer and self-updates into
+# ~/.local/share/claude/versions, leaving ~/.local/bin/claude as the entry
+# point and removing the @anthropic-ai/claude-code npm package it replaced.
+# A missing binary under the npm prefix is therefore the expected state on any
+# container whose home volume has run an auto-update, not a broken install.
+wrapper_common_claude_bin() {
+    local candidate
+    for candidate in "$HOME/.local/bin/claude" /home/claude/.local/bin/claude \
+                     "$HOME/.npm-global/bin/claude" /home/claude/.npm-global/bin/claude; do
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Bash timeout defaults shared by all wrapped CLIs.

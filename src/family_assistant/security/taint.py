@@ -3,32 +3,90 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from family_assistant.tools.metadata import ToolDescriptor
 
 logger = logging.getLogger(__name__)
 
-TAINT_METADATA_VERSION = "runtime_v1"
+TAINT_METADATA_VERSION = "runtime_v2"
+LEGACY_TAINT_METADATA_VERSIONS = frozenset({"runtime_v1"})
+"""Metadata versions written before the trusted-pole authorship split.
+
+``runtime_v1`` rows stamped ``trusted_user`` under the conflated meaning of
+that tier — "direct input from an authenticated user, or system-authored
+control text" — so they cannot be read as evidence that a human authored the
+text. :func:`is_human_direct_metadata` treats them as not human-direct, which
+is the epoch guard for the transition."""
 A2A_TAINT_METADATA_KEY = "family_assistant_taint_metadata"
 LEGACY_MISSING_TAINT_METADATA_LABEL = "legacy_missing_taint_metadata"
 
+_HOME_ASSISTANT_ACTION_TOOL = "call_home_assistant_action"
+
+# Home Assistant domains that act on household devices and state only. This is
+# an allowlist on purpose: HA also exposes domains that message people, call
+# webhooks, or run code, and only a domain verified to stay inside the
+# household belongs here. Deliberately excluded, with reasons:
+#   script / automation  — run operator-defined sequences that may themselves
+#                          notify or call a REST endpoint
+#   media_player         — play_media fetches a caller-supplied URL
+#   notify / rest_command / tts / conversation — leave the household by design
+_HOUSEHOLD_LOCAL_HA_DOMAINS = frozenset({
+    "alarm_control_panel",
+    "button",
+    "climate",
+    "cover",
+    "fan",
+    "humidifier",
+    "input_boolean",
+    "input_button",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "lawn_mower",
+    "light",
+    "lock",
+    "number",
+    "scene",
+    "select",
+    "siren",
+    "switch",
+    "vacuum",
+    "valve",
+    "water_heater",
+})
+
+# HA domains that run operator-supplied code on the Home Assistant host, which
+# is the sandbox_network sink rather than any kind of household-local action.
+_CODE_EXECUTING_HA_DOMAINS = frozenset({"python_script", "shell_command"})
+
 
 class SourceTrustTier(IntEnum):
-    """Monotonic source trust tier. Higher values are less trusted."""
+    """Monotonic source trust tier. Higher values are less trusted.
+
+    ``TRUSTED_USER`` and ``TRUSTED_INTERNAL`` are both the trusted pole and no
+    shipped policy cell distinguishes them; the split exists so that consumers
+    needing *the human's own words* — the reviewer's originating-request slot,
+    the destination echo — can ask for them by tier instead of reconstructing
+    authorship structurally. See :func:`is_externally_authored` for the
+    boundary every "is this external?" comparison should go through.
+    """
 
     TRUSTED_USER = 0
-    KNOWN_CONTACT = 1
-    RECOGNIZED_MACHINE = 2
-    UNKNOWN_EXTERNAL = 3
+    TRUSTED_INTERNAL = 1
+    KNOWN_CONTACT = 2
+    RECOGNIZED_MACHINE = 3
+    UNKNOWN_EXTERNAL = 4
 
     @classmethod
     def from_value(cls, value: object) -> SourceTrustTier:
@@ -50,6 +108,43 @@ class SourceTrustTier(IntEnum):
         return self.name.lower()
 
 
+EXTERNALLY_AUTHORED_MIN_TIER = SourceTrustTier.KNOWN_CONTACT
+"""First tier whose content was authored outside the trust boundary."""
+
+
+def is_externally_authored(tier: SourceTrustTier | None) -> bool:
+    """Whether content at this tier was authored outside the trust boundary.
+
+    The single place the trusted-pole boundary is expressed. Consumers that
+    used to write ``tier > TRUSTED_USER`` (or ``is TRUSTED_USER``) to mean
+    "external" must call this instead, so adding ``TRUSTED_INTERNAL`` between
+    the two poles does not silently reclassify ordinary model output as
+    external. Absent provenance is never trusted.
+    """
+    if tier is None:
+        return True
+    return tier >= EXTERNALLY_AUTHORED_MIN_TIER
+
+
+def is_human_direct_metadata(metadata: object) -> bool:
+    """Whether a stamp attests that a human typed this text themselves.
+
+    True only for content stamped exactly ``trusted_user`` under the post-split
+    vocabulary. Pre-split (``runtime_v1``) stamps used ``trusted_user`` for
+    system-authored control text too, so they never qualify -- the epoch guard
+    that keeps the transition from laundering machine text into human words.
+    """
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("version") != TAINT_METADATA_VERSION:
+        return False
+    try:
+        tier = SourceTrustTier.from_value(metadata.get("max_tier"))
+    except (TypeError, ValueError):
+        return False
+    return tier is SourceTrustTier.TRUSTED_USER
+
+
 class SinkClass(StrEnum):
     """Operation class used by runtime taint policy."""
 
@@ -69,6 +164,7 @@ class TaintPolicyOutcome(StrEnum):
 
     ALLOW = "allow"
     AUDIT = "audit"
+    ADJUDICATE = "adjudicate"
     CONFIRM = "confirm"
     REDACT = "redact"
     DENY = "deny"
@@ -112,7 +208,7 @@ class TaintSource:
 class SensitiveReadScope:
     """Private corpus scope touched by a sensitive read."""
 
-    kind: Literal["notes", "documents", "message_history", "attachments"]
+    kind: Literal["notes", "documents", "message_history", "attachments", "tool"]
     qualifier: str
     surfaced_ids: frozenset[str]
 
@@ -126,6 +222,63 @@ class SensitiveReadRecord:
     query_origin: Literal["direct_user", "model_generated", "tool_or_history"]
 
 
+DEFAULT_MAX_SOURCES: int = 12
+DEFAULT_MAX_SEEN_KEYS: int = 128
+
+TaintSourceKey = tuple[str, str | None, str, tuple[str, ...], str]
+TaintSourceSortKey = tuple[int, str, str, tuple[str, ...], str]
+
+
+def taint_source_semantic_key(source: TaintSource) -> TaintSourceKey:
+    """Return the stable semantic identity of a taint source."""
+    return (
+        source.source_type.value,
+        source.source_id,
+        source.tier.config_value,
+        tuple(sorted(source.labels)),
+        source.reason,
+    )
+
+
+def taint_source_sort_key(source: TaintSource) -> TaintSourceSortKey:
+    """Deterministic sort key for taint sources.
+
+    Orders lower trust tiers to higher trust tiers so the highest-tier taint
+    escalation remains at the tail of the retained sequence, followed by
+    source type, source id, labels, and reason for complete stability.
+    """
+    return (
+        int(source.tier),
+        source.source_type.value,
+        source.source_id or "",
+        tuple(sorted(source.labels)),
+        source.reason,
+    )
+
+
+def order_taint_sources(sources: Iterable[TaintSource]) -> tuple[TaintSource, ...]:
+    """Order taint sources deterministically."""
+    return tuple(sorted(sources, key=taint_source_sort_key))
+
+
+def canonicalize_taint_sources(
+    sources: Iterable[TaintSource],
+    *,
+    max_sources: int = DEFAULT_MAX_SOURCES,
+) -> tuple[TaintSource, ...]:
+    """Deduplicate sources by semantic key and sort deterministically."""
+    seen_keys: set[TaintSourceKey] = set()
+    distinct: list[TaintSource] = []
+    for source in sources:
+        key = taint_source_semantic_key(source)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            distinct.append(source)
+    if len(distinct) > max_sources:
+        distinct = distinct[-max_sources:]
+    return order_taint_sources(distinct)
+
+
 @dataclass(frozen=True, slots=True)
 class TurnTaintState:
     """Immutable taint state for a single processing turn."""
@@ -136,6 +289,48 @@ class TurnTaintState:
     fresh_high_taint_seen_at_sequence: int | None
     history_high_taint_present: bool
     sequence: int = 0
+    approved_sinks: frozenset[str] = frozenset()
+    total_source_count: int = 0
+    distinct_source_count: int = 0
+    has_explicit_counts: bool = False
+    _seen_keys: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self._seen_keys and self.sources:
+            seen_hashes: list[int] = []
+            distinct: list[TaintSource] = []
+            for s in self.sources:
+                h = hash(taint_source_semantic_key(s))
+                if h not in seen_hashes:
+                    seen_hashes.append(h)
+                    distinct.append(s)
+            retained_fifo = tuple(distinct[-DEFAULT_MAX_SOURCES:])
+            object.__setattr__(self, "sources", retained_fifo)
+            # Bound and compact deduplication index to 64-bit integer hashes of recent distinct sources
+            object.__setattr__(
+                self,
+                "_seen_keys",
+                tuple(seen_hashes[-DEFAULT_MAX_SEEN_KEYS:]),
+            )
+            if self.total_source_count == 0:
+                object.__setattr__(self, "total_source_count", len(self.sources))
+            if self.distinct_source_count == 0:
+                object.__setattr__(self, "distinct_source_count", len(distinct))
+
+    @property
+    def omitted_source_count(self) -> int:
+        """Count of distinct sources omitted from retained details."""
+        return max(0, self.distinct_source_count - len(self.sources))
+
+    """Exact profile-sink handoffs a human approved for *this* taint.
+
+    Travels with the taint rather than beside it, because it is a fact about
+    the same content and handoff: "someone was shown this and said yes to the
+    coder profile's sandbox_network gate". A gate downstream of the one that
+    asked can then read the approval without granting the same sink class to a
+    different profile or named action. Serialized with the rest of the state,
+    so it survives the delegation boundary the way the sources do.
+    """
 
     @classmethod
     def empty(cls) -> TurnTaintState:
@@ -147,6 +342,27 @@ class TurnTaintState:
             fresh_high_taint_seen_at_sequence=None,
             history_high_taint_present=False,
             sequence=0,
+        )
+
+    @staticmethod
+    def _profile_sink_approval_key(profile_id: str, sink_class: SinkClass) -> str:
+        """Return an unambiguous persisted key for one profile handoff."""
+        return f"profile:{len(profile_id)}:{profile_id}:{sink_class.value}"
+
+    def approve_sink(
+        self,
+        sink_class: SinkClass,
+        *,
+        profile_id: str,
+    ) -> TurnTaintState:
+        """Record approval for this turn entering one exact sink profile."""
+        key = self._profile_sink_approval_key(profile_id, sink_class)
+        return replace(self, approved_sinks=self.approved_sinks | {key})
+
+    def is_sink_approved(self, sink_class: SinkClass, *, profile_id: str) -> bool:
+        """Whether exact-profile approval travelled with this turn's taint."""
+        return self._profile_sink_approval_key(profile_id, sink_class) in (
+            self.approved_sinks
         )
 
     def add_source(
@@ -165,13 +381,44 @@ class TurnTaintState:
                 history_high_present = True
             elif fresh_high_sequence is None:
                 fresh_high_sequence = next_sequence
+
+        key_hash = hash(taint_source_semantic_key(source))
+        if key_hash in self._seen_keys:
+            return replace(
+                self,
+                max_tier=max_tier,
+                fresh_high_taint_seen_at_sequence=fresh_high_sequence,
+                history_high_taint_present=history_high_present,
+                sequence=next_sequence,
+                total_source_count=self.total_source_count + 1,
+            )
+
+        new_total = self.total_source_count + 1
+        new_distinct = self.distinct_source_count + 1
+
+        if len(self.sources) >= DEFAULT_MAX_SOURCES:
+            new_sources = (*self.sources[-(DEFAULT_MAX_SOURCES - 1) :], source)
+        else:
+            new_sources = (*self.sources, source)
+
+        if len(self._seen_keys) >= DEFAULT_MAX_SEEN_KEYS:
+            new_seen_keys = (
+                *self._seen_keys[-(DEFAULT_MAX_SEEN_KEYS - 1) :],
+                key_hash,
+            )
+        else:
+            new_seen_keys = (*self._seen_keys, key_hash)
+
         return replace(
             self,
             max_tier=max_tier,
-            sources=(*self.sources, source),
+            sources=new_sources,
             fresh_high_taint_seen_at_sequence=fresh_high_sequence,
             history_high_taint_present=history_high_present,
             sequence=next_sequence,
+            total_source_count=new_total,
+            distinct_source_count=new_distinct,
+            _seen_keys=new_seen_keys,
         )
 
     def add_sensitive_read(
@@ -192,9 +439,28 @@ class TurnTaintState:
             sequence=next_sequence,
         )
 
-    def to_metadata(self, *, max_sources: int = 12) -> TaintMetadata:
+    def with_authorship_floor(self) -> TurnTaintState:
+        """Return this state floored at ``TRUSTED_INTERNAL``.
+
+        Applied when stamping content composed *inside* the trust boundary but
+        not typed by a human -- assistant rows, tool results, machine-composed
+        user rows. Authorship floors the stamp: a clean turn's model output is
+        ``trusted_internal``, and a tainted turn's stays at the turn maximum,
+        because the floor only ever raises.
+        """
+        if self.max_tier >= SourceTrustTier.TRUSTED_INTERNAL:
+            return self
+        return replace(self, max_tier=SourceTrustTier.TRUSTED_INTERNAL)
+
+    def to_metadata(
+        self,
+        *,
+        max_sources: int = DEFAULT_MAX_SOURCES,
+        include_counts: bool | None = None,
+    ) -> TaintMetadata:
         """Serialize a compact metadata representation for persistence."""
-        return {
+        retained = self.sources[-max_sources:]
+        metadata: TaintMetadata = {
             "version": TAINT_METADATA_VERSION,
             "max_tier": self.max_tier.config_value,
             "history_high_taint_present": self.history_high_taint_present,
@@ -207,9 +473,22 @@ class TurnTaintState:
                     "labels": sorted(source.labels),
                     "reason": source.reason,
                 }
-                for source in self.sources[-max_sources:]
+                for source in retained
             ],
+            "approved_sinks": sorted(self.approved_sinks),
         }
+        should_include_counts = include_counts
+        if should_include_counts is None:
+            should_include_counts = (
+                self.has_explicit_counts
+                or self.omitted_source_count > 0
+                or self.total_source_count > len(retained)
+            )
+        if should_include_counts:
+            metadata["total_source_count"] = self.total_source_count
+            metadata["distinct_source_count"] = self.distinct_source_count
+            metadata["omitted_source_count"] = self.omitted_source_count
+        return metadata
 
     @classmethod
     def from_metadata(
@@ -262,6 +541,69 @@ class TurnTaintState:
             )
         if from_history and state.max_tier >= SourceTrustTier.UNKNOWN_EXTERNAL:
             state = replace(state, history_high_taint_present=True)
+
+        has_explicit = (
+            "total_source_count" in metadata
+            or "distinct_source_count" in metadata
+            or "omitted_source_count" in metadata
+        )
+        if has_explicit:
+            raw_total = metadata.get("total_source_count")
+            raw_distinct = metadata.get("distinct_source_count")
+            raw_omitted = metadata.get("omitted_source_count")
+
+            parsed_total = (
+                _parse_nonnegative_int(raw_total) if raw_total is not None else None
+            )
+            parsed_distinct = (
+                _parse_nonnegative_int(raw_distinct)
+                if raw_distinct is not None
+                else None
+            )
+            parsed_omitted = (
+                _parse_nonnegative_int(raw_omitted) if raw_omitted is not None else None
+            )
+
+            if (
+                (raw_total is not None and parsed_total is None)
+                or (raw_distinct is not None and parsed_distinct is None)
+                or (raw_omitted is not None and parsed_omitted is None)
+            ):
+                return cls.malformed_history_state()
+
+            if parsed_distinct is not None:
+                distinct_count = parsed_distinct
+            elif parsed_omitted is not None:
+                distinct_count = len(state.sources) + parsed_omitted
+            else:
+                distinct_count = state.distinct_source_count
+
+            total_count = (
+                parsed_total
+                if parsed_total is not None
+                else max(distinct_count, state.total_source_count)
+            )
+
+            distinct_count = max(distinct_count, len(state.sources))
+            total_count = max(total_count, distinct_count)
+
+            state = replace(
+                state,
+                total_source_count=total_count,
+                distinct_source_count=distinct_count,
+                has_explicit_counts=True,
+            )
+        # Approvals are not carried across a *history* read: a human clearing
+        # one turn's content for a sandbox says nothing about a later turn that
+        # merely quotes it. They travel only on the delegation boundary, where
+        # the same turn continues under another profile.
+        if not from_history:
+            raw_approved = metadata.get("approved_sinks")
+            if isinstance(raw_approved, list):
+                state = replace(
+                    state,
+                    approved_sinks=frozenset(str(entry) for entry in raw_approved),
+                )
         return state
 
     @classmethod
@@ -297,6 +639,10 @@ class TaintMetadata(TypedDict, total=False):
     history_high_taint_present: bool
     fresh_high_taint_seen_at_sequence: int | None
     sources: list[TaintMetadataSource]
+    approved_sinks: list[str]
+    total_source_count: int
+    distinct_source_count: int
+    omitted_source_count: int
 
 
 class TurnTaintTracker(Protocol):
@@ -339,6 +685,40 @@ class InMemoryTurnTaintTracker:
         return self._state
 
 
+def machine_authored_taint_metadata(
+    state: TurnTaintState,
+    *,
+    max_sources: int = 12,
+) -> TaintMetadata:
+    """Stamp a row the machine composed rather than a human typing it."""
+    return state.with_authorship_floor().to_metadata(max_sources=max_sources)
+
+
+def floor_machine_authored_metadata(
+    metadata: TaintMetadata | None,
+) -> TaintMetadata | None:
+    """Raise a machine-authored stamp to at least ``trusted_internal``.
+
+    Operates on the serialized stamp rather than the state so it can sit in a
+    row validator, where every construction path passes through. Absent
+    metadata stays absent: missing provenance is handled by the consumers that
+    already refuse to read it as trusted, and fabricating a stamp here would
+    invent provenance the writer never claimed.
+    """
+    if metadata is None:
+        return None
+    try:
+        tier = SourceTrustTier.from_value(metadata.get("max_tier"))
+    except (TypeError, ValueError):
+        return metadata
+    if tier >= SourceTrustTier.TRUSTED_INTERNAL:
+        return metadata
+    return {
+        **metadata,
+        "max_tier": SourceTrustTier.TRUSTED_INTERNAL.config_value,
+    }
+
+
 def merge_taint_state_into_tracker(
     tracker: TurnTaintTracker,
     state: TurnTaintState,
@@ -364,8 +744,50 @@ def merge_taint_state_into_tracker(
         )
     if state.history_high_taint_present and not merged.history_high_taint_present:
         merged = replace(merged, history_high_taint_present=True)
+    if state.approved_sinks and not from_history:
+        merged = replace(
+            merged, approved_sinks=merged.approved_sinks | state.approved_sinks
+        )
+    extra_total = max(0, state.total_source_count - len(state.sources))
+    new_distinct = max(merged.distinct_source_count, state.distinct_source_count)
+    if (
+        extra_total > 0
+        or new_distinct != merged.distinct_source_count
+        or state.has_explicit_counts
+    ):
+        merged = replace(
+            merged,
+            total_source_count=merged.total_source_count + extra_total,
+            distinct_source_count=new_distinct,
+            has_explicit_counts=True,
+        )
     tracker.replace(merged)
     return merged
+
+
+class TaintAdjudicateCell(BaseModel):
+    """Structured runtime-taint matrix cell delegated to the reviewer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal[TaintPolicyOutcome.ADJUDICATE]
+    verdict_floor: (
+        Literal[TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY] | None
+    ) = None
+    fallback: Literal[TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY] | None = None
+
+    @model_validator(mode="after")
+    def _fallback_cannot_relax_floor(self) -> TaintAdjudicateCell:
+        if (
+            self.verdict_floor is TaintPolicyOutcome.DENY
+            and self.fallback is TaintPolicyOutcome.CONFIRM
+        ):
+            msg = "An adjudicate fallback cannot be weaker than its verdict_floor"
+            raise ValueError(msg)
+        return self
+
+
+type TaintPolicyCell = TaintPolicyOutcome | TaintAdjudicateCell
 
 
 class TaintPolicyConfig(BaseModel):
@@ -382,11 +804,11 @@ class TaintPolicyConfig(BaseModel):
     operator_minimum: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = (
         Field(default_factory=dict)
     )
-    matrix: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = Field(
+    matrix: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = Field(
         default_factory=dict
     )
-    matrix_overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = (
-        Field(default_factory=dict)
+    matrix_overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = Field(
+        default_factory=dict
     )
     artifact_labels: dict[SourceTrustTier, list[str]] = Field(
         default_factory=lambda: {
@@ -448,6 +870,52 @@ class TaintPolicyConfig(BaseModel):
             parsed[SourceTrustTier.from_value(raw_key)] = raw_value
         return parsed
 
+    @model_validator(mode="after")
+    def _validate_adjudication_cells(self) -> TaintPolicyConfig:
+        for matrix_name, matrix in (
+            ("matrix", self.matrix),
+            ("matrix_overrides", self.matrix_overrides),
+        ):
+            for tier, sink_map in matrix.items():
+                for sink_class, cell in sink_map.items():
+                    if _cell_outcome(cell) is not TaintPolicyOutcome.ADJUDICATE:
+                        continue
+                    if (
+                        _resolved_adjudicate_fallback(
+                            cell, tier=tier, sink_class=sink_class
+                        )
+                        is None
+                    ):
+                        msg = (
+                            f"taint_policy.{matrix_name}."
+                            f"{tier.config_value}.{sink_class.value} uses adjudicate "
+                            "without a non-allow fallback; configure fallback as "
+                            "confirm or deny"
+                        )
+                        raise ValueError(msg)
+
+        for tier, sink_map in self.operator_minimum.items():
+            for sink_class, minimum in sink_map.items():
+                if minimum is TaintPolicyOutcome.ADJUDICATE:
+                    msg = "taint_policy.operator_minimum cannot be adjudicate"
+                    raise ValueError(msg)
+                if minimum is not TaintPolicyOutcome.REDACT:
+                    continue
+                resolved_matrix = _default_taint_matrix()
+                _merge_matrix(resolved_matrix, self.matrix)
+                _merge_matrix(resolved_matrix, self.matrix_overrides)
+                cell = _trusted_pole_lookup(resolved_matrix, tier, sink_class)
+                if (
+                    cell is not None
+                    and _cell_outcome(cell) is TaintPolicyOutcome.ADJUDICATE
+                ):
+                    msg = (
+                        "taint_policy.operator_minimum cannot apply redact to an "
+                        f"adjudicate cell ({tier.config_value}.{sink_class.value})"
+                    )
+                    raise ValueError(msg)
+        return self
+
 
 @dataclass(frozen=True, slots=True)
 class TaintPolicyEvaluation:
@@ -458,6 +926,8 @@ class TaintPolicyEvaluation:
     effective_outcome: TaintPolicyOutcome
     mode: TaintPolicyMode
     reason: str
+    verdict_floor: TaintPolicyOutcome | None = None
+    fallback_outcome: TaintPolicyOutcome | None = None
 
 
 class TaintPolicyEvaluator:
@@ -481,12 +951,36 @@ class TaintPolicyEvaluator:
         sink_class: SinkClass,
     ) -> TaintPolicyEvaluation:
         """Evaluate a sink request for the supplied taint state."""
-        requested = self._configured_outcome(state.max_tier, sink_class)
-        requested = self._apply_operator_minimum(
-            tier=state.max_tier,
-            sink_class=sink_class,
-            outcome=requested,
-        )
+        cell = self._configured_cell(state.max_tier, sink_class)
+        requested = _cell_outcome(cell)
+        verdict_floor: TaintPolicyOutcome | None = None
+        fallback_outcome: TaintPolicyOutcome | None = None
+        if requested is TaintPolicyOutcome.ADJUDICATE:
+            verdict_floor = _cell_verdict_floor(cell)
+            fallback_outcome = _resolved_adjudicate_fallback(
+                cell,
+                tier=state.max_tier,
+                sink_class=sink_class,
+            )
+            if fallback_outcome is None:
+                msg = (
+                    "Adjudicate cells require a non-allow fallback for "
+                    f"{state.max_tier.config_value}.{sink_class.value}"
+                )
+                raise ValueError(msg)
+            verdict_floor, fallback_outcome = self._apply_adjudicate_minimum(
+                tier=state.max_tier,
+                sink_class=sink_class,
+                verdict_floor=verdict_floor,
+                fallback_outcome=fallback_outcome,
+            )
+        else:
+            requested = self._apply_operator_minimum(
+                tier=state.max_tier,
+                sink_class=sink_class,
+                outcome=requested,
+            )
+
         effective = (
             TaintPolicyOutcome.AUDIT
             if self._config.mode is TaintPolicyMode.OBSERVE
@@ -497,6 +991,14 @@ class TaintPolicyEvaluator:
             f"Runtime taint max tier {state.max_tier.config_value} maps "
             f"{sink_class.value} to {requested.value}."
         )
+        if requested is TaintPolicyOutcome.ADJUDICATE:
+            if fallback_outcome is None:
+                raise AssertionError("Adjudicate evaluation lost its fallback")
+            floor_text = verdict_floor.value if verdict_floor is not None else "allow"
+            reason += (
+                f" Reviewer verdict floor is {floor_text}; fallback is "
+                f"{fallback_outcome.value}."
+            )
         if effective != requested:
             reason += f" Observe mode records this as {effective.value}."
         return TaintPolicyEvaluation(
@@ -505,26 +1007,64 @@ class TaintPolicyEvaluator:
             effective_outcome=effective,
             mode=self._config.mode,
             reason=reason,
+            verdict_floor=verdict_floor,
+            fallback_outcome=fallback_outcome,
         )
+
+    def _apply_adjudicate_minimum(
+        self,
+        *,
+        tier: SourceTrustTier,
+        sink_class: SinkClass,
+        verdict_floor: TaintPolicyOutcome | None,
+        fallback_outcome: TaintPolicyOutcome,
+    ) -> tuple[TaintPolicyOutcome | None, TaintPolicyOutcome]:
+        minimum = _trusted_pole_lookup(self._config.operator_minimum, tier, sink_class)
+        if minimum is TaintPolicyOutcome.REDACT:
+            msg = (
+                "A redact operator minimum cannot be applied to adjudicate for "
+                f"{tier.config_value}.{sink_class.value}"
+            )
+            raise ValueError(msg)
+        if minimum is TaintPolicyOutcome.ADJUDICATE:
+            msg = "An operator minimum cannot itself be adjudicate"
+            raise ValueError(msg)
+        if minimum is TaintPolicyOutcome.CONFIRM or minimum is TaintPolicyOutcome.DENY:
+            if verdict_floor is None or _outcome_strictness(
+                minimum
+            ) > _outcome_strictness(verdict_floor):
+                verdict_floor = minimum
+            if not _outcome_satisfies_minimum(fallback_outcome, minimum):
+                fallback_outcome = minimum
+        if verdict_floor is not None and not _outcome_satisfies_minimum(
+            fallback_outcome, verdict_floor
+        ):
+            fallback_outcome = verdict_floor
+        return verdict_floor, fallback_outcome
 
     def evaluate_tool(
         self,
         *,
         descriptor: ToolDescriptor,
         state: TurnTaintState,
+        arguments: Mapping[str, object] | None = None,
+        delegation_sink_classes: Mapping[str, SinkClass] | None = None,
     ) -> TaintPolicyEvaluation:
         """Resolve a tool sink class from metadata and evaluate it."""
         return self.evaluate(
             state=state,
-            sink_class=resolve_tool_sink_class(descriptor),
+            sink_class=resolve_tool_sink_class(
+                descriptor, arguments, delegation_sink_classes
+            ),
         )
 
-    def _configured_outcome(
+    def _configured_cell(
         self,
         tier: SourceTrustTier,
         sink_class: SinkClass,
-    ) -> TaintPolicyOutcome:
-        return self._matrix.get(tier, {}).get(sink_class, TaintPolicyOutcome.ALLOW)
+    ) -> TaintPolicyCell:
+        cell = _trusted_pole_lookup(self._matrix, tier, sink_class)
+        return TaintPolicyOutcome.ALLOW if cell is None else cell
 
     def _apply_operator_minimum(
         self,
@@ -533,9 +1073,12 @@ class TaintPolicyEvaluator:
         sink_class: SinkClass,
         outcome: TaintPolicyOutcome,
     ) -> TaintPolicyOutcome:
-        minimum = self._config.operator_minimum.get(tier, {}).get(sink_class)
+        minimum = _trusted_pole_lookup(self._config.operator_minimum, tier, sink_class)
         if minimum is None:
             return outcome
+        if minimum is TaintPolicyOutcome.ADJUDICATE:
+            msg = "An operator minimum cannot itself be adjudicate"
+            raise ValueError(msg)
         if _outcome_satisfies_minimum(outcome, minimum):
             return outcome
         return minimum
@@ -603,36 +1146,95 @@ def merge_taint_policy_config(
 
 def _reject_relaxed_base_policy(
     *,
-    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]],
+    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]],
     base: TaintPolicyConfig,
 ) -> None:
     base_matrix = _default_taint_matrix()
     _merge_matrix(base_matrix, base.matrix)
     _merge_matrix(base_matrix, base.matrix_overrides)
     for tier, sink_map in overrides.items():
-        for sink_class, outcome in sink_map.items():
-            minimum = base_matrix.get(tier, {}).get(sink_class)
-            operator_minimum = base.operator_minimum.get(tier, {}).get(sink_class)
-            if operator_minimum is not None and (
-                minimum is None
-                or _outcome_strictness(operator_minimum) > _outcome_strictness(minimum)
+        for sink_class, cell in sink_map.items():
+            minimum = _trusted_pole_lookup(base_matrix, tier, sink_class)
+            operator_minimum = _trusted_pole_lookup(
+                base.operator_minimum, tier, sink_class
+            )
+            if minimum is not None and not _cell_satisfies_minimum(
+                cell,
+                minimum,
+                tier=tier,
+                sink_class=sink_class,
             ):
-                minimum = operator_minimum
-            if minimum is None:
-                continue
-            if not _outcome_satisfies_minimum(outcome, minimum):
                 msg = (
                     "Profile taint_policy cannot relax base policy for "
                     f"{tier.config_value}.{sink_class.value}: "
-                    f"{outcome.value} < {minimum.value}"
+                    f"{_cell_description(cell)} < {_cell_description(minimum)}"
+                )
+                raise ValueError(msg)
+            if operator_minimum is not None and not _cell_satisfies_outcome_minimum(
+                cell,
+                operator_minimum,
+                tier=tier,
+                sink_class=sink_class,
+            ):
+                msg = (
+                    "Profile taint_policy cannot relax base policy for "
+                    f"{tier.config_value}.{sink_class.value}: "
+                    f"{_cell_description(cell)} < {operator_minimum.value}"
                 )
                 raise ValueError(msg)
 
 
-def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
-    """Resolve a conservative sink class from tool metadata tags."""
+def _home_assistant_action_sink_class(
+    arguments: Mapping[str, object] | None,
+) -> SinkClass:
+    """Classify a Home Assistant action by its domain rather than blanket-tagging.
+
+    ``home_auto`` alone would understate the risk, because HA exposes domains
+    that deliver messages, invoke webhooks, or run code on the HA host. The
+    household-local set is therefore an allowlist: an unrecognised or absent
+    domain keeps the conservative external classification, so a domain added by
+    a future HA release is never silently downgraded.
+    """
+    domain = (arguments or {}).get("domain")
+    if not isinstance(domain, str):
+        return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    normalized = domain.strip().lower()
+    if normalized in _CODE_EXECUTING_HA_DOMAINS:
+        return SinkClass.SANDBOX_NETWORK
+    if normalized in _HOUSEHOLD_LOCAL_HA_DOMAINS:
+        return SinkClass.HOME_LOCAL
+    return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+
+
+def resolve_tool_sink_class(
+    descriptor: ToolDescriptor,
+    arguments: Mapping[str, object] | None = None,
+    delegation_sink_classes: Mapping[str, SinkClass] | None = None,
+) -> SinkClass:
+    """Resolve a conservative sink class from tool metadata tags.
+
+    ``arguments`` lets a tool that spans several sink classes be classified by
+    the call rather than by its registration, which the taint design requires
+    for Home Assistant actions. Omitting it keeps the tag-only classification.
+
+    ``delegation_sink_classes`` extends the same idea to delegation: handing a
+    turn to a profile is as privileged as whatever that profile does, so a
+    delegation to a profile that declares a sink (a code-execution sandbox, say)
+    is classified as that sink rather than as a generic delegation. A target
+    that declares nothing keeps the tag-only classification.
+    """
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
-    if "sensitive_data" in tag_values and "read_only" in tag_values:
+    if "delegation" in tag_values and delegation_sink_classes:
+        target = (arguments or {}).get("target_service_id")
+        if isinstance(target, str):
+            declared = delegation_sink_classes.get(target)
+            if declared is not None:
+                return declared
+    if (
+        "sensitive_data" in tag_values
+        and "read_only" in tag_values
+        and not tag_values.intersection({"browser", "external_comm"})
+    ):
         return SinkClass.SENSITIVE_READ_BROADENING
     if "code_execution" in tag_values or "worker" in tag_values:
         return SinkClass.SANDBOX_NETWORK
@@ -644,6 +1246,15 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         # high-risk read/code/browser rules so a tool that also carried one of
         # those tags is never downgraded to user_local by this rule.
         return SinkClass.USER_LOCAL
+    if descriptor.name == _HOME_ASSISTANT_ACTION_TOOL:
+        return _home_assistant_action_sink_class(arguments)
+    if "known_user_comm" in tag_values:
+        # Outward communication whose recipient the server validates against
+        # configured users. Checked before external_comm so the refinement
+        # wins, since a tool carries both: the broader tag keeps tool policies
+        # that match on it working, while the sink class reflects that the
+        # model cannot choose the destination.
+        return SinkClass.KNOWN_USER_MESSAGE
     if "external_comm" in tag_values:
         return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     if "delegation" in tag_values:
@@ -681,9 +1292,15 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
     return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
 
 
-def _default_taint_matrix() -> dict[
+def _legacy_taint_matrix() -> dict[
     SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]
 ]:
+    """Return the pre-adjudication outcome for every cell.
+
+    Also the source of an adjudicate cell's derived fallback -- what a cell
+    resolves to when no reviewer verdict is available -- so a cell here is
+    the strictest outcome a deployment can reach without configuring one.
+    """
     return {
         SourceTrustTier.TRUSTED_USER: {
             SinkClass.USER_LOCAL: TaintPolicyOutcome.ALLOW,
@@ -722,18 +1339,179 @@ def _default_taint_matrix() -> dict[
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.CONFIRM,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
             SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
-            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.DENY,
+            # Confirm rather than deny: an authenticated operator can run the
+            # same request through a coding agent out of band, losing this
+            # deployment's provenance, audit trail and result-taint
+            # propagation, so a hard denial removes the safer in-band choice
+            # rather than the capability. A context with no confirmation
+            # channel still fails closed, and a restricted profile or an
+            # operator_minimum can strengthen this back to deny.
+            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.CONFIRM,
             SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.CONFIRM,
         },
     }
 
 
+def _default_taint_matrix() -> dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]]:
+    matrix: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = {
+        tier: dict(sink_map) for tier, sink_map in _legacy_taint_matrix().items()
+    }
+    for tier in (SourceTrustTier.KNOWN_CONTACT, SourceTrustTier.RECOGNIZED_MACHINE):
+        matrix[tier].update({
+            SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
+            SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
+            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE,
+        })
+    matrix[SourceTrustTier.UNKNOWN_EXTERNAL].update({
+        SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
+        SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.AUDIT,
+    })
+    return matrix
+
+
+def _trusted_pole_lookup[T](
+    mapping: Mapping[SourceTrustTier, Mapping[SinkClass, T]],
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> T | None:
+    """Resolve one policy entry, inheriting ``trusted_user`` for the pole.
+
+    ``TRUSTED_INTERNAL`` makes no policy distinction from ``TRUSTED_USER``; the
+    equivalence lives here rather than in duplicated matrix rows so that
+    *operator* configuration inherits it too. A deployment that wrote a floor
+    or an override only for ``trusted_user`` keeps governing ordinary model
+    output after it reclassifies -- a per-tier ``dict.get`` would walk straight
+    past that entry and silently relax the policy. An explicit
+    ``trusted_internal`` entry wins where one is written.
+    """
+    entry = mapping.get(tier, {}).get(sink_class)
+    if entry is None and tier is SourceTrustTier.TRUSTED_INTERNAL:
+        return mapping.get(SourceTrustTier.TRUSTED_USER, {}).get(sink_class)
+    return entry
+
+
 def _merge_matrix(
-    target: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]],
-    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]],
+    target: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]],
+    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]],
 ) -> None:
     for tier, sink_map in overrides.items():
         target.setdefault(tier, {}).update(sink_map)
+
+
+def _cell_outcome(cell: TaintPolicyCell) -> TaintPolicyOutcome:
+    if isinstance(cell, TaintAdjudicateCell):
+        return TaintPolicyOutcome.ADJUDICATE
+    return cell
+
+
+def _cell_verdict_floor(cell: TaintPolicyCell) -> TaintPolicyOutcome | None:
+    if isinstance(cell, TaintAdjudicateCell):
+        return cell.verdict_floor
+    return None
+
+
+def _resolved_adjudicate_fallback(
+    cell: TaintPolicyCell,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> TaintPolicyOutcome | None:
+    if isinstance(cell, TaintAdjudicateCell) and cell.fallback is not None:
+        return cell.fallback
+    legacy = _legacy_taint_matrix().get(tier, {}).get(sink_class)
+    if legacy in {TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY}:
+        return legacy
+    return None
+
+
+def _cell_main_outcome(cell: TaintPolicyCell) -> TaintPolicyOutcome:
+    outcome = _cell_outcome(cell)
+    if outcome is not TaintPolicyOutcome.ADJUDICATE:
+        return outcome
+    return _cell_verdict_floor(cell) or TaintPolicyOutcome.ADJUDICATE
+
+
+def _cell_fallback_outcome(
+    cell: TaintPolicyCell,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> TaintPolicyOutcome:
+    if _cell_outcome(cell) is not TaintPolicyOutcome.ADJUDICATE:
+        return _cell_outcome(cell)
+    fallback = _resolved_adjudicate_fallback(
+        cell,
+        tier=tier,
+        sink_class=sink_class,
+    )
+    if fallback is None:
+        msg = (
+            "Adjudicate cells require a non-allow fallback for "
+            f"{tier.config_value}.{sink_class.value}"
+        )
+        raise ValueError(msg)
+    return fallback
+
+
+def _cell_satisfies_minimum(
+    cell: TaintPolicyCell,
+    minimum: TaintPolicyCell,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> bool:
+    cell_main = _cell_main_outcome(cell)
+    minimum_main = _cell_main_outcome(minimum)
+    if not _outcome_satisfies_minimum(cell_main, minimum_main):
+        return False
+    cell_fallback = _cell_fallback_outcome(
+        cell,
+        tier=tier,
+        sink_class=sink_class,
+    )
+    minimum_fallback = _cell_fallback_outcome(
+        minimum,
+        tier=tier,
+        sink_class=sink_class,
+    )
+    return _outcome_satisfies_minimum(cell_fallback, minimum_fallback)
+
+
+def _cell_satisfies_outcome_minimum(
+    cell: TaintPolicyCell,
+    minimum: TaintPolicyOutcome,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> bool:
+    if minimum is TaintPolicyOutcome.ADJUDICATE:
+        return False
+    if (
+        _cell_outcome(cell) is TaintPolicyOutcome.ADJUDICATE
+        and minimum is TaintPolicyOutcome.REDACT
+    ):
+        return False
+    return _outcome_satisfies_minimum(_cell_main_outcome(cell), minimum) and (
+        _outcome_satisfies_minimum(
+            _cell_fallback_outcome(
+                cell,
+                tier=tier,
+                sink_class=sink_class,
+            ),
+            minimum,
+        )
+    )
+
+
+def _cell_description(cell: TaintPolicyCell) -> str:
+    if not isinstance(cell, TaintAdjudicateCell):
+        return cell.value
+    floor = cell.verdict_floor.value if cell.verdict_floor is not None else "allow"
+    fallback = cell.fallback.value if cell.fallback is not None else "derived"
+    return f"adjudicate(floor={floor}, fallback={fallback})"
 
 
 def _outcome_strictness(outcome: TaintPolicyOutcome) -> int:
@@ -741,12 +1519,14 @@ def _outcome_strictness(outcome: TaintPolicyOutcome) -> int:
         return 0
     if outcome is TaintPolicyOutcome.AUDIT:
         return 1
+    if outcome is TaintPolicyOutcome.ADJUDICATE:
+        return 2
     if outcome is TaintPolicyOutcome.REDACT:
-        return 2
-    if outcome is TaintPolicyOutcome.CONFIRM:
-        return 2
-    if outcome is TaintPolicyOutcome.DENY:
         return 3
+    if outcome is TaintPolicyOutcome.CONFIRM:
+        return 3
+    if outcome is TaintPolicyOutcome.DENY:
+        return 4
     raise AssertionError(f"Unhandled taint policy outcome: {outcome}")
 
 
@@ -905,6 +1685,54 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
     return state.to_metadata()
 
 
+def artifact_taint_sources(
+    provenance: Mapping[str, object] | None,
+    *,
+    source_id: str,
+    source_type: TaintSourceType = TaintSourceType.ATTACHMENT,
+    reason: str = "Stored artifact provenance.",
+) -> tuple[TaintSource, ...]:
+    """Read an artifact's stored provenance as taint sources.
+
+    An artifact produced from untrusted input is labelled where it is created
+    (see ``email_intake/taint.py``), so an artifact carrying no provenance is
+    one no untrusted path touched and contributes nothing. Defaulting the
+    unlabelled case to ``unknown_external`` instead would taint every ordinary
+    user upload.
+    """
+    if provenance is None:
+        return ()
+
+    raw_state = provenance.get("taint_metadata")
+    if raw_state is not None:
+        state = TurnTaintState.from_metadata(raw_state)
+        if state.sources:
+            return state.sources
+
+    raw_tier = provenance.get("source_trust_tier")
+    if raw_tier is None:
+        return ()
+    try:
+        tier = SourceTrustTier.from_value(raw_tier)
+    except ValueError:
+        tier = SourceTrustTier.UNKNOWN_EXTERNAL
+    raw_labels = provenance.get("provenance_labels")
+    labels = (
+        frozenset(str(label) for label in raw_labels)
+        if isinstance(raw_labels, list)
+        else frozenset()
+    )
+    return (
+        TaintSource(
+            source_type=source_type,
+            source_id=source_id,
+            tier=tier,
+            labels=labels,
+            reason=reason,
+        ),
+    )
+
+
 def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
     """Build an initial turn state from included message history."""
     state = TurnTaintState.empty()
@@ -919,7 +1747,39 @@ def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
             state = replace(state, max_tier=history_state.max_tier)
         if history_state.history_high_taint_present:
             state = replace(state, history_high_taint_present=True)
+        extra_total = max(
+            0, history_state.total_source_count - len(history_state.sources)
+        )
+        new_distinct = max(
+            state.distinct_source_count, history_state.distinct_source_count
+        )
+        if (
+            extra_total > 0
+            or new_distinct != state.distinct_source_count
+            or history_state.has_explicit_counts
+        ):
+            state = replace(
+                state,
+                total_source_count=state.total_source_count + extra_total,
+                distinct_source_count=new_distinct,
+                has_explicit_counts=True,
+            )
     return state
+
+
+def _parse_nonnegative_int(value: object) -> int | None:
+    """Return a non-negative integer if value is a finite, non-boolean int or float, else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and math.isfinite(value) and value >= 0:
+        try:
+            converted = int(value)
+            return converted if converted >= 0 else None
+        except (OverflowError, ValueError):
+            return None
+    return None
 
 
 def _source_from_metadata(

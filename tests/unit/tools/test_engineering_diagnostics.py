@@ -46,7 +46,7 @@ def exec_context_with_db() -> ToolExecutionContext:
     db = Mock()
     db.engine = Mock()
     db.engine.dialect = Mock()
-    db.engine.dialect.name = "sqlite"
+    db.dialect_name = "sqlite"
     return ToolExecutionContext(
         interface_type="test",
         conversation_id="conv-1",
@@ -78,6 +78,43 @@ async def test_get_system_info_returns_runtime_metadata(
     assert "python_version" in data
     assert "platform" in data
     assert data["database_dialect"] == "sqlite"
+
+
+@pytest.mark.anyio
+async def test_get_system_info_reports_the_build_it_is_running(
+    exec_context_with_db: ToolExecutionContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The commit is what a history query has to be anchored against.
+
+    The image carries no repository, so without this the profile has no way to
+    tell which revision it is diagnosing and "what changed since" degrades to
+    whatever is on the default branch today.
+    """
+    monkeypatch.setenv("GIT_COMMIT", "abc1234")
+    monkeypatch.setenv("BUILD_DATE", "2026-09-13T00:00:00Z")
+
+    data = (await get_system_info(exec_context_with_db)).get_data()
+
+    assert isinstance(data, dict)
+    assert data["git_commit"] == "abc1234"
+    assert data["build_date"] == "2026-09-13T00:00:00Z"
+
+
+@pytest.mark.anyio
+async def test_get_system_info_build_falls_back_when_unstamped(
+    exec_context_with_db: ToolExecutionContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local run has no build stamp; say so rather than omitting the key."""
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    monkeypatch.delenv("BUILD_DATE", raising=False)
+
+    data = (await get_system_info(exec_context_with_db)).get_data()
+
+    assert isinstance(data, dict)
+    assert data["git_commit"] == "unknown"
+    assert data["build_date"] == "unknown"
 
 
 @pytest.mark.anyio
@@ -249,12 +286,18 @@ def _ctx_with_app_config(app_config: Mock) -> ToolExecutionContext:
 
 
 @pytest.mark.anyio
-async def test_get_resolved_config_redacts_secrets_and_omits_profile_bodies() -> None:
+async def test_get_resolved_config_omits_profile_bodies_and_redacts_embedded() -> None:
+    """Declared credentials are masked by SecretStr before reaching this tool.
+
+    A hand-built dump cannot exercise that (see
+    ``tests/unit/test_config_inspection.py`` for the real-AppConfig case), so
+    what is checked here is what the tool itself owns: dropping profile bodies,
+    listing profile ids, and redacting a credential embedded in a value.
+    """
     fake_app_config = Mock()
     fake_app_config.model_dump.return_value = {
         "default_service_profile_id": "default_assistant",
-        "openai_api_key": "sk-secret-value",
-        "telegram_token": "telegram-secret",
+        "database_url": "postgresql://fa:hunter2@db.internal/family",
         "service_profiles": [
             {"id": "default_assistant", "description": "Default"},
             {"id": "engineer", "description": "Engineer"},
@@ -268,8 +311,7 @@ async def test_get_resolved_config_redacts_secrets_and_omits_profile_bodies() ->
     assert isinstance(data, dict)
     cfg = data["config"]
     assert isinstance(cfg, dict)
-    assert cfg["openai_api_key"] == "[REDACTED]"
-    assert cfg["telegram_token"] == "[REDACTED]"
+    assert cfg["database_url"] == "postgresql://fa:[REDACTED]@db.internal/family"
     assert "service_profiles" not in cfg  # bodies omitted
     assert "default_profile_settings" not in cfg
     assert data["profile_ids"] == ["default_assistant", "engineer"]
@@ -321,7 +363,9 @@ async def test_get_profile_config_returns_specific_profile() -> None:
     matched.model_dump.return_value = {
         "id": "engineer",
         "description": "Engineer profile",
-        "processing_config": {"openai_api_key": "leak-me"},
+        "processing_config": {
+            "home_assistant_api_url": "https://ha.internal/api?token=leak-me"
+        },
     }
     matched.operator_tools_policy = None
 
@@ -336,7 +380,10 @@ async def test_get_profile_config_returns_specific_profile() -> None:
     assert data["description"] == "Engineer profile"
     cfg = data["config"]
     assert isinstance(cfg, dict)
-    assert cfg["processing_config"]["openai_api_key"] == "[REDACTED]"
+    assert (
+        cfg["processing_config"]["home_assistant_api_url"]
+        == "https://ha.internal/api?token=[REDACTED]"
+    )
 
 
 @pytest.mark.anyio

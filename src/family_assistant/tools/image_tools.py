@@ -141,7 +141,7 @@ async def highlight_image_tool(
     attachment_id = image_attachment_id.get_id()
     logger.info(f"Highlighting {len(regions)} regions on image {attachment_id}")
 
-    try:
+    async def highlight_image() -> ToolResult:
         # Check if it's an image
         if not image_attachment_id.get_mime_type().startswith("image/"):
             logger.warning(
@@ -165,15 +165,15 @@ async def highlight_image_tool(
 
         # Load and process image with PIL
         # Use asyncio.to_thread to avoid blocking event loop with CPU-intensive PIL operations
-        try:
-
+        async def process_image() -> tuple[bytes, list[str]] | ToolResult:
             def _process_image_with_pil(
                 img_content: bytes,
                 # ast-grep-ignore: no-dict-any - image region dicts have varying shape and style keys
                 region_list: list[dict[str, Any]],
             ) -> tuple[bytes, list[str]] | tuple[None, str]:
                 """Process image with PIL - runs in thread pool to avoid blocking."""
-                try:
+
+                def process_open_image() -> tuple[bytes, list[str]] | tuple[None, str]:
                     with Image.open(io.BytesIO(img_content)) as original_img:
                         # Save format before any conversion (e.g., "JPEG", "PNG")
                         original_format = original_img.format or "PNG"
@@ -291,6 +291,8 @@ async def highlight_image_tool(
 
                         return (output_buffer.getvalue(), regions_drawn)
 
+                try:
+                    return process_open_image()
                 except Exception as e:
                     return (None, f"Failed to process image: {e!s}")
 
@@ -304,12 +306,19 @@ async def highlight_image_tool(
                 return ToolResult(text=f"Error: {result[1]}", attachments=None)
 
             highlighted_content, regions_drawn = result
+            return highlighted_content, regions_drawn
 
+        try:
+            process_result = await process_image()
         except Exception as e:
             logger.error(f"Error processing image with PIL: {e}")
             return ToolResult(
                 text=f"Error: Failed to process image: {e!s}", attachments=None
             )
+
+        if isinstance(process_result, ToolResult):
+            return process_result
+        highlighted_content, regions_drawn = process_result
 
         # Determine new filename
         original_filename = image_attachment_id.get_filename() or "image.png"
@@ -336,6 +345,8 @@ async def highlight_image_tool(
 
         return ToolResult(text=success_message, attachments=[highlighted_attachment])
 
+    try:
+        return await highlight_image()
     except Exception as e:
         logger.exception(f"Error highlighting image {image_attachment_id}: {e}")
         return ToolResult(

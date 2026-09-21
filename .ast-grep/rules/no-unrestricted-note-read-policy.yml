@@ -1,0 +1,33 @@
+id: no-unrestricted-note-read-policy
+language: python
+severity: error
+message: "NoteReadPolicy.UNRESTRICTED bypasses note read confinement - restricted to approved admin surfaces"
+note: |
+  NoteReadPolicy.UNRESTRICTED disables both halves of read confinement for a note or
+  skill lookup: the visibility-grants subset check and the required-label floor. The
+  floor is the only thing that keeps a confined profile out of unlabelled notes and
+  label-less file skills, since an empty label set is a subset of every grant set --
+  so a read that skips the policy is not a narrower read, it is an unconfined one.
+
+  Every note or skill read performed on behalf of a profile MUST derive the policy
+  from the active profile via ToolExecutionContext.note_read_policy(), so the
+  confinement stays a property of the resolution boundary rather than of one caller.
+
+  ❌ INCORRECT - a confined profile reaches every note in the store:
+    await db_context.notes.get_by_title(title, read_policy=NoteReadPolicy.UNRESTRICTED)
+
+  ✅ CORRECT - honor the active profile:
+    await db_context.notes.get_by_title(title, read_policy=exec_context.note_read_policy())
+
+  Approved locations (see .ast-grep/exemptions.yml): the NoteReadPolicy definition,
+  the web notes admin API, the notes indexer, the memory apply path, and the
+  confirmation preview's existence lookup. Each reads on nobody's behalf -- there is
+  no profile whose confinement could apply. A new such surface must be added there
+  with a justification, so the opt-out stays greppable and reviewed.
+
+  For a one-off approved call site, add an inline exemption with a reason:
+    # ast-grep-ignore: no-unrestricted-note-read-policy - admin surface, bypass by design
+    read_policy=NoteReadPolicy.UNRESTRICTED
+rule:
+  pattern: NoteReadPolicy.UNRESTRICTED
+

@@ -7,18 +7,18 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        yield db_ctx
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
+    db_ctx = Database(engine=db_engine)
+    yield db_ctx
 
 
 class TestA2ATasksRepository:
     @pytest.mark.asyncio
-    async def test_create_and_get_task(self, db_context: DatabaseContext) -> None:
+    async def test_create_and_get_task(self, db_context: Database) -> None:
         await db_context.a2a_tasks.create_task(
             task_id="test-1",
             profile_id="profile-a",
@@ -36,7 +36,7 @@ class TestA2ATasksRepository:
 
     @pytest.mark.asyncio
     async def test_create_task_if_absent_returns_existing(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         created = await db_context.a2a_tasks.create_task_if_absent(
             task_id="dedupe-task",
@@ -65,28 +65,26 @@ class TestA2ATasksRepository:
         self, db_engine: AsyncEngine
     ) -> None:
         async def create_one(profile_id: str) -> object:
-            async with DatabaseContext(engine=db_engine) as db_context:
-                return await db_context.a2a_tasks.create_task_if_absent(
-                    task_id="concurrent-dedupe-task",
-                    profile_id=profile_id,
-                    conversation_id=f"conv-{profile_id}",
-                    context_id="ctx-1",
-                    status="working",
-                )
+            db_context = Database(engine=db_engine)
+            return await db_context.a2a_tasks.create_task_if_absent(
+                task_id="concurrent-dedupe-task",
+                profile_id=profile_id,
+                conversation_id=f"conv-{profile_id}",
+                context_id="ctx-1",
+                status="working",
+            )
 
         results = await asyncio.gather(create_one("profile-a"), create_one("profile-b"))
         assert sum(result is None for result in results) == 1
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            row = await db_context.a2a_tasks.get_task("concurrent-dedupe-task")
+        db_context = Database(engine=db_engine)
+        row = await db_context.a2a_tasks.get_task("concurrent-dedupe-task")
 
         assert row is not None
         assert row["profile_id"] in {"profile-a", "profile-b"}
 
     @pytest.mark.asyncio
-    async def test_cancel_does_not_get_overwritten(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_cancel_does_not_get_overwritten(self, db_context: Database) -> None:
         """Once a task is canceled, update_task_status must not overwrite the status."""
         await db_context.a2a_tasks.create_task(
             task_id="race-test",
@@ -117,7 +115,7 @@ class TestA2ATasksRepository:
 
     @pytest.mark.asyncio
     async def test_terminal_status_is_not_overwritten(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """A 'failed' task (e.g. reaped) must not be flipped back by a late send."""
         await db_context.a2a_tasks.create_task(

@@ -30,7 +30,8 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.telegram.ui import (
     PendingTelegramConfirmation,
@@ -41,8 +42,10 @@ from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
     find_provider_by_type,
 )
-from family_assistant.tools.policy import PolicyEvaluation
-from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolCallReviewAuthorization,
+)
 from tests.functional.telegram.test_telegram_handler import (
     create_context,
     create_mock_update,
@@ -100,6 +103,7 @@ class RecordingConfirmationService:
         decision_only: bool = False,
         processing_profile_id: str | None = None,
         taint_state_json: dict[str, object] | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> dict[str, object]:
         self.last_created_request = {
             "target_user_id": target_user_id,
@@ -112,6 +116,7 @@ class RecordingConfirmationService:
             "decision_only": decision_only,
             "processing_profile_id": processing_profile_id,
             "taint_state_json": taint_state_json,
+            "tool_call_review_authorization": tool_call_review_authorization,
         }
         return {"id": self.created_request_id}
 
@@ -306,6 +311,128 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
 
 
 @pytest.mark.asyncio
+async def test_over_budget_durable_prompt_is_approvable_in_the_web() -> None:
+    """Telegram announces it without buttons; the web approval still resolves it.
+
+    The old behaviour refused the call outright, which is what made a payload
+    reviewable on one interface unusable everywhere. See
+    docs/design/confirmation-prompt-capacity.md.
+    """
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=5.0,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+
+    confirmation_task = asyncio.create_task(
+        manager.request_confirmation(
+            conversation_id=str(USER_CHAT_ID),
+            interface_type="telegram",
+            turn_id="turn-id",
+            prompt_text="Do you want to run this tool call?\n" + ("x" * 10000),
+            tool_name="record_tool",
+            tool_args={"value": "x" * 10000},
+            timeout=5.0,
+            target_user_id=str(USER_ID),
+            tool_call_id="call-id",
+            source_message_internal_id=1,
+        )
+    )
+
+    await wait_for_condition(
+        lambda: bool(bot.sent_messages),
+        timeout=2.0,
+        description="Telegram hand-off notice to be sent",
+    )
+    sent = bot.sent_messages[0]
+    assert sent["reply_markup"] is None
+    assert "web app" in cast("str", sent["text"])
+
+    # The durable record exists and the wait is still running, so a web
+    # approval resolves the very call Telegram could not render.
+    assert confirmation_service.last_created_request is not None
+    assert not confirmation_task.done()
+    confirmation_service.status = "approved"
+    assert confirmation_waiters.resolve_completed(
+        confirmation_service.created_request_id,
+        "executed:web-approval",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
+    )
+
+    outcome = await asyncio.wait_for(confirmation_task, timeout=5.0)
+    assert outcome.kind == "completed"
+    assert outcome.result == "executed:web-approval"
+
+
+@pytest.mark.asyncio
+async def test_an_expired_handoff_notice_is_marked_timed_out() -> None:
+    """The notice has no keyboard, so nothing may depend on removing one.
+
+    Telegram rejects a no-op markup edit as "message is not modified"; sharing
+    a try block with the text edit would let that error skip the timeout text
+    and leave the notice claiming an expired request is still pending.
+    """
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=0.2,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+
+    outcome = await manager.request_confirmation(
+        conversation_id=str(USER_CHAT_ID),
+        interface_type="telegram",
+        turn_id="turn-id",
+        prompt_text="Do you want to run this tool call?\n" + ("x" * 10000),
+        tool_name="record_tool",
+        tool_args={"value": "x" * 10000},
+        timeout=0.2,
+        target_user_id=str(USER_ID),
+        tool_call_id="call-id",
+        source_message_internal_id=1,
+    )
+
+    assert outcome.kind == "timed_out"
+    assert bot.edited_markups == []
+    assert any(
+        "Confirmation timed out" in cast("str", edit["text"])
+        for edit in bot.edited_texts
+    )
+
+
+@pytest.mark.asyncio
+async def test_over_budget_prompt_fails_when_nothing_else_can_approve_it() -> None:
+    """With no durable record there is no other channel, so the call is refused."""
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=5.0,
+    )
+
+    outcome = await manager.request_confirmation(
+        conversation_id=str(USER_CHAT_ID),
+        interface_type="telegram",
+        turn_id="turn-id",
+        prompt_text="Do you want to run this tool call?\n" + ("x" * 10000),
+        tool_name="record_tool",
+        tool_args={"value": "x" * 10000},
+        timeout=5.0,
+    )
+
+    assert outcome.kind == "failed"
+    assert isinstance(outcome.result, str)
+    assert "web app" in outcome.result
+    assert bot.sent_messages == []
+
+
+@pytest.mark.asyncio
 async def test_durable_telegram_confirmation_persists_taint_policy_context() -> None:
     confirmation_service = RecordingConfirmationService()
     confirmation_waiters = ConfirmationResultWaiterRegistry()
@@ -329,6 +456,14 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
         )
         .to_metadata()
     )
+    review_authorization = ToolCallReviewAuthorization(
+        tool_name="record_tool",
+        call_id="call-id",
+        tool_args={"value": "test"},
+        sink_class="artifact_write",
+        static_policy_reason="Static review requested confirmation.",
+        taint_policy_reason=None,
+    )
 
     confirmation_task = asyncio.create_task(
         manager.request_confirmation(
@@ -344,6 +479,7 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
             source_message_internal_id=1,
             taint_state_json=taint_state_json,
             processing_profile_id="runtime-taint-test",
+            tool_call_review_authorization=review_authorization,
         )
     )
 
@@ -360,6 +496,10 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
     assert (
         confirmation_service.last_created_request["processing_profile_id"]
         == "runtime-taint-test"
+    )
+    assert (
+        confirmation_service.last_created_request["tool_call_review_authorization"]
+        is review_authorization
     )
 
     pending = manager.pending_confirmations[confirmation_service.created_request_id]
@@ -433,24 +573,33 @@ async def test_existing_durable_confirmation_sends_inline_keyboard() -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_durable_confirmation_truncates_long_telegram_prompt() -> None:
-    """Long durable confirmation prompts should still produce a sendable message."""
+async def test_existing_durable_confirmation_hands_a_long_prompt_to_the_web() -> None:
+    """Telegram cannot show it, so it points at the web instead of trimming it.
+
+    The durable request is listed per user rather than per interface, so it is
+    already waiting in the web app's pending confirmations. Sending a fragment
+    with Confirm/Cancel attached would let the user approve payload they never
+    saw; sending nothing would strand a request they were never told about.
+    """
     bot = RecordingTelegramBot()
     manager = TelegramConfirmationUIManager(
         application=cast("Any", SimpleNamespace(bot=bot)),
     )
+    prompt = "From your email — approve to run:\n\n" + ("x" * 10000)
 
     outcome = await manager.send_existing_confirmation_request(
         conversation_id=str(USER_CHAT_ID),
         request_id="confirm_long",
-        prompt_text="From your email — approve to run:\n\n" + ("x" * 10000),
+        prompt_text=prompt,
     )
 
     assert outcome.kind == "completed"
-    sent_text = bot.sent_messages[0]["text"]
+    sent = bot.sent_messages[0]
+    sent_text = sent["text"]
     assert isinstance(sent_text, str)
     assert len(sent_text) < 4096
-    assert "Confirmation details truncated" in sent_text
+    assert "web app" in sent_text
+    assert sent["reply_markup"] is None
 
 
 @pytest.mark.asyncio
@@ -948,22 +1097,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         fix.tools_provider, PolicyEnforcingToolsProvider
     )
     assert policy_provider is not None
-    original_eval = policy_provider._policy_engine.evaluate_for_execution
-
-    def _patched_eval(
-        descriptor: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - policy engine signature uses object values
-        arguments: dict[str, Any] | None = None,
-        can_confirm: bool = True,
-    ) -> PolicyEvaluation:
-        if descriptor.name == TOOL_NAME_SENSITIVE and can_confirm:
-            return PolicyEvaluation(
-                decision=ToolPolicyDecision.CONFIRM,
-                reason="test: requires confirmation",
-            )
-        return original_eval(descriptor, arguments=arguments, can_confirm=can_confirm)
-
-    policy_provider._policy_engine.evaluate_for_execution = _patched_eval  # type: ignore[assignment]
+    original_policy_engine = policy_provider._policy_engine
+    _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
 
     # --- 3. Mock LLM: first call returns a tool call, second returns text ---
     tool_call_id = f"call_keyboard_{uuid.uuid4()}"
@@ -1077,13 +1212,16 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         assert any("added" in t.lower() or "note" in t.lower() for t in texts), (
             f"Expected final response after confirmation, got: {texts}"
         )
-        async with DatabaseContext(engine=fix.assistant.database_engine) as db:
-            note = await db.notes.get_by_title(note_title, visibility_grants=None)
+        db = Database(engine=fix.assistant.database_engine)
+        note = await db.notes.get_by_title(
+            note_title, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         assert note is not None
         assert note.content == note_content
 
     finally:
-        policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]
+        policy_provider._policy_engine = original_policy_engine
+        policy_provider._tool_definitions_by_confirmation.clear()
         shutdown_event.set()
         wake_event.set()
         with contextlib.suppress(TimeoutError):

@@ -85,7 +85,7 @@ def verify_mailgun_signature(
         raise EmailIntakeSecurityError(msg)
 
     digest = hmac.new(
-        key=signing_key.encode("utf-8"),
+        key=signing_key.get_secret_value().encode("utf-8"),
         msg=f"{timestamp}{token}".encode(),
         digestmod=hashlib.sha256,
     ).hexdigest()

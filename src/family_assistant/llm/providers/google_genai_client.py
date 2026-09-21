@@ -10,9 +10,8 @@ import os
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from dataclasses import asdict
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -25,9 +24,9 @@ from google.genai import types
 from google.genai.client import DebugConfig
 from google.genai.interactions import Interaction
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
 
+from family_assistant.config_models import AntigravityEnvironmentConfig
 from family_assistant.llm import (
     BaseLLMClient,
     JsonObject,
@@ -39,6 +38,11 @@ from family_assistant.llm import (
     ToolCallItem,
     UserMessageDict,
     _format_messages_for_debug,
+    describe_attachment_for_fallback,
+)
+from family_assistant.llm.antigravity_egress import (
+    AntigravityEgressResolver,
+    EgressNetworkResolver,
 )
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
@@ -52,10 +56,13 @@ from family_assistant.llm.messages import (
     TextContentPart,
     ToolMessage,
     UserMessage,
-    message_to_json_dict,
+    is_turn_scaffolding,
 )
-from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
-from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
+from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
+from family_assistant.observability.metrics import (
+    current_call_attribution,
+    record_llm_call,
+)
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -87,6 +94,18 @@ def _system_prefixed_content(content: str) -> str:
 
 
 tracer = trace.get_tracer(__name__)
+
+
+def _first_finish_reason(
+    response: types.GenerateContentResponse,
+) -> types.FinishReason | None:
+    """The finish reason of the first candidate, when the response carries one."""
+    for candidate in response.candidates or []:
+        if candidate.finish_reason is not None:
+            return candidate.finish_reason
+    return None
+
+
 T = TypeVar("T", bound=BaseModel)
 
 # Maps Interactions API ErrorEvent.error.code values to our typed exception classes.
@@ -119,6 +138,27 @@ _INTERACTION_TERMINAL_ERROR_STATUSES = {
 }
 
 
+def _image_modality_tokens(
+    by_modality: Any,  # noqa: ANN401 - genai per-modality token list
+    *,
+    token_attr: str = "tokens",
+) -> int | None:
+    """Image-modality tokens from one Interactions per-modality breakdown.
+
+    ``None`` when the breakdown is absent, so a run that reports no modalities
+    emits no image bucket rather than a zero that would read as "no image
+    tokens" when it means "not reported". The SDK types this a list; anything
+    else is not a breakdown to read.
+    """
+    if not isinstance(by_modality, list) or not by_modality:
+        return None
+    return sum(
+        getattr(entry, token_attr, 0) or 0
+        for entry in by_modality
+        if str(getattr(entry, "modality", "")).upper().endswith("IMAGE")
+    )
+
+
 def is_interaction_terminal_error_status(status: str) -> bool:
     """Check if an Interaction status is a terminal (non-success) end state.
 
@@ -135,6 +175,29 @@ def is_interaction_terminal_error_status(status: str) -> bool:
 def is_deep_research_model(model: str) -> bool:
     """Check if a model identifier corresponds to a Deep Research agent."""
     return "deep-research" in model
+
+
+def is_antigravity_model(model: str) -> bool:
+    """Check if a model identifier corresponds to an Antigravity managed agent.
+
+    A prefix match rather than an equality test against the current preview
+    id, so a later ``antigravity-*`` revision routes through the same path
+    without a code change -- the same stance ``is_deep_research_model`` takes
+    on the Deep Research tiers. The ``models/`` prefix the client attaches to
+    every model id is stripped first, so this holds for both the configured
+    id and the client's own ``model_name``.
+    """
+    return model.removeprefix("models/").startswith("antigravity")
+
+
+def is_interactions_agent_model(model: str) -> bool:
+    """Whether a model identifier names an Interactions API agent.
+
+    These do not go through ``generateContent`` at all: they are submitted to
+    ``interactions.create`` with an ``agent=`` rather than a ``model=``, and
+    run server-side until they reach a terminal state.
+    """
+    return is_deep_research_model(model) or is_antigravity_model(model)
 
 
 def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
@@ -240,6 +303,10 @@ class GoogleGenAIClient(BaseLLMClient):
         enable_google_search: bool = False,
         enable_computer_use: bool = False,
         computer_use_excluded_functions: list[str] | None = None,
+        antigravity_model: str | None = None,
+        antigravity_max_total_tokens: int | None = None,
+        antigravity_environment: AntigravityEnvironmentConfig | None = None,
+        antigravity_egress_resolver: EgressNetworkResolver | None = None,
         debug_messages: bool | None = None,
         debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
@@ -256,6 +323,12 @@ class GoogleGenAIClient(BaseLLMClient):
             enable_google_search: Enable Google Search grounding for real-time information
             enable_computer_use: Enable native Gemini computer use tools (explicit opt-in)
             computer_use_excluded_functions: List of computer use function names to exclude
+            antigravity_model: Reasoning model for an Antigravity managed-agent model id
+            antigravity_max_total_tokens: Token ceiling for one Antigravity agent run
+            antigravity_environment: Sandbox environment (egress policy and injected
+                credentials) for an Antigravity agent run
+            antigravity_egress_resolver: Pre-built resolver for that environment,
+                primarily for tests; built from ``antigravity_environment`` when omitted
             debug_messages: Enable detailed message logging. If None, reads from DEBUG_LLM_MESSAGES env var.
             debug_config: SDK DebugConfig dict for record/replay in tests (client_mode, replay_id, replays_directory)
             **kwargs: Default parameters for generation
@@ -285,6 +358,23 @@ class GoogleGenAIClient(BaseLLMClient):
         self.enable_google_search = enable_google_search
         self.enable_computer_use = enable_computer_use
         self.computer_use_excluded_functions = computer_use_excluded_functions
+        self.antigravity_model = antigravity_model
+        self.antigravity_max_total_tokens = antigravity_max_total_tokens
+        self.antigravity_environment = antigravity_environment
+        # Only a resolver this client built is closed by it; an injected one
+        # belongs to whoever passed it in.
+        self._owned_antigravity_egress: AntigravityEgressResolver | None = None
+        if antigravity_egress_resolver is not None:
+            self._antigravity_egress: EgressNetworkResolver | None = (
+                antigravity_egress_resolver
+            )
+        elif antigravity_environment is not None:
+            self._owned_antigravity_egress = AntigravityEgressResolver(
+                antigravity_environment
+            )
+            self._antigravity_egress = self._owned_antigravity_egress
+        else:
+            self._antigravity_egress = None
 
         # Debug configuration - read from env var if not explicitly set
         if debug_messages is None:
@@ -317,9 +407,11 @@ class GoogleGenAIClient(BaseLLMClient):
         try:
             api_client = getattr(self.client, "_api_client", None)
             if api_client and hasattr(api_client, "close"):
-                api_client.close()  # type: ignore[attr-defined]
+                api_client.close()
         except Exception as e:
             logger.debug(f"Error closing API client: {e}")
+        if self._owned_antigravity_egress is not None:
+            await self._owned_antigravity_egress.aclose()
 
     async def __aenter__(self) -> "GoogleGenAIClient":
         """Enter async context manager."""
@@ -392,13 +484,21 @@ class GoogleGenAIClient(BaseLLMClient):
         response_model: type[T],
         max_retries: int = 2,
     ) -> T:
-        """Generate structured output using Gemini's native response_schema mode."""
+        """Generate structured output using Gemini's native JSON Schema mode.
+
+        The schema goes to ``response_json_schema`` rather than ``response_schema``:
+        the latter is a restricted OpenAPI subset whose proto rejects any keyword it
+        does not model, so a Pydantic model with ``extra="forbid"`` or a mapping field
+        is refused outright with a 400. ``response_json_schema`` takes JSON Schema as
+        Pydantic emits it and ignores the keywords it does not implement, which the
+        validate-and-retry loop below already covers.
+        """
         self._validate_user_input(messages)
 
         attempt_messages = list(messages)
         generation_config = self._build_base_generation_config()
         generation_config.response_mime_type = "application/json"
-        generation_config.response_schema = response_model
+        generation_config.response_json_schema = response_model.model_json_schema()
 
         raw_response: str | None = None
         last_error: Exception | None = None
@@ -408,10 +508,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents = self._convert_messages_to_genai_format(
                     self._process_tool_messages(attempt_messages)
                 )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=generation_config,
+                response = await self._instrumented_structured_request(
+                    attempt_messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -446,6 +544,60 @@ class GoogleGenAIClient(BaseLLMClient):
             validation_error=last_error,
         )
 
+    async def _instrumented_structured_request(
+        self,
+        messages: Sequence[LLMMessage],
+        contents: Any,  # noqa: ANN401 - genai ContentListUnion
+        generation_config: Any,  # noqa: ANN401 - genai GenerateContentConfig
+    ) -> Any:  # noqa: ANN401 - genai GenerateContentResponse
+        """Run one structured-output request under the shared telemetry.
+
+        Wraps the request rather than the whole `generate_structured` call: a
+        schema-validation retry is a second billed request, and rolling the two
+        together would report one call that cost twice what it looks like.
+        """
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=False,
+            operation="structured",
+            response_schema=generation_config,
+        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generation_config,
+            )
+            # Before finishing, so the resolved model reaches the metric: an
+            # alias resolves to a dated snapshot, and without this a
+            # structured call would always report the requested name.
+            telemetry.record_response_metadata(
+                resolved_model=getattr(response, "model_version", None),
+                response_id=getattr(response, "response_id", None),
+            )
+            usage = getattr(response, "usage_metadata", None)
+            telemetry.record_usage(
+                self._reasoning_info_from_usage_metadata(usage) if usage else None
+            )
+            telemetry.finish_success(None)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            # Cancellation during tool-call review or shutdown passes every
+            # `except Exception`; without this the billable request would reach
+            # no counter at all. A no-op once a terminal path has run.
+            telemetry.finish_abandoned()
+            span.end()
+        return response
+
     async def generate_json(
         self,
         messages: Sequence[LLMMessage],
@@ -473,10 +625,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents = self._convert_messages_to_genai_format(
                     self._process_tool_messages(attempt_messages)
                 )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=generation_config,
+                response = await self._instrumented_structured_request(
+                    attempt_messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -582,65 +732,71 @@ class GoogleGenAIClient(BaseLLMClient):
         elif attachment.file_path:
             # Try to read file content for supported types
             try:
-                file_path = Path(attachment.file_path)
-                if file_path.exists() and file_path.is_file():
-                    # Check file size before reading (20MB limit, aligned with Gemini API)
-                    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
-                    file_size = file_path.stat().st_size
-
-                    if file_size > MAX_FILE_SIZE:
-                        size_mb = file_size / (1024 * 1024)
-                        parts.append({
-                            "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
-                            f"(exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit). "
-                            f"{attachment.description or 'No description'}]"
-                        })
-                    else:
-                        # Read file content
-                        file_content = file_path.read_bytes()
-
-                        # Infer MIME type from file extension if not provided
-                        effective_mime_type = attachment.mime_type
-                        if not effective_mime_type:
-                            guessed_mime_type, _ = mimetypes.guess_type(str(file_path))
-                            if guessed_mime_type:
-                                effective_mime_type = guessed_mime_type
-
-                        # Handle supported file types with content
-                        # Gemini supports images, videos, audio, and PDFs
-                        if effective_mime_type and (
-                            effective_mime_type.startswith("image/")
-                            or effective_mime_type.startswith("video/")
-                            or effective_mime_type.startswith("audio/")
-                            or effective_mime_type == "application/pdf"
-                        ):
-                            media_part = types.Part.from_bytes(
-                                data=file_content, mime_type=effective_mime_type
-                            )
-                            parts.append(media_part)
-                        else:
-                            # Unsupported type - describe the file
-                            size_mb = len(file_content) / (1024 * 1024)
-                            parts.append({
-                                "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
-                                f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
-                                f"Binary content not accessible to model]"
-                            })
-                else:
-                    parts.append({
-                        "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
-                    })
+                self._append_file_path_attachment(parts, attachment)
             except Exception as e:
                 # Error reading file - fall back to description
                 parts.append({
                     "text": f"[File: {attachment.file_path} - Error reading file: {e!s}]"
                 })
 
-        # Return UserMessage with parts for provider-specific handling
+        # `parts` carries the media for Gemini, which reads `parts` and ignores
+        # `content`. Every other adapter does the reverse, and a cross-provider
+        # fallback renders this same message -- `RetryingLLMClient` builds the
+        # injection from the primary alone -- so `content` is what the fallback
+        # sees, and a placeholder there would drop the attachment silently.
         return UserMessage(
-            content="[Multimodal attachment]",  # Fallback content for serialization
+            content=describe_attachment_for_fallback(attachment),
             parts=parts,
         )
+
+    @staticmethod
+    def _append_file_path_attachment(
+        parts: list[dict[str, object] | types.Part], attachment: "ToolAttachment"
+    ) -> None:
+        """Append a file-backed attachment or its readable description."""
+        assert attachment.file_path is not None
+        file_path = Path(attachment.file_path)
+        if not file_path.exists() or not file_path.is_file():
+            parts.append({
+                "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
+            })
+            return
+
+        max_file_size = 20 * 1024 * 1024
+        file_size = file_path.stat().st_size
+        if file_size > max_file_size:
+            size_mb = file_size / (1024 * 1024)
+            parts.append({
+                "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
+                f"(exceeds {max_file_size // (1024 * 1024)}MB limit). "
+                f"{attachment.description or 'No description'}]"
+            })
+            return
+
+        file_content = file_path.read_bytes()
+        effective_mime_type = attachment.mime_type
+        if not effective_mime_type:
+            guessed_mime_type, _ = mimetypes.guess_type(str(file_path))
+            if guessed_mime_type:
+                effective_mime_type = guessed_mime_type
+
+        if effective_mime_type and (
+            effective_mime_type.startswith("image/")
+            or effective_mime_type.startswith("video/")
+            or effective_mime_type.startswith("audio/")
+            or effective_mime_type == "application/pdf"
+        ):
+            parts.append(
+                types.Part.from_bytes(data=file_content, mime_type=effective_mime_type)
+            )
+            return
+
+        size_mb = len(file_content) / (1024 * 1024)
+        parts.append({
+            "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
+            f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
+            f"Binary content not accessible to model]"
+        })
 
     def _convert_messages_to_genai_format(
         self,
@@ -983,9 +1139,28 @@ class GoogleGenAIClient(BaseLLMClient):
 
         return all_tools
 
-    def _is_deep_research_model(self, model: str) -> bool:
-        """Check if model identifier corresponds to deep research agent."""
-        return is_deep_research_model(model)
+    @property
+    def _agent_label(self) -> str:
+        """Human-readable name of the Interactions agent, for logs and errors."""
+        return (
+            "Antigravity" if is_antigravity_model(self._agent_name) else "Deep Research"
+        )
+
+    @property
+    def agent_operation_name(self) -> str:
+        """The ``operation`` metric label for this agent's runs.
+
+        Public because the pollable delegation path records its own metrics and
+        has to use the same value: an agent that reported ``deep_research``
+        when run interactively and something else when delegated would split
+        one agent across two series.
+        """
+        return self._agent_label.lower().replace(" ", "_")
+
+    @property
+    def _agent_name(self) -> str:
+        """The bare agent id to send as ``agent=`` on an Interactions call."""
+        return self.model_name.replace("models/", "")
 
     async def generate_response(
         self,
@@ -997,22 +1172,19 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
-        with tracer.start_as_current_span(
-            "llm.provider.generate",
-            attributes={
-                "gen_ai.system": "google-genai",
-                "gen_ai.request.model": self.model_name,
-            },
-        ) as span:
-            # Request tracking for diagnostics
-            start_time = time.monotonic()
-            request_timestamp = datetime.now(UTC)
-            request_id = f"google_{uuid.uuid4().hex[:16]}"
+        with tracer.start_as_current_span("llm.provider.generate") as span:
+            telemetry = LLMCallTelemetry(
+                span,
+                provider="google",
+                system="google-genai",
+                requested_model=self.model_name,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                streaming=False,
+            )
 
-            # Convert messages to dict format for request buffer recording
-            message_dicts = [message_to_json_dict(msg) for msg in messages]
-
-            try:
+            async def request_success() -> LLMOutput:
                 # Keep messages as typed objects for processing
                 typed_messages = list(messages)
 
@@ -1252,58 +1424,36 @@ class GoogleGenAIClient(BaseLLMClient):
                         reasoning_info = MessageReasoningInfo()
                     reasoning_info["thought_summaries"] = thought_summaries
 
+                telemetry.record_response_metadata(
+                    resolved_model=response.model_version,
+                    response_id=response.response_id,
+                    finish_reason=_first_finish_reason(response),
+                )
+
                 llm_output = LLMOutput(
                     content=content,
                     tool_calls=tool_calls,
-                    reasoning_info=reasoning_info,
+                    reasoning_info=telemetry.finalize_usage(reasoning_info),
                     provider_metadata=None,  # Thought signatures are now on individual tool calls
+                    resolved_model=response.model_version,
                 )
 
-                # Record successful request to diagnostics buffer
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model_name,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=asdict(llm_output),
-                            duration_ms=duration_ms,
-                            error=None,
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(f"Failed to record LLM request: {record_err}")
-
-                set_usage_span_attributes(span, llm_output.reasoning_info)
+                telemetry.record_output(llm_output)
+                telemetry.finish_success(asdict(llm_output))
 
                 return llm_output
 
+            try:
+                return await request_success()
             except Exception as e:
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
-                # Record failed request to diagnostics buffer
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model_name,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=None,
-                            duration_ms=duration_ms,
-                            error=str(e),
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(f"Failed to record LLM request error: {record_err}")
+                telemetry.finish_error(e)
                 raise self._map_error_to_typed_exception(e) from e
+            finally:
+                # Cancellation -- a task timeout, a shutdown, an abandoned
+                # indexing job -- passes every `except Exception`, and the
+                # request still ran and may still be billed. A no-op once a
+                # terminal path has recorded the call.
+                telemetry.finish_abandoned()
 
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw exception to a typed LLMProviderError subclass."""
@@ -1371,6 +1521,66 @@ class GoogleGenAIClient(BaseLLMClient):
         thoughts_tokens = getattr(usage, "thoughts_token_count", None)
         if thoughts_tokens is not None:
             reasoning_info["reasoning_tokens"] = thoughts_tokens
+        # Billed apart from the prompt and the candidates: what the provider
+        # spent running code execution or search grounding on its own.
+        tool_use_tokens = getattr(usage, "tool_use_prompt_token_count", None)
+        if tool_use_tokens is not None:
+            reasoning_info["tool_use_tokens"] = tool_use_tokens
+        # An ordinary Gemini turn can carry images too -- an attachment on a
+        # chat message is the common case -- and they are not billed at the
+        # text rate, so the split belongs here rather than only on the image
+        # backends. The cached slice is recorded so the buckets can stay
+        # disjoint instead of counting cached images twice.
+        for field, key in (
+            ("prompt_tokens_details", "image_input_tokens"),
+            ("candidates_tokens_details", "image_output_tokens"),
+            ("cache_tokens_details", "cached_image_tokens"),
+        ):
+            image_tokens = _image_modality_tokens(
+                getattr(usage, field, None), token_attr="token_count"
+            )
+            if image_tokens is not None:
+                reasoning_info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
+        return reasoning_info
+
+    @staticmethod
+    def _reasoning_info_from_interaction_usage(
+        usage: Any,  # noqa: ANN401 - google.genai interactions Usage
+    ) -> MessageReasoningInfo | None:
+        """Build reasoning info from an Interactions API run's `usage`.
+
+        A managed agent's spend is reported on the interaction rather than as
+        chat usage, so it reaches no `generate_content` response and has to be
+        read from here. The buckets follow the same Gemini conventions the
+        chat path does: cached tokens are a subset of the input, while thought
+        and server-side tool tokens are billed apart from the output.
+        """
+        if not usage:
+            return None
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=getattr(usage, "total_input_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "total_output_tokens", 0) or 0,
+            total_tokens=getattr(usage, "total_tokens", 0) or 0,
+        )
+        for field, key in (
+            ("total_cached_tokens", "cached_prompt_tokens"),
+            ("total_thought_tokens", "reasoning_tokens"),
+            ("total_tool_use_tokens", "tool_use_tokens"),
+        ):
+            value = getattr(usage, field, None)
+            if value is not None:
+                reasoning_info[key] = value  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
+        # An Interactions run can be multimodal on both sides -- reference
+        # images in, generated video out -- and those tokens are not billed at
+        # the text rate, so the modality split has to reach the buckets.
+        for field, key in (
+            ("input_tokens_by_modality", "image_input_tokens"),
+            ("output_tokens_by_modality", "image_output_tokens"),
+            ("cached_tokens_by_modality", "cached_image_tokens"),
+        ):
+            image_tokens = _image_modality_tokens(getattr(usage, field, None))
+            if image_tokens is not None:
+                reasoning_info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
         return reasoning_info
 
     @staticmethod
@@ -1464,108 +1674,231 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
-        if self._is_deep_research_model(self.model_name):
-            return self._generate_deep_research_stream(messages)
+        if is_interactions_agent_model(self.model_name):
+            return self._generate_agent_interaction_stream(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
-    def _build_deep_research_create_kwargs(
+    def _extract_agent_input_text(self, messages: Sequence[LLMMessage]) -> str:
+        """Collapse the trailing run of user messages into one input string.
+
+        Interactions agents take a single ``input`` string rather than a
+        message list, so scaffolding is dropped rather than serialized: the
+        turn-context block would otherwise be appended verbatim to the request
+        the agent is asked to carry out.
+        """
+        # Collect all contiguous trailing user messages for input
+        # This handles cases where user sends multiple messages in a row
+        user_input_parts: list[str] = []
+        for msg in reversed(messages):
+            if is_turn_scaffolding(msg):
+                continue
+            if msg.role != "user":
+                # Stop at the first non-user message
+                break
+
+            self._reject_unrepresentable_input(msg)
+
+            msg_text = ""
+            if isinstance(msg.content, str):
+                msg_text = msg.content
+            elif isinstance(msg.content, list):
+                text_fragments = []
+                for part in msg.content:
+                    if isinstance(part, TextContentPart):
+                        text_fragments.append(part.text)
+                    elif isinstance(part, str):
+                        text_fragments.append(part)
+                msg_text = "\n".join(text_fragments)
+
+            if msg_text:
+                user_input_parts.insert(0, msg_text)
+
+        return "\n\n".join(user_input_parts)
+
+    def _reject_unrepresentable_input(self, msg: LLMMessage) -> None:
+        """Refuse a message whose non-text payload the agent cannot receive.
+
+        An Interactions agent takes one ``input`` string, so anything that is
+        not text -- an image or PDF injected as provider ``parts``, an image
+        URL part -- is unrepresentable. Dropping it silently would hand the
+        agent a request that names a file it never received and let it answer
+        confidently about nothing, so the turn fails instead. Text-shaped
+        attachments (``text/*``, JSON, CSV) are unaffected: the base adapter
+        injects those as text, which this path carries.
+        """
+        if getattr(msg, "parts", None):
+            raise InvalidRequestError(
+                f"{self._agent_label} cannot read attachments: this request "
+                "carries media the agent has no way to receive. Send the "
+                "content as text, or use a profile that reads attachments.",
+                provider="google",
+                model=self.model_name,
+            )
+        if isinstance(msg.content, list):
+            unsupported = sorted({
+                part.type
+                for part in msg.content
+                if not isinstance(part, str | TextContentPart)
+                and getattr(part, "type", None) is not None
+            })
+            if unsupported:
+                raise InvalidRequestError(
+                    f"{self._agent_label} cannot read {', '.join(unsupported)} "
+                    "content: the agent takes a single text request. Send the "
+                    "content as text, or use a profile that reads attachments.",
+                    provider="google",
+                    model=self.model_name,
+                )
+
+    def _extract_agent_system_prompt(self, messages: Sequence[LLMMessage]) -> str:
+        """Concatenate every system message into one instruction string.
+
+        Returned unmarked: the ``System:`` prefix disambiguates system content
+        only where it has to travel as something else, and which of the two
+        agent shapes applies is the caller's to decide.
+        """
+        return "\n\n".join(
+            msg.content for msg in messages if msg.role == "system" and msg.content
+        ).strip()
+
+    def _resolve_previous_interaction_id(
+        self, messages: Sequence[LLMMessage], explicit: str | None
+    ) -> str | None:
+        """Find the interaction to continue from, preferring an explicit id.
+
+        An explicit value (e.g. a delegation run's stored interaction id) wins;
+        otherwise it is scanned out of the last assistant message's provider
+        metadata, which is where the interactive chat path records it.
+        """
+        if explicit is not None:
+            return explicit
+
+        for msg in reversed(messages):
+            if (
+                msg.role == "assistant"
+                and isinstance(msg, AssistantMessage)
+                and msg.provider_metadata
+            ):
+                pm = msg.provider_metadata
+                if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
+                    return pm.interaction_id
+                if isinstance(pm, dict) and pm.get("interaction_id"):
+                    return cast("str | None", pm.get("interaction_id"))
+        return None
+
+    def _build_agent_create_kwargs(
         self,
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
         # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
     ) -> dict[str, Any]:
-        """Build ``interactions.create`` kwargs for a Deep Research call.
+        """Build ``interactions.create`` kwargs for an Interactions agent call.
 
-        Extracts the input text from the trailing run of user messages plus
-        any system prompt, and resolves ``previous_interaction_id`` for
-        multi-turn continuation. If not given explicitly, it's scanned from
-        the last assistant message's provider metadata (the interactive chat
-        path's own history); an explicit value (e.g. from a delegation run's
-        stored interaction id) overrides that scan. Does not set ``stream``
-        — callers choose streaming (interactive) or not (submit-then-poll).
+        Shapes the input for whichever agent ``model_name`` names — Deep
+        Research or Antigravity — and resolves ``previous_interaction_id`` for
+        multi-turn continuation. Does not set ``stream`` — callers choose
+        streaming (interactive) or not (submit-then-poll).
         """
-        resolved_previous_interaction_id = previous_interaction_id
+        resolved_previous_interaction_id = self._resolve_previous_interaction_id(
+            messages, previous_interaction_id
+        )
+        input_text = self._extract_agent_input_text(messages)
+        system_prompt = self._extract_agent_system_prompt(messages)
 
-        # Collect all contiguous trailing user messages for input
-        # This handles cases where user sends multiple messages in a row
-        user_input_parts = []
-        for msg in reversed(messages):
-            if msg.role == "user":
-                # Extract text content from message
-                msg_text = ""
-                if isinstance(msg.content, str):
-                    msg_text = msg.content
-                elif isinstance(msg.content, list):
-                    text_fragments = []
-                    for part in msg.content:
-                        if isinstance(part, TextContentPart):
-                            text_fragments.append(part.text)
-                        elif isinstance(part, str):
-                            text_fragments.append(part)
-                    msg_text = "\n".join(text_fragments)
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+        create_kwargs: dict[str, Any] = {
+            "agent": self._agent_name,
+            "background": True,
+        }
 
-                if msg_text:
-                    user_input_parts.insert(0, msg_text)
-            else:
-                # Stop at the first non-user message
-                break
+        if is_antigravity_model(self._agent_name):
+            create_kwargs["agent_config"] = self._antigravity_agent_config()
+            # Antigravity takes a first-class system_instruction, so the prompt
+            # stays out of the task the agent plans against instead of being
+            # read as part of it.
+            if system_prompt.strip():
+                create_kwargs["system_instruction"] = system_prompt.strip()
+        else:
+            create_kwargs["agent_config"] = {
+                "type": "deep-research",
+                "thinking_summaries": "auto",
+                "visualization": "auto",
+            }
+            # Deep Research exposes no system_instruction, so the prompt is
+            # folded into the single input string -- where it does need the
+            # marker, being otherwise indistinguishable from the task text.
+            if system_prompt:
+                input_text = (
+                    f"{_system_prefixed_content(system_prompt)}\n\n{input_text}"
+                )
 
-        input_text = "\n\n".join(user_input_parts)
-
-        if resolved_previous_interaction_id is None:
-            # Check for previous interaction ID in assistant history
-            # Iterate through messages to find the last assistant message with provider metadata
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and isinstance(msg, AssistantMessage)
-                    and msg.provider_metadata
-                ):
-                    pm = msg.provider_metadata
-                    if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
-                        resolved_previous_interaction_id = pm.interaction_id
-                        break
-                    elif isinstance(pm, dict) and pm.get("interaction_id"):
-                        resolved_previous_interaction_id = pm.get("interaction_id")
-                        break
-
-        # Prepend system prompt if present (Deep Research takes input string)
-        system_prompt = ""
-        for msg in messages:
-            if msg.role == "system" and msg.content:
-                system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
-
-        if system_prompt:
-            input_text = system_prompt + input_text
+        create_kwargs["input"] = input_text
 
         if not input_text:
             raise InvalidRequestError(
-                "Deep Research requires non-empty input",
+                f"{self._agent_label} requires non-empty input",
                 provider="google",
                 model=self.model_name,
             )
 
         logger.info(
-            f"Starting Deep Research interaction. Model: {self.model_name}, "
+            f"Starting {self._agent_label} interaction. Model: {self.model_name}, "
             f"Prev ID: {resolved_previous_interaction_id}"
         )
 
-        agent_name = self.model_name.replace("models/", "")
-
-        create_kwargs = {
-            "input": input_text,
-            "agent": agent_name,
-            "background": True,
-            "agent_config": {
-                "type": "deep-research",
-                "thinking_summaries": "auto",
-                "visualization": "auto",
-            },
-        }
         if resolved_previous_interaction_id:
             create_kwargs["previous_interaction_id"] = resolved_previous_interaction_id
         return create_kwargs
+
+    # ast-grep-ignore: no-dict-any - agent_config payload for the Interactions SDK
+    def _antigravity_agent_config(self) -> dict[str, Any]:
+        """Build the ``agent_config`` block for an Antigravity agent run.
+
+        ``model`` and ``max_total_tokens`` are omitted when unset so the API's
+        own defaults apply, rather than this client pinning a model the
+        operator never chose.
+        """
+        # ast-grep-ignore: no-dict-any - agent_config payload for the Interactions SDK
+        agent_config: dict[str, Any] = {"type": "antigravity"}
+        if self.antigravity_model:
+            agent_config["model"] = self.antigravity_model
+        if self.antigravity_max_total_tokens is not None:
+            agent_config["max_total_tokens"] = self.antigravity_max_total_tokens
+        return agent_config
+
+    # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
+    async def _build_agent_environment(
+        self,
+        environment_sources: Sequence[Mapping[str, Any]] | None = None,
+        # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
+    ) -> dict[str, Any] | None:
+        """Build the ``environment`` block, or ``None`` to send none.
+
+        Merges the two things that shape a run's sandbox: files mounted into it
+        (a delegation's attachments, submit path only — the interactive path
+        carries no attachments) and its egress policy, which comes from static
+        profile config and so applies to both paths. Credentials named by that
+        policy are minted here, per run.
+
+        Antigravity always gets a block, even an otherwise empty one: the API
+        requires the field and rejects a create request that omits it with
+        ``Missing required field 'environment'``, so its default sandbox is
+        stated as ``{"type": "remote"}`` rather than left implicit. Deep
+        Research takes no environment at all, so it sends none unless there is
+        something to put in one.
+        """
+        # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
+        environment: dict[str, Any] = {}
+        if environment_sources:
+            environment["sources"] = list(environment_sources)
+        if self._antigravity_egress is not None:
+            network = await self._antigravity_egress.resolve_network()
+            if network is not None:
+                environment["network"] = network
+        if not environment and not is_antigravity_model(self._agent_name):
+            return None
+        return {"type": "remote", **environment}
 
     def _classify_agent_delegation_error(self, e: Exception) -> Exception:
         """Map an Interactions API exception to the delegation error taxonomy.
@@ -1591,48 +1924,105 @@ class GoogleGenAIClient(BaseLLMClient):
             return DelegationTransientError(str(e))
         return e
 
-    async def start_deep_research_interaction(
+    async def start_agent_interaction(
         self,
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
+        environment_sources: Sequence[Mapping[str, Any]] | None = None,
     ) -> Interaction:
-        """Start a Deep Research interaction without waiting for it to finish.
+        """Start an Interactions agent run without waiting for it to finish.
 
         Used by the pollable-delegation path: submits in the background and
         returns immediately with the interaction's initial (non-terminal)
-        state instead of streaming until the whole research run completes.
-        Raises the generic delegation error taxonomy
+        state instead of streaming until the whole run completes. Raises the
+        generic delegation error taxonomy
         (``DelegationTransientError``/``DelegationPermanentError``/
         ``DelegationTaskNotFoundError``) rather than ``LLMProviderError``.
 
-        Deep-Research-specific (via ``_build_deep_research_create_kwargs``'s
-        ``agent_config``), unlike ``get_agent_interaction``/
-        ``cancel_agent_interaction`` below: submitting an interaction needs
-        agent-specific input shaping, but polling/cancelling one by id
-        doesn't — a future non-Deep-Research Interactions API agent (e.g.
-        Antigravity) would need its own ``start_*`` but could reuse those two
-        as-is.
+        Which agent runs follows from ``model_name`` — submitting needs
+        agent-specific input shaping (see ``_build_agent_create_kwargs``),
+        while ``get_agent_interaction``/``cancel_agent_interaction`` below
+        need none, because polling or cancelling by id is the same call
+        whatever produced the id.
         """
-        create_kwargs = self._build_deep_research_create_kwargs(
+        create_kwargs = self._build_agent_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
         )
+        # A fresh sandbox with the caller's files mounted into it, under this
+        # profile's egress policy. Only the submit path carries sources: the
+        # interactive path goes through the provider-agnostic
+        # `generate_response_stream`, which has no attachments to mount.
+        environment = await self._build_agent_environment(environment_sources)
+        if environment is not None:
+            create_kwargs["environment"] = environment
+        # Accounting starts here, not above: building the kwargs and resolving
+        # the sandbox's credentials can fail without any request reaching
+        # Google, and a failure that never left the process is not a provider
+        # error. A submission that does reach the API is counted here because
+        # it is the last place it can be -- a run that never gets an id
+        # reaches no terminal poll.
+        started = time.monotonic()
         try:
-            return cast(
+            interaction = cast(
                 "Interaction",
                 await self.client.aio.interactions.create(
                     **create_kwargs, stream=False
                 ),
             )
         except Exception as e:
-            raise self._classify_agent_delegation_error(e) from e
+            error = self._classify_agent_delegation_error(e)
+            self._record_failed_submission(error, time.monotonic() - started)
+            raise error from e
+        if not interaction.id:
+            error = DelegationTransientError(
+                "Interactions API create response carried no interaction id"
+            )
+            self._record_failed_submission(error, time.monotonic() - started)
+            raise error
+        return interaction
+
+    def _record_failed_submission(
+        self, error: BaseException, duration_seconds: float
+    ) -> None:
+        """Count a submission that reached the API but started no run.
+
+        Recorded on failure only: a submission that succeeds is counted when
+        the run reaches a terminal state, and counting it here too would
+        double every run.
+        """
+        record_llm_call(
+            attribution=current_call_attribution(),
+            provider="google",
+            model=self.model_name,
+            resolved_model=None,
+            operation=self.agent_operation_name,
+            outcome="error",
+            error_type=type(error).__name__,
+            duration_seconds=duration_seconds,
+            time_to_first_output_seconds=None,
+            reasoning_info=None,
+        )
+
+    def reasoning_info_from_interaction(
+        self,
+        interaction: Interaction,
+    ) -> MessageReasoningInfo | None:
+        """Token usage for a finished agent run, for callers that poll.
+
+        The pollable delegation path never sees the stream that would otherwise
+        carry usage, so it reads the totals off the interaction it polled.
+        """
+        return self._reasoning_info_from_interaction_usage(
+            getattr(interaction, "usage", None)
+        )
 
     async def get_agent_interaction(self, interaction_id: str) -> Interaction:
         """Fetch the current state of any Interactions API agent run (one poll).
 
         Generic by design — polling by id needs no agent-specific knowledge.
         Raises the generic delegation error taxonomy on failure (see
-        ``start_deep_research_interaction``).
+        ``start_agent_interaction``).
         """
         try:
             return cast(
@@ -1646,38 +2036,66 @@ class GoogleGenAIClient(BaseLLMClient):
         """Best-effort cancellation of any Interactions API agent run.
 
         Generic by design (see ``get_agent_interaction``). Callers (e.g.
-        ``DeepResearchProcessingService.cancel_async``) are expected to
+        ``InteractionsAgentProcessingService.cancel_async``) are expected to
         swallow any exception this raises, mirroring
         ``RemoteA2AService.cancel_async``.
         """
         await self.client.aio.interactions.cancel(interaction_id)
 
-    async def _generate_deep_research_stream(
+    async def _generate_agent_interaction_stream(
         self,
         messages: Sequence[LLMMessage],
     ) -> AsyncIterator[LLMStreamEvent]:
         """
-        Handle Deep Research agent interactions using the Interactions API.
+        Handle Interactions API agent runs (Deep Research, Antigravity).
 
-        Deep Research requires background execution and polling/streaming via interactions.create.
+        These agents require background execution and polling/streaming via
+        interactions.create. Deltas the agent emits that have no text form
+        (images today, and any future step type) are skipped rather than
+        rendered, so the interactive transcript stays the agent's prose.
         """
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"google_deep_research_{uuid.uuid4().hex[:16]}"
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
+        agent_label = self._agent_label
+        # Built before the span, and so before the metrics lifecycle: shaping
+        # the request and resolving the sandbox's egress credential both happen
+        # entirely in this process, and a failure there is not a provider
+        # error. Counted inside, it would put a Google call that never left the
+        # process into the provider error rate.
+        create_kwargs = self._build_agent_create_kwargs(messages)
+        environment = await self._build_agent_environment()
+        if environment is not None:
+            create_kwargs["environment"] = environment
+        create_kwargs["stream"] = True
+
+        span = tracer.start_span("llm.provider.agent_interaction")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=True,
+            operation=self.agent_operation_name,
+        )
 
         content_yielded = False
-        try:
-            create_kwargs = self._build_deep_research_create_kwargs(messages)
-            create_kwargs["stream"] = True
+        interaction_id: str | None = None
+        last_event_id: str | None = None
+        # An agent run reports its spend on the interaction, not as chat usage,
+        # so it has to be picked up off whichever events carry the interaction.
+        # Last one wins: the totals are cumulative for the run.
+        interaction_usage: Any | None = None
+        interaction_model: str | None = None
 
+        async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal content_yielded, interaction_id, last_event_id
+            nonlocal interaction_usage, interaction_model
             stream = cast(
                 "AsyncIterator[Any]",
                 await self.client.aio.interactions.create(**create_kwargs),
             )
 
-            interaction_id = None
-            last_event_id: str | None = None
             thought_summaries: list[str] = []
 
             # 3. Process stream
@@ -1687,31 +2105,58 @@ class GoogleGenAIClient(BaseLLMClient):
                 if event_id := getattr(chunk, "event_id", None):
                     last_event_id = event_id
 
+                if served := getattr(
+                    getattr(chunk, "interaction", None), "model", None
+                ):
+                    interaction_model = served
+                    # Recorded as it arrives, for the same reason the usage is:
+                    # a terminal error status or an error frame raises straight
+                    # past the finalization block, and a failure series that
+                    # substitutes the alias cannot be analysed by model.
+                    telemetry.record_response_metadata(resolved_model=served)
+
+                if usage := getattr(getattr(chunk, "interaction", None), "usage", None):
+                    interaction_usage = usage
+                    # Recorded as it arrives rather than only at finalization: a
+                    # terminal error status or an error frame raises out of this
+                    # loop, and a run that failed still spent what it spent.
+                    # Interactions usage is cumulative, so the last one seen is
+                    # the total and later reports simply supersede earlier ones.
+                    telemetry.record_usage(
+                        self._reasoning_info_from_interaction_usage(usage)
+                    )
+
                 # Capture Interaction ID
                 if event_type in {"interaction.created", "interaction.start"}:
                     interaction_id = chunk.interaction.id
-                    logger.info(f"Deep Research interaction started: {interaction_id}")
+                    logger.info(f"{agent_label} interaction started: {interaction_id}")
 
                 elif event_type in {"step.delta", "content.delta"}:
                     if chunk.delta.type == "text":
-                        yield LLMStreamEvent(type="content", content=chunk.delta.text)
+                        text_event = LLMStreamEvent(
+                            type="content", content=chunk.delta.text
+                        )
+                        telemetry.observe_event(text_event)
+                        yield text_event
                         content_yielded = True
                     elif chunk.delta.type == "thought_summary":
                         thought_text = chunk.delta.content.text
                         thought_summaries.append(thought_text)
-                        yield LLMStreamEvent(
+                        thought_event = LLMStreamEvent(
                             type="content", content=f"\n*Thinking: {thought_text}*\n"
                         )
+                        telemetry.observe_event(thought_event)
+                        yield thought_event
                         content_yielded = True
                     elif chunk.delta.type == "image":
                         # Image deltas (e.g. visualization charts) are not yet surfaced as
                         # attachments; skip them so text output is unaffected.
                         logger.debug(
-                            "Ignoring Deep Research image delta (visualization not yet wired)"
+                            f"Ignoring {agent_label} image delta (visualization not yet wired)"
                         )
 
                 elif event_type in {"interaction.completed", "interaction.complete"}:
-                    logger.info("Deep Research interaction complete")
+                    logger.info(f"{agent_label} interaction complete")
 
                 elif event_type == "interaction.status_update":
                     status = getattr(chunk, "status", None) or getattr(
@@ -1719,7 +2164,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     )
                     if status in _INTERACTION_TERMINAL_ERROR_STATUSES:
                         raise ServiceUnavailableError(
-                            f"Deep Research interaction {status}",
+                            f"{agent_label} interaction {status}",
                             provider="google",
                             model=self.model_name,
                         )
@@ -1731,7 +2176,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         error_obj
                     )
                     logger.error(
-                        f"Deep Research stream error: code={error_code} msg={error_message}"
+                        f"{agent_label} stream error: code={error_code} msg={error_message}"
                     )
 
                     # Map error code to typed exception
@@ -1763,53 +2208,35 @@ class GoogleGenAIClient(BaseLLMClient):
             if last_event_id:
                 done_metadata["last_event_id"] = last_event_id
 
+            run_usage = self._reasoning_info_from_interaction_usage(interaction_usage)
             if thought_summaries:
-                done_metadata["reasoning_info"] = MessageReasoningInfo(
-                    thought_summaries=[{"summary": t} for t in thought_summaries]
-                )
+                run_usage = run_usage or MessageReasoningInfo()
+                run_usage["thought_summaries"] = [
+                    {"summary": t} for t in thought_summaries
+                ]
+            if run_usage is not None:
+                done_metadata["reasoning_info"] = run_usage
 
-            # Record successful request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=None,
-                        tool_choice=None,
-                        response={"streaming": True, "metadata": done_metadata},
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
+            # The interaction reports the model it actually ran, which an alias
+            # can make different from the configured one -- the pollable path
+            # already records it, and this is its interactive equivalent.
+            if interaction_id or interaction_model:
+                telemetry.record_response_metadata(
+                    response_id=interaction_id, resolved_model=interaction_model
                 )
-            except Exception as record_err:
-                logger.debug(f"Failed to record Deep Research request: {record_err}")
+            done_metadata["reasoning_info"] = telemetry.finalize_usage(
+                done_metadata.get("reasoning_info")
+            )
+            telemetry.finish_success({"streaming": True, "metadata": done_metadata})
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
+        events = stream_events()
+        try:
+            async for stream_event in events:
+                yield stream_event
         except Exception as e:
-            # Record failed request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=None,
-                        tool_choice=None,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(
-                    f"Failed to record Deep Research request error: {record_err}"
-                )
+            telemetry.finish_error(e)
 
             # If the exception is already a typed LLMProviderError (e.g. raised by
             # stream error/status handlers above), use it directly.
@@ -1818,7 +2245,7 @@ class GoogleGenAIClient(BaseLLMClient):
             else:
                 typed_error = self._map_interactions_error(e)
             logger.exception(
-                f"Google Deep Research error ({type(typed_error).__name__}): {e}"
+                f"Google {agent_label} error ({type(typed_error).__name__}): {e}"
             )
 
             # If no content has been yielded, raise typed exception so
@@ -1846,6 +2273,16 @@ class GoogleGenAIClient(BaseLLMClient):
             if last_event_id:
                 error_done_metadata["last_event_id"] = last_event_id
             yield LLMStreamEvent(type="done", metadata=error_done_metadata)
+        finally:
+            try:
+                await events.aclose()
+            finally:
+                # A no-op unless the stream ended without reaching a terminal
+                # path -- a client that disconnected mid-turn raises through
+                # the generator, and the call would otherwise be counted
+                # nowhere despite having run.
+                telemetry.finish_abandoned()
+                span.end()
 
     async def _generate_response_stream(
         self,
@@ -1854,21 +2291,22 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
-        span = tracer.start_span(
-            "llm.provider.generate_stream",
-            attributes={
-                "gen_ai.system": "google-genai",
-                "gen_ai.request.model": self.model_name,
-            },
+        span = tracer.start_span("llm.provider.generate_stream")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            streaming=True,
         )
-        # Request tracking for diagnostics
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"google_stream_{uuid.uuid4().hex[:16]}"
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
 
         content_yielded = False
-        try:
+
+        async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal content_yielded
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
 
@@ -1968,18 +2406,42 @@ class GoogleGenAIClient(BaseLLMClient):
             # carrying the final cumulative counts. Keep the newest seen rather
             # than reading a single chunk, since not every chunk includes it.
             latest_usage_metadata: Any | None = None
+            resolved_model: str | None = None
+            response_id: str | None = None
+            finish_reason: object = None
 
             # Process stream chunks
             with trace.use_span(span, end_on_exit=False):
                 async for chunk in stream_response:  # type: ignore[misc]
                     if getattr(chunk, "usage_metadata", None):
                         latest_usage_metadata = chunk.usage_metadata
+                        # Recorded as it arrives, not only once the stream ends
+                        # cleanly: a stream that dies mid-flight still spent
+                        # what the provider has already reported, and the
+                        # failure finalizer reads whatever telemetry holds.
+                        # Gemini's counts are cumulative, so the latest wins.
+                        telemetry.record_usage(
+                            self._reasoning_info_from_usage_metadata(
+                                latest_usage_metadata
+                            )
+                        )
+                    resolved_model = chunk.model_version or resolved_model
+                    response_id = chunk.response_id or response_id
+                    finish_reason = _first_finish_reason(chunk) or finish_reason
+                    # Recorded as it arrives, like the usage above: a stream
+                    # that dies later is finalized without reaching the block
+                    # below, and a failure filed under the requested alias
+                    # cannot be compared with that model's successes.
+                    if resolved_model or response_id:
+                        telemetry.record_response_metadata(
+                            resolved_model=resolved_model, response_id=response_id
+                        )
 
                     # Extract text content from chunk
                     if hasattr(chunk, "text") and chunk.text:
-                        yield LLMStreamEvent(  # noqa: ASYNC119
-                            type="content", content=chunk.text
-                        )
+                        chunk_event = LLMStreamEvent(type="content", content=chunk.text)
+                        telemetry.observe_event(chunk_event)
+                        yield chunk_event  # noqa: ASYNC119
                         content_yielded = True
 
                     # Handle candidates structure for more complex responses
@@ -2011,9 +2473,11 @@ class GoogleGenAIClient(BaseLLMClient):
                                         and hasattr(part, "text")
                                         and part.text
                                     ):
-                                        yield LLMStreamEvent(  # noqa: ASYNC119
+                                        part_event = LLMStreamEvent(
                                             type="content", content=part.text
                                         )
+                                        telemetry.observe_event(part_event)
+                                        yield part_event  # noqa: ASYNC119
                                         content_yielded = True
 
                                     # Accumulate function calls with their thought signatures
@@ -2083,19 +2547,28 @@ class GoogleGenAIClient(BaseLLMClient):
                     ),
                     provider_metadata=provider_metadata,
                 )
-                yield LLMStreamEvent(
+                tool_call_event = LLMStreamEvent(
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call_id
                 )
+                telemetry.observe_event(tool_call_event)
+                yield tool_call_event
 
             # Signal completion
             done_metadata: StreamEventMetadata = {}
+
+            telemetry.record_response_metadata(
+                resolved_model=resolved_model,
+                response_id=response_id,
+                finish_reason=finish_reason,
+            )
+            if resolved_model:
+                done_metadata["resolved_model"] = resolved_model
 
             stream_reasoning_info: MessageReasoningInfo | None = None
             if latest_usage_metadata is not None:
                 stream_reasoning_info = self._reasoning_info_from_usage_metadata(
                     latest_usage_metadata
                 )
-                set_usage_span_attributes(span, stream_reasoning_info)
 
             # Add thought summaries to reasoning_info for debugging/introspection
             if thought_summaries:
@@ -2103,53 +2576,20 @@ class GoogleGenAIClient(BaseLLMClient):
                     stream_reasoning_info = MessageReasoningInfo()
                 stream_reasoning_info["thought_summaries"] = thought_summaries
 
-            if stream_reasoning_info is not None:
-                done_metadata["reasoning_info"] = stream_reasoning_info
+            done_metadata["reasoning_info"] = telemetry.finalize_usage(
+                stream_reasoning_info
+            )
 
-            # Record successful streaming request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response={"streaming": True, "metadata": done_metadata},
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record streaming LLM request: {record_err}")
+            telemetry.finish_success({"streaming": True, "metadata": done_metadata})
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
+        events = stream_events()
+        try:
+            async for stream_event in events:
+                yield stream_event
         except Exception as e:
-            span.set_status(StatusCode.ERROR, str(e))
-            span.record_exception(e)
-            # Record failed streaming request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(
-                    f"Failed to record streaming LLM request error: {record_err}"
-                )
+            telemetry.finish_error(e)
 
             typed_error = self._map_error_to_typed_exception(e)
             logger.exception(
@@ -2173,4 +2613,12 @@ class GoogleGenAIClient(BaseLLMClient):
                 },
             )
         finally:
-            span.end()
+            try:
+                await events.aclose()
+            finally:
+                # A no-op unless the stream ended without reaching a terminal
+                # path -- a client that disconnected mid-turn raises through
+                # the generator, and the call would otherwise be counted
+                # nowhere despite having run.
+                telemetry.finish_abandoned()
+                span.end()

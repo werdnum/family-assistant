@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.webhook_source import WebhookEventSource
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.app_creator import app as fastapi_app
 
 
@@ -154,7 +155,9 @@ async def test_webhook_event_signature_required_when_secret_configured(
 
     # Create a mock config with a secret for 'grafana' source
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": "test-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "grafana": SecretStr("test-secret")
+    }
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -181,7 +184,9 @@ async def test_webhook_event_invalid_signature_rejected(
 
     # Create a mock config with a secret for 'grafana' source
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": "test-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "grafana": SecretStr("test-secret")
+    }
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -218,7 +223,7 @@ async def test_webhook_event_valid_signature_accepted(
 
     # Create a mock config with a secret for 'grafana' source
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": secret}
+    mock_config.event_system.sources.webhook.secrets = {"grafana": SecretStr(secret)}
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -245,7 +250,9 @@ async def test_webhook_event_no_signature_needed_for_unconfigured_source(
 
     # Create a mock config with a secret only for 'grafana', not for 'github'
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": "test-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "grafana": SecretStr("test-secret")
+    }
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -270,17 +277,19 @@ async def test_worker_started_uses_nonpersisted_callback_token_header(
 ) -> None:
     """Worker start proof bypasses source signing and is excluded from event data."""
     callback_token = "worker-callback-token"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.worker_tasks.create_task(
-            task_id="worker-start-task",
-            conversation_id="conv-1",
-            interface_type="test",
-            task_description="Worker start callback",
-            callback_token=callback_token,
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.worker_tasks.create_task(
+        task_id="worker-start-task",
+        conversation_id="conv-1",
+        interface_type="test",
+        task_description="Worker start callback",
+        callback_token=callback_token,
+    )
 
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"worker": "source-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "worker": SecretStr("source-secret")
+    }
     mock_webhook_source = AsyncMock(spec=WebhookEventSource)
     transport = ASGITransport(app=fastapi_app)
 
@@ -310,8 +319,8 @@ async def test_worker_started_uses_nonpersisted_callback_token_header(
     emitted_event = mock_webhook_source.emit_event.await_args.args[0]
     assert emitted_event["source"] is None
     assert emitted_event["data"] == {"task_id": "worker-start-task"}
-    async with DatabaseContext(engine=db_engine) as db_context:
-        task = await db_context.worker_tasks.get_task("worker-start-task")
+    db_context = Database(engine=db_engine)
+    task = await db_context.worker_tasks.get_task("worker-start-task")
     assert task is not None
     assert task["status"] == "running"
 

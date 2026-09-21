@@ -19,7 +19,7 @@ import pytest
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing.types import ChatInteractionResult
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.task_worker import LlmCallbackPayload, handle_llm_callback
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -40,17 +40,22 @@ class CallbackCapturingService:
 
     def __init__(self) -> None:
         self.service_config = SimpleNamespace(
-            id="callback_profile", allow_wake_llm=True
+            id="callback_profile",
+            allow_wake_llm=True,
         )
         self.processing_services_registry: dict[str, object] = {}
         self.captured_callback: object = "unset"
         self.captured_user_id: object = "unset"
+        self.captured_model_selection: object = "unset"
+        self.captured_trigger_is_internal: object = "unset"
         self.confirmation_outcome: ConfirmationOutcome | None = None
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.captured_callback = kwargs["request_confirmation_callback"]
         self.captured_user_id = kwargs.get("user_id")
-        db_context = cast("DatabaseContext", kwargs["db_context"])
+        self.captured_model_selection = kwargs.get("model_selection")
+        self.captured_trigger_is_internal = kwargs.get("trigger_is_internal")
+        db_context = cast("Database", kwargs["db_context"])
         callback = kwargs["request_confirmation_callback"]
         if callback is not None:
             callback_context = ToolExecutionContext(
@@ -86,7 +91,7 @@ class CallbackCapturingService:
 
 
 def _exec_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     processing_service: CallbackCapturingService,
     chat_interface: ChatInterface,
 ) -> ToolExecutionContext:
@@ -132,11 +137,11 @@ async def test_callback_with_owner_can_request_durable_confirmation(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "sent_message_id"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await handle_llm_callback(
-            _exec_context(db_context, processing_service, chat_interface),
-            _payload(created_by_user_id="callback-owner"),
-        )
+    db_context = Database(engine=db_engine)
+    await handle_llm_callback(
+        _exec_context(db_context, processing_service, chat_interface),
+        _payload(created_by_user_id="callback-owner"),
+    )
 
     assert processing_service.captured_callback is not None
     # The owner is threaded as the turn's user_id too, so nested scheduled
@@ -148,13 +153,37 @@ async def test_callback_with_owner_can_request_durable_confirmation(
     assert isinstance(processing_service.confirmation_outcome.result, str)
     assert "hasn't run yet" in processing_service.confirmation_outcome.result
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        pending = await db_context.confirmation_requests.list_pending_for_user(
-            "callback-owner"
-        )
+    db_context = Database(engine=db_engine)
+    pending = await db_context.confirmation_requests.list_pending_for_user(
+        "callback-owner"
+    )
     assert len(pending) == 1
     assert pending[0]["tool_name"] == "delete_calendar_event"
     assert pending[0]["origin_conversation_id"] == TEST_CONVERSATION_ID
+
+
+@pytest.mark.asyncio
+async def test_a_worker_completed_continuation_declares_its_trigger_internal(
+    db_engine: AsyncEngine,
+) -> None:
+    """The wake says the row it composed is not a request somebody wrote.
+
+    The turn it continues is over, so it carries no run envelope of its own,
+    and the flag it does carry is what the processing service reads to refuse
+    to route it -- rather than this call site remembering to freeze a default
+    that another worker entry point would then have to remember too.
+    """
+    processing_service = CallbackCapturingService()
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "sent_message_id"
+
+    await handle_llm_callback(
+        _exec_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload(created_by_user_id="callback-owner"),
+    )
+
+    assert processing_service.captured_model_selection is None
+    assert processing_service.captured_trigger_is_internal is True
 
 
 @pytest.mark.asyncio
@@ -167,11 +196,11 @@ async def test_callback_without_owner_reports_tool_not_run(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "sent_message_id"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await handle_llm_callback(
-            _exec_context(db_context, processing_service, chat_interface),
-            _payload(created_by_user_id=None),
-        )
+    db_context = Database(engine=db_engine)
+    await handle_llm_callback(
+        _exec_context(db_context, processing_service, chat_interface),
+        _payload(created_by_user_id=None),
+    )
 
     assert processing_service.captured_callback is not None
     assert processing_service.confirmation_outcome is not None
@@ -179,6 +208,6 @@ async def test_callback_without_owner_reports_tool_not_run(
     assert isinstance(processing_service.confirmation_outcome.result, str)
     assert "no recorded owner" in processing_service.confirmation_outcome.result
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        rows = await db_context.confirmation_requests.list_pending_for_user("anyone")
+    db_context = Database(engine=db_engine)
+    rows = await db_context.confirmation_requests.list_pending_for_user("anyone")
     assert rows == []

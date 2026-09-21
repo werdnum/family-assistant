@@ -27,6 +27,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
+# Install the first-party Brave Search MCP server, pinned for a reproducible build. This
+# replaces @modelcontextprotocol/server-brave-search, which came from the archived MCP
+# reference-server collection and has a monthly rate-limit counter that never resets,
+# permanently failing "Rate limit exceeded" after ~15,000 calls until the process restarts.
+ARG BRAVE_SEARCH_MCP_VERSION=2.1.3
+RUN npm install --global "@brave/brave-search-mcp-server@${BRAVE_SEARCH_MCP_VERSION}"
+
 # Set working directory and prepare directories with proper permissions
 WORKDIR /app
 
@@ -64,8 +71,11 @@ RUN ARCHITECTURE="" && \
     deno --version
 
 # --- Install MCP Tools ---
-# Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv)
-# These will be available via `uvx` or directly if UV_TOOL_BIN_DIR is in PATH
+# Install Python MCP tools using uv tool install (these go into /uv/tools, separate from the venv).
+# UV_TOOL_BIN_DIR is on PATH, so the entry points are invoked by name (see mcp_config in
+# defaults.yaml). They are not reachable through `uvx`: the MCP SDK spawns stdio servers with a
+# whitelisted environment (HOME, LOGNAME, PATH, SHELL, TERM, USER), so UV_TOOL_DIR never reaches
+# the child and `uvx` would re-resolve the package from PyPI on every startup instead.
 # Ensure cache directory is writable before switching to appuser
 RUN rm -rf /home/appuser/.cache/uv && \
     mkdir -p /home/appuser/.cache/uv && \
@@ -76,11 +86,13 @@ USER appuser
 ENV HOME=/home/appuser
 ENV UV_TOOL_BIN_DIR=/uv/bin
 ENV UV_TOOL_DIR=/uv/tools
-RUN uv tool install mcp-server-time
-RUN uv tool install mcp-server-fetch
-
-# Install Node.js MCP tools globally using Deno, providing explicit names
-RUN deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
+# Both servers declare `mcp>=1.23.0` with no upper bound but import `McpError` from
+# `mcp.shared.exceptions`, which mcp 2.x removed — an unconstrained install resolves mcp 2.x and the
+# server dies with an ImportError before it can speak MCP. Pin the SDK to the 1.x line the
+# application itself resolves. scripts/check_mcp_servers.py fails the container smoke test if this
+# regresses.
+RUN uv tool install mcp-server-time --with "mcp<2"
+RUN uv tool install mcp-server-fetch --with "mcp<2"
 
 # Switch back to root for remaining system-level operations
 USER root

@@ -19,6 +19,10 @@ scripts_table = Table(
     Column(
         "parameters_schema", Text, nullable=True
     ),  # JSON Schema for expected parameters
+    # Definition record for the script body: authoring stamp, content hash, and
+    # creation disposition, as JSON text. See
+    # docs/design/executable-definition-taint.md.
+    Column("definition_record", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), default=lambda: datetime.now(UTC)),
     Column(
         "updated_at",

@@ -7,6 +7,7 @@ user journey via the HTTP API using Gemini SDK record/replay.
 import os
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -26,7 +27,8 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     CompositeToolsProvider,
@@ -36,6 +38,7 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app
 from family_assistant.web.web_chat_interface import WebChatInterface
 
@@ -99,7 +102,7 @@ async def llm_integration_processing_service(
         api_key=os.getenv("GEMINI_API_KEY")
         or os.getenv("GOOGLE_API_KEY")
         or "test-key",
-        model="gemini-3.6-flash",  # V3 model with thought signatures, cheaper than pro
+        model="gemini-3.8-flash",  # V3 model with thought signatures, cheaper than pro
         debug_config=gemini_http_api_debug_config,
     )
 
@@ -127,8 +130,8 @@ async def llm_integration_processing_service(
 
     # Set up context providers
     # Define async function for notes provider
-    async def get_db_context_for_notes() -> DatabaseContext:
-        return get_db_context(engine=db_engine)
+    def get_db_context_for_notes() -> Database:
+        return Database(engine=db_engine)
 
     calendar_provider = CalendarContextProvider(
         calendar_config={},  # type: ignore[arg-type]
@@ -138,6 +141,7 @@ async def llm_integration_processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db_context_for_notes,
         prompts=config.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     users_provider = KnownUsersContextProvider(
         chat_id_to_name_map={},
@@ -154,6 +158,11 @@ async def llm_integration_processing_service(
         context_providers=context_providers,
         server_url="http://test",
         app_config=AppConfig(),
+        # Record/replay matches on the request body, and every request carries a
+        # <turn_context> block stamping the current time. A real clock makes the
+        # body differ from the recording on every run, so no cassette can ever
+        # replay.
+        clock=MockClock(datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC)),
     )
 
     try:

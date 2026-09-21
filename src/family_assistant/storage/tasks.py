@@ -1,13 +1,17 @@
-"""
-Handles storage and retrieval of background tasks using the database queue.
+"""Task table definition and the worker wake-up registry.
+
+Reads and writes of the queue itself live in
+:class:`~family_assistant.storage.repositories.tasks.TasksRepository`; what is
+left here is the table the repository uses and the process-wide notification
+events it fires on enqueue.
 """
 
 import asyncio
 import logging
 from asyncio import Event
-from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from enum import IntEnum
 
 from sqlalchemy import (
     JSON,
@@ -17,23 +21,11 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    insert,
-    or_,
-    select,
-    update,
 )
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import SQLAlchemyError
 
-# Use absolute package path
-from family_assistant.storage.base import metadata  # Keep metadata
-
-# Remove get_engine import
-from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
-from family_assistant.storage.types import TaskDict
+from family_assistant.storage.base import metadata
 
 logger = logging.getLogger(__name__)
-# Remove engine = get_engine()
 
 # Module state for task notifications
 _task_event: Event | None = None
@@ -106,6 +98,54 @@ def notify_other_workers(except_event: Event) -> None:
             event.set()
 
 
+class TaskPriority(IntEnum):
+    """Which lane of the queue a task runs in.
+
+    The members are ordered: the queue hands out the highest priority that is
+    due before any lower one, however long the lower one has waited.
+    """
+
+    BACKGROUND = 0
+    """Nobody is waiting; the work catches up when the house is quiet.
+
+    Message-history indexing (per turn and backfill), note indexing, and every
+    cleanup and reaper task.
+    """
+
+    INTERACTIVE = 1
+    """Somebody is waiting, or expects it at a particular time.
+
+    Reminders and future callbacks, confirmation-gated tool executions,
+    delegated runs and their polls, automation and event-listener scripts,
+    email-intake actions, and user-initiated document work.
+    """
+
+    @property
+    def label(self) -> str:
+        """This lane's name where a string is wanted: metrics, the admin API."""
+        return self.name.lower()
+
+
+@dataclass(frozen=True)
+class TaskAttempt:
+    """Which attempt of a task is running, and whether it is the last one.
+
+    Read by a handler that has to choose between failing (so the queue retries
+    it) and giving up in a way that leaves a durable record. Without it such a
+    handler either abandons its work on the first transient error or retries
+    for ever; neither is what the queue's own retry budget is for.
+    """
+
+    retry_count: int
+    """How many times this task has already been rescheduled after a failure."""
+    max_retries: int
+
+    @property
+    def is_final(self) -> bool:
+        """Whether a failure now exhausts the queue's retries for this task."""
+        return self.retry_count >= self.max_retries
+
+
 # Define the tasks table for the message queue
 tasks_table = Table(
     "tasks",
@@ -129,404 +169,13 @@ tasks_table = Table(
     Column("max_retries", Integer, default=3, nullable=False),
     Column("recurrence_rule", String, nullable=True),
     Column("original_task_id", String, nullable=True, index=True),
+    # Server default only, no Python-side default: every producer chooses a lane
+    # through the repository's required parameter, and the default exists for
+    # the rows the migration adds the column to.
+    Column(
+        "priority",
+        Integer,
+        nullable=False,
+        server_default=str(TaskPriority.BACKGROUND.value),
+    ),
 )
-
-
-async def enqueue_task(
-    db_context: DatabaseContext,  # Added context
-    task_id: str,
-    task_type: str,
-    # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
-    payload: Mapping[str, Any] | None = None,
-    scheduled_at: datetime | None = None,
-    max_retries_override: int | None = None,
-    recurrence_rule: str | None = None,
-    original_task_id: str | None = None,
-) -> None:
-    """Adds a task to the queue with automatic notification for immediate tasks.
-
-    Args:
-        db_context: Database context for the operation
-        task_id: Unique identifier for the task
-        task_type: Type of task (determines which handler processes it)
-        payload: Optional data payload for the task
-        scheduled_at: When to run the task (None = immediate)
-        max_retries_override: Override default max retries
-        recurrence_rule: Optional recurrence rule for repeating tasks
-        original_task_id: ID of the original task if this is a recurrence
-    """
-
-    processed_scheduled_at = scheduled_at
-    if processed_scheduled_at:
-        if processed_scheduled_at.tzinfo is None:
-            raise ValueError("scheduled_at must be timezone-aware")
-        # Convert to UTC if it's aware and not already UTC
-        if processed_scheduled_at.tzinfo != UTC:
-            logger.debug(
-                f"Converting scheduled_at for task {task_id} from {processed_scheduled_at.tzinfo} to UTC."
-            )
-            processed_scheduled_at = processed_scheduled_at.astimezone(UTC)
-
-    max_task_retries = max_retries_override if max_retries_override is not None else 3
-
-    values_to_insert = {
-        "task_id": task_id,
-        "task_type": task_type,
-        "payload": payload,
-        "scheduled_at": processed_scheduled_at,  # Use the processed version
-        "status": "pending",
-        "retry_count": 0,
-        "max_retries": max_task_retries,
-        "recurrence_rule": recurrence_rule,
-        "original_task_id": original_task_id if original_task_id else task_id,
-    }
-    # Filter out None values unless they are allowed (payload, error)
-    values_to_insert = {
-        k: v
-        for k, v in values_to_insert.items()
-        if v is not None or k in {"payload", "error"}
-    }
-
-    try:
-        # Check if this is a system task (starts with "system_")
-        is_system_task = task_id.startswith("system_")
-
-        if is_system_task:
-            # For system tasks, do an upsert to handle re-scheduling
-            if db_context.engine.dialect.name == "postgresql":
-                # PostgreSQL: Use ON CONFLICT DO UPDATE
-                stmt = pg_insert(tasks_table).values(**values_to_insert)
-                # Only update fields that might change for system tasks
-                update_dict = {
-                    "scheduled_at": stmt.excluded.scheduled_at,
-                    "payload": stmt.excluded.payload,
-                    "max_retries": stmt.excluded.max_retries,
-                    "recurrence_rule": stmt.excluded.recurrence_rule,
-                }
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["task_id"],
-                    set_=update_dict,
-                    where=(
-                        tasks_table.c.status != "processing"
-                    ),  # Don't update if currently processing
-                )
-            else:
-                # SQLite: Check if exists first, then update or insert
-                existing = await db_context.fetch_one(
-                    select(tasks_table.c.id, tasks_table.c.status).where(
-                        tasks_table.c.task_id == task_id
-                    )
-                )
-                if existing and existing["status"] != "processing":
-                    # Update existing task
-                    stmt = (
-                        update(tasks_table)
-                        .where(tasks_table.c.task_id == task_id)
-                        .where(tasks_table.c.status != "processing")
-                        .values(
-                            scheduled_at=processed_scheduled_at,
-                            payload=payload,
-                            max_retries=max_task_retries,
-                            recurrence_rule=recurrence_rule,
-                        )
-                    )
-                elif not existing:
-                    # Insert new task
-                    stmt = insert(tasks_table).values(**values_to_insert)
-                else:
-                    # Task is currently processing, skip update
-                    logger.info(
-                        f"System task {task_id} is currently processing, skipping update"
-                    )
-                    return
-        else:
-            # For regular tasks, do normal insert
-            stmt = insert(tasks_table).values(**values_to_insert)
-
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
-        logger.info(
-            f"{'Updated' if is_system_task else 'Enqueued'} task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
-        )
-        is_immediate = scheduled_at is None or scheduled_at <= datetime.now(UTC)
-        if is_immediate:
-            # Automatically notify workers about immediate tasks. Fan out to every
-            # registered per-worker wake event so all idle workers in the pool wake.
-            def notify() -> None:
-                notify_workers()
-                logger.info(f"Notified workers about immediate task {task_id}.")
-
-            # Trigger eager task execution after the transaction commits.
-            logger.info("Scheduling worker task notification for transaction commit.")
-            db_context.on_commit(notify)
-    except ValueError:  # Re-raise specific errors
-        raise
-    except SQLAlchemyError as e:
-        logger.exception(f"Database error in enqueue_task {task_id}: {e}")
-        raise
-
-
-async def dequeue_task(
-    db_context: DatabaseContext,
-    worker_id: str,
-    task_types: list[str],  # Added context
-    current_time: datetime,  # Added current_time parameter
-) -> TaskDict | None:
-    """Atomically dequeues the next available task."""
-
-    logger.debug(
-        f"Attempting to dequeue task. Worker: {worker_id}, Types: {task_types}, Current Time: {current_time.isoformat()}"
-    )
-    assert db_context.conn is not None  # Ensure conn is available in this context
-
-    # This operation needs to be atomic (SELECT FOR UPDATE + UPDATE)
-    # The transaction is now managed by the DatabaseContext context manager itself.
-    try:
-        # No need to call db_context.begin() here
-
-        stmt = (
-            select(tasks_table)
-            .where(tasks_table.c.status == "pending")
-            .where(tasks_table.c.task_type.in_(task_types))
-            .where(
-                or_(
-                    tasks_table.c.scheduled_at.is_(None),
-                    tasks_table.c.scheduled_at
-                    <= current_time,  # Use passed current_time
-                )
-            )
-            .where(
-                tasks_table.c.retry_count <= tasks_table.c.max_retries
-            )  # Allow task to run when retry_count == max_retries
-            .order_by(
-                tasks_table.c.retry_count.asc(),
-                tasks_table.c.created_at.asc(),
-            )
-            .limit(1)
-            .with_for_update(skip_locked=True)  # Lock the selected row
-        )
-        logger.debug(
-            f"Dequeue task SQL query: {stmt.compile(compile_kwargs={'literal_binds': True})}"
-        )
-        # Execute directly on the connection within the existing transaction
-        result = await db_context.conn.execute(stmt)
-        task_row = result.fetchone()  # Use fetchone directly on the result proxy
-
-        if task_row:
-            logger.debug(
-                f"Task found by {worker_id}: {task_row.task_id} (Internal ID: {task_row.id})"
-            )
-            update_stmt = (
-                update(tasks_table)
-                .where(tasks_table.c.id == task_row.id)
-                .where(
-                    tasks_table.c.status == "pending"
-                )  # Ensure status hasn't changed
-                .values(
-                    status="processing", locked_by=worker_id, locked_at=current_time
-                )  # Use passed current_time
-            )
-            # Execute update directly on the connection
-            update_result = await db_context.conn.execute(update_stmt)
-
-            if update_result.rowcount == 1:
-                # No need to call db_context.commit() here, context manager handles it
-                logger.info(f"Worker {worker_id} dequeued task {task_row.task_id}")
-                return task_row._asdict()  # type: ignore[return-value]
-            else:
-                # This means the row was locked or status changed between select and update
-                logger.warning(
-                    f"Worker {worker_id} failed to lock task {task_row.task_id} after selection (rowcount={update_result.rowcount}). Task might have been picked up by another worker."
-                )
-                # No need to call db_context.rollback() here, context manager handles it on exit if error occurred
-                return None
-        else:
-            logger.debug(
-                f"No suitable task found for worker {worker_id} with types {task_types} at {current_time.isoformat()}."
-            )
-            # No need to call db_context.rollback() here, context manager handles it on exit
-            return None  # No suitable task found
-
-    except SQLAlchemyError as e:
-        logger.exception(f"Database error in dequeue_task: {e}")
-        # Rollback is handled by the context manager's __aexit__ on exception
-        raise
-    except Exception as e:
-        logger.exception(f"Unexpected error in dequeue_task: {e}")
-        # Rollback is handled by the context manager's __aexit__ on exception
-        raise
-
-
-async def update_task_status(
-    db_context: DatabaseContext,  # Added context
-    task_id: str,
-    status: str,
-    error: str | None = None,
-) -> bool:
-    """Updates task status."""
-    values_to_update = {"status": status, "locked_by": None, "locked_at": None}
-    if status == "failed":
-        values_to_update["error"] = error
-
-    try:
-        stmt = (
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(**values_to_update)
-        )
-        # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:  # type: ignore[attr-defined]
-            logger.info(f"Updated task {task_id} status to {status}.")
-            return True
-        else:
-            logger.warning(
-                f"Task {task_id} not found or status unchanged when updating to {status}."
-            )
-            return False
-    except SQLAlchemyError as e:
-        logger.exception(f"Database error in update_task_status({task_id}): {e}")
-        raise
-
-
-async def reschedule_task_for_retry(
-    db_context: DatabaseContext,  # Added context
-    task_id: str,
-    next_scheduled_at: datetime,
-    new_retry_count: int,
-    error: str,
-) -> bool:
-    """Reschedules a task for retry."""
-    if next_scheduled_at.tzinfo is None:
-        raise ValueError("next_scheduled_at must be timezone-aware")
-
-    try:
-        stmt = (
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(
-                status="pending",
-                retry_count=new_retry_count,
-                scheduled_at=next_scheduled_at,
-                error=error,
-                locked_by=None,
-                locked_at=None,
-            )
-        )
-        # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:  # type: ignore[attr-defined]
-            logger.info(
-                f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
-            )
-            return True
-        else:
-            logger.warning(f"Task {task_id} not found when rescheduling for retry.")
-            return False
-    except ValueError:  # Re-raise specific errors
-        raise
-    except SQLAlchemyError as e:
-        logger.exception(f"Database error in reschedule_task_for_retry({task_id}): {e}")
-        raise
-
-
-async def manually_retry_task(
-    db_context: DatabaseContext,
-    internal_task_id: int,  # This is tasks_table.c.id
-) -> bool:
-    """
-    Manually retries a task that has failed or exhausted its retries.
-    Increments max_retries, sets status to pending, and schedules for immediate run.
-    """
-    # For manual retry, using actual current time is acceptable as it's a user-triggered action
-    # not part of the automated time-sensitive worker loop.
-    current_real_time = datetime.now(UTC)
-    try:
-        # Fetch the task by its internal ID
-        select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
-        task_row = await db_context.fetch_one(select_stmt)
-
-        if not task_row:
-            logger.warning(
-                f"Manual retry requested for non-existent task with internal ID {internal_task_id}."
-            )
-            return False
-
-        # Check if task is eligible for manual retry
-        is_failed_status = task_row["status"] == "failed"
-        is_pending_exhausted = (
-            task_row["status"] == "pending"
-            and task_row["retry_count"] >= task_row["max_retries"]
-        )
-
-        if not (is_failed_status or is_pending_exhausted):
-            logger.warning(
-                f"Task with internal ID {internal_task_id} (status: {task_row['status']}, retries: {task_row['retry_count']}/{task_row['max_retries']}) "
-                "is not eligible for manual retry."
-            )
-            return False
-
-        update_values = {
-            "status": "pending",
-            "max_retries": task_row["max_retries"] + 1,
-            "scheduled_at": current_real_time,  # Use current real time for immediate retry
-            "error": None,  # Clear previous error
-            "locked_by": None,
-            "locked_at": None,
-            # retry_count remains as is, it will be compared against the new max_retries
-        }
-
-        update_stmt = (
-            update(tasks_table)
-            .where(tasks_table.c.id == internal_task_id)
-            .values(**update_values)
-        )
-
-        result = await db_context.execute_with_retry(update_stmt)
-
-        if result.rowcount > 0:  # type: ignore[attr-defined]
-            logger.info(
-                f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
-            )
-
-            # Notify workers about the retry; fan out to every registered worker.
-            def notify() -> None:
-                notify_workers()
-                logger.info(
-                    f"Notified workers about manual retry for task internal ID {internal_task_id}."
-                )
-
-            db_context.on_commit(notify)
-            return True
-        else:
-            logger.error(
-                f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."  # type: ignore
-            )
-            return False
-
-    except SQLAlchemyError as e:
-        logger.exception(
-            f"Database error during manual retry for task internal ID {internal_task_id}: {e}"
-        )
-        raise  # Re-raise to be handled by context manager or caller
-    except Exception as e:
-        logger.exception(
-            f"Unexpected error during manual retry for task internal ID {internal_task_id}: {e}"
-        )
-        raise
-
-
-async def get_all_tasks(
-    db_context: DatabaseContext,
-    limit: int = 100,
-) -> list[TaskDict]:
-    """Retrieves tasks, ordered by creation descending."""
-    try:
-        stmt = (
-            select(tasks_table).order_by(tasks_table.c.created_at.desc()).limit(limit)
-        )
-        rows = await db_context.fetch_all(stmt)
-        return rows  # type: ignore[return-value]
-    except SQLAlchemyError as e:
-        logger.exception(f"Database error in get_all_tasks: {e}")
-        raise

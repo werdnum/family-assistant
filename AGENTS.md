@@ -159,6 +159,15 @@ the message-history taint epoch, the read-only diagnostics token, embedding prov
 global tool policy. Look there before adding or changing anything that reads configuration, and
 update it when you add a new setting.
 
+Config fields that hold credentials must be typed `SecretStr` (pydantic). That masks them in
+`model_dump`, so they cannot reach a diagnostic dump, and the guarantee comes from the type rather
+than from anything matching on field names — read the value with `.get_secret_value()` at the point
+of use. `config_inspection.py` handles only what a type cannot express: a credential embedded inside
+a larger value (the password in `database_url`, a `token=` parameter in an endpoint URL), and config
+whose shape is not declared (`mcp_config.mcpServers` is `extra="allow"`, and its `env` blocks are
+keyed by operator-chosen variable names). Add a case to `tests/unit/test_config_inspection.py` when
+you add a credential field.
+
 ### Gemini Computer Use (visual browser profile)
 
 The `browser_visual_profile` drives a browser via Gemini's native computer-use capability, enabled
@@ -269,16 +278,89 @@ supervision requirements based on input trust level:
    user's calendar.
 4. **Engineer Profile [B]**: read-only diagnostic access (source code, database, error logs, notes)
    for debugging the application. Used via `/engineer` or by delegating to the `engineer` profile.
-   It cannot change state or communicate externally on its own; every side effect requires user
-   confirmation — creating GitHub issues, reconnecting an MCP server, and delegation in either
-   direction, so a human approves before the engineer hands off a fix or another profile hands it an
-   investigation. Example: "Why isn't my daily brief firing?"
-5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) with a
-   higher iteration limit (100) for deep multi-step reasoning. Used via `/complex` or delegation
-   from the default assistant. **Not to be confused with `spawn_worker`**, which launches isolated
-   coding agents (Claude Code / Gemini CLI) in sandboxed containers with NO access to Family
-   Assistant tools or data. Use `complex_tasks` when the task needs FA context (notes, calendar,
-   documents, Home Assistant, etc.); use `spawn_worker` for standalone coding or computing tasks.
+   It cannot change state or communicate externally on its own; side effects are gated — creating
+   GitHub issues requires user confirmation, while aligned handoffs, worker launches, sandboxed code
+   execution, and inbound delegations are judged by tool-call review. Example: "Why isn't my daily
+   brief firing?" Code execution is granted by the tag pair `code_execution` + `worker`, which is
+   what execution *outside* the application carries (a deployment's code-execution MCP server,
+   `spawn_worker`); `code_execution` alone — the in-app script tools — stays denied, as does the
+   shared workspace. A sandbox run reproduces a failure or reads a repository without giving the
+   profile anything that writes back, and the `sandbox_network` taint sink gates it whenever the
+   turn carries untrusted content. It runs on the `deep` model tier, with all three tiers selectable
+   per request and Auto in shadow mode, like `default_assistant` below; its routing guidance is more
+   eager, because diagnosis is the work a weaker model loops on without converging.
+5. **Complex Tasks Profile [BC]**: full tool access on the `deep` model tier (OpenAI GPT-5.6-sol at
+   `reasoning_effort: high`, falling back to Claude Fable 5.1), with a higher iteration limit (100)
+   for deep multi-step reasoning. Used via `/complex` or delegation from the default assistant,
+   which runs the `standard` tier (Gemini 3.8 Flash, with GPT-5.6-terra as its fallback) with 50
+   iterations. Which models a tier names is configured in the top-level `model_tiers` map, not on
+   the profile, and a tier is **selectable per request** — a `model_tier` on the chat API or on
+   `delegate_to_service`, bounded by the profile's `allowed_model_tiers` (a user) or
+   `auto_model_tiers` (a model), so `Assistant + Deep` no longer needs this profile. When a request
+   names no tier, `default_assistant` runs the Auto classifier in **shadow mode**: it records which
+   tier it would have chosen while the turn still executes on `standard`, so Auto is evaluated
+   against real outcomes before it decides anything. What survives here is the workflow: the
+   long-investigation guidance and the iteration ceiling. See
+   [docs/operations/CONFIGURATION_REFERENCE.md](docs/operations/CONFIGURATION_REFERENCE.md) and
+   [docs/design/model-tiers.md](docs/design/model-tiers.md). **Not to be confused with
+   `spawn_worker`**, which launches isolated coding agents (Claude Code / Gemini CLI) in sandboxed
+   containers with NO access to Family Assistant tools or data. Use `complex_tasks` when the task
+   needs FA context (notes, calendar, documents, Home Assistant, etc.); use `spawn_worker` for
+   standalone coding or computing tasks.
+6. **Media Analyst Profile [A]**: describes and transcribes audio, video, images and PDFs on Gemini,
+   which is the only configured provider whose adapter represents audio and video at all. Delegated
+   to with `attachment_ids` when a profile's own model cannot read an attachment. It reads untrusted
+   media, so it holds neither [B] nor [C], and denying each takes more than an empty tool policy:
+   context providers inject the user's notes, calendar and known users into every profile's system
+   prompt by default, so they are turned off via `excluded_context_providers`; and
+   `global_tools_policy` rules are injected at the `profile` layer, which outranks the `defaults`
+   layer a profile's own `tools_policy` occupies, so a profile cannot refuse a global grant through
+   its own policy at any priority — `excluded_global_tools` is the mechanism for that, denying in
+   the same layer at a higher priority. All three globally granted tools are withheld here:
+   `read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than
+   only the current turn's artifacts, and `report_technical_problem` persists model-supplied text.
+   The profile therefore reaches no tools at all. Deliberately has no `retry_config`: falling back
+   to a provider that cannot read the media would return a confident description of nothing.
+7. **Coder Profile [C]**: a coding agent — writes and runs code, works with files, reads the web —
+   on Google's Antigravity managed agent (`antigravity-preview-09-2026` reasoning with
+   `gemini-3.8-flash`), in a Google-hosted throwaway sandbox. Used via `/coder` or delegation. It
+   acts but reads nothing of the household's: no aggregated context, and the agent runs server-side
+   with no FA tool surface, so it works only from the request text. As with `media_analyst`, a
+   deny-by-default `tools_policy` does not achieve that alone -- the three globally granted tools
+   are withheld via `excluded_global_tools`, so the profile is not advertised as holding tools it
+   says it has none of; and it has no `retry_config`, because a fallback chat model would answer
+   from its own knowledge instead of running the task. **Three ways to reach a coding agent, and
+   they are not interchangeable**: `coder` for self-contained code and computation, with the result
+   returned into the conversation; `spawn_worker` when the agent must read or write the *shared
+   workspace* in our own sandbox; `complex_tasks` when the task needs FA context (notes, calendar,
+   documents). See
+   [docs/design/gemini-antigravity-managed-agent.md](docs/design/gemini-antigravity-managed-agent.md).
+   **[C] is the shipped configuration, not a fixed property.** `antigravity_config.environment` can
+   attach a credential — a GitHub App token, say — to the sandbox's egress proxy, which adds [B] to
+   a profile that already reads the open web. `defaults.yaml` ships no `environment` block precisely
+   so that widening is a deployment's explicit choice; where a deployment makes it, the profile's
+   `taint_sink_class: "sandbox_network"` under `taint_policy.mode: "enforce"` is what keeps
+   untrusted content from directing an agent holding real credentials. See
+   [docs/design/antigravity-environment-and-credentials.md](docs/design/antigravity-environment-and-credentials.md).
+8. **Memory Curator Profile [BC]**: reviews a settled conversation and proposes edits to the
+   household's memory notes. It reads sensitive data and writes state, so **both are confined to
+   memory-labelled notes** and it reaches nothing else of the household's. Confinement is
+   configuration, not code: a **read policy** (`required_note_read_labels: [memory]`) applied at
+   every boundary that resolves notes or skills for a profile — grants alone do not confine, since
+   an unlabelled note is a subset of any grant set — and the matching **write floor**
+   (`required_note_visibility_labels: [memory]`), which makes the notes repository refuse a write to
+   anything else. It holds `get_note` and `propose_memory_edits` and nothing more: no
+   `search_documents` (the widest path from the indexed corpus into a turn with no human in it), no
+   `delete_note` (deletion is not a write under the confinement policy, so it would remove any note
+   the curator can see; removals are edits in the proposed list), no messaging, calendar,
+   scheduling, egress or delegation, and the three globally granted tools withheld through
+   `excluded_global_tools` as `media_analyst` and `coder` do. Every context provider but `notes` is
+   excluded, because calendar, contacts, weather and home state do not come from the notes table and
+   no note-read confinement touches them. **It is run by the memory review task, not delegated to**:
+   the task hands it a rendered transcript bound to an evidence scope and a store revision, so an
+   arbitrary inbound request would carry neither (`allowed_delegation_sources: []`,
+   `delegation_security_level: blocked`, `allow_wake_llm: false`, no slash command). See
+   [docs/design/conversation-memory.md](docs/design/conversation-memory.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.
@@ -309,9 +391,38 @@ least-privilege access, input validation, and defense in depth.
   reasonable behaviour suffices; that trades disproportionate complexity for negligible benefit and
   tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in
   `REVIEW_GUIDELINES.md`).
-- **Never leave tests broken.** Fix all test failures rather than dismissing them as 'unrelated' or
-  'pre-existing' — you are responsible for failures in or near the code you changed. For flakiness
-  in areas completely unrelated to your change, see "Debugging and Change Verification" below.
+- **Withdraw unrequested promises before defending them.** Do not invent guarantees, coverage
+  claims, or attestations the user did not request and then add machinery to make them true. If
+  review shows such a promise cannot be justified, narrow or remove the promise first; reviewers
+  must question whether the promise belongs, not only whether it is proven.
+- **Stop review-fix loops at the scope boundary.** On rereview, distinguish defects in the original
+  change from defects introduced by earlier feedback. If repairing review-added code would require
+  another layer of state, validation, attestation, retries, or lifecycle machinery, prefer deletion,
+  narrowing, reuse of an existing chokepoint, or an accepted bounded residual unless the user
+  explicitly authorizes the expanded design.
+- **Design docs are approach-level documents.** When review surfaces an edge case in a design doc,
+  respond by increasing altitude — restate the rule so the general case covers it — rather than
+  appending a paragraph for that case. Defer construction detail (field names, wire formats,
+  plumbing) to the implementing PRs, where the type checker, tests and conformance rules verify it
+  instead of prose; a design doc's work plan should name each milestone's outcome and how it will be
+  verified, and leave the construction to the PR. See "Reviewing Design Documents" in
+  `REVIEW_GUIDELINES.md` for the reviewer-side counterpart.
+- **Prefer enforcement chokepoints over enumeration.** A design that depends on finding every
+  instance of something (every call site, every tool that writes, every path that renders untrusted
+  text) will decay as the code evolves. Route all instances through one place — a shared serializer,
+  a required registry, a type, a conformance rule — so a missed instance fails loudly instead of
+  slipping through. Arrange mechanisms so neglect degrades availability (visible failure, gets
+  fixed) rather than safety (silent widening, gets exploited), and check that every gate leaves a
+  satisfiable path for ordinary use: a gate that blocks normal workflows gets turned off and then
+  protects nothing.
+- **Record accepted trade-offs where reviewers will find them.** When you and the user deliberately
+  accept a residual risk or simplification, write it down in the change or its design doc (e.g. a
+  "Deliberate simplifications" section) with the rationale. A documented, reasoned acceptance closes
+  the thread; an undocumented one gets re-litigated every review round.
+- **Do not leave failures caused by the change broken.** Investigate failures in or near the code
+  you changed and fix those caused by or plausibly coupled to it. Report unrelated, pre-existing, or
+  environmental failures as blockers or follow-up work rather than automatically expanding the PR.
+  For unrelated flakiness, see "Debugging and Change Verification" below.
 - **Hook bypassing**: never bypass pre-commit hooks, PreToolUse hooks, or other verification hooks
   (e.g. `--no-verify`, `--no-gpg-sign`) without explicit permission from the user.
 
@@ -432,15 +543,44 @@ placement, auth, and the error-vs-telemetry reporting lanes.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL
   text may break across engines.
 
-- **Database Access Pattern**: Use the repository pattern via DatabaseContext:
+- **Database Access Pattern**: use the repository pattern via a `Database` handle. It is **not** a
+  context manager: every operation on it opens its own transaction and commits before returning, so
+  the write is durable when the call returns and the handle can be passed freely across turns,
+  tasks, and tool calls.
 
   ```python
-  from family_assistant.storage.context import DatabaseContext
+  from family_assistant.storage.database import Database
 
-  async with DatabaseContext() as db:
-      await db.notes.add_or_update(title, content)
-      tasks = await db.tasks.get_pending_tasks()
+  db = Database(engine)
+  await db.notes.add_or_update(title, content)   # committed
+  tasks = await db.tasks.get_pending_tasks()
   ```
+
+  Reach for `DatabaseTransaction` only where rollback is load-bearing — a sequence that must not be
+  half-applied:
+
+  ```python
+  async with db.transaction() as txn:
+      run_id = await txn.delegation_runs.create_run(...)
+      await txn.tasks.enqueue(DELEGATED_PROFILE_RUN_TASK_TYPE, ...)
+  ```
+
+  Three rules follow, all enforced at runtime rather than by review:
+
+  - **Nothing inside a transaction may reach the handle.** Use `txn.<repository>`, hoist handle work
+    to before the block, or — for genuinely detached work — `spawn_detached()`. A handle operation
+    under an open transaction raises `AmbientTransactionError` in production on both backends,
+    because the alternatives are a deadlock on SQLite and a silent escape from rollback on
+    PostgreSQL.
+  - **Converting a site to a transaction includes auditing its call tree.** Everything reached from
+    inside must take the `DatabaseTransaction` or touch no database at all — including chat
+    interfaces, which resolve targets and fetch attachments from their own handle while sending.
+  - **No transaction may span an LLM call, a tool dispatch, or a network round trip.** Split the
+    work; do not widen the block.
+
+  For multi-statement repository methods, use the closure form `await db.atomic(body)` rather than
+  the block: it can be replayed after a rollback, which is what makes serialization failures and
+  deadlocks retryable. See [docs/design/db-commit-as-you-go.md](docs/design/db-commit-as-you-go.md).
 
 - **SQLAlchemy Count Queries**: give `func.count()` an alias with `.label("count")` — this avoids a
   KeyError when accessing the result:

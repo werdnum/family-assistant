@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import literal, select, union_all
 from sqlalchemy.sql import functions as func
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.events import event_listeners_table
 from family_assistant.storage.models import Automation
@@ -33,7 +33,7 @@ class AutomationsRepository(BaseRepository):
     Name uniqueness is enforced across both automation types at this layer.
     """
 
-    def __init__(self, db_context: DatabaseContext) -> None:
+    def __init__(self, db_context: Database) -> None:
         """Initialize with database context."""
         super().__init__(db_context)
         self._events_repo = EventsRepository(db_context)

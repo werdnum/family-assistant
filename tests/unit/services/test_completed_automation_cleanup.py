@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import update
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.events import event_listeners_table
 from family_assistant.task_worker import handle_completed_automation_cleanup
 
@@ -26,19 +26,19 @@ class MinimalContext:
     interface_type: str
     conversation_id: str
     user_name: str
-    db_context: DatabaseContext
+    db_context: Database
     processing_service: None = None
 
 
 @pytest.fixture
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
     """Create a database context for testing."""
-    async with DatabaseContext(engine=db_engine) as context:
-        yield context
+    context = Database(engine=db_engine)
+    yield context
 
 
 @pytest.fixture
-def exec_context(db_context: DatabaseContext) -> MinimalContext:
+def exec_context(db_context: Database) -> MinimalContext:
     """Create a minimal execution context for testing."""
     return MinimalContext(
         interface_type="test",
@@ -53,7 +53,7 @@ class TestCompletedAutomationCleanup:
 
     @pytest.mark.asyncio
     async def test_deletes_old_completed_one_time_listeners(
-        self, exec_context: MinimalContext, db_context: DatabaseContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
         """Test that completed one-time listeners older than retention are deleted."""
         # Create a one-time listener
@@ -73,7 +73,7 @@ class TestCompletedAutomationCleanup:
             .where(event_listeners_table.c.id == listener_id)
             .values(enabled=False, last_execution_at=old_time)
         )
-        await db_context.execute_with_retry(stmt)
+        await db_context.execute(stmt)
 
         # Run cleanup with 24 hour retention
         await handle_completed_automation_cleanup(exec_context, {"retention_hours": 24})  # type: ignore[arg-type]
@@ -84,7 +84,7 @@ class TestCompletedAutomationCleanup:
 
     @pytest.mark.asyncio
     async def test_preserves_recently_completed_one_time_listeners(
-        self, exec_context: MinimalContext, db_context: DatabaseContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
         """Test that recently completed one-time listeners are preserved."""
         listener_id = await db_context.events.create_event_listener(
@@ -103,7 +103,7 @@ class TestCompletedAutomationCleanup:
             .where(event_listeners_table.c.id == listener_id)
             .values(enabled=False, last_execution_at=recent_time)
         )
-        await db_context.execute_with_retry(stmt)
+        await db_context.execute(stmt)
 
         await handle_completed_automation_cleanup(exec_context, {"retention_hours": 24})  # type: ignore[arg-type]
 
@@ -113,7 +113,7 @@ class TestCompletedAutomationCleanup:
 
     @pytest.mark.asyncio
     async def test_preserves_enabled_one_time_listeners(
-        self, exec_context: MinimalContext, db_context: DatabaseContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
         """Test that enabled (not yet fired) one-time listeners are preserved."""
         listener_id = await db_context.events.create_event_listener(
@@ -133,7 +133,7 @@ class TestCompletedAutomationCleanup:
 
     @pytest.mark.asyncio
     async def test_preserves_recurring_listeners(
-        self, exec_context: MinimalContext, db_context: DatabaseContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
         """Test that recurring (non-one-time) disabled listeners are preserved."""
         listener_id = await db_context.events.create_event_listener(
@@ -153,7 +153,7 @@ class TestCompletedAutomationCleanup:
 
     @pytest.mark.asyncio
     async def test_uses_default_retention(
-        self, exec_context: MinimalContext, db_context: DatabaseContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
         """Test that cleanup uses default 24h retention when not specified."""
         # Create a listener completed 25 hours ago (older than 24h default)
@@ -171,7 +171,7 @@ class TestCompletedAutomationCleanup:
             .where(event_listeners_table.c.id == old_listener_id)
             .values(enabled=False, last_execution_at=old_time)
         )
-        await db_context.execute_with_retry(stmt)
+        await db_context.execute(stmt)
 
         # Create a listener completed 23 hours ago (within 24h default)
         recent_listener_id = await db_context.events.create_event_listener(
@@ -188,7 +188,7 @@ class TestCompletedAutomationCleanup:
             .where(event_listeners_table.c.id == recent_listener_id)
             .values(enabled=False, last_execution_at=recent_time)
         )
-        await db_context.execute_with_retry(stmt)
+        await db_context.execute(stmt)
 
         # Run cleanup with no retention_hours specified (should use 24h default)
         await handle_completed_automation_cleanup(exec_context, {})  # type: ignore[arg-type]

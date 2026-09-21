@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import metadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor
 
 # Define the error_logs table
 error_logs_table = Table(
@@ -47,7 +47,7 @@ error_logs_table = Table(
 
 
 async def get_error_logs(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     *,
     level: str | None = None,
     logger_name: str | None = None,
@@ -74,7 +74,7 @@ async def get_error_logs(
 
 
 async def get_error_log_by_id(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     error_id: int,
     # ast-grep-ignore: no-dict-any - database row has dynamic columns from query
 ) -> dict[str, Any] | None:
@@ -85,7 +85,7 @@ async def get_error_log_by_id(
 
 
 async def count_error_logs(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     *,
     level: str | None = None,
     logger_name: str | None = None,
@@ -106,12 +106,12 @@ async def count_error_logs(
 
 
 async def cleanup_old_error_logs(
-    db_context: DatabaseContext, retention_days: int = 30
+    db_context: DatabaseExecutor, retention_days: int = 30
 ) -> int:
     """Remove error logs older than retention period. Returns number of deleted rows."""
     cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
 
     stmt = delete(error_logs_table).where(error_logs_table.c.timestamp < cutoff_date)
-    result = await db_context.execute_with_retry(stmt)
+    result = await db_context.execute(stmt)
 
     return result.rowcount

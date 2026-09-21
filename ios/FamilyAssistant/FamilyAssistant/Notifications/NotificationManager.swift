@@ -444,10 +444,15 @@ final class NotificationManager {
     }
 
     private func performRequest(_ request: URLRequest) async throws {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotificationError.authWall)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NotificationError.invalidResponse
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: NotificationError.authWall
+        )
         guard 200..<300 ~= httpResponse.statusCode else {
             let body = String(data: data, encoding: .utf8)
             throw NotificationError.server(statusCode: httpResponse.statusCode, body: body)
@@ -559,6 +564,7 @@ private enum NotificationError: LocalizedError {
     case invalidServerURL
     case invalidResponse
     case notAuthenticated
+    case authWall
     case server(statusCode: Int, body: String?)
 
     var errorDescription: String? {
@@ -569,6 +575,8 @@ private enum NotificationError: LocalizedError {
             "The server returned an invalid response."
         case .notAuthenticated:
             "Sign in before enabling notifications."
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .server(let statusCode, let body):
             if let body, !body.isEmpty {
                 "Notification server request failed with status \(statusCode): \(body)"

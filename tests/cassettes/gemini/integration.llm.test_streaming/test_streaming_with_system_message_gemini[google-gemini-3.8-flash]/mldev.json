@@ -1,0 +1,209 @@
+{
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_system_message_gemini[google-gemini-3.8-flash]/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "System: You are a helpful assistant that responds in a very concise manner."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "What is the capital of France? Reply in exactly one word."
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "text/event-stream",
+          "Content-Disposition": "attachment",
+          "Vary": "Origin, X-Origin, Referer",
+          "Transfer-Encoding": "chunked",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Paris"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 134,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 30
+                }
+              ],
+              "thoughtsTokenCount": 103,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "zzyYavjuF__Eg8UP0qSy8Ag"
+          },
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "",
+                      "thoughtSignature": "Eq0ECqoEARFNMg8QqaXIXzHh+BDI43siyoLiBevLYEjcoo+fk3noAERQCMBBzQ8rRKip7ka36dNxQTO7d+nOm1X7SSXavpBAdBm5Xqvh0HynD2o+TDe63uPgMqE/CJnCmjqNOOniGlC24OB9YpoflifXOTrYdGpv1YJXo7AOdB7FALUQaeCizgYYS+hbGaZ0vRQ+DGOT9Gm8M569avNPdybVvLbWZK9tX24/qaXw73Tz/7g0unJLP12cXzoARGVlLpRBkRgtuf4roUgVa7JpX7NaL5bCBJW+aqaJWjrnX8thlUTdCA0Lk5AIOQh3/xwEfA3U7pj7anntKnIhXGfLbWlR/gNkZ+NdQGEU4rSBcsan4saCJavs6BcvbkV4Ak4GsWp5fL+tN3wCStfxjDERuMIZSLxbQJ3jybz0sutXmy/VbcdVN+1YZausuGEDaHVHzmLxC/w7Mv0EoamkWUbHCEHO77ZYxwI3n+ioTriuoG2MMhhhWf6YyCzYqXuHO6s4RBB+hYXCGGzx+wgkHb9Htr4apDsnKmEhyKuso5wN9iWi2NK8SOGXpZDZGsAuQSPLDviZT1M09oBY7Wck2unNoB6AdiIV9pHoZrCnEsx+urEjXpsLRhjZz5DH4cKnA/PQjEjbXyJ8nnwUBqsnxah85Jrev0DU8swqo7J1XQH2G8PwSjX/MHTwf4saVR4HdTYEjJ/jzaq6gdb90YQkR48acRDYK+d1zB8IOlysuhnh9bA="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 134,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 30
+                }
+              ],
+              "thoughtsTokenCount": 103,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "zzyYavjuF__Eg8UP0qSy8Ag"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Paris"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.8-flash",
+            "response_id": "zzyYavjuF__Eg8UP0qSy8Ag",
+            "usage_metadata": {
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 30
+                }
+              ],
+              "thoughts_token_count": 103,
+              "total_token_count": 134
+            }
+          },
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "",
+                      "thought_signature": "Eq0ECqoEARFNMg8QqaXIXzHh-BDI43siyoLiBevLYEjcoo-fk3noAERQCMBBzQ8rRKip7ka36dNxQTO7d-nOm1X7SSXavpBAdBm5Xqvh0HynD2o-TDe63uPgMqE_CJnCmjqNOOniGlC24OB9YpoflifXOTrYdGpv1YJXo7AOdB7FALUQaeCizgYYS-hbGaZ0vRQ-DGOT9Gm8M569avNPdybVvLbWZK9tX24_qaXw73Tz_7g0unJLP12cXzoARGVlLpRBkRgtuf4roUgVa7JpX7NaL5bCBJW-aqaJWjrnX8thlUTdCA0Lk5AIOQh3_xwEfA3U7pj7anntKnIhXGfLbWlR_gNkZ-NdQGEU4rSBcsan4saCJavs6BcvbkV4Ak4GsWp5fL-tN3wCStfxjDERuMIZSLxbQJ3jybz0sutXmy_VbcdVN-1YZausuGEDaHVHzmLxC_w7Mv0EoamkWUbHCEHO77ZYxwI3n-ioTriuoG2MMhhhWf6YyCzYqXuHO6s4RBB-hYXCGGzx-wgkHb9Htr4apDsnKmEhyKuso5wN9iWi2NK8SOGXpZDZGsAuQSPLDviZT1M09oBY7Wck2unNoB6AdiIV9pHoZrCnEsx-urEjXpsLRhjZz5DH4cKnA_PQjEjbXyJ8nnwUBqsnxah85Jrev0DU8swqo7J1XQH2G8PwSjX_MHTwf4saVR4HdTYEjJ_jzaq6gdb90YQkR48acRDYK-d1zB8IOlysuhnh9bA="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.8-flash",
+            "response_id": "zzyYavjuF__Eg8UP0qSy8Ag",
+            "usage_metadata": {
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 30
+                }
+              ],
+              "thoughts_token_count": 103,
+              "total_token_count": 134
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

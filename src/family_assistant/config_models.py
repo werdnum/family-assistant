@@ -11,20 +11,57 @@ Configuration priority (lowest to highest):
 1. Code defaults (defined in model Field defaults)
 2. config.yaml file
 3. Environment variables
+
+Fields that hold credentials
+----------------------------
+Type a credential-bearing field ``SecretStr``. Pydantic then masks it in
+``model_dump``, so it cannot reach a diagnostic dump
+(``get_resolved_config``, ``get_profile_config``, ``GET /api/debug/profiles``),
+and the guarantee is enforced by the type rather than by anything guessing from
+the field's name.
+
+Startup logging in ``config_loader`` routes whole-config logs through
+:func:`family_assistant.config_inspection.redact_sensitive_config` using
+``model_dump(mode="json")`` on successful validation (omitting whole-config
+logging on validation failure to prevent leaking pre-validation raw secrets).
+Read the value with ``.get_secret_value()`` at the point of use; the type
+checker will point out every place that needs it.
+
+Two things this cannot express, handled in
+:mod:`family_assistant.config_inspection` instead:
+
+* A credential *inside* a larger value -- the password in ``database_url``, a
+  ``token=`` parameter in an endpoint. The field as a whole is not secret and
+  masking it would throw away the host and database an operator needs.
+* Config whose shape is not declared -- ``mcp_config.mcpServers`` uses
+  ``extra="allow"`` and its ``env`` blocks are keyed by operator-chosen
+  variable names, so there is no field to annotate.
+
+Add a case to ``tests/unit/test_config_inspection.py`` when you add a
+credential field.
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
+import re
 import zoneinfo
 from contextvars import ContextVar
 from email.utils import parseaddr
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -34,9 +71,17 @@ if TYPE_CHECKING:
 
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
-from .security.taint import TaintPolicyConfig
+from .memory.limits import MemoryLimits
+from .memory.review_settings import MemoryReviewSettings
+from .security.taint import SinkClass, TaintPolicyConfig
+from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
+from .tools.mcp_attachments import (
+    MCPAttachmentMode,
+    file_path_mode_is_supported,
+)
 from .tools.policy import (
-    ToolPolicyConfig,  # noqa: TC001 - Pydantic resolves this model at runtime
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 
 
@@ -47,6 +92,14 @@ class RetryModelConfig(BaseModel):
 
     provider: str | None = None
     model: str | None = None
+    # Request parameters for this entry only, overlaid on the top-level
+    # `llm_parameters` map. That map is keyed by model substring, so the same
+    # model at two reasoning efforts cannot be expressed there at all -- the
+    # first matching pattern wins for every use of the model. An overlay here
+    # is re-inserted under the entry's exact model id after the global patterns,
+    # so it applies last and only to this entry.
+    # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
+    llm_parameters: dict[str, Any] | None = None
 
 
 class RetryConfig(BaseModel):
@@ -58,6 +111,135 @@ class RetryConfig(BaseModel):
     fallback: RetryModelConfig | None = None
 
 
+_TIER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_TIER_SLASH_COMMAND_PATTERN = re.compile(r"^/[a-z0-9_]{1,31}$")
+
+
+def _reject_built_in_slash_command(claimant: str, command: str) -> None:
+    """Refuse a configured command the bot already answers itself.
+
+    ``command`` must already be normalised. The built-in handlers are registered
+    before any configured command and Telegram dispatches to the first match, so
+    a configuration claiming one of those names loses every time: the built-in
+    action runs and the thing that was configured never does. Failing at startup
+    says so, rather than advertising a command in the menu that does something
+    else entirely.
+    """
+    if command not in BUILT_IN_SLASH_COMMANDS:
+        return
+    msg = (
+        f"{claimant} uses slash command {command!r}, which the bot answers with "
+        "a built-in command. Built-in handlers are registered first and win, so "
+        "the configured command would never run."
+    )
+    raise ValueError(msg)
+
+
+class ModelTierConfig(BaseModel):
+    """A named model recipe: which models to run, and how.
+
+    A tier says how inference runs; a profile says how the agent operates.
+    Profiles reference a tier by name through
+    ``processing_config.model_tier`` instead of naming providers and models
+    inline, so replacing a model is a tier-map edit rather than a change to
+    every profile that used it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Primary first, optional availability fallback second. Two entries is the
+    # ceiling because that is what RetryingLLMClient serves: a chain answers
+    # "what if the selected model is unavailable", not "try progressively
+    # weaker models".
+    chain: list[RetryModelConfig]
+    # User-facing name for the tier (e.g. "Max" for `frontier`). Config
+    # vocabulary and UI vocabulary are deliberately allowed to differ.
+    label: str | None = None
+    # One line describing when this tier is worth its cost.
+    description: str | None = None
+    # Per-message chat command that runs one request on this tier, on whatever
+    # profile the conversation is already using. A tier command and a profile
+    # command are separate commands rather than a combinatorial set, so a
+    # message carries one or the other.
+    slash_command: str | None = None
+
+    @field_validator("slash_command")
+    @classmethod
+    def validate_slash_command(cls, v: str | None) -> str | None:
+        if v is not None and not _TIER_SLASH_COMMAND_PATTERN.match(v):
+            msg = (
+                f"Invalid model tier slash_command {v!r}. It must start with '/' "
+                "and continue with 1-31 lowercase letters, digits or underscores."
+            )
+            raise ValueError(msg)
+        return v
+
+    @field_validator("chain")
+    @classmethod
+    def validate_chain(cls, v: list[RetryModelConfig]) -> list[RetryModelConfig]:
+        if not 1 <= len(v) <= 2:
+            msg = (
+                f"A model tier chain must have 1 or 2 entries (a primary and an "
+                f"optional fallback), got {len(v)}."
+            )
+            raise ValueError(msg)
+        if any(not entry.model for entry in v):
+            msg = "Every model tier chain entry must set 'model'."
+            raise ValueError(msg)
+        return v
+
+
+class ModelRoutingConfig(BaseModel):
+    """The Auto classifier: whether it runs, and what runs it.
+
+    Auto is a routing policy over tiers rather than a tier of its own. One
+    classifier serves every profile that opts in with
+    ``processing_config.model_selection: auto``; what differs per profile is
+    the tier list it chooses from and the profile's ``auto_routing_guidance``,
+    both of which travel with the request. A second classifier per profile
+    would be a second model to evaluate for no decision it could make better.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["off", "shadow", "active"] = "off"
+    """``shadow`` records what Auto would have chosen while the run executes on
+    the profile's configured tier; ``active`` lets the decision pick the tier.
+    ``off`` never calls the classifier at all."""
+    classifier: RetryModelConfig = Field(default_factory=RetryModelConfig)
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    history_messages: int = Field(default=6, ge=0)
+    """How many recent messages of the conversation the classifier sees."""
+
+
+class ToolCallReviewEscalationConfig(BaseModel):
+    """Turn-local thresholds used by tool-call review escalation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    consecutive_denials: int = Field(default=3, ge=1)
+    total_denials_per_turn: int = Field(default=20, ge=1)
+
+
+class ToolCallReviewConfig(BaseModel):
+    """Configuration for the non-agentic tool-call reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    provider: str | None = "google"
+    # See defaults.yaml: 3.8 roughly sextuples benign friction on real household
+    # tool calls without allowing fewer attacks, so the judge stays on 3.7.
+    model: str = "gemini-3.7-flash"
+    retry_config: RetryConfig | None = None
+    timeout_seconds: float = Field(default=30.0, gt=0)
+    max_reviews_per_turn: int = Field(default=25, ge=1)
+    escalation: ToolCallReviewEscalationConfig = Field(
+        default_factory=ToolCallReviewEscalationConfig
+    )
+    guidance: str = ""
+
+
 class ReolinkCameraItemConfig(BaseModel):
     """Configuration for a single Reolink camera."""
 
@@ -65,7 +247,7 @@ class ReolinkCameraItemConfig(BaseModel):
 
     host: str
     username: str
-    password: str
+    password: SecretStr
     port: int | None = None  # None means auto-detect based on use_https
     use_https: bool = True
     channel: int = 0
@@ -93,6 +275,145 @@ class CameraConfig(BaseModel):
 
     backend: str = "reolink"  # Currently only 'reolink' is supported
     cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
+
+
+class AntigravityEgressCredentialConfig(BaseModel):
+    """A credential the sandbox's egress proxy injects on matching requests.
+
+    Names a *kind* of credential, never a value: the secret material is read
+    from the process environment when a run is submitted, so a leaked config
+    file discloses which domains get a credential rather than the credential.
+    The sandbox never receives it either -- the proxy adds the header on the
+    way out, so nothing the agent can print or write to a file contains it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # `github_app`: mint a short-lived installation access token from the
+    # GitHub App named by GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID and the
+    # private key at GITHUB_APP_PRIVATE_KEY_PATH (or inline in
+    # GITHUB_APP_PRIVATE_KEY). `bearer`: use the static token in `token_env`.
+    type: Literal["github_app", "bearer"]
+    header_name: str = "Authorization"
+    # `bearer` renders "Bearer <token>"; `basic` renders
+    # "Basic base64(x-access-token:<token>)", which is how GitHub authenticates
+    # git-over-HTTPS as opposed to its REST API. Getting this wrong surfaces as
+    # a 401 midway through an agent run rather than as a config error, so it is
+    # chosen per rule rather than guessed from the domain.
+    scheme: Literal["bearer", "basic"] = "bearer"
+    # Required by (and only meaningful to) `type: "bearer"`.
+    token_env: str | None = None
+
+    @model_validator(mode="after")
+    def validate_credential(self) -> AntigravityEgressCredentialConfig:
+        if self.type == "bearer" and not self.token_env:
+            msg = "Antigravity egress credential of type 'bearer' requires 'token_env'"
+            raise ValueError(msg)
+        if self.type != "bearer" and self.token_env:
+            msg = (
+                f"Antigravity egress credential of type '{self.type}' does not "
+                "read 'token_env'"
+            )
+            raise ValueError(msg)
+        return self
+
+
+class AntigravityEgressRuleConfig(BaseModel):
+    """One domain rule for the Antigravity sandbox's egress proxy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Supports wildcards ("*.githubusercontent.com"); "*" matches every domain,
+    # which is how the API spells "restrict nothing, but still inject headers
+    # on the rules that carry a credential".
+    domain: str
+    # Static headers injected alongside any credential. For non-secret values
+    # only -- a secret belongs in `credential`, which reads the environment.
+    headers: dict[str, str] = Field(default_factory=dict)
+    credential: AntigravityEgressCredentialConfig | None = None
+
+
+class AntigravityEnvironmentConfig(BaseModel):
+    """The sandbox environment one Antigravity run gets.
+
+    Today this is the egress policy: whether the sandbox reaches the network at
+    all, which domains it may reach, and which credentials the proxy attaches
+    on the way out. Mounted files are not configured here -- they come from a
+    delegation's attachments (see ``InteractionsAgentProcessingService``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # `default` sends no network block, leaving the API's own policy (all
+    # outbound traffic allowed, no injection). `disabled` cuts the sandbox off
+    # entirely. `allowlist` sends `allowlist` and nothing else is reachable.
+    network: Literal["default", "disabled", "allowlist"] = "default"
+    allowlist: list[AntigravityEgressRuleConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_network(self) -> AntigravityEnvironmentConfig:
+        if self.network == "allowlist" and not self.allowlist:
+            msg = (
+                "Antigravity environment sets network: 'allowlist' with an "
+                "empty allowlist, which leaves the sandbox unable to reach "
+                "anything. Use network: 'disabled' to mean that deliberately."
+            )
+            raise ValueError(msg)
+        if self.network != "allowlist" and self.allowlist:
+            msg = (
+                f"Antigravity environment sets an allowlist but network is "
+                f"'{self.network}', so the allowlist would be discarded. Set "
+                "network: 'allowlist' to apply it."
+            )
+            raise ValueError(msg)
+        return self
+
+
+class AntigravityConfig(BaseModel):
+    """Runtime configuration for a Google Antigravity managed-agent profile.
+
+    Only meaningful on a profile whose ``llm_model`` is the Antigravity agent
+    id: the agent id selects the managed agent, and these fields select the
+    model it reasons with, cap what a single run may spend, and describe the
+    sandbox environment it runs in.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The agent's reasoning model. Pinned rather than left to the API default
+    # so an upstream default change is a config change here, not a silent
+    # behaviour change in a profile users have calibrated their prompts to.
+    model: str = "gemini-3.8-flash"
+    # Ceiling on the tokens one agent run may consume. Unset means the API's
+    # own default; the agent plans and executes autonomously in a sandbox, so
+    # this is the only bound on how long it iterates other than wall clock.
+    max_total_tokens: int | None = Field(default=None, gt=0)
+    # Unset means a fresh default sandbox with unrestricted egress and no
+    # credentials, which is what the profile ships as. Configuring a credential
+    # here widens the profile's Rule of Two class -- see
+    # docs/design/antigravity-environment-and-credentials.md.
+    environment: AntigravityEnvironmentConfig | None = None
+
+
+# The `name` of every context provider the assistant can attach to a profile.
+# Duplicated here rather than imported so config validation does not depend on
+# the provider module; `test_context_provider_names_match_config` keeps the two
+# in step, since a name drifting out of this set would silently turn an
+# exclusion into a no-op.
+CONTEXT_PROVIDER_NAMES: frozenset[str] = frozenset({
+    "notes",
+    "calendar",
+    "known_users",
+    "weather",
+    "home_assistant",
+})
+
+_GLOB_METACHARACTERS = "*?["
+
+
+def _is_glob(name: str) -> bool:
+    """Whether a tool name contains `fnmatch` wildcard syntax."""
+    return any(char in name for char in _GLOB_METACHARACTERS)
 
 
 class ProcessingConfig(BaseModel):
@@ -124,13 +445,63 @@ class ProcessingConfig(BaseModel):
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'anthropic'
     retry_config: RetryConfig | None = None
+    # Name of an entry in the top-level `model_tiers` map. A profile names
+    # either a tier or an inline model (`provider`/`llm_model`/`retry_config`),
+    # never both -- the loader rejects a definition that does both, and a
+    # declaration of either kind drops the other when inherited.
+    model_tier: str | None = None
+    # Whether this profile's tier is fixed by whoever asked (`explicit`) or
+    # chosen per request by the Auto classifier (`auto`). Auto never reaches
+    # past `auto_model_tiers`, and `model_tier` remains the tier a run lands on
+    # when nothing selected one and when routing fails.
+    model_selection: Literal["explicit", "auto"] = "explicit"
+    review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
     home_assistant_api_url: str | None = None
-    home_assistant_token: str | None = None
+    home_assistant_token: SecretStr | None = None
     home_assistant_context_template: str | None = None
     home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
+    # Context providers inject the user's own data -- notes, calendar, known
+    # users, weather, Home Assistant state -- into the system prompt. A profile
+    # that exists to look at one attachment and answer in text has no use for
+    # any of it, and injecting it hands private data to a prompt built around
+    # untrusted content. Listing a provider name here drops it for this profile.
+    excluded_context_providers: list[str] = Field(default_factory=list)
+    # Master switch for the same data, above excluded_context_providers: false
+    # means the profile receives no aggregated context at all. Defaults to false
+    # so a profile nobody thought about is denied rather than granted -- most
+    # shipped profiles want none of it, and two of them (media_analyst,
+    # telephone_external) must not have it. The current time is injected either
+    # way; it is not what this gates.
+    include_aggregated_context: bool = False
+
+    @field_validator("excluded_context_providers")
+    @classmethod
+    def validate_excluded_context_providers(cls, v: list[str]) -> list[str]:
+        unknown = sorted(set(v) - CONTEXT_PROVIDER_NAMES)
+        if unknown:
+            msg = (
+                f"Unknown context provider(s) in excluded_context_providers: "
+                f"{', '.join(unknown)}. Valid names: "
+                f"{', '.join(sorted(CONTEXT_PROVIDER_NAMES))}."
+            )
+            raise ValueError(msg)
+        return v
+
+    # Only read when llm_model is the Antigravity managed agent; a profile
+    # pointing anywhere else is rejected at startup rather than silently
+    # ignoring this.
+    antigravity_config: AntigravityConfig | None = None
+    # The runtime-taint sink class a whole turn on this profile counts as.
+    # Set it on a profile whose turn is itself a privileged operation -- a
+    # sandbox that runs code, say -- so the taint matrix gates reaching the
+    # profile at all, the way it already gates the equivalent tool. Unset (the
+    # default) means the profile is not a sink in its own right and only its
+    # tools are evaluated.
+    taint_sink_class: SinkClass | None = None
+
     max_iterations: int = 5
     context_pruning_min_turns: int = 3
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
@@ -139,6 +510,25 @@ class ProcessingConfig(BaseModel):
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    # Read floor, the mirror of required_note_visibility_labels. A note or file
+    # skill must carry every label listed here to be readable by this profile.
+    # Grants alone cannot express this: a note is visible when its labels are a
+    # *subset* of the grants, so an unlabelled note -- and every label-less file
+    # skill -- is visible to every reader. None (the default) is the ordinary
+    # reader, confined by grants only.
+    required_note_read_labels: list[str] | None = None
+    # Whether this profile sees the household's conversation memory, and
+    # whether its conversations are reviewed into it. Two settings because they
+    # are two decisions: a specialised profile can benefit from the household's
+    # standing preferences without teaching its own conversations back into
+    # shared memory. Contributing implies reading, which startup validation
+    # enforces. `memory_read` is also the whole of memory's visibility: the one
+    # place a profile's NoteReadPolicy is derived grants or denies the `memory`
+    # label from it, so the setting and the profile's visibility_grants cannot
+    # disagree. See docs/design/conversation-memory.md, "Two settings, one
+    # convenience default".
+    memory_read: bool = False
+    memory_contribute: bool = False
     allow_wake_llm: bool = True
     enable_computer_use: bool = False
     computer_use_excluded_functions: list[str] = Field(default_factory=list)
@@ -265,7 +655,30 @@ class ServiceProfile(BaseModel):
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
+    # Tool names to withhold from this profile even though `global_tools_policy`
+    # grants them to every profile. A profile's own `tools_policy` cannot deny a
+    # global grant -- global rules are injected at the `profile` policy layer,
+    # which outranks the `defaults` layer a profile's own policy occupies, so
+    # layer beats priority. This is the only way for a profile that must hold no
+    # privileges to actually hold none.
+    excluded_global_tools: list[str] = Field(default_factory=list)
     remote_a2a: RemoteA2AConfig | None = None
+    # Tiers this profile may run on. `None` means "only its configured
+    # `model_tier`", which is what a profile pinned to a model or to a
+    # provider-coupled runtime stays at.
+    allowed_model_tiers: list[str] | None = None
+    # The subset of `allowed_model_tiers` a *model-composed* request may select
+    # without a confirmation -- a `delegate_to_service` `model_tier` argument
+    # today, and Auto routing when it lands. A user's explicit selection is
+    # authorized by `allowed_model_tiers` instead: it is the user's own choice
+    # to spend more, where this is authority handed to a model.
+    auto_model_tiers: list[str] | None = None
+    # Where this profile's routing threshold sits, in the classifier's own
+    # words. Thresholds are contextual to the agent -- a diagnostic profile
+    # reaches for stronger reasoning more readily than a chat assistant -- so
+    # the guidance travels with the request rather than living in the shared
+    # classifier prompt.
+    auto_routing_guidance: str | None = None
 
 
 class DefaultProfileSettings(BaseModel):
@@ -281,6 +694,9 @@ class DefaultProfileSettings(BaseModel):
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
+    allowed_model_tiers: list[str] | None = None
+    auto_model_tiers: list[str] | None = None
+    auto_routing_guidance: str | None = None
 
 
 class NotesConfig(BaseModel):
@@ -289,6 +705,70 @@ class NotesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_visibility_labels: list[str] = Field(default_factory=list)
+
+
+class MemoryConfig(BaseModel):
+    """Bounds and naming for the conversation-memory store.
+
+    Every memory write is held to these at the notes repository, whichever
+    interface it arrives through. See docs/design/conversation-memory.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    core_note_max_chars: int = MemoryLimits.DEFAULTS.core_note_max_chars
+    topic_note_max_chars: int = MemoryLimits.DEFAULTS.topic_note_max_chars
+    topic_index_max_chars: int = MemoryLimits.DEFAULTS.topic_index_max_chars
+    review_input_max_chars: int = MemoryLimits.DEFAULTS.review_input_max_chars
+    max_edits_per_review: int = MemoryLimits.DEFAULTS.max_edits_per_review
+    core_note_title: str = MemoryLimits.DEFAULTS.core_note_title
+
+    enabled: bool = MemoryReviewSettings.DEFAULTS.enabled
+    """The master switch. With it off nothing is swept and nothing is reviewed.
+
+    On by default, which costs a deployment nothing while contribution ships
+    off on every profile: the sweep is not even seeded until some profile is
+    configured to contribute.
+    """
+    sweep_interval_minutes: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.sweep_interval_minutes, gt=0
+    )
+    idle_window_minutes: dict[str, int] = Field(
+        default_factory=lambda: dict(MemoryReviewSettings.DEFAULTS.idle_window_minutes)
+    )
+    default_idle_window_minutes: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.default_idle_window_minutes, gt=0
+    )
+    max_deferral_hours: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.max_deferral_hours, gt=0
+    )
+    contributing_interfaces: list[str] = Field(
+        default_factory=lambda: sorted(
+            MemoryReviewSettings.DEFAULTS.contributing_interfaces
+        )
+    )
+
+    def to_limits(self) -> MemoryLimits:
+        """The runtime value the storage layer enforces."""
+        return MemoryLimits(
+            core_note_max_chars=self.core_note_max_chars,
+            topic_note_max_chars=self.topic_note_max_chars,
+            topic_index_max_chars=self.topic_index_max_chars,
+            review_input_max_chars=self.review_input_max_chars,
+            max_edits_per_review=self.max_edits_per_review,
+            core_note_title=self.core_note_title,
+        )
+
+    def to_review_settings(self) -> MemoryReviewSettings:
+        """The value the sweep and the due predicate are evaluated against."""
+        return MemoryReviewSettings(
+            enabled=self.enabled,
+            sweep_interval_minutes=self.sweep_interval_minutes,
+            idle_window_minutes=dict(self.idle_window_minutes),
+            default_idle_window_minutes=self.default_idle_window_minutes,
+            max_deferral_hours=self.max_deferral_hours,
+            contributing_interfaces=frozenset(self.contributing_interfaces),
+        )
 
 
 class SkillsConfig(BaseModel):
@@ -300,14 +780,35 @@ class SkillsConfig(BaseModel):
     builtin_dir: str | None = None
 
 
+class CalDAVCalendarConfig(BaseModel):
+    """Configuration for an individual CalDAV calendar collection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    id: str | None = None
+    name: str | None = None
+    default: bool | None = None
+
+
+class ICalFeedConfig(BaseModel):
+    """Configuration for an individual iCal feed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    id: str | None = None
+    name: str | None = None
+
+
 class CalDAVConfig(BaseModel):
     """CalDAV server configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
     username: str | None = None
-    password: str | None = None
-    calendar_urls: list[str] = Field(default_factory=list)
+    password: SecretStr | None = None
+    calendar_urls: list[str | CalDAVCalendarConfig] = Field(default_factory=list)
     base_url: str | None = None
 
 
@@ -316,7 +817,7 @@ class ICalConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    urls: list[str] = Field(default_factory=list)
+    urls: list[str | ICalFeedConfig] = Field(default_factory=list)
 
 
 class DuplicateDetectionEmbeddingConfig(BaseModel):
@@ -360,7 +861,7 @@ class PWAConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     vapid_public_key: str | None = None
-    vapid_private_key: str | None = None
+    vapid_private_key: SecretStr | None = None
     vapid_contact_email: str | None = None
 
 
@@ -375,7 +876,7 @@ class ApnsConfig(BaseModel):
 
     team_id: str | None = None
     key_id: str | None = None
-    auth_key: str | None = None
+    auth_key: SecretStr | None = None
     auth_key_path: str | None = None
     bundle_id: str | None = None
     use_sandbox: bool = False
@@ -393,14 +894,14 @@ class OAuthIntegrationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     oauth_client_id: str = ""
-    oauth_client_secret: str = ""
-    credential_encryption_key: str = ""
+    oauth_client_secret: SecretStr = SecretStr("")
+    credential_encryption_key: SecretStr = SecretStr("")
     scopes: list[str] = Field(default_factory=list)
     require_taint_enforcement: bool = True
 
 
 class GoogleIntegrationConfig(OAuthIntegrationConfig):
-    """Per-user Gmail/Drive integration configuration.
+    """Per-user Gmail/Drive/Calendar integration configuration.
 
     Enables the user-scoped Google data feature: OAuth client credentials, the
     Fernet key used to encrypt stored refresh tokens at rest, the operator-tunable
@@ -414,6 +915,8 @@ class GoogleIntegrationConfig(OAuthIntegrationConfig):
             "https://www.googleapis.com/auth/gmail.compose",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events",
         ]
     )
 
@@ -441,6 +944,9 @@ class GeminiTranscriptionConfig(BaseModel):
 
     input_enabled: bool = True
     output_enabled: bool = True
+    # BCP-47 codes for the user's speech. Empty means Gemini auto-detects, which
+    # misreads short or noisy utterances as another language.
+    language_codes: list[str] = Field(default_factory=list)
 
 
 class GeminiVADConfig(BaseModel):
@@ -453,6 +959,12 @@ class GeminiVADConfig(BaseModel):
     end_of_speech_sensitivity: str = "DEFAULT"
     prefix_padding_ms: int | None = None
     silence_duration_ms: int | None = None
+
+
+def _car_audio_vad_default() -> GeminiVADConfig:
+    return GeminiVADConfig(
+        start_of_speech_sensitivity="START_SENSITIVITY_LOW", prefix_padding_ms=300
+    )
 
 
 class GeminiAffectiveDialogConfig(BaseModel):
@@ -508,18 +1020,39 @@ class TelephoneOverrides(BaseModel):
     greeting: TelephoneGreetingConfig = Field(default_factory=TelephoneGreetingConfig)
 
 
+class GeminiLiveToolsConfig(BaseModel):
+    """How a Live session reaches the profile's tools."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    on_demand: bool = True
+    """Reach on-demand tools through ``search_tools``/``call_tool``.
+
+    A Live session cannot be handed new tool declarations mid-session, so the
+    profile's on-demand tools are declared as two meta-tools instead of being
+    flattened into the declaration list. Turning this off declares every
+    advertisable tool up front. See
+    docs/design/voice-mode-on-demand-tools.md.
+    """
+
+
 class GeminiLiveConfig(BaseModel):
     """Gemini Live Voice API configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3.1-flash-live-preview"
+    model: str = "gemini-3.8-live"
+    tools: GeminiLiveToolsConfig = Field(default_factory=GeminiLiveToolsConfig)
     voice: GeminiVoiceConfig = Field(default_factory=GeminiVoiceConfig)
     session: GeminiSessionConfig = Field(default_factory=GeminiSessionConfig)
     transcription: GeminiTranscriptionConfig = Field(
         default_factory=GeminiTranscriptionConfig
     )
     vad: GeminiVADConfig = Field(default_factory=GeminiVADConfig)
+    # Replaces `vad` when a native client's audio runs through a car (CarPlay).
+    # The car's mic hears the assistant through the cabin speakers, and default
+    # sensitivity takes that echo for the user barging in.
+    car_audio_vad: GeminiVADConfig = Field(default_factory=_car_audio_vad_default)
     affective_dialog: GeminiAffectiveDialogConfig = Field(
         default_factory=GeminiAffectiveDialogConfig
     )
@@ -558,31 +1091,6 @@ class AttachmentConfig(BaseModel):
     storage_path: str = "/tmp/chat_attachments"
     large_tool_result_threshold_kb: int = (
         100  # Auto-convert to attachment if > this size (in KiB)
-    )
-    allowed_mime_types: list[str] = Field(
-        default_factory=lambda: [
-            "image/jpeg",
-            "image/png",
-            "image/gif",
-            "image/webp",
-            "image/bmp",
-            "image/tiff",
-            "application/pdf",
-            "text/plain",
-            "text/markdown",
-            "application/json",
-            "text/csv",
-            "video/mp4",
-            "video/webm",
-            "video/ogg",
-            "audio/mpeg",
-            "audio/wav",
-            "audio/ogg",
-            "audio/webm",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ]
     )
 
 
@@ -765,7 +1273,7 @@ class EmailIntakeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mailgun_webhook_signing_key: str | None = None
+    mailgun_webhook_signing_key: SecretStr | None = None
     mailgun_signature_max_age_seconds: int = Field(default=300, gt=0)
     allowed_sender_addresses: list[str] = Field(default_factory=list)
     allowed_recipient_addresses: list[str] = Field(default_factory=list)
@@ -779,7 +1287,7 @@ class EmailIntakeConfig(BaseModel):
     max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     max_attachment_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     max_total_attachment_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
-    outbound_mailgun_api_key: str | None = None
+    outbound_mailgun_api_key: SecretStr | None = None
     outbound_mailgun_domain: str | None = None
     outbound_from_address: str | None = None
     outbound_timeout_seconds: float = Field(default=10.0, gt=0)
@@ -809,7 +1317,7 @@ class WebhookSourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    secrets: dict[str, str] = Field(
+    secrets: dict[str, SecretStr] = Field(
         default_factory=dict,
         description="Optional per-source secrets for signature verification. "
         "Keys are source names, values are secret keys.",
@@ -848,6 +1356,19 @@ class MessageBatchingConfig(BaseModel):
     media_group_max_wait_seconds: float = 60.0
 
 
+class KeychuteConfig(BaseModel):
+    """Configuration for brokered HTTP calls from scripts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str | None = None
+    token: SecretStr | None = None
+    token_file: str | None = None
+    ca_bundle: str | None = None
+    max_response_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+
+
 class DatabaseErrorsLoggingConfig(BaseModel):
     """Configuration for database error logging."""
 
@@ -867,6 +1388,21 @@ class LoggingConfig(BaseModel):
     )
 
 
+class MCPAttachmentParameterConfig(BaseModel):
+    """One attachment parameter, when a bare mode is not enough.
+
+    The server's own description is dropped when the parameter's schema is
+    replaced -- it describes the string the server used to want, which can
+    contradict the attachment outright -- so this is where an operator puts
+    back something useful for the model to read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: MCPAttachmentMode
+    description: str | None = None
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server.
 
@@ -879,6 +1415,58 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
+    # Maps tool name -> parameter name -> how this deployment wants that
+    # parameter adapted: an attachment mode (bare, or with a description), or
+    # "drop" to hide it. See docs/operations/CONFIGURATION_REFERENCE.md.
+    parameter_overrides: dict[
+        str,
+        dict[
+            str,
+            MCPAttachmentMode | Literal["drop"] | MCPAttachmentParameterConfig,
+        ],
+    ] = Field(default_factory=dict)
+    # Declared (rather than left to extra="allow") so diagnostic dumps mask it
+    # by type. `env` values cannot be declared this way -- their keys are
+    # operator-chosen environment variable names -- so they are redacted
+    # structurally by config_inspection instead.
+    token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_parameter_overrides(self) -> MCPServerConfig:
+        """Reject ``file_path`` materialisation on a transport that cannot use it.
+
+        ``file_path`` writes the attachment into our own filesystem and hands
+        the server the path, which only means anything to a stdio server we
+        spawned ourselves. Configuring it for a remote server would send a path
+        the server cannot open, so it fails at load rather than at the first
+        tool call.
+        """
+        if not self.parameter_overrides:
+            return self
+        transport = str(
+            (self.__pydantic_extra__ or {}).get("transport") or "stdio"
+        ).lower()
+        if file_path_mode_is_supported(transport):
+            return self
+        offenders = sorted(
+            f"{tool_name}.{parameter_name}"
+            for tool_name, parameters in self.parameter_overrides.items()
+            for parameter_name, parameter in parameters.items()
+            if (
+                parameter.mode
+                if isinstance(parameter, MCPAttachmentParameterConfig)
+                else parameter
+            )
+            == "file_path"
+        )
+        if offenders:
+            msg = (
+                f"parameter_overrides mode 'file_path' requires a stdio MCP "
+                f"server, but transport is {transport!r}: {', '.join(offenders)}. "
+                f"Use 'data_uri' instead."
+            )
+            raise ValueError(msg)
+        return self
 
 
 class MCPConfig(BaseModel):
@@ -887,6 +1475,26 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+
+
+def mcp_servers_for_runtime(
+    mcp_config: MCPConfig,
+    # ast-grep-ignore: no-dict-any - Runtime MCP server dicts are heterogeneous by design
+) -> dict[str, dict[str, Any]]:
+    """Serialize MCP server entries for connecting, with the token unwrapped.
+
+    ``model_dump`` masks the ``SecretStr`` token, which is what diagnostic
+    dumps want and what a client trying to authenticate must not get.
+    """
+    # ast-grep-ignore: no-dict-any - Runtime MCP server dicts are heterogeneous by design
+    servers: dict[str, dict[str, Any]] = {}
+    for server_id, server_config in mcp_config.mcpServers.items():
+        dumped = server_config.model_dump()
+        token = server_config.token
+        if token is not None:
+            dumped["token"] = token.get_secret_value()
+        servers[server_id] = dumped
+    return servers
 
 
 class WorkerResourceLimits(BaseModel):
@@ -1015,7 +1623,7 @@ class MQTTConfig(BaseModel):
     broker_host: str | None = None
     broker_port: int = 1883
     username: str | None = None
-    password: str | None = None
+    password: SecretStr | None = None
 
 
 class UCPConfigObject(BaseModel):
@@ -1101,7 +1709,7 @@ class UCPConfig(BaseModel):
     profile_url: str | None = None
     profile_cache_max_age_seconds: int = Field(default=300, ge=60)
     signing_key_id: str | None = None
-    signing_private_key: str | None = None
+    signing_private_key: SecretStr | None = None
     signing_private_key_path: str | None = None
     additional_signing_keys: list[UCPSigningKeyConfig] = Field(default_factory=list)
     trusted_endpoint_suffixes: list[str] = Field(
@@ -1172,7 +1780,7 @@ class OIDCConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_id: str = ""
-    client_secret: str = ""
+    client_secret: SecretStr = SecretStr("")
     discovery_url: str = ""
     allowed_emails: list[str] = Field(default_factory=list)
 
@@ -1214,7 +1822,7 @@ class GeminiImageConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3-pro-image-preview"
+    model: str = "gemini-3-pro-image"
 
 
 class VeoVideoConfig(BaseModel):
@@ -1230,7 +1838,7 @@ class GeminiOmniVideoConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-omni-flash-preview"
+    model: str = "gemini-omni-1.1-flash"
 
 
 class AppConfig(BaseSettings):
@@ -1289,14 +1897,14 @@ class AppConfig(BaseSettings):
         return tuple(sources)
 
     # Secrets and API keys (primarily from environment)
-    telegram_token: str | None = None
+    telegram_token: SecretStr | None = None
     telegram_enabled: bool = True
     telegram_api_base_url: str | None = (
         None  # Custom Telegram Bot API URL (for testing or self-hosted)
     )
-    openrouter_api_key: str | None = None
-    gemini_api_key: str | None = None
-    openai_api_key: str | None = None
+    openrouter_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
 
     # User access control
     users: list[UserIdentityConfig] = Field(default_factory=list)
@@ -1318,7 +1926,7 @@ class AppConfig(BaseSettings):
     )
 
     # Model configuration
-    model: str = "gemini/gemini-3.1-pro-preview"
+    model: str = "gemini/gemini-3.8-flash"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
     # Optional explicit embedding provider selection. When None, the provider is
@@ -1333,7 +1941,7 @@ class AppConfig(BaseSettings):
     embedding_base_url: str | None = None
     # API key for the OpenAI-compatible embeddings endpoint. Falls back to
     # openai_api_key / OPENAI_API_KEY when unset.
-    embedding_api_key: str | None = None
+    embedding_api_key: SecretStr | None = None
 
     # Storage paths
     database_url: str = "sqlite+aiosqlite:///family_assistant.db"
@@ -1346,7 +1954,7 @@ class AppConfig(BaseSettings):
     )
 
     # Weather integration
-    willyweather_api_key: str | None = None
+    willyweather_api_key: SecretStr | None = None
     willyweather_location_id: int | None = None
 
     # Debug flags
@@ -1368,6 +1976,7 @@ class AppConfig(BaseSettings):
     # as report_technical_problem. Operator policy can still override these.
     global_tools_policy: ToolPolicyConfig | None = None
     taint_policy: TaintPolicyConfig = Field(default_factory=TaintPolicyConfig)
+    tool_call_review: ToolCallReviewConfig | None = None
 
     # Feature configurations
     calendar_config: CalendarConfig = Field(default_factory=CalendarConfig)
@@ -1387,11 +1996,13 @@ class AppConfig(BaseSettings):
     message_batching_config: MessageBatchingConfig = Field(
         default_factory=MessageBatchingConfig
     )
+    keychute_config: KeychuteConfig = Field(default_factory=KeychuteConfig)
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
     browser_handoff_config: BrowserHandoffConfig = Field(
         default_factory=BrowserHandoffConfig
     )
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
+    memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
     mqtt_config: MQTTConfig = Field(default_factory=MQTTConfig)
     ucp_config: UCPConfig = Field(default_factory=UCPConfig)
@@ -1400,11 +2011,63 @@ class AppConfig(BaseSettings):
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
     llm_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
+    # Named model recipes profiles select with `processing_config.model_tier`.
+    model_tiers: dict[str, ModelTierConfig] = Field(default_factory=dict)
+
+    # The Auto classifier that picks a tier per request for profiles whose
+    # `processing_config.model_selection` is `auto`.
+    model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
+
+    @model_validator(mode="after")
+    def validate_model_routing_names_a_classifier(self) -> AppConfig:
+        """A classifier that is switched on has to say what runs it.
+
+        Discovering the omission on the first routed turn would produce a run
+        of `error` outcomes that look like a provider problem rather than a
+        configuration one.
+        """
+        if self.model_routing.mode != "off" and not self.model_routing.classifier.model:
+            msg = (
+                f"model_routing.mode is '{self.model_routing.mode}' but "
+                "model_routing.classifier names no model. Set the classifier's "
+                "provider and model, or set mode to 'off'."
+            )
+            raise ValueError(msg)
+        return self
+
+    @field_validator("model_tiers")
+    @classmethod
+    def validate_model_tier_names(
+        cls, v: dict[str, ModelTierConfig]
+    ) -> dict[str, ModelTierConfig]:
+        invalid = sorted(name for name in v if not _TIER_NAME_PATTERN.match(name))
+        if invalid:
+            msg = (
+                f"Invalid model tier name(s): {', '.join(invalid)}. Tier names "
+                "must start with a lowercase letter and contain only lowercase "
+                "letters, digits and underscores."
+            )
+            raise ValueError(msg)
+        return v
+
     # Logging configuration
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # Server port (optional, defaults to 8000)
     server_port: int = 8000
+
+    # Prometheus metrics exporter. Served on a port of its own rather than as a
+    # route on the main app, which an Ingress publishes to the internet in its
+    # entirety -- see docs/design/prometheus-metrics.md.
+    #
+    # Off by default, and loopback-only when switched on. The endpoint carries
+    # token spend, model line-up and error rates and has no authentication of
+    # its own, so a deployment that wants it reachable from a scraper says so
+    # explicitly. Getting this wrong then breaks scraping, which is visible and
+    # gets fixed, rather than publishing the data, which is not.
+    metrics_enabled: bool = False
+    metrics_port: int = 9090
+    metrics_bind_host: str = "127.0.0.1"
 
     # Number of in-process TaskWorker instances to run concurrently.
     # Multiple workers are required so a handler that parks waiting on an
@@ -1414,9 +2077,216 @@ class AppConfig(BaseSettings):
     # single event loop and cannot span processes.
     task_worker_count: int = Field(default=2, ge=1)
 
+    # Number of additional in-process TaskWorker instances reserved for
+    # interactive work. A reserved worker claims only tasks in the interactive
+    # lane, and never a handler that parks on another queued task, so a burst of
+    # background work on the general workers cannot delay a reminder or a
+    # confirmation. Set to 0 to run general workers only.
+    reserved_task_worker_count: int = Field(default=1, ge=0)
+
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @model_validator(mode="after")
+    def validate_metrics_port_is_not_the_application_port(self) -> AppConfig:
+        """Reject a metrics port that collides with the application's.
+
+        The exporter binds synchronously during startup, before the Uvicorn
+        task scheduled just before it gets to run. On a collision Uvicorn is
+        the one that fails to bind, and it does so inside a background task
+        nobody observes, leaving a process that is up and serving metrics
+        while the API it exists to serve is gone. Failing here instead turns
+        a silent half-outage into a startup error naming the setting.
+        """
+        if self.metrics_enabled and self.metrics_port == self.server_port:
+            msg = (
+                f"metrics_port ({self.metrics_port}) must differ from server_port "
+                f"({self.server_port}): the exporter and the application cannot "
+                f"share a port, and the application is the one that loses."
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_model_tier_slash_commands_are_unique(self) -> AppConfig:
+        """Reject a tier command that another command already answers to.
+
+        A chat surface dispatches a leading ``/word`` by looking it up, so two
+        configurations claiming one word means whichever the lookup finds first
+        wins and the other silently never runs. A tier command and a profile
+        command mean different things -- pick the intelligence for this message
+        versus pick the agent -- so a collision between them is the same
+        ambiguity, not a resolvable precedence. The bot's own commands are in
+        the same namespace and are registered ahead of both, so claiming one of
+        those is the same defect with a guaranteed loser.
+
+        Compared on the normalised command, since that is what dispatch keys on:
+        ``/Deep`` and ``/deep`` are one word to Telegram, not two.
+        """
+        owners: dict[str, str] = {}
+        for tier_name, tier in self.model_tiers.items():
+            if tier.slash_command is None:
+                continue
+            command = normalize_slash_command(tier.slash_command)
+            _reject_built_in_slash_command(f"Model tier {tier_name!r}", command)
+            existing = owners.get(command)
+            if existing is not None:
+                msg = (
+                    f"Model tiers {existing!r} and {tier_name!r} both use "
+                    f"slash_command {tier.slash_command!r}. A command names one "
+                    "thing to run."
+                )
+                raise ValueError(msg)
+            owners[command] = tier_name
+
+        for profile in self.service_profiles:
+            for raw_command in profile.slash_commands:
+                command = normalize_slash_command(raw_command)
+                _reject_built_in_slash_command(f"Profile {profile.id!r}", command)
+                tier_name = owners.get(command)
+                if tier_name is not None:
+                    msg = (
+                        f"Profile {profile.id!r} uses slash command "
+                        f"{raw_command!r}, which model tier {tier_name!r} also "
+                        "claims. A tier command selects the intelligence for one "
+                        "message and a profile command selects the agent, so one "
+                        "word cannot mean both."
+                    )
+                    raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_excluded_global_tools_are_granted(self) -> AppConfig:
+        """Reject an exclusion that withholds nothing.
+
+        `excluded_global_tools` exists to take a globally granted tool away from a
+        profile that must hold no privileges. A name that no global rule grants
+        withholds nothing — whether it is a typo or a tool that was never global —
+        and the generated matcher silently matches nothing, leaving the grant it
+        was meant to remove in place. For a profile processing untrusted input
+        that is a security control that reads as configured and does nothing, so
+        it fails at startup instead.
+
+        Only enforced against name-based global rules that can actually confer
+        access. A rule matching by tag or MCP server could still grant the named
+        tool, and this cannot tell, so a policy containing one of those is left
+        alone rather than risking a false rejection. A `deny` rule is the reverse
+        error: counting the names it denies as granted would let an exclusion
+        matching only that deny validate while withholding nothing, which is the
+        no-op this exists to reject. `confirm` counts as granted, since a tool
+        reachable behind a confirmation is still reachable.
+
+        Names are glob patterns on both sides, because `ToolMatcher.matches`
+        resolves them with `fnmatchcase`. Comparing them as literals would reject
+        a working config -- a grant of `read_*` excluded as `read_text_attachment`,
+        or the reverse -- and refusing to start is a worse failure than the no-op
+        this guards against. When both sides are patterns, neither matches the
+        other's literal text even where their match sets overlap (`read_*` and
+        `*_attachment` meet on `read_text_attachment`), so such a pair is left
+        alone: deciding whether two globs can intersect is not worth doing to
+        reach a stricter answer than "cannot tell".
+        """
+        if self.global_tools_policy is None:
+            granted: set[str] = set()
+            has_unanalysable_rule = False
+        else:
+            granting_rules = [
+                rule
+                for rule in self.global_tools_policy.rules
+                if rule.decision is not ToolPolicyDecision.DENY
+            ]
+            granted = {
+                name for rule in granting_rules for name in (rule.match.names or ())
+            }
+            has_unanalysable_rule = any(
+                rule.match.names is None for rule in granting_rules
+            )
+        if has_unanalysable_rule:
+            return self
+
+        for profile in self.service_profiles:
+            ineffective = sorted(
+                excluded
+                for excluded in set(profile.excluded_global_tools)
+                # Either direction counts: the exclusion may be the pattern and
+                # the grant concrete, or the other way round. Overlap in either
+                # sense means the two rules can meet on a real tool.
+                if not any(
+                    fnmatchcase(grant, excluded)
+                    or fnmatchcase(excluded, grant)
+                    or (_is_glob(grant) and _is_glob(excluded))
+                    for grant in granted
+                )
+            )
+            if ineffective:
+                msg = (
+                    f"Profile {profile.id!r} excludes global tool(s) "
+                    f"{', '.join(ineffective)}, which global_tools_policy does not "
+                    "grant, so the exclusion withholds nothing. Remove the entry, "
+                    "or correct it to one of: "
+                    f"{', '.join(sorted(granted)) or '(none granted)'}."
+                )
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_memory_contribution_implies_reading(self) -> AppConfig:
+        """Reject a profile configured to contribute to memory but not read it.
+
+        Contribution feeds a profile's conversations to the curator, which then
+        writes entries the profile itself cannot see. That is a profile
+        teaching a notebook it is not allowed to open: it can neither honour
+        what it taught nor be corrected by it, and nothing reports the
+        asymmetry at runtime. The design makes reading the prerequisite, so the
+        contradiction is a startup error rather than a silent oddity.
+
+        Raises:
+            ValueError: naming every profile with the combination.
+        """
+        offenders = sorted(
+            profile.id
+            for profile in self.service_profiles
+            if profile.processing_config.memory_contribute
+            and not profile.processing_config.memory_read
+        )
+        if offenders:
+            raise ValueError(
+                f"Profile(s) {', '.join(offenders)} set memory_contribute "
+                "without memory_read. Contributing to the household's memory "
+                "requires reading it: set memory_read: true, or turn "
+                "memory_contribute off."
+            )
+        return self
+
+    def effective_memory_read(self, profile: ServiceProfile) -> bool:
+        """Whether this profile actually reads the household's memory.
+
+        The one place the master switch meets a profile's own setting.
+        ``memory_config.enabled: false`` is documented as turning the whole
+        mechanism off for every profile at once, and that is only true if every
+        consumer of ``memory_read`` -- the profile's note read policy, the
+        withholding of the memory-writing tools, the ``memory_read`` its
+        running service advertises -- asks here rather than reading the profile
+        field directly. The raw fields keep their meaning for validation: a
+        profile that contributes without reading is still a startup error
+        however the switch is set, so turning the mechanism back on cannot
+        surface a contradiction that startup would have rejected.
+        """
+        return self.memory_config.enabled and profile.processing_config.memory_read
+
+    def effective_memory_contribute(self, profile: ServiceProfile) -> bool:
+        """Whether this profile's conversations actually feed the curator.
+
+        The contribution half of :meth:`effective_memory_read`. Note that the
+        *recorded* enablement moments are deliberately not derived from this:
+        the master switch pauses the mechanism without discarding what a
+        contributing profile has already established, so turning it back on
+        resumes from the moment it had.
+        """
+        return (
+            self.memory_config.enabled and profile.processing_config.memory_contribute
+        )
 
     @model_validator(mode="after")
     def validate_user_identity_uniqueness(self) -> AppConfig:

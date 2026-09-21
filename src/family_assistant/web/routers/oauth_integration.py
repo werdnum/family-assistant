@@ -37,7 +37,7 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryptionError,
 )
 from family_assistant.services.oauth_integration_state import OAuthIntegrationState
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_session_user, get_db
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ def get_oauth_http_client(request: Request) -> httpx.AsyncClient:
 
 
 CurrentUser = Annotated[dict, Depends(get_current_session_user)]
-Db = Annotated[DatabaseContext, Depends(get_db)]
+Db = Annotated[Database, Depends(get_db)]
 OAuthClient = Annotated[httpx.AsyncClient, Depends(get_oauth_http_client)]
 
 
@@ -401,7 +401,7 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
                 _oauth_urls(request, spec)["token"],
                 data={
                     "client_id": integration.oauth_client_id,
-                    "client_secret": integration.oauth_client_secret,
+                    "client_secret": integration.oauth_client_secret.get_secret_value(),
                     "code": code,
                     "grant_type": "authorization_code",
                     "redirect_uri": redirect_uri,
@@ -466,7 +466,9 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
 
         # f. Encrypt the refresh token and upsert the connection.
         try:
-            encryption = CredentialEncryption(integration.credential_encryption_key)
+            encryption = CredentialEncryption(
+                integration.credential_encryption_key.get_secret_value()
+            )
         except CredentialEncryptionError:
             logger.exception("Invalid CREDENTIAL_ENCRYPTION_KEY")
             return _settings_redirect({
@@ -535,7 +537,9 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
             # Best-effort revocation: a decryption failure or a failed revoke
             # still deletes the row below.
             try:
-                encryption = CredentialEncryption(integration.credential_encryption_key)
+                encryption = CredentialEncryption(
+                    integration.credential_encryption_key.get_secret_value()
+                )
                 refresh_token = encryption.decrypt(connection.refresh_token_encrypted)
                 await http_client.post(
                     _oauth_urls(request, spec)["revoke"],

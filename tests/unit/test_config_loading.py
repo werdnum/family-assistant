@@ -157,7 +157,7 @@ class TestPromptsYamlServiceProfilesMerging:
         default_settings = {
             "processing_config": {
                 "prompts": {
-                    "system_prompt": "You are a helpful assistant. Current time: {current_time}",
+                    "system_prompt": "You are a helpful assistant.",
                 },
                 "timezone": "UTC",
             },
@@ -166,7 +166,7 @@ class TestPromptsYamlServiceProfilesMerging:
         # This simulates prompts.yaml's service_profiles section
         prompts_yaml_service_profiles = {
             "camera_analyst": {
-                "system_prompt": "You are a camera analyst. Current time: {current_time}",
+                "system_prompt": "You are a camera analyst.",
             },
         }
 

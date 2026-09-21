@@ -2,7 +2,8 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -28,12 +29,15 @@ from family_assistant.llm import (
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
+    MessageAttachmentMetadata,
     ToolMessage,
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -48,9 +52,14 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
+from family_assistant.web.dependencies import get_current_user
 from family_assistant.web.models import ChatMessageResponse
 from family_assistant.web.web_chat_interface import WebChatInterface
-from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import CalendarConfig
@@ -64,10 +73,10 @@ logger = logging.getLogger(__name__)
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
-    """Provides a DatabaseContext for a single test function."""
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+) -> AsyncGenerator[Database]:
+    """Provides a Database for a single test function."""
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -75,11 +84,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for tests."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
@@ -136,28 +141,29 @@ def test_processing_service(
     mock_llm_client: RuleBasedMockLLMClient,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config: ProcessingServiceConfig,
-    db_context: DatabaseContext,  # This is an instance of DatabaseContext from the fixture
+    db_context: Database,  # This is an instance of Database from the fixture
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    # NotesContextProvider expects get_db_context_func to be Callable[[], Awaitable[DatabaseContext]]
-    # This means it wants a function that, when called and awaited, returns an *entered* DatabaseContext.
-    # The db_context fixture provides an already entered DatabaseContext instance.
+    # NotesContextProvider expects get_db_context_func to be Callable[[], Awaitable[Database]]
+    # This means it wants a function that, when called and awaited, returns an *entered* Database.
+    # The db_context fixture provides an already entered Database instance.
     # We need its engine to create new contexts for the provider if it manages its own lifecycle.
     captured_engine = db_context.engine
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
+    def get_entered_db_context_for_provider() -> Database:
         """
-        Returns an awaitable that resolves to an entered DatabaseContext.
+        Returns an awaitable that resolves to an entered Database.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=captured_engine) as new_ctx:
-            return new_ctx
+        new_ctx = Database(engine=captured_engine)
+        return new_ctx
 
     # Create mock context providers
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
         prompts=mock_processing_service_config.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast(
@@ -215,9 +221,9 @@ async def app_fixture(
     app.state.web_chat_interface = WebChatInterface(db_engine)
 
     # Ensure database is initialized for this app instance
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)  # Initialize main schema
-        await temp_db_ctx.init_vector_db()  # Initialize vector schema
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)  # Initialize main schema
+    await temp_db_ctx.init_vector_db()  # Initialize vector schema
 
     return app
 
@@ -235,11 +241,7 @@ def mock_processing_service_config_no_tools() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for tests with no tools."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
@@ -255,19 +257,20 @@ def test_processing_service_no_tools(
     mock_llm_client: RuleBasedMockLLMClient,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config_no_tools: ProcessingServiceConfig,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components and no tools."""
 
     captured_engine = db_context.engine
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
-        async with get_db_context(engine=captured_engine) as new_ctx:
-            return new_ctx
+    def get_entered_db_context_for_provider() -> Database:
+        new_ctx = Database(engine=captured_engine)
+        return new_ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
         prompts=mock_processing_service_config_no_tools.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast(
@@ -321,9 +324,9 @@ async def app_fixture_no_tools(
 
     app.state.web_chat_interface = WebChatInterface(db_engine)
 
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)
-        await temp_db_ctx.init_vector_db()
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_db_ctx.init_vector_db()
 
     return app
 
@@ -344,7 +347,7 @@ async def test_client_no_tools(
 @pytest.mark.asyncio
 async def test_api_chat_add_note_tool(
     test_client: AsyncClient,
-    db_context: DatabaseContext,
+    db_context: Database,
     mock_llm_client: RuleBasedMockLLMClient,  # To set rules
     test_processing_service: ProcessingService,  # To access its config
 ) -> None:
@@ -365,12 +368,10 @@ async def test_api_chat_add_note_tool(
     # Configure mock LLM rules
     # Rule 1: User prompt -> LLM requests add_or_update_note tool
     def rule1_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        last_msg_content = messages[-1].content if messages else ""
-        return (
-            isinstance(last_msg_content, str)
-            and "Please add a note" in last_msg_content
-        )
+        # get_last_message_text skips the trailing <turn_context> block, so
+        # "the last message" still means the newest real one -- the user prompt
+        # on the first call, the tool result on the second.
+        return "Please add a note" in get_last_message_text(kwargs.get("messages", []))
 
     rule1_output = LLMOutput(
         content=llm_intermediate_reply,
@@ -421,7 +422,9 @@ async def test_api_chat_add_note_tool(
     assert len(mock_llm_client.get_calls()) == 2
 
     # Assert Database State (Note created)
-    note = await db_context.notes.get_by_title(note_title, visibility_grants=None)
+    note = await db_context.notes.get_by_title(
+        note_title, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == note_content
 
@@ -483,7 +486,7 @@ async def test_api_chat_add_note_tool(
 async def test_api_chat_send_message_persists_user_id(
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test that user_id is correctly persisted when sending a message."""
     # Arrange
@@ -539,7 +542,7 @@ async def test_api_chat_send_message_persists_user_id(
 async def test_api_chat_send_message_persists_user_id_no_tools(
     test_client_no_tools: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test that user_id is correctly persisted when sending a message with no tools enabled."""
     # Arrange
@@ -589,3 +592,129 @@ async def test_api_chat_send_message_persists_user_id_no_tools(
     logger.info(
         f"Successfully verified user_id '{expected_user_id}' was persisted for all messages without tools."
     )
+
+
+@pytest.mark.asyncio
+async def test_conversation_share_is_authenticated_read_only_and_revocable(
+    test_client: AsyncClient,
+    app_fixture: FastAPI,
+    db_context: Database,
+    tmp_path: Path,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    await db_context.message_history.add_message(
+        UserMessage(content="Please help me choose a gift"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    attachment_registry = AttachmentRegistry(str(tmp_path), db_context.engine)
+    app_fixture.state.attachment_registry = attachment_registry
+    attachment = await attachment_registry.register_user_attachment(
+        db_context,
+        b"shared details",
+        "details.txt",
+        "text/plain",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Here are the gift options."),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        attachments=[
+            MessageAttachmentMetadata(
+                type="attachment_reference",
+                attachment_id=attachment.attachment_id,
+            )
+        ],
+    )
+    foreign_attachment = await attachment_registry.register_user_attachment(
+        db_context,
+        b"private",
+        "private.txt",
+        "text/plain",
+        conversation_id=str(uuid.uuid4()),
+        user_id="test_user",
+    )
+
+    create_response = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert create_response.status_code == 200
+    share_url = create_response.json()["share_url"]
+    token = share_url.rsplit("/", 1)[-1]
+    stored_share = await db_context.conversation_shares.get_by_conversation(
+        conversation_id
+    )
+    assert stored_share is not None
+    assert stored_share.token_hash != token
+    assert len(stored_share.token_hash) == 64
+    status_response = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert status_response.json() == {"active": True}
+
+    replacement_response = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    replacement_token = replacement_response.json()["share_url"].rsplit("/", 1)[-1]
+    assert replacement_token != token
+
+    async def wife_user() -> dict[str, str]:
+        return {"user_identifier": "wife"}
+
+    app_fixture.dependency_overrides[get_current_user] = wife_user
+    non_owner_share = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert non_owner_share.status_code == 404
+    replaced_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+    assert replaced_read.status_code == 404
+    token = replacement_token
+    owner_read = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert owner_read.status_code == 404
+
+    shared_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+    assert shared_read.status_code == 200
+    payload = shared_read.json()
+    assert [message["content"] for message in payload["messages"]] == [
+        "Please help me choose a gift",
+        "Here are the gift options.",
+    ]
+    shared_attachment_url = payload["messages"][1]["attachments"][0]["content_url"]
+    attachment_response = await test_client.get(shared_attachment_url)
+    assert attachment_response.status_code == 200
+    assert attachment_response.content == b"shared details"
+    foreign_attachment_response = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/attachments/"
+        f"{foreign_attachment.attachment_id}"
+    )
+    assert foreign_attachment_response.status_code == 404
+
+    conversation_list = await test_client.get(
+        "/api/v1/chat/conversations?interface_type=web"
+    )
+    assert conversation_list.status_code == 200
+    assert conversation_list.json()["conversations"] == []
+
+    app_fixture.dependency_overrides.pop(get_current_user)
+    revoke_response = await test_client.delete(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert revoke_response.status_code == 204
+    app_fixture.dependency_overrides[get_current_user] = wife_user
+    revoked_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+    assert revoked_read.status_code == 404
+    app_fixture.dependency_overrides.pop(get_current_user)

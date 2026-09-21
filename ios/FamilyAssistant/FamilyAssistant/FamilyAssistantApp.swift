@@ -5,7 +5,10 @@ struct FamilyAssistantApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var authManager: AuthManager
     @State private var notificationManager: NotificationManager
+    @State private var watchAuthentication: WatchAuthentication
     @State private var sharedAttachmentInbox = SharedAttachmentInbox()
+    @State private var voiceCallStarter: VoiceCallStarter
+    @State private var callDonor = AssistantCallDonor()
 
     init() {
         #if DEBUG
@@ -17,10 +20,32 @@ struct FamilyAssistantApp: App {
         let authManager = AuthManager()
         #endif
         _authManager = State(initialValue: authManager)
+        _watchAuthentication = State(initialValue: WatchAuthentication(auth: authManager))
         _notificationManager = State(initialValue: NotificationManager())
 
-        ErrorReporter.shared.configure { [weak authManager] in authManager?.validatedServerURL() }
+        ErrorReporter.shared.configure(
+            baseURLProvider: { [weak authManager] in authManager?.validatedServerURL() },
+            authTokenProvider: { [weak authManager] in
+                try await authManager?.validAccessTokenIfPresent()
+            }
+        )
         ErrorReporter.shared.installGlobalHandlers()
+
+        // Siri's start-call intent is delivered before any scene connects, and
+        // on a background launch from a locked phone no scene connects at all,
+        // so the thing that turns a request into a call is installed here
+        // rather than driven from the view layer. It reaches the view layer
+        // through the environment, because the Voice tab has to know whether a
+        // call already owns the audio session.
+        let voiceCallStarter = VoiceCallStarter(authManager: authManager)
+        _voiceCallStarter = State(initialValue: voiceCallStarter)
+        #if DEBUG
+        if !UITestConfiguration.isEnabled, !UITestConfiguration.isHostingUnitTests {
+            voiceCallStarter.install(into: .shared)
+        }
+        #else
+        voiceCallStarter.install(into: .shared)
+        #endif
     }
 
     var body: some Scene {
@@ -46,9 +71,24 @@ struct FamilyAssistantApp: App {
             .environment(authManager)
             .environment(notificationManager)
             .environment(sharedAttachmentInbox)
+            .environment(voiceCallStarter)
             .onAppear {
+                watchAuthentication.activate()
                 appDelegate.notificationManager = notificationManager
                 notificationManager.bind(authManager: authManager)
+                donateAssistantCallHandle()
+            }
+            .onChange(of: authManager.watchPairingIdentity) {
+                watchAuthentication.publishPhoneState()
+            }
+            // Signing in is the only prerequisite for "Hey Siri, call Family
+            // Assistant", so the handle Siri resolves is donated here rather
+            // than from the Voice tab, on a launch that is already signed in
+            // and on a sign-in that happens later. Signing out is where a call
+            // running at process scope has to be ended.
+            .onChange(of: authManager.isAuthenticated) {
+                donateAssistantCallHandle()
+                voiceCallStarter.signedInStateChanged(to: authManager.isAuthenticated)
             }
             .task {
                 await ErrorReporter.shared.flushPersisted()
@@ -67,6 +107,13 @@ struct FamilyAssistantApp: App {
                     await dispatchOpenedURLs()
                 }
             }
+    }
+
+    private func donateAssistantCallHandle() {
+        #if DEBUG
+        guard !UITestConfiguration.isEnabled else { return }
+        #endif
+        callDonor.signedInStateChanged(to: authManager.isAuthenticated)
     }
 
     private func dispatchOpenedURLs() async {

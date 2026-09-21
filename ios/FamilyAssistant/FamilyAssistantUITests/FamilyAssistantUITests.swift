@@ -86,6 +86,10 @@ final class FamilyAssistantUITests: XCTestCase {
         openSeededConversationIfNeeded()
 
         XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            app.buttons["share-conversation"].waitForExistence(timeout: 10),
+            "A persisted conversation should offer the owner-side share button."
+        )
         XCTAssertTrue(app.buttons["default_assistant"].exists || app.buttons["default_assistant, Profile"].exists)
         attachScreenshot(named: "native-chat-history")
     }
@@ -271,6 +275,16 @@ final class FamilyAssistantUITests: XCTestCase {
             "Pasted image never appeared as a chat draft attachment."
         )
         attachScreenshot(named: "pasted-image-draft-attachment")
+    }
+
+    func testChatComposerOffersCameraCapture() {
+        relaunch(initialPath: "/chat")
+
+        XCTAssertTrue(app.textFields["chat-composer"].waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertTrue(
+            app.buttons["chat-camera-button"].waitForExistence(timeout: 10),
+            "Camera capture control never appeared in the chat composer."
+        )
     }
 
     private func solidTestImage() -> UIImage {

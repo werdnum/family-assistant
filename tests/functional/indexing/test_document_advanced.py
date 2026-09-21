@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
@@ -469,23 +469,21 @@ async def test_document_indexing_with_llm_summary_e2e(
         document_db_id = response_data["document_id"]
 
         # Fetch task ID
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.payload.cast(sqlalchemy.Text).like(
-                        f'%"document_id": {document_db_id}%'
-                    )
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                    f'%"document_id": {document_db_id}%'
                 )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
             )
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find task for doc ID {document_db_id}"
-            )
-            indexing_task_id = task_info["task_id"]
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, f"Could not find task for doc ID {document_db_id}"
+        indexing_task_id = task_info["task_id"]
 
         # Wait for indexing
         test_new_task_event.set()
@@ -505,18 +503,18 @@ async def test_document_indexing_with_llm_summary_e2e(
 
         # --- Assert: Query for the LLM-generated summary ---
         summary_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(
-                f"Querying vectors for LLM summary using text: '{TEST_QUERY_FOR_SUMMARY}'"
-            )
-            summary_query_results = await query_vectors(
-                db,
-                query_embedding=query_summary_embedding,  # Use local variable
-                embedding_model=TEST_EMBEDDING_MODEL,
-                limit=5,
-                filters={"source_id": doc_source_id_summary},
-                embedding_type_filter=[LLM_SUMMARY_TARGET_TYPE],
-            )
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(
+            f"Querying vectors for LLM summary using text: '{TEST_QUERY_FOR_SUMMARY}'"
+        )
+        summary_query_results = await query_vectors(
+            db,
+            query_embedding=query_summary_embedding,  # Use local variable
+            embedding_model=TEST_EMBEDDING_MODEL,
+            limit=5,
+            filters={"source_id": doc_source_id_summary},
+            embedding_type_filter=[LLM_SUMMARY_TARGET_TYPE],
+        )
 
         assert summary_query_results is not None, (
             "LLM summary query_vectors returned None"
@@ -560,17 +558,17 @@ async def test_document_indexing_with_llm_summary_e2e(
 
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(f"Cleanup error for document {document_db_id}: {e}")
         if indexing_task_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_id == indexing_task_id
-                    )
-                    await db_cleanup.execute_with_retry(delete_stmt)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_id == indexing_task_id
+                )
+                await db_cleanup.execute(delete_stmt)
             except Exception as e:
                 logger.warning(f"Cleanup error for task {indexing_task_id}: {e}")
 
@@ -731,26 +729,26 @@ async def test_url_indexing_e2e(
         logger.info(f"API call for URL successful. Document DB ID: {document_db_id}")
 
         # Fetch task ID
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)  # Give task time to appear
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.payload.cast(sqlalchemy.Text).like(
-                        f'%"document_id": {document_db_id}%'
-                    )
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)  # Give task time to appear
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                    f'%"document_id": {document_db_id}%'
                 )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
             )
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find enqueued task for URL document ID {document_db_id}"
-            )
-            indexing_task_id = task_info["task_id"]
-            logger.info(
-                f"Found indexing task ID: {indexing_task_id} for URL document DB ID: {document_db_id}"
-            )
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, (
+            f"Could not find enqueued task for URL document ID {document_db_id}"
+        )
+        indexing_task_id = task_info["task_id"]
+        logger.info(
+            f"Found indexing task ID: {indexing_task_id} for URL document DB ID: {document_db_id}"
+        )
 
         # Wait for indexing task and subsequent embedding tasks to complete
         test_new_task_event.set()
@@ -768,22 +766,22 @@ async def test_url_indexing_e2e(
 
         # --- Assert: Query for the fetched URL content ---
         url_content_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(
-                f"Querying vectors for URL content using text: '{TEST_QUERY_FOR_URL_CONTENT}'"
-            )
-            url_content_query_results = await query_vectors(
-                db,
-                query_embedding=query_url_content_embedding,  # Use local variable
-                embedding_model=TEST_EMBEDDING_MODEL,
-                limit=5,
-                filters={
-                    "source_id": url_doc_source_id
-                },  # Filter by the document's source_id
-                embedding_type_filter=[
-                    "content_chunk"
-                ],  # Expecting chunks from TextChunker
-            )
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(
+            f"Querying vectors for URL content using text: '{TEST_QUERY_FOR_URL_CONTENT}'"
+        )
+        url_content_query_results = await query_vectors(
+            db,
+            query_embedding=query_url_content_embedding,  # Use local variable
+            embedding_model=TEST_EMBEDDING_MODEL,
+            limit=5,
+            filters={
+                "source_id": url_doc_source_id
+            },  # Filter by the document's source_id
+            embedding_type_filter=[
+                "content_chunk"
+            ],  # Expecting chunks from TextChunker
+        )
 
         assert url_content_query_results is not None, (
             "URL content query_vectors returned None"
@@ -856,19 +854,19 @@ async def test_url_indexing_e2e(
 
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
-                    logger.info(f"Cleaned up test URL document DB ID {document_db_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
+                logger.info(f"Cleaned up test URL document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test URL document cleanup: {cleanup_err}")
         if indexing_task_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_id == indexing_task_id
-                    )
-                    await db_cleanup.execute_with_retry(delete_stmt)
-                    logger.info(f"Cleaned up test URL task ID {indexing_task_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_id == indexing_task_id
+                )
+                await db_cleanup.execute(delete_stmt)
+                logger.info(f"Cleaned up test URL task ID {indexing_task_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during test URL task cleanup: {cleanup_err}")
 
@@ -1017,23 +1015,23 @@ async def test_url_indexing_auto_title_e2e(
         )
 
         # Fetch task ID
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.payload.cast(sqlalchemy.Text).like(
-                        f'%"document_id": {document_db_id}%'
-                    )
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.payload.cast(sqlalchemy.Text).like(
+                    f'%"document_id": {document_db_id}%'
                 )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
             )
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find task for auto-title doc ID {document_db_id}"
-            )
-            indexing_task_id = task_info["task_id"]
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, (
+            f"Could not find task for auto-title doc ID {document_db_id}"
+        )
+        indexing_task_id = task_info["task_id"]
 
         # Wait for indexing
         test_new_task_event.set()
@@ -1044,27 +1042,27 @@ async def test_url_indexing_auto_title_e2e(
         )
 
         # --- Assert: Verify Document Title in DB ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_record = await db.vector.get_document_by_id(document_db_id)
-            assert doc_record is not None, (
-                f"Document record {document_db_id} not found in DB."
-            )
-            assert doc_record.title == MOCK_URL_TITLE, (
-                f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
-            )
-            logger.info(f"Verified document title in DB: '{doc_record.title}'")
+        db = Database(engine=pg_vector_db_engine)
+        doc_record = await db.vector.get_document_by_id(document_db_id)
+        assert doc_record is not None, (
+            f"Document record {document_db_id} not found in DB."
+        )
+        assert doc_record.title == MOCK_URL_TITLE, (
+            f"Document title was not updated. Expected '{MOCK_URL_TITLE}', got '{doc_record.title}'"
+        )
+        logger.info(f"Verified document title in DB: '{doc_record.title}'")
 
         # --- Assert: Query for the fetched URL content ---
         url_content_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            url_content_query_results = await query_vectors(
-                db,
-                query_embedding=query_url_content_embedding,  # Use local variable
-                embedding_model=TEST_EMBEDDING_MODEL,
-                limit=5,
-                filters={"source_id": url_doc_source_id},
-                embedding_type_filter=["content_chunk"],
-            )
+        db = Database(engine=pg_vector_db_engine)
+        url_content_query_results = await query_vectors(
+            db,
+            query_embedding=query_url_content_embedding,  # Use local variable
+            embedding_model=TEST_EMBEDDING_MODEL,
+            limit=5,
+            filters={"source_id": url_doc_source_id},
+            embedding_type_filter=["content_chunk"],
+        )
 
         assert url_content_query_results is not None
         assert len(url_content_query_results) > 0
@@ -1106,19 +1104,19 @@ async def test_url_indexing_auto_title_e2e(
 
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
             except Exception as e:
                 logger.warning(
                     f"Cleanup error for auto-title document {document_db_id}: {e}"
                 )
         if indexing_task_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_id == indexing_task_id
-                    )
-                    await db_cleanup.execute_with_retry(delete_stmt)
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_id == indexing_task_id
+                )
+                await db_cleanup.execute(delete_stmt)
             except Exception as e:
                 logger.warning(
                     f"Cleanup error for auto-title task {indexing_task_id}: {e}"

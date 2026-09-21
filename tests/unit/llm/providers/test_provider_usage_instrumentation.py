@@ -147,6 +147,21 @@ class _UsageChunk:
 @pytest.mark.no_db
 class TestOpenAIStreamUsage:
     @staticmethod
+    def _chat_completions_client(**extra_params: object) -> OpenAIClient:
+        """A gpt-5.5 client pinned to Chat Completions.
+
+        Direct OpenAI defaults to the Responses API. These tests cover the Chat
+        Completions path, which remains in use for models pinned off Responses
+        and for OpenAI-compatible endpoints, so they opt out explicitly rather
+        than relying on a default that no longer selects it.
+        """
+        return OpenAIClient(
+            api_key="test",
+            model="gpt-5.5",
+            model_parameters={"gpt-5.5": {"use_responses_api": False, **extra_params}},
+        )
+
+    @staticmethod
     async def _captured_params(
         client: OpenAIClient,
         chunks: list[object],
@@ -180,7 +195,7 @@ class TestOpenAIStreamUsage:
 
     async def test_direct_openai_requests_usage_on_the_stream(self) -> None:
         """Without stream_options the API sends no usage for a streamed turn."""
-        client = OpenAIClient(api_key="test", model="gpt-5.5")
+        client = self._chat_completions_client()
 
         params, _ = await self._captured_params(client, [])
 
@@ -198,11 +213,7 @@ class TestOpenAIStreamUsage:
 
     async def test_model_parameters_can_override_the_default(self) -> None:
         """Operators on a compatible endpoint need a way to opt in."""
-        client = OpenAIClient(
-            api_key="test",
-            model="gpt-5.5",
-            model_parameters={"gpt-5.5": {"stream_options": {"include_usage": False}}},
-        )
+        client = self._chat_completions_client(stream_options={"include_usage": False})
 
         params, _ = await self._captured_params(client, [])
 
@@ -211,7 +222,7 @@ class TestOpenAIStreamUsage:
     async def test_streaming_preserves_reasoning_tokens(self) -> None:
         """include_usage makes this reachable on a streamed turn for the first
         time; the non-streaming path already reported it."""
-        client = OpenAIClient(api_key="test", model="gpt-5.5")
+        client = self._chat_completions_client()
         chunk = _UsageChunk(cached_tokens=0)
         chunk.usage.completion_tokens_details = SimpleNamespace(reasoning_tokens=777)
 
@@ -224,7 +235,7 @@ class TestOpenAIStreamUsage:
 
     async def test_usage_only_final_chunk_is_not_skipped(self) -> None:
         """The usage chunk has empty choices, so the content guards skip it."""
-        client = OpenAIClient(api_key="test", model="gpt-5.5")
+        client = self._chat_completions_client()
 
         _, events = await self._captured_params(
             client, [_UsageChunk(cached_tokens=4000)]

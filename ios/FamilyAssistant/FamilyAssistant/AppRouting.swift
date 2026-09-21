@@ -44,6 +44,36 @@ struct ChatRoute: Equatable {
     }
 }
 
+/// A read-only conversation shared by its bearer token. Shared transcripts are
+/// native Chat destinations, but remain separate from the owner's editable
+/// conversation selection and history.
+struct SharedConversationRoute: Equatable {
+    let token: String
+
+    static func route(for url: URL, relativeTo baseURL: URL) -> SharedConversationRoute? {
+        guard url.matchesOrigin(of: baseURL),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return nil
+        }
+
+        let prefix = "/shared/conversations/"
+        let path = components.percentEncodedPath
+        guard path.hasPrefix(prefix) else {
+            return nil
+        }
+        let encodedToken = String(path.dropFirst(prefix.count))
+        guard !encodedToken.isEmpty, !encodedToken.contains("/") else {
+            return nil
+        }
+        let token = encodedToken.removingPercentEncoding ?? encodedToken
+        guard !token.contains("/") else {
+            return nil
+        }
+        return SharedConversationRoute(token: token)
+    }
+}
+
 enum NotesRoute: Equatable, Hashable {
     case list
     case detail(title: String)
@@ -97,6 +127,7 @@ final class AppRouter {
 
     var selectedTab: AppTab = .chat
     var chatSelection = ChatRoute()
+    var sharedConversationRoute: SharedConversationRoute?
     var notesRoute: NotesRoute = .list
     var documentsPath: [WebRoute] = []
     var morePath: [MoreRoute] = []
@@ -107,6 +138,7 @@ final class AppRouter {
     /// Documents falls to More.
     static func owningTab(for url: URL, relativeTo baseURL: URL) -> AppTab? {
         guard url.matchesOrigin(of: baseURL) else { return nil }
+        if SharedConversationRoute.route(for: url, relativeTo: baseURL) != nil { return .chat }
         if ChatRoute.route(for: url, relativeTo: baseURL) != nil { return .chat }
         if url.normalizedPath == Self.voicePath { return .voice }
         if NotesRoute.route(for: url, relativeTo: baseURL) != nil { return .notes }
@@ -126,7 +158,12 @@ final class AppRouter {
 
         switch tab {
         case .chat:
-            chatSelection = ChatRoute.route(for: url, relativeTo: baseURL) ?? ChatRoute()
+            if let sharedRoute = SharedConversationRoute.route(for: url, relativeTo: baseURL) {
+                sharedConversationRoute = sharedRoute
+            } else {
+                sharedConversationRoute = nil
+                chatSelection = ChatRoute.route(for: url, relativeTo: baseURL) ?? ChatRoute()
+            }
         case .voice:
             break
         case .notes:
@@ -163,18 +200,25 @@ final class AppRouter {
     func reset() {
         selectedTab = .chat
         chatSelection = ChatRoute()
+        sharedConversationRoute = nil
         notesRoute = .list
         documentsPath = []
         morePath = []
     }
 
     func openSharedAttachments(batchID: String) {
+        sharedConversationRoute = nil
         chatSelection = ChatRoute(
             conversationID: nil,
             initialPrompt: nil,
             newConversationRequestID: batchID,
             sharedAttachmentBatchID: batchID
         )
+        selectedTab = .chat
+    }
+
+    func closeSharedConversation() {
+        sharedConversationRoute = nil
         selectedTab = .chat
     }
 

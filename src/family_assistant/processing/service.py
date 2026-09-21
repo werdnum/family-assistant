@@ -5,6 +5,7 @@ import logging
 import re
 import traceback
 import uuid
+from dataclasses import replace
 from string import Formatter
 from typing import TYPE_CHECKING, Literal
 
@@ -12,6 +13,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent
+from family_assistant.llm.call_context import CallAttribution, attributed_call
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
@@ -23,7 +25,24 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.llm.model_routing import ROUTER_CALL_SELECTION
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierClientMissing,
+    ModelTierEligibility,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+    resolve_model_selection,
+    stamp_model_selection,
+)
+from family_assistant.observability.metrics import record_model_routing
+from family_assistant.processing.protocol import TaintedSinkRefusedError
+from family_assistant.security.taint import (
+    TaintPolicyConfig,
+    TaintPolicyEvaluator,
+    TaintPolicyOutcome,
+    TurnTaintState,
+)
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -31,6 +50,7 @@ from .attachments import AttachmentProcessor
 from .context import ContextPreparer
 from .llm_loop import LLMStreamingLoop
 from .tool_execution import ToolExecutor
+from .turn_context import build_turn_context_message, turn_context_guidance
 from .types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
@@ -40,10 +60,17 @@ from .utils import (
     _user_friendly_error_message,
     format_attachment_metadata_block,
     inject_metadata_into_user_message,
+    merge_attachment_metadata,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+    from collections.abc import (
+        AsyncGenerator,
+        AsyncIterator,
+        Collection,
+        Mapping,
+        Sequence,
+    )
     from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
@@ -51,6 +78,9 @@ if TYPE_CHECKING:
     from family_assistant.context_providers import ContextProvider
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_routing import ModelRouter, RoutingDecision
+    from family_assistant.llm.model_selection import RoutingOutcome
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import (
@@ -59,9 +89,13 @@ if TYPE_CHECKING:
         TurnTaintTracker,
     )
     from family_assistant.services.api_backend import ApiBackend
-    from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.attachment_registry import (
+        AttachmentMetadata,
+        AttachmentRegistry,
+    )
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.services.tool_call_review import TriggerReviewInput
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
     from family_assistant.tools.types import EventSourcesById
@@ -69,19 +103,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
-# Sentinel substituted for per-turn system prompt inputs when locating the
-# prompt's stable prefix. Chosen so it cannot share a leading character with a
-# real timestamp or context block, which would hide the boundary.
-_VOLATILE_PROBE = "\x00\x00per-turn-probe\x00\x00"
+# How the current time is spelled inside the <turn_context> block. Defined once
+# so the surfaces that report the block (the context viewer) cannot render a
+# different clock format from the one the model is handed.
+DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S %Z"
 
-
-def _common_prefix_len(left: str, right: str) -> int | None:
-    """Length of the longest common prefix of two strings, or None if empty."""
-    limit = min(len(left), len(right))
-    index = 0
-    while index < limit and left[index] == right[index]:
-        index += 1
-    return index or None
+# Stand-in result for a tool call whose real result was never recorded, so the
+# history stays representable to providers that require every call to be
+# answered. Worded for the model: it says what is and is not known, because the
+# tool may well have run to completion after the turn that called it went away.
+ABANDONED_TOOL_CALL_RESULT = (
+    "Error: no result was recorded for this tool call. The turn that made it "
+    "ended before the tool returned, so whether it took effect is unknown. "
+    "Re-run it if you need the result, and check for side effects first if "
+    "re-running it would not be safe to do twice."
+)
 
 
 def _taint_metadata_from_sources(
@@ -117,6 +153,61 @@ def _tool_row_attachment_ids(message: LLMMessage) -> set[str]:
     }
 
 
+def _selectable_tier_lines(eligibility: ModelTierEligibility) -> list[str]:
+    """Catalog lines naming the tiers a delegating model may ask a target for.
+
+    Only the automatic list is advertised: a tier the target admits from a user
+    but not from another profile would be a suggestion the model can only be
+    refused for taking. A target with nothing beyond its default gets no lines
+    at all, which is most of them.
+    """
+    options = [
+        option
+        for option in eligibility.auto_options
+        if option.id != eligibility.default_tier
+    ]
+    if not options:
+        return []
+    lines = ["  Optional `model_tier` values for this profile:"]
+    lines.extend(
+        f"  - {option.id} ({option.label})"
+        + (f": {option.description}" if option.description else "")
+        for option in options
+    )
+    return lines
+
+
+def _attachment_summary(
+    attachments: Sequence[MessageAttachmentMetadata] | None,
+) -> list[str]:
+    """What the Auto classifier is told about a turn's attachments.
+
+    Names and types only. The classifier is deciding how much reasoning the
+    request deserves, and a file's contents cannot make that decision better --
+    while sending them would put a document the user uploaded through a second
+    model on every turn, for nothing.
+    """
+    return [
+        f"{attachment.get('filename') or 'attachment'} "
+        f"({attachment.get('mime_type') or 'unknown type'})"
+        for attachment in attachments or ()
+    ]
+
+
+def _referenced_attachment_metadata(
+    attachment_id: str,
+    metadata: AttachmentMetadata,
+) -> MessageAttachmentMetadata:
+    """Describe an attachment a turn carries only as a content-part reference."""
+    filename = metadata.metadata.get("original_filename")
+    return MessageAttachmentMetadata(
+        type="attachment_reference",
+        attachment_id=attachment_id,
+        mime_type=metadata.mime_type,
+        filename=filename if isinstance(filename, str) and filename else "attachment",
+    )
+
+
 def _response_attachment_references(
     response_attachment_ids: Sequence[str] | None,
     *,
@@ -150,8 +241,14 @@ class ProcessingService:
     interacting with the LLM, and handling tool calls.
     """
 
-    _USE_ISOLATED_HISTORY_WRITES = True
     kind: Literal["local"] = "local"
+
+    sends_turn_context_block: bool = True
+    """Whether this service's requests actually carry a ``<turn_context>`` block.
+
+    Gates the system-prompt sentence describing the block, so a subclass whose
+    transport drops it does not promise the model something that never arrives.
+    """
 
     def __init__(
         self,
@@ -170,10 +267,30 @@ class ProcessingService:
         on_demand_view: OnDemandToolsView | None = None,
         credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
         api_backend: ApiBackend | None = None,
+        taint_policy: TaintPolicyConfig | None = None,
+        tier_llm_clients: Mapping[str, LLMInterface] | None = None,
+        model_router: ModelRouter | None = None,
     ) -> None:
+        """Build a profile's service.
+
+        ``llm_client`` serves a run that selects no tier, and is the client for
+        the profile's own ``model_tier`` where it has one. ``tier_llm_clients``
+        holds one client per tier the profile may be run on, built once at
+        startup: a run binds to one of them for its whole duration rather than
+        rebinding shared state, so two conversations at different tiers cannot
+        take each other's models.
+
+        ``model_router`` is the deployment's single Auto classifier, shared by
+        every profile that opts into routing. ``None`` -- which is every
+        deployment with ``model_routing.mode: off``, and every service a test
+        builds directly -- means no turn here is ever routed.
+        """
         self._llm_client = llm_client
+        self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
+        self._model_router = model_router
         self.tools_provider = tools_provider
         self.on_demand_view = on_demand_view
+        self._live_tools_provider: ToolsProvider | None = None
         self.service_config = service_config
         self.context_providers = context_providers
         self.server_url = server_url or "http://localhost:8000"
@@ -186,10 +303,16 @@ class ProcessingService:
         self.event_sources = event_sources
         self.credential_resolvers = credential_resolvers
         self.api_backend = api_backend
+        # Only read by a subclass whose profile declares a `taint_sink_class`;
+        # an ordinary profile is not a sink in its own right and evaluates
+        # taint per tool, inside the tools provider.
+        self.taint_policy = taint_policy or TaintPolicyConfig()
 
-        # Compose helpers
+        # Compose helpers. None of them holds a client: the run's client is
+        # passed to the calls that need one, so which model a turn talks to is
+        # a property of that turn rather than of the shared service.
         self.attachment_processor = AttachmentProcessor(
-            attachment_registry, llm_client, app_config, self.clock
+            attachment_registry, app_config, self.clock
         )
         self.context_preparer = ContextPreparer(
             context_providers, service_config, self.clock
@@ -204,22 +327,550 @@ class ProcessingService:
             api_backend=api_backend,
         )
         self.llm_loop = LLMStreamingLoop(
-            llm_client,
             service_config,
             app_config,
             self.tool_executor,
             self.attachment_processor,
         )
 
+    def sink_refusal_reason(
+        self,
+        state: TurnTaintState,
+    ) -> str | None:
+        """Refusal text when a turn's taint bars this profile's declared sink.
+
+        A profile whose whole turn is a privileged operation -- an agent that
+        runs code in a sandbox -- declares a ``taint_sink_class``, and the turn
+        is then evaluated the way the equivalent *tool* already is. Returns
+        ``None`` (proceed) for a profile that declares no sink, which is every
+        ordinary profile.
+
+        Called from ``LLMStreamingLoop.run_stream`` with the turn's *complete*
+        state: the prompt's own sources, the aggregated context's, and the
+        history's, merged. Evaluating only the trigger's sources would miss a
+        trusted prompt that pulls in an email-derived attachment or tainted
+        history -- the sandbox would then execute exactly the content this
+        exists to keep out.
+
+        A ``confirm`` outcome is permitted only when an approval for this sink
+        travelled with the taint -- recorded by whichever gate actually put the
+        question to a user (today, ``delegate_to_service``'s). Reading the
+        approval off the state means this gate never has to infer, from the
+        shape of the call path, whether somebody was asked. ``deny`` is refused
+        regardless: it is never confirmable, so no approval for it can exist.
+        """
+        sink_class = self.service_config.taint_sink_class
+        if sink_class is None:
+            return None
+
+        evaluation = TaintPolicyEvaluator(self.taint_policy).evaluate(
+            state=state, sink_class=sink_class
+        )
+        logger.info(
+            "Profile sink taint policy evaluated: profile=%s sink=%s requested=%s "
+            "effective=%s mode=%s max_tier=%s approved=%s",
+            self.service_config.id,
+            evaluation.sink_class.value,
+            evaluation.requested_outcome.value,
+            evaluation.effective_outcome.value,
+            evaluation.mode.value,
+            state.max_tier.config_value,
+            sorted(state.approved_sinks),
+        )
+        permitted = {TaintPolicyOutcome.ALLOW, TaintPolicyOutcome.AUDIT}
+        if state.is_sink_approved(sink_class, profile_id=self.service_config.id):
+            permitted |= {TaintPolicyOutcome.CONFIRM}
+            if evaluation.verdict_floor is not TaintPolicyOutcome.DENY:
+                # A human approval carried with this exact turn already answers
+                # a confirmable adjudication. A deny floor remains absolute.
+                permitted |= {TaintPolicyOutcome.ADJUDICATE}
+        if evaluation.effective_outcome in permitted:
+            return None
+
+        return (
+            f"Profile '{self.service_config.id}' refused this request: it runs "
+            f"code in a sandbox ({sink_class.value}), and the request carries "
+            f"{state.max_tier.config_value} content, which the runtime taint "
+            f"policy resolves to '{evaluation.effective_outcome.value}'. "
+            "Content derived from email, web pages or other untrusted sources "
+            "cannot direct a code-execution agent. Ask the user to make the "
+            "request themselves if it is genuinely wanted."
+        )
+
     @property
     def llm_client(self) -> LLMInterface:
+        """The client this profile's DEFAULT tier is served by.
+
+        Not the running turn's client: a turn binds to the client its resolved
+        tier names, which is passed down the call it belongs to. Reaching for
+        this from inside a turn attributes spend to a tier the turn is not
+        running at.
+        """
         return self._llm_client
 
-    @llm_client.setter
-    def llm_client(self, value: LLMInterface) -> None:
-        self._llm_client = value
-        self.llm_loop.llm_client = value
-        self.attachment_processor.llm_client = value
+    def resolve_model_selection(
+        self,
+        request: ModelSelectionRequest | None,
+    ) -> ResolvedModelSelection:
+        """Admit a tier request for this profile, or raise.
+
+        The entry surfaces call this: a slash command, the web selector, the
+        delegation tool's target. Every one of them resolves before the turn is
+        prepared, so a refusal is an answer about the request rather than a
+        failure part-way through it.
+        """
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
+
+    def _run_binding(
+        self, selection: ResolvedModelSelection | None
+    ) -> tuple[ResolvedModelSelection, LLMInterface]:
+        """Bind a run to the envelope frozen for it and the client serving it.
+
+        This is also where a queued run's envelope is revalidated: it was
+        resolved at enqueue time and the deployment may have moved underneath
+        it, so the tier has to still have a client. Re-resolving it from scratch
+        would be worse -- a deployment that narrowed the eligibility lists would
+        silently downgrade a run somebody already authorized.
+
+        ``tier is None`` is a profile pinned to an inline model, which has no
+        map to look anything up in.
+        """
+        resolved = selection or ResolvedModelSelection.unselected(
+            self.service_config.tier_eligibility.default_tier
+        )
+        tier = resolved.tier
+        if tier is None:
+            return resolved, self._llm_client
+        client = self._tier_llm_clients.get(tier)
+        if client is None:
+            # Not a refusal: the gate already admitted this tier, so a missing
+            # client is a deployment that built fewer clients than it admits
+            # tiers. Surfacing it as a refusal would tell a user to choose
+            # differently about a defect only an operator can fix.
+            msg = (
+                f"Profile '{self.service_config.id}' admits model tier '{tier}' "
+                "but has no client built for it. Clients here: "
+                f"{', '.join(sorted(self._tier_llm_clients)) or '(none)'}."
+            )
+            raise ModelTierClientMissing(msg)
+        return resolved, client
+
+    async def _bind_run(
+        self,
+        db_context: Database,
+        selection: ResolvedModelSelection | None,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+        trigger_is_internal: bool,
+        trigger_role: Literal["user", "system"],
+        exclude_turn_id: str | None = None,
+    ) -> tuple[ResolvedModelSelection, LLMInterface]:
+        """Settle which models this turn runs on, Auto routing included.
+
+        The one place a turn's tier is decided, and it is decided once: the
+        result is frozen for the run, so a tool loop's later iterations cannot
+        drift onto another model with different tool representation and
+        attachment handling.
+
+        It is also where "somebody asked for this" is decided, from the two
+        flags a turn already carries to be persisted correctly: a wake the
+        application composed is a system-role trigger, an internal one, or
+        both. Reading them here rather than trusting each worker path to also
+        pass a frozen envelope is what keeps a new wake from being routed by
+        having forgotten something.
+        """
+        routed = await self._auto_routed_selection(
+            db_context,
+            selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            acting_user_id=acting_user_id,
+            trigger_is_authored_request=(
+                trigger_role == "user" and not trigger_is_internal
+            ),
+            exclude_turn_id=exclude_turn_id,
+        )
+        return self._run_binding(routed if routed is not None else selection)
+
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        *,
+        db_context: Database,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        acting_user_id: str | None,
+    ) -> ResolvedModelSelection:
+        """Route *selection* now, for a run that will execute later.
+
+        A queued run's envelope is its authorization, and it is persisted so a
+        restart or a deployment cannot change the models underneath it. Routing
+        has to happen on the same side of that persistence: a run enqueued
+        unrouted reaches the worker with nothing to replay, and would silently
+        take the target's default while the synchronous path routed the same
+        request. Called by ``delegate_to_service`` before the run row exists.
+
+        ``subconversation_id`` is the one the run will execute under, which the
+        caller therefore allocates before calling: a fresh delegation reads the
+        empty history of its own new subconversation, a resumed one reads the
+        history it is continuing. Passing ``None`` would not mean "no history"
+        -- it selects the main conversation.
+        """
+        routed = await self._auto_routed_selection(
+            db_context,
+            selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            # A queued run's files reach it as content-part references, which
+            # is what the classifier's own resolution reads.
+            trigger_attachments=None,
+            acting_user_id=acting_user_id,
+            # A delegation is a request a model wrote, and each agent boundary
+            # resolves its own tier: the run this routes for executes on a
+            # request, not on a wake the application composed for it.
+            trigger_is_authored_request=True,
+            exclude_turn_id=None,
+        )
+        return routed if routed is not None else selection
+
+    @property
+    def effective_model_selection(self) -> Literal["explicit", "auto"]:
+        """What this deployment will actually do with a request naming no tier.
+
+        A profile configured ``auto`` under ``model_routing.mode: shadow`` still
+        runs every request on its configured tier, so a surface that advertised
+        Auto there would offer a control that changes nothing.
+        """
+        if (
+            self.service_config.model_selection == "auto"
+            and self.app_config.model_routing.mode == "active"
+        ):
+            return "auto"
+        return "explicit"
+
+    def _should_auto_route(
+        self,
+        selection: ResolvedModelSelection | None,
+        *,
+        trigger_is_authored_request: bool,
+    ) -> bool:
+        """Whether Auto gets to decide this turn's tier.
+
+        A run nobody wrote a request for is never routed. Reminders, scheduled
+        and event wakes, and the turn that tells a profile its delegation came
+        back all run on trigger text the application composed, and a classifier
+        weighing that is grading our own prose: it would spend a model call to
+        decide how hard a wake notice is. Those runs take the profile's
+        configured tier, which is the design's recorded simplification.
+
+        An explicit selection bypasses routing entirely -- a person or a
+        delegating model has already answered the question the classifier
+        exists to answer, and asking it again would be spending a model call to
+        second-guess an authorization. A delegation that named no tier is not
+        an explicit selection and *is* routed: the target profile decides its
+        own tier at each agent boundary.
+
+        A frozen envelope is not routed either, and that is a property of the
+        envelope rather than of the caller: everything read back from storage
+        arrives frozen, so no call site has to remember to say so.
+
+        Whether the deployment routes at all is asked once, at startup, by
+        there being a router to route with. ``model_routing.mode`` is not
+        re-read here: two places encoding "routing is off" is two places to
+        disagree.
+        """
+        return (
+            trigger_is_authored_request
+            and self._model_router is not None
+            and self.service_config.model_selection == "auto"
+            and (
+                selection is None
+                or (selection.source == "default" and not selection.frozen)
+            )
+        )
+
+    async def _auto_routed_selection(
+        self,
+        db_context: Database,
+        selection: ResolvedModelSelection | None,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+        trigger_is_authored_request: bool,
+        exclude_turn_id: str | None,
+    ) -> ResolvedModelSelection | None:
+        """The envelope Auto produced for this turn, or ``None`` if it did not run.
+
+        In ``shadow`` mode the resolved tier is unchanged and the decision is
+        recorded beside it as ``would_choose``: the point of shadow mode is to
+        collect what Auto would have done while the deployment keeps running on
+        what it already trusted. In ``active`` mode a decision resolves through
+        the same admission gate every other selection passes, and a failed
+        outcome resolves to the tier the run already had with the outcome on
+        the envelope -- never silently.
+        """
+        router = self._model_router
+        if router is None or not self._should_auto_route(
+            selection, trigger_is_authored_request=trigger_is_authored_request
+        ):
+            return None
+
+        eligibility = self.service_config.tier_eligibility
+        decision = await self._classify(
+            router,
+            db_context,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            acting_user_id=acting_user_id,
+            exclude_turn_id=exclude_turn_id,
+        )
+
+        # The envelope the run arrived with, not a fresh default: a caller that
+        # already resolved "no tier named" against this profile's eligibility
+        # has said something, and substituting a default here would discard the
+        # provenance it recorded.
+        base = (
+            selection
+            if selection is not None
+            else ResolvedModelSelection.unselected(eligibility.default_tier)
+        )
+        mode = self.app_config.model_routing.mode
+        outcome = decision.outcome
+        recorded_tier: str | None = None
+        if mode == "shadow":
+            recorded_tier = decision.tier
+            routed = replace(
+                base,
+                routing_outcome=outcome,
+                routing_would_choose=decision.tier,
+                classifier_model=decision.classifier_model,
+            )
+        elif decision.tier is None:
+            routed = replace(
+                base,
+                routing_outcome=outcome,
+                classifier_model=decision.classifier_model,
+            )
+        else:
+            routed, outcome, recorded_tier = self._admit_routed_tier(
+                base, decision.tier, classifier_model=decision.classifier_model
+            )
+
+        record_model_routing(
+            profile=self.service_config.id,
+            mode=mode,
+            outcome=outcome,
+            tier=recorded_tier,
+            latency_seconds=decision.latency_ms / 1000,
+        )
+        return routed
+
+    def _admit_routed_tier(
+        self,
+        base: ResolvedModelSelection,
+        tier: str,
+        *,
+        classifier_model: str,
+    ) -> tuple[ResolvedModelSelection, RoutingOutcome, str | None]:
+        """Put an active-mode decision through the shared admission gate.
+
+        The gate can refuse -- the eligibility the classifier was offered and
+        the eligibility the gate enforces are the same list, but a profile
+        reconfigured between the two would not be -- and a refusal here is a
+        classification this deployment cannot use, which is what ``invalid``
+        means. The run continues on the tier it already had.
+
+        ``requested`` is cleared: nobody asked for this tier. The source says
+        Auto, and a turn detail rendering "requested to resolved" must show
+        ``Auto -> Deep`` rather than a ``deep`` nobody typed.
+        """
+        try:
+            chosen = resolve_model_selection(
+                self.service_config.tier_eligibility,
+                ModelSelectionRequest(tier=tier, source="auto"),
+                profile_id=self.service_config.id,
+            )
+        except ModelTierNotPermitted:
+            logger.warning(
+                "Model routing chose tier '%s', which profile '%s' does not "
+                "admit from Auto; the run continues on its configured tier.",
+                tier,
+                self.service_config.id,
+            )
+            return (
+                replace(
+                    base, routing_outcome="invalid", classifier_model=classifier_model
+                ),
+                "invalid",
+                None,
+            )
+        return (
+            replace(
+                chosen,
+                requested=None,
+                routing_outcome="decided",
+                classifier_model=classifier_model,
+            ),
+            "decided",
+            tier,
+        )
+
+    async def _classify(
+        self,
+        router: ModelRouter,
+        db_context: Database,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+        exclude_turn_id: str | None,
+    ) -> RoutingDecision:
+        """Ask the classifier, attributed to the profile it is deciding for.
+
+        The spend is this profile's -- it is what routing that profile's turn
+        costs -- but it is not spend at the tier the turn will run at, so it
+        carries its own label. Established here rather than inside the router
+        because the router serves every profile and knows none of them.
+        """
+        history = await self._routing_history(
+            db_context,
+            router,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            exclude_turn_id=exclude_turn_id,
+        )
+        attachments = await self._described_trigger_attachments(
+            db_context,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            acting_user_id=acting_user_id,
+        )
+        attribution = CallAttribution(
+            profile_id=self.service_config.id,
+            model_selection=ROUTER_CALL_SELECTION,
+        )
+        with attributed_call(attribution):
+            return await router.route(
+                eligibility=self.service_config.tier_eligibility,
+                guidance=self.service_config.auto_routing_guidance,
+                history=history,
+                request_text=self._extract_user_content_for_history(
+                    trigger_content_parts
+                ),
+                attachment_summary=_attachment_summary(attachments),
+            )
+
+    async def _described_trigger_attachments(
+        self,
+        db_context: Database,
+        *,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+    ) -> list[MessageAttachmentMetadata]:
+        """This turn's files, named and typed, however they arrived.
+
+        Only some ingresses describe a turn's attachments. The rest reference
+        them: a content part carrying an attachment id and nothing readable is
+        what a delegated request, an inbound A2A message and an injected
+        artifact all look like. Both are "analyze this", and neither says what
+        "this" is until the reference is resolved, so it is resolved here --
+        once, for whatever reaches the classifier -- rather than at each
+        ingress, where the next one added would arrive undescribed.
+
+        One bounded lookup, for the ids nothing has already described, and only
+        for metadata: name and type are what a tier decision can use, and
+        reading contents would put every uploaded document through a second
+        model for nothing.
+        """
+        described_ids = {
+            attachment.get("attachment_id") for attachment in trigger_attachments or ()
+        }
+        referenced_ids = [
+            part["attachment_id"]
+            for part in trigger_content_parts
+            if part["type"] == "attachment"
+            and part["attachment_id"] not in described_ids
+        ]
+        registry = self._attachment_registry
+        if not referenced_ids or registry is None:
+            return list(trigger_attachments or ())
+        found = await registry.get_attachments(
+            db_context, referenced_ids, acting_user_id=acting_user_id
+        )
+        return merge_attachment_metadata(
+            trigger_attachments,
+            [
+                _referenced_attachment_metadata(attachment_id, found[attachment_id])
+                for attachment_id in referenced_ids
+                if attachment_id in found
+            ],
+        )
+
+    async def _routing_history(
+        self,
+        db_context: Database,
+        router: ModelRouter,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        exclude_turn_id: str | None,
+    ) -> list[LLMMessage]:
+        """The recent conversation the classifier is shown.
+
+        The classifier's own message count, but the interface's configured age:
+        a message old enough that the turn itself will not see it is not
+        context for what is being asked now, on any surface.
+
+        A count of zero means no history, and is read as such rather than
+        passed down -- the repository treats a falsy limit as "no limit", which
+        would hand the classifier the whole window instead of none of it.
+        """
+        if router.history_messages <= 0:
+            return []
+        _, history_max_age = self.context_preparer.get_history_limits(interface_type)
+        return await db_context.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=router.history_messages,
+            max_age=history_max_age,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            current_time=self.clock.now(),
+            # The streaming web path commits the prompt before the producer
+            # runs, so without this the classifier reads the request twice --
+            # once as history, once as the request it is judging -- and a
+            # repeated request is not the same evidence as a fresh one.
+            exclude_turn_id=exclude_turn_id,
+        )
 
     @property
     def attachment_registry(self) -> AttachmentRegistry | None:
@@ -233,7 +884,7 @@ class ProcessingService:
 
     async def _resolve_thread_root_id(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         replied_to_interface_id: str | None,
     ) -> int | None:
@@ -285,7 +936,7 @@ class ProcessingService:
 
     async def _build_initial_messages_for_llm(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         replied_to_interface_id: str | None,
@@ -354,7 +1005,7 @@ class ProcessingService:
 
     async def _append_missing_pinned_history_messages(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages_for_llm: list[LLMMessage],
         pinned_history_message_ids: list[int] | None,
     ) -> None:
@@ -408,6 +1059,89 @@ class ProcessingService:
                 break
         return pruned_count
 
+    @staticmethod
+    def _repair_unmatched_tool_calls(
+        messages_for_llm: list[LLMMessage],
+    ) -> tuple[int, int]:
+        """Pair every tool call left in the history with exactly one result.
+
+        History can contain an assistant tool call whose result was never
+        written: a turn that is interrupted while a tool is still running
+        persists the call as soon as the model emits it, and the result only
+        lands when the tool finishes. A client that starts a second turn on
+        that conversation meanwhile replays the gap, which providers that
+        validate the pairing reject outright — OpenAI's Responses API fails the
+        whole request with "No tool output found for function call".
+
+        Synthesize a placeholder result for each unmatched call so the model
+        can see that the call was abandoned rather than silently losing it, and
+        drop tool results whose call is missing, which cannot be represented at
+        all. Truncation of the history window is handled before this by
+        :meth:`_prune_leading_invalid_messages`, so an unmatched call reaching
+        here really is an abandoned one and not merely a call whose result fell
+        outside the window.
+
+        Every surviving result is emitted directly after its calling assistant
+        message, even if history stored it further down. The incident this
+        repairs produces exactly that separation — the rival turn persists its
+        prompt while the slow tool is still running, so the rows land as
+        ``assistant(call) → user(rival prompt) → tool(result)`` — and a provider
+        that wants the results attached to the calling turn rejects it. Moving
+        the result keeps the real output (the model can use it) instead of
+        discarding it for a placeholder; the cost is that the intervening
+        message now sorts after a result it was originally typed before.
+
+        Returns the (synthesized, dropped) counts.
+        """
+        # A result only answers its call if the call came first, so both facts
+        # have to be known before any message can be classified: which results
+        # are usable, and therefore which calls still need one.
+        seen_call_ids: set[str] = set()
+        # call id -> its result, hoisted out of the stream so it can be re-emitted
+        # at the call site. Only the first result for a call is kept; a duplicate
+        # cannot be represented and is dropped like an orphan.
+        results_by_call_id: dict[str, ToolMessage] = {}
+        dropped = 0
+        for message in messages_for_llm:
+            if not isinstance(message, ToolMessage):
+                if isinstance(message, AssistantMessage) and message.tool_calls:
+                    seen_call_ids.update(
+                        tool_call.id for tool_call in message.tool_calls
+                    )
+                continue
+            if (
+                message.tool_call_id not in seen_call_ids
+                or message.tool_call_id in results_by_call_id
+            ):
+                dropped += 1
+                continue
+            results_by_call_id[message.tool_call_id] = message
+
+        repaired: list[LLMMessage] = []
+        synthesized = 0
+        for message in messages_for_llm:
+            if isinstance(message, ToolMessage):
+                # Emitted at its call site below, or already counted as dropped.
+                continue
+            repaired.append(message)
+            if not isinstance(message, AssistantMessage) or not message.tool_calls:
+                continue
+            for tool_call in message.tool_calls:
+                answer = results_by_call_id.get(tool_call.id)
+                if answer is not None:
+                    repaired.append(answer)
+                    continue
+                repaired.append(
+                    ToolMessage(
+                        tool_call_id=tool_call.id,
+                        name=tool_call.function.name,
+                        content=ABANDONED_TOOL_CALL_RESULT,
+                    )
+                )
+                synthesized += 1
+        messages_for_llm[:] = repaired
+        return synthesized, dropped
+
     def render_available_service_profiles(self) -> str:
         """Render the catalog of delegatable service profiles.
 
@@ -418,12 +1152,40 @@ class ProcessingService:
         registry = self.processing_services_registry
         if not registry:
             return ""
-        lines = [
-            f"- ID: {profile_id}, Description: "
-            f"{service.service_config.description or 'No description available.'}"
-            for profile_id, service in registry.items()
-        ]
+        lines: list[str] = []
+        for profile_id, service in registry.items():
+            description = (
+                service.service_config.description or "No description available."
+            )
+            lines.append(f"- ID: {profile_id}, Description: {description}")
+            lines.extend(
+                _selectable_tier_lines(service.service_config.tier_eligibility)
+            )
         return "\n".join(lines)
+
+    @property
+    def live_tools_provider(self) -> ToolsProvider:
+        """Tools provider for a Live (voice) session.
+
+        A Live session's tool declarations are frozen at session setup, so the
+        activation mechanism the LLM loop uses cannot reach an on-demand tool
+        there. This provider declares the eager tools plus ``search_tools`` and
+        ``call_tool``, and dispatches the latter back through the profile's
+        ordinary chain so policy, taint and review still apply. A profile with
+        nothing on-demand has nothing to disclose progressively and gets the
+        ordinary provider.
+
+        See docs/design/voice-mode-on-demand-tools.md.
+        """
+        if self.on_demand_view is None:
+            return self.tools_provider
+        if self._live_tools_provider is None:
+            from family_assistant.tools.live_meta import (  # noqa: PLC0415 - avoids a cycle through tools/__init__
+                LiveMetaToolsProvider,
+            )
+
+            self._live_tools_provider = LiveMetaToolsProvider(self.on_demand_view)
+        return self._live_tools_provider
 
     async def delegation_catalog_addition(self) -> str:
         """Return a system-prompt section listing delegation targets, or "".
@@ -456,60 +1218,59 @@ class ProcessingService:
             f"{catalog}"
         )
 
-    def _render_system_prompt(
-        self, user_name: str, aggregated_other_context_str: str
-    ) -> tuple[str, int | None]:
-        """Render a system prompt and locate its request-stable prefix.
+    def validate_system_prompt_renders(self) -> None:
+        """Render the system prompt once, raising ValueError if the template is bad.
 
-        Returns the rendered prompt plus the length of the leading run that does
-        not depend on per-turn inputs (see ``SystemMessage.stable_prefix_len``),
-        or ``None`` if no such boundary exists.
-
-        The boundary is found by rendering a second time with sentinel values for
-        the per-turn inputs and taking the common prefix: whatever two renderings
-        that differ only in those inputs still share is, by construction,
-        independent of them. Deriving it this way keeps it correct for
-        operator-edited templates, which may place the placeholders anywhere or
-        omit them entirely.
+        Called at startup so an operator template that still asks for a removed
+        placeholder fails the boot rather than the first conversation to reach
+        this profile. The user name is the only per-conversation input and any
+        value exercises the same code path, so a stand-in is enough.
         """
-        rendered = self._format_system_prompt(
-            user_name=user_name,
-            current_time_str=self._current_time_str(),
-            aggregated_other_context_str=aggregated_other_context_str,
-        )
-        probe = self._format_system_prompt(
-            user_name=user_name,
-            current_time_str=_VOLATILE_PROBE,
-            aggregated_other_context_str=_VOLATILE_PROBE,
-        )
-        stable_prefix_len = _common_prefix_len(rendered, probe)
-        return rendered, stable_prefix_len
+        self.format_system_prompt(user_name="startup validation")
 
-    def _current_time_str(self) -> str:
-        return (
-            self.clock
-            .now()
-            .astimezone(self.service_config.timezone)
-            .strftime("%Y-%m-%d %H:%M:%S %Z")
-        )
+    @staticmethod
+    def _build_system_message(content: str) -> SystemMessage:
+        """Wrap a rendered system prompt, marking the whole of it cacheable.
 
-    def _format_system_prompt(
-        self,
-        *,
-        user_name: str,
-        current_time_str: str,
-        aggregated_other_context_str: str,
-    ) -> str:
-        """Render the system prompt template with strict placeholder validation."""
+        The prompt carries no per-turn material -- the clock and the context
+        providers ride in the trailing ``<turn_context>`` block instead -- so all
+        of it is stable across a conversation's requests and the cache breakpoint
+        sits at its end. Text appended after this point (attachment metadata,
+        on-demand tool additions) lands past the offset and stays out of the
+        cached block, which is what ``stable_prefix_len`` is for.
+        """
+        return SystemMessage(content=content, stable_prefix_len=len(content) or None)
+
+    def current_time_str(self, *, fmt: str = DEFAULT_TIME_FORMAT) -> str:
+        """Now, in the profile's timezone, as the model is shown it.
+
+        Public because the surfaces that report or re-render the turn-context
+        block -- the context viewer and the two Live API paths -- must not spell
+        this out for themselves and drift from what the model actually receives.
+        It reads the injected clock, so a test that pins the clock pins these too.
+
+        *fmt* exists for telephony, which has the model speak the time aloud and
+        wants a more speakable rendering than the machine-readable default.
+        """
+        return self.clock.now().astimezone(self.service_config.timezone).strftime(fmt)
+
+    def format_system_prompt(self, *, user_name: str) -> str:
+        """Render the system prompt template with strict placeholder validation.
+
+        ``current_time`` and ``aggregated_other_context`` are deliberately absent
+        from ``format_args``: they now ride in the trailing ``<turn_context>``
+        block, and a template still asking for them would quietly reintroduce the
+        cache-busting interpolation this moved away from. Leaving them out turns
+        that into the unknown-placeholder error below, which
+        ``validate_system_prompt_renders`` surfaces at startup.
+        """
         system_prompt_template = self.service_config.prompts.get(
             "system_prompt",
-            "You are a helpful assistant. Current time is {current_time}.",
+            "You are a helpful assistant.",
         )
         system_prompt_docs = self.service_config.prompts.get("system_prompt_docs", "")
         format_args = {
             "user_name": user_name,
-            "current_time": current_time_str,
-            "aggregated_other_context": aggregated_other_context_str,
             "server_url": self.server_url,
             "profile_id": self.service_config.id,
         }
@@ -569,6 +1330,19 @@ class ProcessingService:
                 )
             else:
                 final_system_prompt = system_prompt_docs.strip()
+
+        # Appended here rather than written into each profile's template, since
+        # every profile that receives the block needs to be told what it is -- and
+        # told accurately: a profile without the aggregated-context grant must not
+        # be led to believe its notes and calendar are in there.
+        if self.sends_turn_context_block:
+            guidance = turn_context_guidance(
+                includes_aggregated_context=(
+                    self.service_config.include_aggregated_context
+                ),
+                placement="appended",
+            )
+            final_system_prompt = f"{final_system_prompt}\n\n{guidance}".strip()
 
         return self.context_preparer.prepend_profile_preamble(final_system_prompt)
 
@@ -633,7 +1407,7 @@ class ProcessingService:
 
     async def _save_history_message(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         message: LLMMessage,
         interface_type: str,
@@ -647,39 +1421,29 @@ class ProcessingService:
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
         is_internal: bool = False,
-        save_with_isolated_context: bool = False,
     ) -> int | None:
-        """Persist a history message using either the active context or a fresh one."""
+        """Persist a history message."""
         message_timestamp = timestamp if timestamp is not None else self.clock.now()
 
-        async def _persist_message(target_db_context: DatabaseContext) -> int | None:
-            return await target_db_context.message_history.add_message(
-                message=message,
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                interface_message_id=interface_message_id,
-                turn_id=turn_id,
-                thread_root_id=thread_root_id,
-                timestamp=message_timestamp,
-                processing_profile_id=self.service_config.id,
-                subconversation_id=subconversation_id,
-                user_id=user_id,
-                reasoning_info=reasoning_info,
-                attachments=attachments,
-                is_internal=is_internal,
-            )
-
-        # On SQLite, avoid nested contexts with StaticPool because they may share
-        # the same underlying connection/transaction as the outer context.
-        if save_with_isolated_context and db_context.supports_isolated_writes:
-            async with db_context.create_isolated_context() as isolated_db_context:
-                return await _persist_message(isolated_db_context)
-
-        return await _persist_message(db_context)
+        return await db_context.message_history.add_message(
+            message=message,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=interface_message_id,
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            timestamp=message_timestamp,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id=user_id,
+            reasoning_info=reasoning_info,
+            attachments=attachments,
+            is_internal=is_internal,
+        )
 
     async def _persist_error_history_message(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         error_message: str,
         error_traceback: str,
@@ -689,14 +1453,19 @@ class ProcessingService:
         thread_root_id: int | None,
         subconversation_id: str | None,
         user_id: str | None,
-        save_with_isolated_context: bool | None = None,
+        model_selection: ResolvedModelSelection | None,
     ) -> int | None:
-        """Persist a processing error message with the standard write strategy."""
-        use_isolated_context = (
-            self._USE_ISOLATED_HISTORY_WRITES
-            if save_with_isolated_context is None
-            else save_with_isolated_context
-        )
+        """Persist a processing error message, stamped with the run's tier.
+
+        The tier fields go on the error row for the same reason they go on a
+        reply: this row is what the turn produced. Without them the persisted
+        record of a routed turn would exist only for turns that succeeded, so
+        the shadow evaluation would read ``would_choose`` against a population
+        with every failure removed from it -- and a tier that fails more often
+        would look better for it.
+        """
+        reasoning_info: MessageReasoningInfo = {}
+        stamp_model_selection(reasoning_info, model_selection)
         try:
             return await self._save_history_message(
                 db_context,
@@ -711,7 +1480,7 @@ class ProcessingService:
                 thread_root_id=thread_root_id,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
-                save_with_isolated_context=use_isolated_context,
+                reasoning_info=reasoning_info or None,
             )
         except Exception:
             logger.exception("Failed to save error message to history")
@@ -719,7 +1488,7 @@ class ProcessingService:
 
     async def _prepare_turn_messages_for_llm(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         interface_type: str,
         conversation_id: str,
@@ -731,10 +1500,10 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         trigger_attachments: list[MessageAttachmentMetadata] | None,
         subconversation_id: str | None,
+        llm_client: LLMInterface,
         thread_root_id: int | None = None,
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
-        save_history_with_isolated_context: bool = True,
         trigger_role: Literal["user", "system"] = "user",
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
@@ -788,7 +1557,6 @@ class ProcessingService:
                 subconversation_id=subconversation_id,
                 user_id=user_id,
                 is_internal=trigger_is_internal,
-                save_with_isolated_context=save_history_with_isolated_context,
             )
         if saved_user_msg_record is not None and thread_root_id_for_turn is None:
             thread_root_id_for_turn = saved_user_msg_record
@@ -821,54 +1589,79 @@ class ProcessingService:
         pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
         if pruned_count > 0:
             logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
+        synthesized, dropped = self._repair_unmatched_tool_calls(messages_for_llm)
+        if synthesized or dropped:
+            logger.warning(
+                "Repaired unmatched tool calls in LLM history for conversation %s: "
+                "%d abandoned call(s) given a placeholder result, %d orphaned "
+                "result(s) dropped.",
+                conversation_id,
+                synthesized,
+                dropped,
+            )
 
-        aggregated_other_context_str = await self.context_preparer.aggregate_context()
-        context_taint_sources = (
-            await self.context_preparer.aggregate_context_taint_sources()
-        )
-        if thread_attachments_context:
-            if aggregated_other_context_str:
-                aggregated_other_context_str += "\n\n" + thread_attachments_context
-            else:
-                aggregated_other_context_str = thread_attachments_context
+        # A profile opts in to the household's own data -- notes, calendar, home
+        # state -- by setting include_aggregated_context. Most shipped profiles do
+        # not, and the taint that comes with the context is gated with it: a
+        # profile that never receives the context was never exposed to it.
+        aggregated_other_context_str = ""
+        context_taint_sources: tuple[TaintSource, ...] = ()
+        if self.service_config.include_aggregated_context:
+            aggregated_other_context_str = (
+                await self.context_preparer.aggregate_context(user_id)
+            )
+            context_taint_sources = (
+                await self.context_preparer.aggregate_context_taint_sources()
+            )
+            if thread_attachments_context:
+                if aggregated_other_context_str:
+                    aggregated_other_context_str += "\n\n" + thread_attachments_context
+                else:
+                    aggregated_other_context_str = thread_attachments_context
 
-        final_system_prompt, stable_prefix_len = self._render_system_prompt(
-            user_name=user_name,
-            aggregated_other_context_str=aggregated_other_context_str,
-        )
+        final_system_prompt = self.format_system_prompt(user_name=user_name)
         delegation_addition = await self.delegation_catalog_addition()
         if delegation_addition:
-            # Appended after the per-turn context, so it lands past the stable
-            # prefix. Guard the offset anyway: a misplaced breakpoint would put
-            # per-turn text inside the cached block, which fails silently as a
-            # cache that only ever writes and never reads.
-            combined = f"{final_system_prompt}\n\n{delegation_addition}".strip()
-            if stable_prefix_len is not None and not combined.startswith(
-                final_system_prompt[:stable_prefix_len]
-            ):
-                stable_prefix_len = None
-            final_system_prompt = combined
+            # Config-derived, so it is as stable as the rest of the prompt and
+            # belongs inside the cached block rather than after it.
+            final_system_prompt = (
+                f"{final_system_prompt}\n\n{delegation_addition}".strip()
+            )
         if final_system_prompt:
-            messages_for_llm.insert(
-                0,
-                SystemMessage(
-                    content=final_system_prompt,
-                    stable_prefix_len=stable_prefix_len,
-                ),
-            )
+            messages_for_llm.insert(0, self._build_system_message(final_system_prompt))
 
-        attachment_injection_messages = (
-            await self.attachment_processor.process_content_parts(
-                db_context,
-                conversation_id,
-                trigger_content_parts,
-                acting_user_id=user_id,
-            )
+        processed_content_parts = await self.attachment_processor.process_content_parts(
+            db_context,
+            conversation_id,
+            trigger_content_parts,
+            acting_user_id=user_id,
+            llm_client=llm_client,
         )
-        messages_for_llm.extend(attachment_injection_messages)
+        # Before the injection messages are appended, so the block lands on the
+        # trigger rather than on the newest injection. An injection built by a
+        # provider adapter can carry its payload in `parts`, which is what that
+        # provider renders -- text appended to `content` there is dropped on the
+        # floor.
+        #
+        # Injected attachments are listed alongside the trigger's own: a
+        # delegated profile receives its attachments only as injections, and
+        # without their ids in the block it can see the image but cannot name
+        # it to transform_image or any other attachment-taking tool.
         self._inject_trigger_attachment_metadata(
             messages_for_llm=messages_for_llm,
-            trigger_attachments=trigger_attachments,
+            trigger_attachments=merge_attachment_metadata(
+                trigger_attachments, processed_content_parts.attachments
+            ),
+        )
+        messages_for_llm.extend(processed_content_parts.messages)
+        # Last, and after the attachment-metadata injection above: that scans back
+        # for the newest user message, and would fasten the trigger's attachment
+        # list onto this block instead of onto the trigger.
+        messages_for_llm.append(
+            build_turn_context_message(
+                current_time_str=self.current_time_str(),
+                aggregated_context=aggregated_other_context_str,
+            )
         )
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
             db_context, messages_for_llm, acting_user_id=user_id
@@ -877,13 +1670,15 @@ class ProcessingService:
 
     async def process_message(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -892,9 +1687,16 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
+
+        The run's binding is a parameter rather than a default, because the only
+        default available here is the shared one -- and a caller that omitted it
+        would silently run the profile's own model while the envelope said
+        otherwise.
 
         Returns:
             A tuple containing:
@@ -910,6 +1712,8 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=llm_client,
+            model_selection=model_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -922,17 +1726,21 @@ class ProcessingService:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
         )
 
     async def process_message_stream(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -941,6 +1749,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -959,6 +1768,8 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=llm_client,
+            model_selection=model_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -971,12 +1782,13 @@ class ProcessingService:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
         ):
             yield item
 
     async def handle_chat_interaction(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[ContentPartDict],
@@ -996,8 +1808,11 @@ class ProcessingService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
-        save_history_with_isolated_context: bool | None = None,
+        reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
+        memory_review: MemoryReviewContext | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1027,6 +1842,9 @@ class ProcessingService:
             trigger_is_internal: Hide the trigger row from user-facing history.
             pinned_history_message_ids: Message rows that must be present even if
                 normal history limits would exclude them.
+            model_selection: The tier this run is bound to. A frozen envelope --
+                everything read back from storage -- is taken as settled; an
+                absent or unfrozen default-sourced one may be routed by Auto.
 
         Returns:
             ChatInteractionResult containing:
@@ -1039,17 +1857,31 @@ class ProcessingService:
 
         if turn_id is None:
             turn_id = str(uuid.uuid4())
-        use_isolated_history_writes = (
-            self._USE_ISOLATED_HISTORY_WRITES
-            if save_history_with_isolated_context is None
-            else save_history_with_isolated_context
-        )
         logger.info(
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
 
+        # Bound before any model-dependent preparation: attachment injection is
+        # built by the primary adapter, so the binding has to exist before the
+        # turn's messages do.
+        resolved_selection, run_llm_client = await self._bind_run(
+            db_context,
+            model_selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            acting_user_id=user_id,
+            trigger_is_internal=trigger_is_internal,
+            trigger_role=trigger_role,
+            exclude_turn_id=turn_id if reuse_existing_user_row else None,
+        )
+
         thread_root_id_for_turn: int | None = None
-        try:
+
+        async def interaction_success() -> ChatInteractionResult:
+            nonlocal thread_root_id_for_turn
             # --- 1-2. Persist user trigger + build LLM-ready messages ---
             (
                 thread_root_id_for_turn,
@@ -1070,9 +1902,10 @@ class ProcessingService:
                 thread_root_id=thread_root_id,
                 trigger_is_internal=trigger_is_internal,
                 pinned_history_message_ids=pinned_history_message_ids,
-                save_history_with_isolated_context=use_isolated_history_writes,
                 trigger_role=trigger_role,
+                reuse_existing_user_row=reuse_existing_user_row,
                 initial_taint_sources=initial_taint_sources,
+                llm_client=run_llm_client,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -1089,6 +1922,8 @@ class ProcessingService:
                 user_id=user_id,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                llm_client=run_llm_client,
+                model_selection=resolved_selection,
                 chat_interfaces=chat_interfaces,
                 confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,
@@ -1098,6 +1933,8 @@ class ProcessingService:
                     *context_taint_sources,
                     *(initial_taint_sources or ()),
                 ),
+                tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -1133,8 +1970,11 @@ class ProcessingService:
                         # rewriting it would break replay continuity.
                         turn_msg.content = normalize_latex_to_unicode(turn_msg.content)
 
+                    # Each assistant message carries the call that produced it.
+                    # Falling back to the turn's last call would attribute one
+                    # call's tokens to every iteration of a tool loop.
                     reasoning_info_for_msg = (
-                        final_reasoning_info
+                        turn_msg.reasoning_info
                         if isinstance(turn_msg, AssistantMessage)
                         else None
                     )
@@ -1156,7 +1996,6 @@ class ProcessingService:
                             if index == final_assistant_index
                             else None
                         ),
-                        save_with_isolated_context=use_isolated_history_writes,
                     )
 
                     if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
@@ -1175,6 +2014,20 @@ class ProcessingService:
                 attachment_ids=response_attachment_ids,
             )
 
+        try:
+            return await interaction_success()
+        except TaintedSinkRefusedError as refusal:
+            # A policy decision, not a fault: render the reason and skip the
+            # error-history row and traceback the generic handler would write.
+            logger.warning(
+                "Runtime taint policy refused a turn on profile '%s': %s",
+                self.service_config.id,
+                refusal,
+            )
+            return ChatInteractionResult.error(
+                text_reply=str(refusal),
+                error_traceback=f"Runtime taint policy refused the turn: {refusal}",
+            )
         except Exception as exc:
             logger.exception(
                 f"Error in handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
@@ -1192,7 +2045,7 @@ class ProcessingService:
                 thread_root_id=thread_root_id_for_turn,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
-                save_with_isolated_context=use_isolated_history_writes,
+                model_selection=resolved_selection,
             )
 
             return ChatInteractionResult.error(
@@ -1203,7 +2056,7 @@ class ProcessingService:
 
     async def handle_chat_interaction_stream(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[ContentPartDict],
@@ -1222,6 +2075,8 @@ class ProcessingService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1237,6 +2092,26 @@ class ProcessingService:
         """
         if turn_id is None:
             turn_id = str(uuid.uuid4())
+
+        # Before the span, and before any model-dependent preparation: the
+        # binding has to exist before the turn's messages do.
+        resolved_selection, run_llm_client = await self._bind_run(
+            db_context,
+            model_selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            acting_user_id=user_id,
+            # The streaming path serves surfaces a person types at, and has no
+            # system-role or internal-trigger variant to distinguish: every
+            # turn that reaches it is somebody's own request.
+            trigger_is_internal=False,
+            trigger_role="user",
+            exclude_turn_id=turn_id if reuse_existing_user_row else None,
+        )
+
         span = tracer.start_span(
             "conversation.process",
             attributes={
@@ -1259,127 +2134,180 @@ class ProcessingService:
             )
 
         thread_root_id_for_turn: int | None = None
-        try:
-            with trace.use_span(span, end_on_exit=False):
-                try:
-                    # --- 1-2. Persist user trigger + build LLM-ready messages ---
-                    (
-                        thread_root_id_for_turn,
-                        typed_messages_for_llm,
-                        context_taint_sources,
-                    ) = await self._prepare_turn_messages_for_llm(
-                        db_context,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        trigger_content_parts=trigger_content_parts,
-                        trigger_interface_message_id=trigger_interface_message_id,
-                        user_name=user_name,
-                        turn_id=turn_id,
-                        user_id=user_id,
-                        replied_to_interface_id=replied_to_interface_id,
-                        trigger_attachments=trigger_attachments,
-                        subconversation_id=subconversation_id,
-                        reuse_existing_user_row=reuse_existing_user_row,
-                    )
 
-                    # --- 3. Stream LLM Processing ---
-                    # Ids already recorded on a tool row of this turn, so the
-                    # closing assistant row doesn't repeat them.
-                    recorded_on_tool_rows: set[str] = set()
-                    async for event, stream_msg in self.process_message_stream(
-                        db_context=db_context,
-                        messages=typed_messages_for_llm,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        user_name=user_name,
-                        user_id=user_id,
-                        turn_id=turn_id,
-                        chat_interface=chat_interface,
-                        chat_interfaces=chat_interfaces,
-                        confirmation_ui_managers=confirmation_ui_managers,
-                        request_confirmation_callback=request_confirmation_callback,
-                        subconversation_id=subconversation_id,
-                        mid_turn_input_provider=mid_turn_input_provider,
-                        initial_taint_sources=(
-                            *context_taint_sources,
-                            *(initial_taint_sources or ()),
-                        ),
-                        taint_tracker=taint_tracker,
+        async def interaction_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal thread_root_id_for_turn
+            # --- 1-2. Persist user trigger + build LLM-ready messages ---
+            (
+                thread_root_id_for_turn,
+                typed_messages_for_llm,
+                context_taint_sources,
+            ) = await self._prepare_turn_messages_for_llm(
+                db_context,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                trigger_content_parts=trigger_content_parts,
+                trigger_interface_message_id=trigger_interface_message_id,
+                user_name=user_name,
+                turn_id=turn_id,
+                user_id=user_id,
+                replied_to_interface_id=replied_to_interface_id,
+                trigger_attachments=trigger_attachments,
+                subconversation_id=subconversation_id,
+                reuse_existing_user_row=reuse_existing_user_row,
+                llm_client=run_llm_client,
+            )
+
+            # --- 3. Stream LLM Processing ---
+            # Ids already recorded on a tool row of this turn, so the
+            # closing assistant row doesn't repeat them.
+            recorded_on_tool_rows: set[str] = set()
+            async for event, stream_msg in self.process_message_stream(
+                db_context=db_context,
+                messages=typed_messages_for_llm,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                user_id=user_id,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                llm_client=run_llm_client,
+                model_selection=resolved_selection,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
+                mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=(
+                    *context_taint_sources,
+                    *(initial_taint_sources or ()),
+                ),
+                taint_tracker=taint_tracker,
+                tool_call_review_trigger=tool_call_review_trigger,
+            ):
+                # A ``user_input`` echo is the client's proof that its
+                # steering message was delivered: seeing one is what
+                # stops it tracking the message for recovery. Publishing
+                # it before the row is written would let a failed write
+                # clear the client's only copy -- the message would exist
+                # nowhere, having been neither persisted nor acted on. So
+                # this one event is published after its save; everything
+                # else streams first, since the reply should not wait on
+                # a database round trip.
+                publish_after_save = event.type == "user_input"
+                if not publish_after_save:
+                    yield event
+
+                # Save messages as they're generated
+                if stream_msg is not None:
+                    if (
+                        isinstance(stream_msg, AssistantMessage)
+                        and stream_msg.content
+                        and not stream_msg.tool_calls
                     ):
-                        yield event  # noqa: ASYNC119
-
-                        # Save messages as they're generated
-                        if stream_msg is not None:
-                            if (
-                                isinstance(stream_msg, AssistantMessage)
-                                and stream_msg.content
-                                and not stream_msg.tool_calls
-                            ):
-                                # Skip messages that carry tool calls: see
-                                # the matching branch in
-                                # handle_chat_interaction for the
-                                # thought-signature rationale.
-                                stream_msg.content = normalize_latex_to_unicode(
-                                    stream_msg.content
-                                )
-                            recorded_on_tool_rows |= _tool_row_attachment_ids(
-                                stream_msg
-                            )
-                            reasoning_info_for_stream = (
-                                event.metadata.get("reasoning_info")
-                                if _is_turn_closing_assistant_message(stream_msg)
-                                and event.metadata
-                                else None
-                            )
-                            # The turn's closing assistant message arrives on the
-                            # same event as its response attachment ids, so this
-                            # is where they get recorded.
-                            response_attachments = (
-                                _response_attachment_references(
-                                    event.metadata.get("attachment_ids"),
-                                    recorded_on_tool_rows=recorded_on_tool_rows,
-                                )
-                                if _is_turn_closing_assistant_message(stream_msg)
-                                and event.metadata
-                                else None
-                            )
-                            await self._save_history_message(
-                                db_context,
-                                message=stream_msg,
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                turn_id=turn_id,
-                                thread_root_id=thread_root_id_for_turn,
-                                subconversation_id=subconversation_id,
-                                user_id=user_id,
-                                reasoning_info=reasoning_info_for_stream,
-                                attachments=response_attachments,
-                                save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
-                            )
-
-                except Exception as e:
-                    span.set_status(StatusCode.ERROR, str(e))
-                    span.record_exception(e)
-                    logger.exception(f"Error in streaming chat interaction: {e}")
-                    processing_error_traceback = traceback.format_exc()
-                    error_message = _user_friendly_error_message(e)
-                    await self._persist_error_history_message(
+                        # Skip messages that carry tool calls: see
+                        # the matching branch in
+                        # handle_chat_interaction for the
+                        # thought-signature rationale.
+                        stream_msg.content = normalize_latex_to_unicode(
+                            stream_msg.content
+                        )
+                    recorded_on_tool_rows |= _tool_row_attachment_ids(stream_msg)
+                    # Every assistant message in the turn carries its
+                    # own call's usage and timing, not just the one that
+                    # closes it -- the intermediate iterations of a tool
+                    # loop are calls too, and used to save nothing.
+                    reasoning_info_for_stream = (
+                        stream_msg.reasoning_info
+                        if isinstance(stream_msg, AssistantMessage)
+                        else None
+                    )
+                    # The turn's closing assistant message arrives on the
+                    # same event as its response attachment ids, so this
+                    # is where they get recorded.
+                    response_attachments = (
+                        _response_attachment_references(
+                            event.metadata.get("attachment_ids"),
+                            recorded_on_tool_rows=recorded_on_tool_rows,
+                        )
+                        if _is_turn_closing_assistant_message(stream_msg)
+                        and event.metadata
+                        else None
+                    )
+                    await self._save_history_message(
                         db_context,
-                        error_message=error_message,
-                        error_traceback=processing_error_traceback,
+                        message=stream_msg,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         turn_id=turn_id,
                         thread_root_id=thread_root_id_for_turn,
                         subconversation_id=subconversation_id,
                         user_id=user_id,
-                    )
-                    error_event = LLMStreamEvent(
-                        type="error",
-                        error=error_message,
-                        metadata={"error_id": str(uuid.uuid4())},
+                        reasoning_info=reasoning_info_for_stream,
+                        attachments=response_attachments,
                     )
 
-                    yield error_event  # noqa: ASYNC119
+                if publish_after_save:
+                    yield event
+
+        events = interaction_events()
+
+        async def traced_events() -> AsyncGenerator[LLMStreamEvent]:
+            while True:
+                try:
+                    with trace.use_span(span, end_on_exit=False):
+                        stream_event = await anext(events)
+                except StopAsyncIteration:
+                    return
+                yield stream_event
+
+        traced_iterator = traced_events()
+        try:
+            async for stream_event in traced_iterator:
+                yield stream_event
+        except TaintedSinkRefusedError as refusal:
+            with trace.use_span(span, end_on_exit=False):
+                logger.warning(
+                    "Runtime taint policy refused a turn on profile '%s': %s",
+                    self.service_config.id,
+                    refusal,
+                )
+                refusal_event = LLMStreamEvent(
+                    type="error",
+                    error=str(refusal),
+                    metadata={"error_id": str(uuid.uuid4())},
+                )
+            yield refusal_event
+        except Exception as e:
+            with trace.use_span(span, end_on_exit=False):
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+                logger.exception(f"Error in streaming chat interaction: {e}")
+                processing_error_traceback = traceback.format_exc()
+                error_message = _user_friendly_error_message(e)
+                await self._persist_error_history_message(
+                    db_context,
+                    error_message=error_message,
+                    error_traceback=processing_error_traceback,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id_for_turn,
+                    subconversation_id=subconversation_id,
+                    user_id=user_id,
+                    model_selection=resolved_selection,
+                )
+                error_event = LLMStreamEvent(
+                    type="error",
+                    error=error_message,
+                    metadata={"error_id": str(uuid.uuid4())},
+                )
+            yield error_event
         finally:
-            span.end()
+            try:
+                await traced_iterator.aclose()
+            finally:
+                try:
+                    await events.aclose()
+                finally:
+                    span.end()

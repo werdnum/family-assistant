@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.document_indexer import DocumentIndexer
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.task_worker import TaskWorker, handle_reindex_document
 from family_assistant.utils.scraping import MockScraper, ScrapeResult
 from family_assistant.web.app_creator import app as fastapi_app
@@ -260,13 +260,13 @@ async def test_reindex_document_e2e(
         )
 
         # Assert: Verify the buggy content was indexed
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            embeddings = await db.vector.get_document_by_id(document_id)
-            assert embeddings is not None
-            assert len(embeddings.embeddings) > 0
-            content = embeddings.embeddings[0].content
-            assert content is not None and "failed" in content.lower()
-            logger.info(f"Verified buggy content was indexed for doc ID {document_id}")
+        db = Database(engine=pg_vector_db_engine)
+        embeddings = await db.vector.get_document_by_id(document_id)
+        assert embeddings is not None
+        assert len(embeddings.embeddings) > 0
+        content = embeddings.embeddings[0].content
+        assert content is not None and "failed" in content.lower()
+        logger.info(f"Verified buggy content was indexed for doc ID {document_id}")
 
         # --- PHASE 2: Fix and Re-index ---
         logger.info(
@@ -311,27 +311,25 @@ async def test_reindex_document_e2e(
         )
 
         # Assert: Verify the correct content is now indexed
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_record = await db.vector.get_document_by_id(document_id)
-            assert doc_record is not None
-            assert doc_record.title == CORRECT_TITLE
-            assert len(doc_record.embeddings) > 0
+        db = Database(engine=pg_vector_db_engine)
+        doc_record = await db.vector.get_document_by_id(document_id)
+        assert doc_record is not None
+        assert doc_record.title == CORRECT_TITLE
+        assert len(doc_record.embeddings) > 0
 
-            # Check that the new, correct content is there
-            found_correct_chunk = any(
-                EXPECTED_CHUNK in (emb.content or "") for emb in doc_record.embeddings
-            )
-            assert found_correct_chunk, (
-                "Correct content chunk not found after re-indexing"
-            )
+        # Check that the new, correct content is there
+        found_correct_chunk = any(
+            EXPECTED_CHUNK in (emb.content or "") for emb in doc_record.embeddings
+        )
+        assert found_correct_chunk, "Correct content chunk not found after re-indexing"
 
-            # Check that the old, buggy content is gone
-            found_buggy_chunk = any(
-                "failed" in (emb.content or "").lower() for emb in doc_record.embeddings
-            )
-            assert not found_buggy_chunk, (
-                "Buggy content chunk still exists after re-indexing"
-            )
+        # Check that the old, buggy content is gone
+        found_buggy_chunk = any(
+            "failed" in (emb.content or "").lower() for emb in doc_record.embeddings
+        )
+        assert not found_buggy_chunk, (
+            "Buggy content chunk still exists after re-indexing"
+        )
 
         logger.info(
             f"Verified correct content was indexed for doc ID {document_id} after re-indexing."
@@ -349,5 +347,5 @@ async def test_reindex_document_e2e(
                 await worker_task
 
         if document_id:
-            async with DatabaseContext(engine=pg_vector_db_engine) as db:
-                await db.vector.delete_document(document_id)
+            db = Database(engine=pg_vector_db_engine)
+            await db.vector.delete_document(document_id)

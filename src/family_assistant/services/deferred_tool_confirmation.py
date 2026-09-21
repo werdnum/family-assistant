@@ -9,8 +9,8 @@ the ``confirmation_tool_execution`` task once the user approves.
 
 from __future__ import annotations
 
-import json
 import logging
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -19,8 +19,11 @@ from family_assistant.services.confirmation_service import (
     create_durable_confirmation,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import get_db_context
-from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
+from family_assistant.tools.confirmation import (
+    TOOL_CONFIRMATION_RENDERERS,
+    append_review_reason_to_confirmation,
+    render_generic_tool_confirmation,
+)
 from family_assistant.tools.types import ConfirmationOutcome
 
 if TYPE_CHECKING:
@@ -35,16 +38,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_CONFIRMATION_ARGS_CHARS = 6000
-
-
-def _markdown_code_block(text: str, *, language: str = "") -> str:
-    """Render a markdown code block with a fence longer than any content fence."""
-    fence = "```"
-    while fence in text:
-        fence += "`"
-    return f"{fence}{language}\n{text}\n{fence}"
-
 
 async def render_tool_confirmation_prompt(
     *,
@@ -58,15 +51,10 @@ async def render_tool_confirmation_prompt(
     if renderer is not None:
         rendered = await renderer(tool_args, context)
     else:
-        args_json = json.dumps(tool_args, indent=2, sort_keys=True, default=str)
-        if len(args_json) > MAX_CONFIRMATION_ARGS_CHARS:
-            args_json = args_json[:MAX_CONFIRMATION_ARGS_CHARS] + "\n... [truncated]"
-        rendered = (
-            f"Tool: {tool_name}\n\n"
-            "Arguments:\n"
-            f"{_markdown_code_block(args_json, language='json')}"
-        )
-    return f"{source_prefix}\n\n{rendered}"
+        rendered = render_generic_tool_confirmation(tool_name, tool_args)
+    return append_review_reason_to_confirmation(
+        f"{source_prefix}\n\n{rendered}", context
+    )
 
 
 async def deliver_confirmation_to_primary_channel(
@@ -140,21 +128,12 @@ async def create_deferred_tool_confirmation(
     timeout_seconds: float,
     target_user_id: str,
     source_prefix: str,
-    link_source_message: bool = True,
 ) -> ConfirmationOutcome:
     """Record a durable confirmation for a confirm-gated tool and notify the user.
 
     Returns a ``completed`` outcome whose ``result`` tells the caller the tool has
     not run yet and is awaiting approval. The policy layer surfaces this result in
     place of the tool's return value.
-
-    ``link_source_message`` resolves the originating user message from
-    ``context.turn_id`` so an approval can thread back to it. Callers whose turn's
-    source message lives in an uncommitted, ambient transaction (e.g. the
-    delegation-completion wakeup, whose data message is written in an isolated
-    context held open across the turn) must pass ``False``: the durable
-    confirmation is written by the confirmation service's own short transaction,
-    which cannot see that row and would violate the foreign key.
     """
     confirmation_prompt = await render_tool_confirmation_prompt(
         tool_name=tool_name,
@@ -162,9 +141,7 @@ async def create_deferred_tool_confirmation(
         context=context,
         source_prefix=source_prefix,
     )
-    confirmation_service = ConfirmationService(
-        db_context_factory=lambda: get_db_context(engine=context.db_context.engine)
-    )
+    confirmation_service = ConfirmationService(db=context.db_context)
     now = context.clock.now() if context.clock is not None else datetime.now(UTC)
     taint_state_json = (
         context.taint_tracker.snapshot().to_metadata()
@@ -180,12 +157,13 @@ async def create_deferred_tool_confirmation(
         tool_args=tool_args,
         confirmation_prompt=confirmation_prompt,
         timeout_seconds=timeout_seconds,
-        turn_id=context.turn_id if link_source_message else None,
+        turn_id=context.turn_id,
         now=now,
         processing_profile_id=context.processing_profile_id,
         origin_interface_type=context.interface_type,
         origin_conversation_id=context.conversation_id,
         taint_state_json=taint_state_json,
+        tool_call_review_authorization=context.tool_call_review_authorization,
     )
     request_id = str(request["id"])
     logger.info(
@@ -210,6 +188,86 @@ async def create_deferred_tool_confirmation(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class DeferredToolConfirmationCallback:
+    """Confirmation channel that records approved work for later execution."""
+
+    target_user_id: str | None
+    source_prefix: str
+    missing_owner_message: Callable[[str], str]
+
+    def is_deferred_confirmation(self) -> bool:
+        """Identify this callback as non-resuming deferred confirmation."""
+        return True
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        """Create one durable confirmation, or fail closed without an owner."""
+        _ = interface_type
+        _ = conversation_id
+        _ = turn_id
+        if self.target_user_id is None:
+            return ConfirmationOutcome(
+                kind="failed",
+                result=self.missing_owner_message(tool_name),
+            )
+        return await create_deferred_tool_confirmation(
+            context=context,
+            tool_name=tool_name,
+            call_id=call_id,
+            tool_args=tool_args,
+            timeout_seconds=timeout_seconds,
+            target_user_id=self.target_user_id,
+            source_prefix=self.source_prefix,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DeferredConfirmationCallbackAdapter:
+    """Classify an existing non-resuming callback as deferred confirmation."""
+
+    callback: RequestConfirmationCallback
+
+    def is_deferred_confirmation(self) -> bool:
+        """Identify the wrapped callback as non-resuming deferred confirmation."""
+        return True
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        """Delegate while marking queued completion as not yet attempted."""
+        outcome = await self.callback(
+            interface_type,
+            conversation_id,
+            turn_id,
+            tool_name,
+            call_id,
+            tool_args,
+            timeout_seconds,
+            context,
+        )
+        if outcome.kind == "completed":
+            return replace(outcome, action_attempted=False)
+        return outcome
+
+
 def build_deferred_confirmation_callback(
     *,
     target_user_id: str | None,
@@ -225,34 +283,8 @@ def build_deferred_confirmation_callback(
     ``confirmation_tool_execution`` task once the user approves. When the owning user
     is unknown the tool cannot be approved and is reported as not run.
     """
-
-    async def _deferred_confirmation_callback(
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        tool_args: ToolArguments,
-        timeout_seconds: float,
-        context: ToolExecutionContext,
-    ) -> ConfirmationOutcome:
-        _ = interface_type
-        _ = conversation_id
-        _ = turn_id
-        if target_user_id is None:
-            return ConfirmationOutcome(
-                kind="failed",
-                result=missing_owner_message(tool_name),
-            )
-        return await create_deferred_tool_confirmation(
-            context=context,
-            tool_name=tool_name,
-            call_id=call_id,
-            tool_args=tool_args,
-            timeout_seconds=timeout_seconds,
-            target_user_id=target_user_id,
-            source_prefix=source_prefix,
-            link_source_message=False,
-        )
-
-    return _deferred_confirmation_callback
+    return DeferredToolConfirmationCallback(
+        target_user_id=target_user_id,
+        source_prefix=source_prefix,
+        missing_owner_message=missing_owner_message,
+    )

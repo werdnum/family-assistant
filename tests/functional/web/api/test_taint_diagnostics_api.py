@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import (
-    DatabaseContext,
+from family_assistant.storage.database import (
+    Database,
     set_engine_history_taint_epoch,
 )
 from family_assistant.storage.message_history import message_history_table
@@ -22,17 +22,52 @@ def _counts_by_key(items: list[dict[str, object]]) -> dict[str | None, int]:
     }
 
 
-async def _commit_seed_data(db_context: DatabaseContext) -> None:
-    """Commit API fixture seed data so the request connection can observe it."""
-    if db_context.conn is None:
-        raise RuntimeError("Database test context is not active")
-    await db_context.conn.commit()
+@pytest.mark.asyncio
+async def test_taint_diagnostics_counts_review_escalation_trip_status(
+    api_client: httpx.AsyncClient,
+    api_db_context: Database,
+) -> None:
+    await api_db_context.taint_audit_events.add(
+        event_id="review-escalation-trip",
+        event_type="tool_call_review_escalation",
+        conversation_id="diagnostics-escalation",
+        turn_id="escalation-turn",
+        processing_profile_id="default_assistant",
+        subconversation_id=None,
+        tool_name="reviewed_tool",
+        tool_call_id="denied-call",
+        sink_class="arbitrary_external_message",
+        max_tier="unknown_external",
+        sources=[],
+        requested_outcome="review_escalation",
+        effective_outcome="deny",
+        mode="enforce",
+        reason="Denial threshold reserved; unattended turn terminated.",
+        arguments_summary={"keys": [], "value_types": {}},
+        review_verdict="deny",
+        review_status="escalation_turn_terminated",
+        review_context={
+            "delegating_contexts": ["denial_threshold"],
+            "allowed_verdicts": ["allow", "confirm", "deny"],
+            "fallback_verdict": "confirm",
+            "used_fallback": False,
+            "destination_echo": None,
+        },
+    )
+
+    response = await api_client.get("/api/diagnostics/taint-audit?days=1")
+
+    assert response.status_code == 200
+    audit = response.json()["audit"]
+    assert _counts_by_key(audit["by_event_type"])["tool_call_review_escalation"] == 1
+    assert _counts_by_key(audit["by_review_status"])["escalation_turn_terminated"] == 1
+    assert _counts_by_key(audit["by_review_verdict"])["deny"] == 1
 
 
 @pytest.mark.asyncio
 async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
     api_client: httpx.AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     """The endpoint aggregates audits and inventories each history row once."""
     await api_db_context.taint_audit_events.add(
@@ -60,6 +95,18 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
         mode="observe",
         reason="Observe mode decision",
         arguments_summary={"keys": ["url"], "value_types": {"url": "str"}},
+        review_verdict="confirm",
+        review_status="completed",
+        review_latency_ms=18.5,
+        review_context={
+            "delegating_contexts": [
+                "taint:unknown_external:attacker_addressable_egress"
+            ],
+            "allowed_verdicts": ["allow", "confirm", "deny"],
+            "fallback_verdict": "confirm",
+            "used_fallback": False,
+            "destination_echo": False,
+        },
     )
     await api_db_context.taint_audit_events.add(
         event_id="audit-result",
@@ -91,7 +138,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"max_tier": "trusted_user", "sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
         {
             "interface_type": "web",
@@ -127,7 +174,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
         {
             "interface_type": "web",
@@ -141,8 +188,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
             "taint_metadata_version": None,
         },
     ]
-    await api_db_context.execute_with_retry(insert(message_history_table).values(rows))
-    await _commit_seed_data(api_db_context)
+    await api_db_context.execute(insert(message_history_table).values(rows))
 
     response = await api_client.get("/api/diagnostics/taint-audit?days=1")
 
@@ -156,6 +202,14 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
         "result_taint": 1,
     }
     assert _counts_by_key(data["audit"]["by_requested_outcome"])["confirm"] == 1
+    assert _counts_by_key(data["audit"]["by_review_verdict"]) == {
+        None: 1,
+        "confirm": 1,
+    }
+    assert _counts_by_key(data["audit"]["by_review_status"]) == {
+        None: 1,
+        "completed": 1,
+    }
     assert _counts_by_key(data["audit"]["source_label_occurrences"]) == {"web": 1}
 
     assert data["history_taint_epoch"] is None
@@ -171,7 +225,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
     assert _counts_by_key(history["by_metadata_version"]) == {
         None: 2,
         "legacy_inferred": 1,
-        "runtime_v1": 2,
+        "runtime_v2": 2,
     }
     assert _counts_by_key(history["by_tool_name"])["browser_open"] == 1
     serialized = response.text
@@ -183,7 +237,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
 @pytest.mark.asyncio
 async def test_taint_diagnostics_splits_history_rows_by_epoch(
     api_client: httpx.AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
     db_engine: AsyncEngine,
 ) -> None:
     """With an epoch configured, history stats split pre/post epoch."""
@@ -212,7 +266,7 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"max_tier": "unknown_external", "sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
         {
             "interface_type": "telegram",
@@ -234,11 +288,10 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"max_tier": "trusted_user", "sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
     ]
-    await api_db_context.execute_with_retry(insert(message_history_table).values(rows))
-    await _commit_seed_data(api_db_context)
+    await api_db_context.execute(insert(message_history_table).values(rows))
 
     response = await api_client.get("/api/diagnostics/taint-audit?days=1")
 
@@ -259,7 +312,7 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
 @pytest.mark.asyncio
 async def test_taint_diagnostics_reports_truncation(
     api_client: httpx.AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     """Audit breakdowns state when the requested event cap truncates them."""
     for index in range(2):
@@ -281,7 +334,6 @@ async def test_taint_diagnostics_reports_truncation(
             reason="Observe mode decision",
             arguments_summary=None,
         )
-    await _commit_seed_data(api_db_context)
 
     response = await api_client.get("/api/diagnostics/taint-audit?days=1&max_events=1")
 

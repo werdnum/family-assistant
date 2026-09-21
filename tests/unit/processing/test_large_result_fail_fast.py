@@ -15,7 +15,7 @@ from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
 from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult
 from family_assistant.utils.clock import SystemClock
 
@@ -31,7 +31,6 @@ def _create_processor(
     app_config.attachment_config.large_tool_result_threshold_kb = threshold_kb
     return AttachmentProcessor(
         attachment_registry=attachment_registry,
-        llm_client=Mock(),
         app_config=app_config,
         clock=SystemClock(),
     )
@@ -191,7 +190,7 @@ async def test_handle_large_result_persists_taint_metadata() -> None:
     taint_metadata = cast(
         "TaintMetadata",
         {
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "sources": [],
         },
@@ -245,18 +244,13 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
     taint_metadata = cast(
         "TaintMetadata",
         {
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "sources": [],
         },
     )
 
-    (
-        _,
-        llm_message,
-        stream_metadata,
-        attachment_ids,
-    ) = await executor._build_output_for_tool_result(
+    output = await executor._build_output_for_tool_result(
         db_context=Mock(),
         result=ToolResult(
             text="small result",
@@ -277,9 +271,9 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         arguments=None,
     )
 
-    assert attachment_ids == ["att_explicit_1"]
-    assert llm_message.taint_metadata == taint_metadata
-    assert stream_metadata == {
+    assert output.auto_attachment_ids == ["att_explicit_1"]
+    assert output.llm_message.taint_metadata == taint_metadata
+    assert output.stream_metadata == {
         "attachments": [
             {
                 "type": "tool_result",
@@ -326,54 +320,51 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
         api_backend=None,
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        owned = await registry.store_and_register_tool_attachment(
-            file_content=b"owned gmail bytes",
-            filename="owned.txt",
-            content_type="text/plain",
-            tool_name="gmail_get_attachment",
-            owner_user_id="user-a",
-            db_context=db,
-        )
+    db = Database(engine=db_engine)
+    owned = await registry.store_and_register_tool_attachment(
+        file_content=b"owned gmail bytes",
+        filename="owned.txt",
+        content_type="text/plain",
+        tool_name="gmail_get_attachment",
+        owner_user_id="user-a",
+        db_context=db,
+    )
 
-        (
-            _,
-            derived_ids,
-        ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
-            db_context=db,
-            content="D" * 4096,
-            function_name="jq_query",
-            conversation_id="conv-derived",
-            call_id="call-derived",
-            taint_metadata=None,
-            acting_user_id="user-a",
-            arguments={"attachment_id": owned.attachment_id, "query": "."},
-        )
-        assert len(derived_ids) == 1
-        derived = await registry.get_attachment(
-            db, derived_ids[0], acting_user_id="user-a"
-        )
-        assert derived is not None
-        assert derived.owner_user_id == "user-a"
-        assert (
-            await registry.get_attachment(db, derived_ids[0], acting_user_id=None)
-            is None
-        )
+    (
+        _,
+        derived_ids,
+    ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
+        db_context=db,
+        content="D" * 4096,
+        function_name="jq_query",
+        conversation_id="conv-derived",
+        call_id="call-derived",
+        taint_metadata=None,
+        acting_user_id="user-a",
+        arguments={"attachment_id": owned.attachment_id, "query": "."},
+    )
+    assert len(derived_ids) == 1
+    derived = await registry.get_attachment(db, derived_ids[0], acting_user_id="user-a")
+    assert derived is not None
+    assert derived.owner_user_id == "user-a"
+    assert (
+        await registry.get_attachment(db, derived_ids[0], acting_user_id=None) is None
+    )
 
-        (
-            _,
-            plain_ids,
-        ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
-            db_context=db,
-            content="E" * 4096,
-            function_name="jq_query",
-            conversation_id="conv-derived",
-            call_id="call-plain",
-            taint_metadata=None,
-            acting_user_id="user-a",
-            arguments={"query": "."},
-        )
-        assert len(plain_ids) == 1
-        plain = await registry.get_attachment(db, plain_ids[0], acting_user_id=None)
-        assert plain is not None
-        assert plain.owner_user_id is None
+    (
+        _,
+        plain_ids,
+    ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
+        db_context=db,
+        content="E" * 4096,
+        function_name="jq_query",
+        conversation_id="conv-derived",
+        call_id="call-plain",
+        taint_metadata=None,
+        acting_user_id="user-a",
+        arguments={"query": "."},
+    )
+    assert len(plain_ids) == 1
+    plain = await registry.get_attachment(db, plain_ids[0], acting_user_id=None)
+    assert plain is not None
+    assert plain.owner_user_id is None

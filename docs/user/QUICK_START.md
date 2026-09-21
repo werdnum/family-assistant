@@ -80,7 +80,6 @@ For specialized tasks, use slash commands before your message:
 | `/browse`    | Complex web interactions (forms, JavaScript) |
 | `/research`  | In-depth research on a topic                 |
 | `/visualize` | Create charts and graphs from data           |
-| `/automate`  | Create automated triggers and actions        |
 | `/artist`    | Generate or manipulate images and videos     |
 
 Example: `/research Tell me about the history of Python programming`

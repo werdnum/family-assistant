@@ -5,13 +5,13 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Self, cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import update
 
-from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
@@ -19,9 +19,10 @@ from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.security.taint import (
+    DEFAULT_MAX_SEEN_KEYS,
+    DEFAULT_MAX_SOURCES,
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     InMemoryTurnTaintTracker,
     SinkClass,
@@ -29,24 +30,28 @@ from family_assistant.security.taint import (
     TaintMetadata,
     TaintMetadataSource,
     TaintPolicyConfig,
+    TaintPolicyEvaluator,
     TaintPolicyMode,
     TaintPolicyOutcome,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
     amnestied_history_taint_metadata,
+    canonicalize_taint_sources,
     merge_history_taint,
     merge_taint_policy_config,
+    merge_taint_state_into_tracker,
     resolve_tool_sink_class,
     strip_legacy_labeled_echoes,
+    taint_source_semantic_key,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import (
-    get_db_context,
+from family_assistant.storage.database import (
+    Database,
     set_engine_history_taint_epoch,
 )
 from family_assistant.storage.message_history import message_history_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
@@ -247,6 +252,8 @@ def _processing_service(
     llm_client: RuleBasedMockLLMClient,
     *,
     max_history_messages: int = 20,
+    taint_sink_class: SinkClass | None = None,
+    taint_policy: TaintPolicyConfig | None = None,
 ) -> ProcessingService:
     return ProcessingService(
         llm_client=llm_client,
@@ -260,10 +267,12 @@ def _processing_service(
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="runtime-taint-test",
             max_iterations=4,
+            taint_sink_class=taint_sink_class,
         ),
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        taint_policy=taint_policy,
     )
 
 
@@ -360,31 +369,21 @@ async def test_prompt_note_taint_source_load_failure_propagates() -> None:
         async def get_prompt_notes(
             self,
             *,
-            visibility_grants: set[str] | None,
+            read_policy: NoteReadPolicy,
         ) -> list[object]:
-            _ = visibility_grants
+            _ = read_policy
             raise RuntimeError("notes unavailable")
 
     class _FailingDbContext:
         notes = _FailingNotes()
 
-        async def __aenter__(self) -> Self:
-            return self
-
-        async def __aexit__(
-            self,
-            exc_type: object,
-            exc: object,
-            traceback: object,
-        ) -> None:
-            _ = (exc_type, exc, traceback)
-
-    async def get_context() -> _FailingDbContext:
+    def get_context() -> _FailingDbContext:
         return _FailingDbContext()
 
     provider = NotesContextProvider(
         get_db_context_func=cast("Any", get_context),
         prompts={},
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     with pytest.raises(RuntimeError, match="notes unavailable"):
@@ -528,6 +527,285 @@ def test_profile_taint_policy_can_make_operator_minimum_stricter() -> None:
     )
 
 
+def test_structured_adjudicate_cell_exposes_floor_and_fallback() -> None:
+    config = TaintPolicyConfig.model_validate({
+        "mode": "enforce",
+        "matrix_overrides": {
+            "unknown_external": {
+                "sandbox_network": {
+                    "outcome": "adjudicate",
+                    "verdict_floor": "confirm",
+                    "fallback": "deny",
+                }
+            }
+        },
+    })
+
+    evaluation = TaintPolicyEvaluator(config).evaluate(
+        state=_unknown_external_tracker().snapshot(),
+        sink_class=SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.effective_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.verdict_floor is TaintPolicyOutcome.CONFIRM
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.DENY
+
+
+def test_bare_adjudicate_derives_legacy_fallback() -> None:
+    evaluation = TaintPolicyEvaluator(
+        TaintPolicyConfig(
+            mode=TaintPolicyMode.ENFORCE,
+            matrix_overrides={
+                SourceTrustTier.UNKNOWN_EXTERNAL: {
+                    SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE
+                }
+            },
+        )
+    ).evaluate(
+        state=_unknown_external_tracker().snapshot(),
+        sink_class=SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.verdict_floor is None
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.CONFIRM
+
+
+def test_bare_adjudicate_without_legacy_gating_fallback_is_rejected() -> None:
+    with pytest.raises(ValueError, match="without a non-allow fallback"):
+        TaintPolicyConfig.model_validate({
+            "matrix_overrides": {"trusted_user": {"user_local": "adjudicate"}}
+        })
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("verdict_floor", "audit"),
+        ("fallback", "audit"),
+        ("unknown", "confirm"),
+    ],
+)
+def test_structured_adjudicate_cell_is_strict(field: str, value: str) -> None:
+    cell = {
+        "outcome": "adjudicate",
+        "verdict_floor": None,
+        "fallback": "confirm",
+        field: value,
+    }
+
+    with pytest.raises(ValueError):
+        TaintPolicyConfig.model_validate({
+            "matrix_overrides": {"trusted_user": {"user_local": cell}}
+        })
+
+
+def test_operator_minimum_becomes_adjudicate_verdict_floor() -> None:
+    config = TaintPolicyConfig(
+        mode=TaintPolicyMode.ENFORCE,
+        operator_minimum={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM
+            }
+        },
+    )
+
+    evaluation = TaintPolicyEvaluator(config).evaluate(
+        state=_unknown_external_tracker().snapshot(),
+        sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+    )
+
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.effective_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.verdict_floor is TaintPolicyOutcome.CONFIRM
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.CONFIRM
+
+
+def test_deny_operator_minimum_never_softens_adjudicate_fallback() -> None:
+    config = TaintPolicyConfig(
+        mode=TaintPolicyMode.ENFORCE,
+        operator_minimum={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.DENY
+            }
+        },
+    )
+
+    evaluation = TaintPolicyEvaluator(config).evaluate(
+        state=_unknown_external_tracker().snapshot(),
+        sink_class=SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.verdict_floor is TaintPolicyOutcome.DENY
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.DENY
+
+
+def test_redact_operator_minimum_is_rejected_for_adjudicate_cell() -> None:
+    with pytest.raises(ValueError, match="cannot apply redact to an adjudicate cell"):
+        TaintPolicyConfig(
+            operator_minimum={
+                SourceTrustTier.UNKNOWN_EXTERNAL: {
+                    SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.REDACT
+                }
+            }
+        )
+
+
+def test_observe_keeps_adjudicate_requested_and_downgrades_only_effect() -> None:
+    evaluation = TaintPolicyEvaluator(TaintPolicyConfig()).evaluate(
+        state=_unknown_external_tracker().snapshot(),
+        sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+    )
+
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.effective_outcome is TaintPolicyOutcome.AUDIT
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.CONFIRM
+
+
+def test_profile_cannot_replace_adjudicate_with_audit() -> None:
+    profile = TaintPolicyConfig(
+        matrix_overrides={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.AUDIT
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot relax base policy"):
+        merge_taint_policy_config(base=TaintPolicyConfig(), profile=profile)
+
+
+def test_floored_adjudicate_ranks_equal_to_confirm() -> None:
+    base = TaintPolicyConfig(
+        matrix_overrides={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM
+            }
+        }
+    )
+    profile = TaintPolicyConfig.model_validate({
+        "matrix_overrides": {
+            "unknown_external": {
+                "attacker_addressable_egress": {
+                    "outcome": "adjudicate",
+                    "verdict_floor": "confirm",
+                    "fallback": "confirm",
+                }
+            }
+        }
+    })
+
+    merged = merge_taint_policy_config(base=base, profile=profile)
+
+    evaluation = TaintPolicyEvaluator(merged).evaluate(
+        state=_unknown_external_tracker().snapshot(),
+        sink_class=SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+    )
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.verdict_floor is TaintPolicyOutcome.CONFIRM
+
+
+def test_profile_cannot_soften_adjudicate_deny_fallback() -> None:
+    base = TaintPolicyConfig.model_validate({
+        "matrix_overrides": {
+            "unknown_external": {
+                "sandbox_network": {
+                    "outcome": "adjudicate",
+                    "verdict_floor": None,
+                    "fallback": "deny",
+                }
+            }
+        }
+    })
+    profile = TaintPolicyConfig.model_validate({
+        "matrix_overrides": {
+            "unknown_external": {
+                "sandbox_network": {
+                    "outcome": "adjudicate",
+                    "verdict_floor": None,
+                    "fallback": "confirm",
+                }
+            }
+        }
+    })
+
+    with pytest.raises(ValueError, match="cannot relax base policy"):
+        merge_taint_policy_config(base=base, profile=profile)
+
+
+def test_documented_legacy_pin_reproduces_previous_matrix_cell_for_cell() -> None:
+    pin = TaintPolicyConfig(
+        mode=TaintPolicyMode.ENFORCE,
+        operator_minimum={
+            SourceTrustTier.KNOWN_CONTACT: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
+                SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
+                SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.CONFIRM,
+            },
+            SourceTrustTier.RECOGNIZED_MACHINE: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
+                SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
+                SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.CONFIRM,
+            },
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.CONFIRM,
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
+                SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
+                SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.DENY,
+                SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.CONFIRM,
+            },
+        },
+    )
+    expected: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = {
+        tier: {sink: TaintPolicyOutcome.ALLOW for sink in SinkClass}
+        for tier in SourceTrustTier
+    }
+    expected[SourceTrustTier.TRUSTED_USER].update({
+        SinkClass.USER_LOCAL: TaintPolicyOutcome.ALLOW,
+        SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
+        SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.ALLOW,
+        SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.ALLOW,
+        SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.ALLOW,
+    })
+    for tier in (SourceTrustTier.KNOWN_CONTACT, SourceTrustTier.RECOGNIZED_MACHINE):
+        expected[tier].update({
+            SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
+            SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
+            SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
+            SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
+            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.CONFIRM,
+        })
+    expected[SourceTrustTier.UNKNOWN_EXTERNAL].update({
+        SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
+        SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.AUDIT,
+        SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.CONFIRM,
+        SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
+        SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
+        SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.DENY,
+        SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.CONFIRM,
+    })
+    evaluator = TaintPolicyEvaluator(pin)
+
+    for tier in SourceTrustTier:
+        state = _tracker_at(tier).snapshot()
+        for sink_class in SinkClass:
+            evaluation = evaluator.evaluate(state=state, sink_class=sink_class)
+            no_verdict_outcome = (
+                evaluation.fallback_outcome
+                if evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
+                else evaluation.requested_outcome
+            )
+            assert no_verdict_outcome is expected[tier][sink_class], (
+                tier,
+                sink_class,
+                evaluation,
+            )
+            if evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE:
+                assert evaluation.verdict_floor is expected[tier][sink_class]
+
+
 def test_taint_metadata_round_trip_preserves_compacted_max_tier() -> None:
     state = TurnTaintState.empty().add_source(
         TaintSource(
@@ -570,28 +848,28 @@ async def test_legacy_history_row_missing_taint_metadata_restores_unknown_extern
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING)
-    async with get_db_context(db_engine) as db_context:
-        internal_id = await db_context.message_history.add_message(
-            UserMessage(content="legacy untrusted text"),
-            interface_type="test",
-            conversation_id="legacy-taint",
-            timestamp=datetime.now(UTC),
-            turn_id="turn-legacy",
-            processing_profile_id="runtime-taint-test",
-        )
-        assert internal_id is not None
-        await db_context.execute_with_retry(
-            update(message_history_table)
-            .where(message_history_table.c.internal_id == internal_id)
-            .values(taint_metadata_json=None, taint_metadata_version=None)
-        )
+    db_context = Database(db_engine)
+    internal_id = await db_context.message_history.add_message(
+        UserMessage(content="legacy untrusted text"),
+        interface_type="test",
+        conversation_id="legacy-taint",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-legacy",
+        processing_profile_id="runtime-taint-test",
+    )
+    assert internal_id is not None
+    await db_context.execute(
+        update(message_history_table)
+        .where(message_history_table.c.internal_id == internal_id)
+        .values(taint_metadata_json=None, taint_metadata_version=None)
+    )
 
-        rows = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="legacy-taint",
-            limit=5,
-            processing_profile_id="runtime-taint-test",
-        )
+    rows = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="legacy-taint",
+        limit=5,
+        processing_profile_id="runtime-taint-test",
+    )
 
     assert len(rows) == 1
     state = merge_history_taint(rows)
@@ -649,7 +927,7 @@ def test_amnestied_metadata_is_none_for_missing_or_malformed_metadata() -> None:
 
 def test_amnestied_metadata_drops_legacy_and_anonymous_artifacts() -> None:
     metadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -663,7 +941,7 @@ def test_amnestied_metadata_drops_legacy_and_anonymous_artifacts() -> None:
 
 def test_amnestied_metadata_keeps_attributed_sources_and_recomputes_tier() -> None:
     metadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -685,7 +963,7 @@ def test_amnestied_metadata_keeps_attributed_sources_and_recomputes_tier() -> No
 
 def test_amnestied_metadata_does_not_honor_persisted_max_tier() -> None:
     metadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "sources": [
             {
@@ -709,7 +987,7 @@ def test_amnestied_metadata_does_not_honor_persisted_max_tier() -> None:
 
 def test_strip_legacy_echoes_returns_metadata_unchanged_without_echoes() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -728,7 +1006,7 @@ def test_strip_legacy_echoes_none_for_non_mapping() -> None:
 
 def test_strip_legacy_echoes_drops_echo_keeps_genuine_and_recomputes() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -750,7 +1028,7 @@ def test_strip_legacy_echoes_drops_echo_keeps_genuine_and_recomputes() -> None:
 
 def test_strip_legacy_echoes_only_echoes_contributes_nothing() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [_legacy_fallback_source_summary()],
@@ -761,7 +1039,7 @@ def test_strip_legacy_echoes_only_echoes_contributes_nothing() -> None:
 
 def test_strip_legacy_echoes_keeps_anonymous_escalation_artifact() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -780,7 +1058,7 @@ def test_strip_legacy_echoes_keeps_anonymous_escalation_artifact() -> None:
 
 def test_strip_legacy_echoes_preserves_hidden_persisted_max_tier() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -844,26 +1122,26 @@ async def _seed_history_row(
     timestamp: datetime,
     taint_metadata_json: TaintMetadata | None,
 ) -> int:
-    async with get_db_context(db_engine) as db_context:
-        internal_id = await db_context.message_history.add_message(
-            UserMessage(content="history text"),
-            interface_type="test",
-            conversation_id=conversation_id,
-            timestamp=timestamp,
-            turn_id=str(uuid.uuid4()),
-            processing_profile_id="runtime-taint-test",
+    db_context = Database(db_engine)
+    internal_id = await db_context.message_history.add_message(
+        UserMessage(content="history text"),
+        interface_type="test",
+        conversation_id=conversation_id,
+        timestamp=timestamp,
+        turn_id=str(uuid.uuid4()),
+        processing_profile_id="runtime-taint-test",
+    )
+    assert internal_id is not None
+    await db_context.execute(
+        update(message_history_table)
+        .where(message_history_table.c.internal_id == internal_id)
+        .values(
+            taint_metadata_json=taint_metadata_json,
+            taint_metadata_version=(
+                "runtime_v2" if taint_metadata_json is not None else None
+            ),
         )
-        assert internal_id is not None
-        await db_context.execute_with_retry(
-            update(message_history_table)
-            .where(message_history_table.c.internal_id == internal_id)
-            .values(
-                taint_metadata_json=taint_metadata_json,
-                taint_metadata_version=(
-                    "runtime_v1" if taint_metadata_json is not None else None
-                ),
-            )
-        )
+    )
     return internal_id
 
 
@@ -871,14 +1149,14 @@ async def _merged_history_state(
     db_engine: AsyncEngine,
     conversation_id: str,
 ) -> TurnTaintState:
-    async with get_db_context(db_engine) as db_context:
-        rows = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id=conversation_id,
-            limit=5,
-            max_age=_TEN_YEARS,
-            processing_profile_id="runtime-taint-test",
-        )
+    db_context = Database(db_engine)
+    rows = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id=conversation_id,
+        limit=5,
+        max_age=_TEN_YEARS,
+        processing_profile_id="runtime-taint-test",
+    )
     assert rows
     return merge_history_taint(rows)
 
@@ -914,7 +1192,7 @@ async def test_epoch_disabled_preserves_legacy_echo_fallback(
         conversation_id="epoch-disabled-echo",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [_legacy_fallback_source_summary()],
@@ -937,7 +1215,7 @@ async def test_pre_epoch_row_with_only_legacy_artifacts_contributes_no_taint(
         conversation_id="epoch-pre-poison",
         timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -964,7 +1242,7 @@ async def test_pre_epoch_row_keeps_genuine_email_source(
         conversation_id="epoch-pre-email",
         timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1051,7 +1329,7 @@ async def test_post_epoch_row_drops_legacy_echo_keeps_genuine_source(
         conversation_id="epoch-post-echo-plus-genuine",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1078,7 +1356,7 @@ async def test_post_epoch_row_preserves_hidden_max_tier_after_echo_stripping(
         conversation_id="epoch-post-echo-hidden-tier",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1105,27 +1383,6 @@ async def test_post_epoch_row_preserves_hidden_max_tier_after_echo_stripping(
 
 
 @pytest.mark.asyncio
-async def test_worker_engine_inherits_history_taint_epoch(
-    db_engine: AsyncEngine,
-) -> None:
-    assistant = Assistant(
-        config=AppConfig(
-            taint_policy=TaintPolicyConfig(history_taint_epoch=_HISTORY_TAINT_EPOCH)
-        ),
-        database_engine=db_engine,
-    )
-    assistant.database_engine = db_engine
-
-    worker_engine = assistant.create_worker_engine()
-    try:
-        async with get_db_context(worker_engine) as db_context:
-            assert db_context.history_taint_epoch == _HISTORY_TAINT_EPOCH
-    finally:
-        if worker_engine is not db_engine:
-            await worker_engine.dispose()
-
-
-@pytest.mark.asyncio
 async def test_post_epoch_row_with_only_legacy_echo_contributes_no_taint(
     db_engine: AsyncEngine,
 ) -> None:
@@ -1135,7 +1392,7 @@ async def test_post_epoch_row_with_only_legacy_echo_contributes_no_taint(
         conversation_id="epoch-post-echo-only",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [_legacy_fallback_source_summary()],
@@ -1159,7 +1416,7 @@ async def test_post_epoch_row_keeps_anonymous_manual_artifact(
         conversation_id="epoch-post-anonymous",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [_anonymous_escalation_source_summary()],
@@ -1171,6 +1428,242 @@ async def test_post_epoch_row_keeps_anonymous_manual_artifact(
     assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert state.history_high_taint_present
     assert [source.source_type for source in state.sources] == [TaintSourceType.MANUAL]
+
+
+def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
+    return ToolDescriptor(
+        name=name,
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=frozenset(tags),
+        origin="local",
+    )
+
+
+def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:
+    """The gate that asks writes the answer onto the taint it asked about.
+
+    A downstream gate on the target profile then reads evidence rather than
+    inferring, from the shape of the call path, that somebody was probably
+    asked.
+    """
+    tracker = InMemoryTurnTaintTracker()
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(registrations=[]),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
+
+    provider._record_sink_approval(
+        context,
+        _tool_descriptor("delegate_to_service", ToolTag.DELEGATION),
+        SinkClass.SANDBOX_NETWORK,
+        {"target_service_id": "coder"},
+    )
+
+    assert tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="other-coder"
+    )
+
+
+def test_an_ordinary_tool_call_records_no_approval() -> None:
+    """A non-delegation tool *is* the sink; clearing the turn would over-grant."""
+    tracker = InMemoryTurnTaintTracker()
+    provider = TaintTrackingToolsProvider(LocalToolsProvider(registrations=[]))
+    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
+
+    provider._record_sink_approval(
+        context,
+        _tool_descriptor("spawn_worker", ToolTag.CODE_EXECUTION),
+        SinkClass.SANDBOX_NETWORK,
+        {},
+    )
+
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+
+
+def _delegation_provider(mode: TaintPolicyMode) -> TaintTrackingToolsProvider:
+    return TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "delegate_to_service",
+                                "description": "Hand the turn to another profile.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_worker_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.DELEGATION,
+                        ToolTag.OUTPUT_UNSPECIFIED,
+                    ]),
+                )
+            ]
+        ),
+        taint_policy=TaintPolicyConfig(mode=mode),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+
+
+def _tracker_at(tier: SourceTrustTier) -> InMemoryTurnTaintTracker:
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id=f"mail-{tier.config_value}",
+            tier=tier,
+            labels=frozenset(),
+            reason="Inbound mail.",
+        )
+    )
+    return tracker
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """A downgraded confirm asked nobody, so it clears nothing.
+
+    Observe mode converts confirm/deny into audit and lets the call through.
+    Treating that dry-run pass as an approval would hand a target profile that
+    is itself enforcing the one piece of evidence its gate trusts.
+    """
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
+    context = _minimal_context(Database(db_engine), tracker)
+
+    await _delegation_provider(TaintPolicyMode.OBSERVE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_observe",
+    )
+
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """Not needing a confirmation is not the same fact as getting one.
+
+    A profile may tighten the matrix, so the target's gate can ask about a
+    sink this one waved through. Recording passage as approval would answer
+    that question on the user's behalf, without anything ever being shown.
+    """
+    tracker = _tracker_at(SourceTrustTier.TRUSTED_USER)
+    context = _minimal_context(Database(db_engine), tracker)
+
+    await _delegation_provider(TaintPolicyMode.ENFORCE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_allowed",
+    )
+
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_approved_confirmation_records_the_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """The approval the target gate reads comes from a user actually saying yes."""
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
+
+    async def _approve(**_kwargs: object) -> ConfirmationOutcome:
+        return ConfirmationOutcome(kind="approved", result=None)
+
+    context = replace(
+        _minimal_context(Database(db_engine), tracker),
+        request_confirmation_callback=_approve,
+    )
+
+    await _delegation_provider(TaintPolicyMode.ENFORCE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_confirmed",
+    )
+
+    assert tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+
+
+def test_an_approval_survives_serialization_but_not_a_history_read() -> None:
+    """It travels with the turn's own taint, not into later turns quoting it."""
+    approved = TurnTaintState.empty().approve_sink(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+
+    carried = TurnTaintState.from_metadata(approved.to_metadata())
+    via_history = TurnTaintState.from_metadata(
+        approved.to_metadata(), from_history=True
+    )
+
+    assert carried.is_sink_approved(SinkClass.SANDBOX_NETWORK, profile_id="coder")
+    assert not via_history.is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+
+
+def test_delegating_to_a_sandbox_profile_resolves_to_its_sink_not_delegation() -> None:
+    """Handing a turn to a profile is as privileged as what that profile does.
+
+    Without this, delegating to a code-execution profile is classified as an
+    ordinary delegation, so untrusted content could reach a sandbox simply by
+    going through `delegate_to_service` instead of `spawn_worker`.
+    """
+    descriptor = _tool_descriptor("delegate_to_service", ToolTag.DELEGATION)
+
+    assert (
+        resolve_tool_sink_class(
+            descriptor,
+            {"target_service_id": "coder"},
+            {"coder": SinkClass.SANDBOX_NETWORK},
+        )
+        is SinkClass.SANDBOX_NETWORK
+    )
+
+
+def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> None:
+    """A target that declares no sink does not become one."""
+    descriptor = _tool_descriptor("delegate_to_service", ToolTag.DELEGATION)
+
+    assert (
+        resolve_tool_sink_class(
+            descriptor,
+            {"target_service_id": "research"},
+            {"coder": SinkClass.SANDBOX_NETWORK},
+        )
+        is not SinkClass.SANDBOX_NETWORK
+    )
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
@@ -1353,8 +1846,8 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
         resolve_tool_sink_class(registered_descriptor("mqtt_publish"))
         is SinkClass.HOME_LOCAL
     )
-    # Home Assistant actions stay conservatively classified because HA
-    # services can deliver messages or invoke webhooks outside the household.
+    # Without arguments a Home Assistant action cannot be classified by domain,
+    # so it keeps the conservative class. See the domain-aware tests below.
     assert (
         resolve_tool_sink_class(registered_descriptor("call_home_assistant_action"))
         is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
@@ -1365,6 +1858,203 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
         resolve_tool_sink_class(registered_descriptor("jq_query"))
         is SinkClass.SENSITIVE_READ_BROADENING
     )
+    # The image and video backends take a prompt with no recipient argument, so
+    # the destination is fixed and they are not arbitrary external messaging.
+    for fixed_destination_tool in (
+        "generate_image",
+        "transform_image",
+        "generate_video",
+    ):
+        assert (
+            resolve_tool_sink_class(registered_descriptor(fixed_destination_tool))
+            is SinkClass.LOW_BANDWIDTH_EXTERNAL
+        ), fixed_destination_tool
+    # Tools whose destination the model does choose keep the arbitrary class.
+    # download_media belongs here, not with the generation tools above: it
+    # takes a URL. It sits next to them in the metadata table and was swept
+    # into their reclassification once, so it is pinned explicitly.
+    for model_addressed_tool in (
+        "ingest_document_from_url",
+        "download_media",
+    ):
+        assert (
+            resolve_tool_sink_class(registered_descriptor(model_addressed_tool))
+            is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+        ), model_addressed_tool
+    assert LOCAL_TOOL_METADATA_BY_NAME[
+        "ingest_document_from_url"
+    ].destination_argument_paths == ("url_to_ingest",)
+    # send_message_to_user communicates outward, but the server rejects any
+    # target that is not an existing conversation owned by an authorized user,
+    # so the model cannot pick the destination.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("send_message_to_user"))
+        is SinkClass.KNOWN_USER_MESSAGE
+    )
+    # The refinement must not leak to tools that only carry the broader tag.
+    assert (
+        ToolTag.KNOWN_USER_COMM
+        not in LOCAL_TOOL_METADATA_BY_NAME["ucp_add_to_cart"].tags
+    )
+    assert (
+        resolve_tool_sink_class(registered_descriptor("ucp_add_to_cart"))
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+
+
+@pytest.mark.parametrize(
+    ("domain", "expected"),
+    [
+        ("light", SinkClass.HOME_LOCAL),
+        ("switch", SinkClass.HOME_LOCAL),
+        ("climate", SinkClass.HOME_LOCAL),
+        ("lock", SinkClass.HOME_LOCAL),
+        # Case is normalized, so a differently-cased domain is still household.
+        ("LIGHT", SinkClass.HOME_LOCAL),
+        # Domains that leave the household keep the conservative class.
+        ("notify", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        ("rest_command", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        # script and automation run operator-defined sequences that may
+        # themselves notify or call out, so they are not household-local.
+        ("script", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        ("automation", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        # play_media fetches a caller-supplied URL.
+        ("media_player", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        # These run code on the Home Assistant host.
+        ("shell_command", SinkClass.SANDBOX_NETWORK),
+        ("python_script", SinkClass.SANDBOX_NETWORK),
+        # The allowlist fails safe: a domain it does not know is not downgraded.
+        ("domain_added_by_a_future_ha_release", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+    ],
+)
+def test_home_assistant_action_sink_class_depends_on_domain(
+    domain: str,
+    expected: SinkClass,
+) -> None:
+    metadata = LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"]
+    descriptor = ToolDescriptor(
+        name="call_home_assistant_action",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_home_assistant_action",
+                    "description": "Run a Home Assistant action.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+
+    resolved = resolve_tool_sink_class(descriptor, {"domain": domain, "action": "x"})
+
+    assert resolved is expected
+
+
+def test_home_assistant_action_without_a_usable_domain_stays_conservative() -> None:
+    """A malformed or absent domain must not fall through to household-local."""
+    metadata = LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"]
+    descriptor = ToolDescriptor(
+        name="call_home_assistant_action",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_home_assistant_action",
+                    "description": "Run a Home Assistant action.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+
+    for arguments in ({"action": "turn_on"}, {"domain": None}, {"domain": 42}, {}):
+        assert (
+            resolve_tool_sink_class(descriptor, arguments)
+            is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+        ), arguments
+
+
+@pytest.mark.asyncio
+async def test_a_tool_result_can_close_the_sink_mid_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """On a sink-declaring profile the model itself is the sink, every call.
+
+    A profile may declare a sink and still hold tools. Gating only the turn's
+    opening state would let a tool that reads the web or a mailbox raise the
+    tier and then feed that content straight back to the model on the next
+    iteration -- the crossing the declaration exists to stop.
+    """
+    llm_client = _first_call_then_final("untrusted_tool")
+    service = _processing_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    result = await service.handle_chat_interaction(
+        db_context=Database(db_engine),
+        interface_type="web",
+        conversation_id="sink-midturn",
+        trigger_content_parts=[{"type": "text", "text": "Do the thing."}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
+
+    assert result.status.value == "error"
+    assert "unknown_external" in (result.text_reply or "")
+    # The tool ran and its result came back; what is refused is the *next*
+    # model call, which is what would carry that result into the sink.
+    assert len(llm_client.get_calls()) == 1
+
+
+def test_evaluate_tool_threads_arguments_into_sink_resolution() -> None:
+    """The evaluator must pass call arguments through, or domains never apply."""
+    metadata = LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"]
+    descriptor = ToolDescriptor(
+        name="call_home_assistant_action",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_home_assistant_action",
+                    "description": "Run a Home Assistant action.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+    evaluator = TaintPolicyEvaluator(
+        TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="web_page",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="Untrusted page content entered the turn.",
+        )
+    )
+
+    evaluation = evaluator.evaluate_tool(
+        descriptor=descriptor,
+        state=state,
+        arguments={"domain": "light", "action": "turn_on"},
+    )
+
+    assert evaluation.sink_class is SinkClass.HOME_LOCAL
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ALLOW
 
 
 @pytest.mark.asyncio
@@ -1373,23 +2063,23 @@ async def test_tool_output_tags_update_turn_taint(
 ) -> None:
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool("trusted_tool", {}, context, "call_trusted")
-        assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
-        assert (
-            context.tool_result_taint_metadata["call_trusted"].get("max_tier")
-            == "trusted_user"
-        )
+    await provider.execute_tool("trusted_tool", {}, context, "call_trusted")
+    assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
+    assert (
+        context.tool_result_taint_metadata["call_trusted"].get("max_tier")
+        == "trusted_user"
+    )
 
-        await provider.execute_tool("untrusted_tool", {}, context, "call_untrusted")
-        assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
-        assert (
-            context.tool_result_taint_metadata["call_untrusted"].get("max_tier")
-            == "unknown_external"
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool("untrusted_tool", {}, context, "call_untrusted")
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert (
+        context.tool_result_taint_metadata["call_untrusted"].get("max_tier")
+        == "unknown_external"
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     result_events = [
         event for event in audit_events if event["event_type"] == "result_taint"
@@ -1399,7 +2089,11 @@ async def test_tool_output_tags_update_turn_taint(
     assert result_events[0]["tool_call_id"] == "call_untrusted"
     assert result_events[0]["max_tier"] == "unknown_external"
     assert result_events[0]["sources_json"][-1]["source_type"] == "tool_output"
-    assert result_events[0]["sources_json"][-1]["source_id"] == "call_untrusted"
+    assert result_events[0]["sources_json"][-1]["source_id"] is None
+    assert result_events[0]["sources_json"][-1]["labels"] == []
+    assert result_events[0]["sources_json"][-1]["reason"] == (
+        "Externally authored source details omitted from audit."
+    )
 
 
 @pytest.mark.asyncio
@@ -1409,10 +2103,10 @@ async def test_unspecified_tool_output_defaults_to_unknown_external(
 ) -> None:
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
+    await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert context.tool_result_taint_metadata["call_legacy"].get("max_tier") == (
@@ -1432,10 +2126,10 @@ async def test_unspecified_tool_output_uses_configured_default_tier(
         ),
     )
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
+    await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.KNOWN_CONTACT
     assert context.tool_result_taint_metadata["call_legacy"].get("max_tier") == (
@@ -1450,15 +2144,15 @@ async def test_missing_tool_output_metadata_defaults_to_unknown_external(
 ) -> None:
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool(
-            "missing_metadata_tool",
-            {},
-            context,
-            "call_missing_metadata",
-        )
+    await provider.execute_tool(
+        "missing_metadata_tool",
+        {},
+        context,
+        "call_missing_metadata",
+    )
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert (
@@ -1476,20 +2170,21 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     caplog.set_level("INFO")
     provider = _tainting_provider()
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        result = await provider.execute_tool(
-            "browser_tool",
-            {"url": "https://attacker.example/path", "secret": "do-not-store"},
-            context,
-            "call_browser",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    result = await provider.execute_tool(
+        "browser_tool",
+        {"url": "https://attacker.example/path", "secret": "do-not-store"},
+        context,
+        "call_browser",
+    )
+    await provider.close()
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
-    assert "requested=confirm effective=audit mode=observe" in caplog.text
+    assert "requested=adjudicate effective=audit mode=observe" in caplog.text
     would_enforce_warnings = [
         record
         for record in caplog.records
@@ -1498,7 +2193,7 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     ]
     assert len(would_enforce_warnings) == 1
     would_enforce_message = would_enforce_warnings[0].getMessage()
-    assert "would_be=confirm" in would_enforce_message
+    assert "would_be=adjudicate" in would_enforce_message
     assert "max_tier=unknown_external" in would_enforce_message
     assert "do-not-store" not in would_enforce_message
     policy_events = [
@@ -1508,13 +2203,13 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     policy_event = policy_events[0]
     assert policy_event["tool_name"] == "browser_tool"
     assert policy_event["sink_class"] == "attacker_addressable_egress"
-    assert policy_event["requested_outcome"] == "confirm"
+    assert policy_event["requested_outcome"] == "adjudicate"
     assert policy_event["effective_outcome"] == "audit"
     assert policy_event["mode"] == "observe"
     assert policy_event["max_tier"] == "unknown_external"
     assert policy_event["arguments_summary_json"] == {
-        "keys": ["secret", "url"],
-        "value_types": {"secret": "str", "url": "str"},
+        "keys": ["argument_1", "argument_2"],
+        "value_types": {"argument_1": "str", "argument_2": "str"},
     }
     assert "do-not-store" not in json.dumps(policy_event["arguments_summary_json"])
 
@@ -1527,10 +2222,10 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
     caplog.set_level("INFO")
     provider = _tainting_provider()
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        result = await provider.execute_tool("home_tool", {}, context, "call_home")
+    result = await provider.execute_tool("home_tool", {}, context, "call_home")
 
     assert isinstance(result, ToolResult)
     would_enforce_warnings = [
@@ -1543,7 +2238,7 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
 
 
 @pytest.mark.asyncio
-async def test_sandbox_network_after_unknown_external_is_denied_in_enforce_mode(
+async def test_sandbox_network_after_unknown_external_blocks_without_confirmation(
     db_engine: AsyncEngine,
 ) -> None:
     provider = TaintTrackingToolsProvider(
@@ -1551,21 +2246,23 @@ async def test_sandbox_network_after_unknown_external_is_denied_in_enforce_mode(
         taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
     )
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        with pytest.raises(ToolPolicyDeniedError):
-            await provider.execute_tool("worker_tool", {}, context, "call_worker")
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    result = await provider.execute_tool("worker_tool", {}, context, "call_worker")
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
+    assert isinstance(result, ToolResult)
+    assert "human confirmation is required but unavailable" in result.get_text()
+    assert "fallback 'confirm'" in result.get_text()
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"
     ]
     assert len(policy_events) == 1
     assert policy_events[0]["tool_name"] == "worker_tool"
     assert policy_events[0]["sink_class"] == "sandbox_network"
-    assert policy_events[0]["requested_outcome"] == "deny"
-    assert policy_events[0]["effective_outcome"] == "deny"
+    assert policy_events[0]["requested_outcome"] == "adjudicate"
+    assert policy_events[0]["effective_outcome"] == "adjudicate"
     assert policy_events[0]["mode"] == "enforce"
     assert policy_events[0]["max_tier"] == "unknown_external"
 
@@ -1579,19 +2276,18 @@ async def test_script_nested_tool_calls_recheck_current_taint(
         taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
     )
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
-        engine = MontyEngine(tools_provider=provider)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
+    engine = MontyEngine(tools_provider=provider)
 
-        with pytest.raises(ScriptExecutionError, match="worker_tool"):
-            await engine.evaluate_async(
-                """
+    result = await engine.evaluate_async(
+        """
 tools_execute("untrusted_tool")
 tools_execute("worker_tool")
 """,
-                execution_context=context,
-            )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+        execution_context=context,
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"
@@ -1601,8 +2297,9 @@ tools_execute("worker_tool")
         "worker_tool",
     ]
     assert policy_events[-1]["sink_class"] == "sandbox_network"
-    assert policy_events[-1]["effective_outcome"] == "deny"
+    assert policy_events[-1]["effective_outcome"] == "adjudicate"
     assert policy_events[-1]["max_tier"] == "unknown_external"
+    assert "fallback 'confirm'" in str(result)
 
 
 @pytest.mark.asyncio
@@ -1621,11 +2318,11 @@ async def test_redact_outcome_is_blocked_until_adapter_exists(
         ),
     )
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        with pytest.raises(ToolPolicyDeniedError, match="redaction outcomes"):
-            await provider.execute_tool("browser_tool", {}, context, "call_browser")
+    with pytest.raises(ToolPolicyDeniedError, match="redaction outcomes"):
+        await provider.execute_tool("browser_tool", {}, context, "call_browser")
 
 
 @pytest.mark.asyncio
@@ -1636,22 +2333,19 @@ async def test_untrusted_tool_taint_persists_to_history_and_later_turn(
     conversation_id = "runtime-taint-conversation"
     first_service = _processing_service(_first_call_then_final("untrusted_tool"))
 
-    async with get_db_context(db_engine) as db_context:
-        first_result = await first_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id=conversation_id,
-            trigger_content_parts=[{"type": "text", "text": "Fetch the page"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-            turn_id=first_turn_id,
-            save_history_with_isolated_context=False,
-        )
+    db_context = Database(db_engine)
+    first_result = await first_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id=conversation_id,
+        trigger_content_parts=[{"type": "text", "text": "Fetch the page"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        turn_id=first_turn_id,
+    )
 
-        assert first_result.status.value == "success"
-        first_turn_messages = await db_context.message_history.get_by_turn_id(
-            first_turn_id
-        )
+    assert first_result.status.value == "success"
+    first_turn_messages = await db_context.message_history.get_by_turn_id(first_turn_id)
 
     tool_messages = [
         message for message in first_turn_messages if isinstance(message, ToolMessage)
@@ -1669,21 +2363,20 @@ async def test_untrusted_tool_taint_persists_to_history_and_later_turn(
 
     second_turn_id = "runtime-taint-turn-2"
     second_service = _processing_service(_clean_final_response("history reply"))
-    async with get_db_context(db_engine) as db_context:
-        second_result = await second_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id=conversation_id,
-            trigger_content_parts=[{"type": "text", "text": "Thanks"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-            turn_id=second_turn_id,
-            save_history_with_isolated_context=False,
-        )
-        assert second_result.status.value == "success"
-        second_turn_messages = await db_context.message_history.get_by_turn_id(
-            second_turn_id
-        )
+    db_context = Database(db_engine)
+    second_result = await second_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id=conversation_id,
+        trigger_content_parts=[{"type": "text", "text": "Thanks"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        turn_id=second_turn_id,
+    )
+    assert second_result.status.value == "success"
+    second_turn_messages = await db_context.message_history.get_by_turn_id(
+        second_turn_id
+    )
 
     second_assistant_messages = [
         message
@@ -1706,33 +2399,33 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
     db_engine: AsyncEngine,
 ) -> None:
     write_tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        write_context = _minimal_context(db_context, write_tracker)
-        result = await add_or_update_note_tool(
-            exec_context=write_context,
-            title="External digest",
-            content="Summary of external content",
-        )
-        assert "successfully" in result
+    db_context = Database(db_engine)
+    write_context = _minimal_context(db_context, write_tracker)
+    result = await add_or_update_note_tool(
+        exec_context=write_context,
+        title="External digest",
+        content="Summary of external content",
+    )
+    assert "successfully" in result
 
-        note = await db_context.notes.get_by_title(
-            "External digest",
-            visibility_grants=None,
-        )
-        assert note is not None
-        assert note.visibility_labels == []
-        assert note.provenance_metadata is not None
-        assert note.provenance_metadata.get("provenance_labels") == [
-            "source_unknown_external"
-        ]
-        taint_metadata = note.provenance_metadata.get("taint_metadata")
-        assert isinstance(taint_metadata, dict)
-        assert taint_metadata.get("max_tier") == "unknown_external"
+    note = await db_context.notes.get_by_title(
+        "External digest",
+        read_policy=NoteReadPolicy.UNRESTRICTED,
+    )
+    assert note is not None
+    assert note.visibility_labels == []
+    assert note.provenance_metadata is not None
+    assert note.provenance_metadata.get("provenance_labels") == [
+        "source_unknown_external"
+    ]
+    taint_metadata = note.provenance_metadata.get("taint_metadata")
+    assert isinstance(taint_metadata, dict)
+    assert taint_metadata.get("max_tier") == "unknown_external"
 
     read_tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        read_context = _minimal_context(db_context, read_tracker)
-        note_result = await get_note_tool("External digest", read_context)
+    db_context = Database(db_engine)
+    read_context = _minimal_context(db_context, read_tracker)
+    note_result = await get_note_tool("External digest", read_context)
 
     assert note_result.data is not None
     assert read_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
@@ -1743,22 +2436,26 @@ async def test_prompt_included_note_surfaces_stored_provenance_taint(
     db_engine: AsyncEngine,
 ) -> None:
     write_tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        write_context = _minimal_context(db_context, write_tracker)
-        result = await add_or_update_note_tool(
-            exec_context=write_context,
-            title="Prompt external digest",
-            content="External content copied into a prompt note.",
-            include_in_prompt=True,
-        )
-        assert "successfully" in result
+    db_context = Database(db_engine)
+    write_context = _minimal_context(db_context, write_tracker)
+    result = await add_or_update_note_tool(
+        exec_context=write_context,
+        title="Prompt external digest",
+        content="External content copied into a prompt note.",
+        include_in_prompt=True,
+    )
+    assert "successfully" in result
 
-    async def get_context() -> Any:  # noqa: ANN401 - repository context manager
-        return get_db_context(db_engine)
+    def get_context() -> Database:
+        return Database(db_engine)
 
-    provider = NotesContextProvider(get_context, prompts={})
+    provider = NotesContextProvider(
+        get_context,
+        prompts={},
+        read_policy=NoteReadPolicy.UNRESTRICTED,
+    )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     sources = await provider.get_context_taint_sources()
 
     assert any("Prompt external digest" in fragment for fragment in fragments)
@@ -1787,10 +2484,10 @@ async def test_full_document_read_restores_stored_provenance_taint(
     )
 
     read_tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        document_id = await db_context.vector.add_document(document)
-        read_context = _minimal_context(db_context, read_tracker)
-        result = await get_full_document_content_tool(read_context, document_id)
+    db_context = Database(db_engine)
+    document_id = await db_context.vector.add_document(document)
+    read_context = _minimal_context(db_context, read_tracker)
+    result = await get_full_document_content_tool(read_context, document_id)
 
     assert isinstance(result, str)
     assert "no content is available" in result
@@ -1814,28 +2511,28 @@ async def test_text_attachment_read_restores_stored_provenance_taint(
     )
     read_tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"external attachment text\n",
-            filename="external.txt",
-            content_type="text/plain",
-            tool_name="test_tool",
-            metadata={
-                "source_trust_tier": "unknown_external",
-                "provenance_labels": ["source_unknown_external"],
-                "taint_metadata": provenance_state.to_metadata(),
-            },
-            db_context=db_context,
-        )
-        read_context = _minimal_context(
-            db_context,
-            read_tracker,
-            attachment_registry=registry,
-        )
-        result = await read_text_attachment_tool(
-            read_context,
-            attachment.attachment_id,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"external attachment text\n",
+        filename="external.txt",
+        content_type="text/plain",
+        tool_name="test_tool",
+        metadata={
+            "source_trust_tier": "unknown_external",
+            "provenance_labels": ["source_unknown_external"],
+            "taint_metadata": provenance_state.to_metadata(),
+        },
+        db_context=db_context,
+    )
+    read_context = _minimal_context(
+        db_context,
+        read_tracker,
+        attachment_registry=registry,
+    )
+    result = await read_text_attachment_tool(
+        read_context,
+        attachment.attachment_id,
+    )
 
     assert result.text is not None
     assert "external attachment text" in result.text
@@ -1853,16 +2550,16 @@ async def test_list_notes_preview_restores_stored_provenance_taint(
     provenance_state = _unknown_external_tracker().snapshot()
     read_tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.notes.add_or_update(
-            title="tainted listed note",
-            content="attacker preview text",
-            include_in_prompt=False,
-            provenance_metadata={"taint_metadata": provenance_state.to_metadata()},
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        read_context = _minimal_context(db_context, read_tracker)
-        result = await list_notes_tool(read_context)
+    db_context = Database(db_engine)
+    await db_context.notes.add_or_update(
+        title="tainted listed note",
+        content="attacker preview text",
+        include_in_prompt=False,
+        provenance_metadata={"taint_metadata": provenance_state.to_metadata()},
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    read_context = _minimal_context(db_context, read_tracker)
+    result = await list_notes_tool(read_context)
 
     assert any(note["title"] == "tainted listed note" for note in result)
     read_state = read_tracker.snapshot()
@@ -1888,28 +2585,29 @@ async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"external attachment text\n",
-            filename="external.txt",
-            content_type="text/plain",
-            tool_name="test_tool",
-            metadata={"taint_metadata": provenance_state.to_metadata()},
-            db_context=db_context,
-        )
-        context = _minimal_context(
-            db_context,
-            tracker,
-            attachment_registry=registry,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"external attachment text\n",
+        filename="external.txt",
+        content_type="text/plain",
+        tool_name="test_tool",
+        metadata={"taint_metadata": provenance_state.to_metadata()},
+        db_context=db_context,
+    )
+    context = _minimal_context(
+        db_context,
+        tracker,
+        attachment_registry=registry,
+    )
 
-        await provider.execute_tool(
-            "browser_tool",
-            {"attachment_ids": [attachment.attachment_id]},
-            context,
-            "call_browser_with_attachment",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool(
+        "browser_tool",
+        {"attachment_ids": [attachment.attachment_id]},
+        context,
+        "call_browser_with_attachment",
+    )
+    await provider.close()
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     policy_events = [
@@ -1917,7 +2615,7 @@ async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
     ]
     assert len(policy_events) == 1
     assert policy_events[0]["tool_name"] == "browser_tool"
-    assert policy_events[0]["requested_outcome"] == "confirm"
+    assert policy_events[0]["requested_outcome"] == "adjudicate"
     assert policy_events[0]["effective_outcome"] == "audit"
     assert policy_events[0]["max_tier"] == "unknown_external"
 
@@ -1964,28 +2662,29 @@ async def test_tainted_schema_attachment_argument_without_id_name_is_merged(
     )
     tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"external image bytes\n",
-            filename="external.png",
-            content_type="image/png",
-            tool_name="test_tool",
-            metadata={"taint_metadata": provenance_state.to_metadata()},
-            db_context=db_context,
-        )
-        context = _minimal_context(
-            db_context,
-            tracker,
-            attachment_registry=registry,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"external image bytes\n",
+        filename="external.png",
+        content_type="image/png",
+        tool_name="test_tool",
+        metadata={"taint_metadata": provenance_state.to_metadata()},
+        db_context=db_context,
+    )
+    context = _minimal_context(
+        db_context,
+        tracker,
+        attachment_registry=registry,
+    )
 
-        await provider.execute_tool(
-            "transform_like_tool",
-            {"image": attachment.attachment_id},
-            context,
-            "call_transform_like_tool",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool(
+        "transform_like_tool",
+        {"image": attachment.attachment_id},
+        context,
+        "call_transform_like_tool",
+    )
+    await provider.close()
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     policy_events = [
@@ -1993,7 +2692,7 @@ async def test_tainted_schema_attachment_argument_without_id_name_is_merged(
     ]
     assert len(policy_events) == 1
     assert policy_events[0]["tool_name"] == "transform_like_tool"
-    assert policy_events[0]["requested_outcome"] == "confirm"
+    assert policy_events[0]["requested_outcome"] == "adjudicate"
     assert policy_events[0]["effective_outcome"] == "audit"
 
 
@@ -2045,18 +2744,18 @@ async def test_completed_taint_confirmation_records_result_taint(
             result=ToolResult(text="confirmed external output"),
         )
 
-    async with get_db_context(db_engine) as db_context:
-        context = replace(
-            _minimal_context(db_context, tracker),
-            request_confirmation_callback=_completed_confirmation,
-        )
-        result = await provider.execute_tool(
-            "confirmed_browser_untrusted",
-            {},
-            context,
-            "call_confirmed_external",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    db_context = Database(db_engine)
+    context = replace(
+        _minimal_context(db_context, tracker),
+        request_confirmation_callback=_completed_confirmation,
+    )
+    result = await provider.execute_tool(
+        "confirmed_browser_untrusted",
+        {},
+        context,
+        "call_confirmed_external",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert isinstance(result, ToolResult)
     assert result.text == "confirmed external output"
@@ -2071,6 +2770,11 @@ async def test_completed_taint_confirmation_records_result_taint(
     assert len(result_events) == 1
     assert result_events[0]["tool_name"] == "confirmed_browser_untrusted"
     assert result_events[0]["max_tier"] == "unknown_external"
+    result_ctx = result_events[0]["review_context_json"]
+    assert isinstance(result_ctx, dict)
+    assert result_ctx.get("total_source_count") == 2
+    assert result_ctx.get("distinct_source_count") == 2
+    assert result_ctx.get("omitted_source_count") == 0
 
 
 @pytest.mark.asyncio
@@ -2131,17 +2835,17 @@ async def test_completed_taint_confirmation_merges_worker_metadata(
             taint_metadata=worker_taint.to_metadata(),
         )
 
-    async with get_db_context(db_engine) as db_context:
-        context = replace(
-            _minimal_context(db_context, tracker),
-            request_confirmation_callback=_completed_confirmation,
-        )
-        result = await provider.execute_tool(
-            "confirmed_dynamic_read",
-            {},
-            context,
-            "call_confirmed_dynamic",
-        )
+    db_context = Database(db_engine)
+    context = replace(
+        _minimal_context(db_context, tracker),
+        request_confirmation_callback=_completed_confirmation,
+    )
+    result = await provider.execute_tool(
+        "confirmed_dynamic_read",
+        {},
+        context,
+        "call_confirmed_dynamic",
+    )
 
     assert isinstance(result, ToolResult)
     assert result.text == "confirmed note contents"
@@ -2186,16 +2890,16 @@ async def test_dynamic_provenance_added_by_trusted_read_is_persisted_on_result(
     )
     tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool(
-            "dynamic_taint_read",
-            {},
-            context,
-            "call_dynamic_read",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool(
+        "dynamic_taint_read",
+        {},
+        context,
+        "call_dynamic_read",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert (
         context.tool_result_taint_metadata["call_dynamic_read"].get("max_tier")
@@ -2207,3 +2911,486 @@ async def test_dynamic_provenance_added_by_trusted_read_is_persisted_on_result(
     assert len(result_events) == 1
     assert result_events[0]["tool_name"] == "dynamic_taint_read"
     assert result_events[0]["max_tier"] == "unknown_external"
+
+
+def test_taint_source_semantic_identity_and_repeated_duplicates() -> None:
+    """Repeated additions of identical sources deduplicate while tracking total counts."""
+    source = TaintSource(
+        source_type=TaintSourceType.USER_MESSAGE,
+        source_id="msg-1",
+        tier=SourceTrustTier.KNOWN_CONTACT,
+        labels=frozenset({"sender:alice", "channel:web"}),
+        reason="Direct message from known contact.",
+    )
+    # Identical source with labels in different order in frozenset
+    identical_source = TaintSource(
+        source_type=TaintSourceType.USER_MESSAGE,
+        source_id="msg-1",
+        tier=SourceTrustTier.KNOWN_CONTACT,
+        labels=frozenset({"channel:web", "sender:alice"}),
+        reason="Direct message from known contact.",
+    )
+    assert taint_source_semantic_key(source) == taint_source_semantic_key(
+        identical_source
+    )
+
+    state = TurnTaintState.empty()
+    for _ in range(10):
+        state = state.add_source(source)
+    state = state.add_source(identical_source)
+
+    assert len(state.sources) == 1
+    assert state.total_source_count == 11
+    assert state.distinct_source_count == 1
+    assert state.omitted_source_count == 0
+
+    # Adding a different source increments distinct count
+    different_source = replace(source, source_id="msg-2")
+    state = state.add_source(different_source)
+    assert len(state.sources) == 2
+    assert state.total_source_count == 12
+    assert state.distinct_source_count == 2
+    assert state.omitted_source_count == 0
+
+
+def test_many_distinct_sources_bounds_in_memory_and_tracks_omitted() -> None:
+    """Adding many distinct sources bounds in-memory sources to DEFAULT_MAX_SOURCES."""
+    state = TurnTaintState.empty()
+    for index in range(30):
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"tool-call-{index:02d}",
+                tier=SourceTrustTier.TRUSTED_INTERNAL,
+                labels=frozenset({f"tag-{index}"}),
+                reason=f"Tool output {index}.",
+            )
+        )
+
+    assert len(state.sources) == DEFAULT_MAX_SOURCES
+    assert state.total_source_count == 30
+    assert state.distinct_source_count == 30
+    assert state.omitted_source_count == 18
+
+    metadata = state.to_metadata()
+    sources = metadata.get("sources")
+    assert sources is not None and len(sources) == DEFAULT_MAX_SOURCES
+    assert metadata.get("total_source_count") == 30
+    assert metadata.get("distinct_source_count") == 30
+    assert metadata.get("omitted_source_count") == 18
+
+
+def test_taint_source_deterministic_ordering_and_output() -> None:
+    """Sources preserve FIFO acquisition order; canonicalize_taint_sources provides deterministic order."""
+    s1 = TaintSource(
+        source_type=TaintSourceType.USER_MESSAGE,
+        source_id="usr-1",
+        tier=SourceTrustTier.TRUSTED_USER,
+        labels=frozenset(),
+        reason="User input.",
+    )
+    s2 = TaintSource(
+        source_type=TaintSourceType.TOOL_OUTPUT,
+        source_id="tool-1",
+        tier=SourceTrustTier.KNOWN_CONTACT,
+        labels=frozenset({"contact"}),
+        reason="Contact data.",
+    )
+    s3 = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="email-1",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({"untrusted"}),
+        reason="External email intake.",
+    )
+
+    state_order_1 = (
+        TurnTaintState
+        .empty()
+        .add_source(s1, from_history=True)
+        .add_source(s2, from_history=True)
+        .add_source(s3, from_history=True)
+    )
+    state_order_2 = (
+        TurnTaintState
+        .empty()
+        .add_source(s3, from_history=True)
+        .add_source(s1, from_history=True)
+        .add_source(s2, from_history=True)
+    )
+    state_order_3 = (
+        TurnTaintState
+        .empty()
+        .add_source(s2, from_history=True)
+        .add_source(s3, from_history=True)
+        .add_source(s1, from_history=True)
+    )
+
+    # In-memory and reviewer state preserves FIFO acquisition order
+    assert state_order_1.sources == (s1, s2, s3)
+    assert state_order_2.sources == (s3, s1, s2)
+    assert state_order_3.sources == (s2, s3, s1)
+
+    # Canonical comparison function sorts deterministically across orders
+    canon_1 = canonicalize_taint_sources(state_order_1.sources)
+    canon_2 = canonicalize_taint_sources(state_order_2.sources)
+    canon_3 = canonicalize_taint_sources(state_order_3.sources)
+    assert canon_1 == canon_2 == canon_3
+
+    # The deterministic order sorts lower trust tiers first and highest tier last
+    assert canon_1[0].tier is SourceTrustTier.TRUSTED_USER
+    assert canon_1[1].tier is SourceTrustTier.KNOWN_CONTACT
+    assert canon_1[2].tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+def test_preservation_of_max_tier_and_flags_across_truncation() -> None:
+    """Compacting out earlier sources never downgrades max_tier or safety flags."""
+    # Historical high taint
+    high_history_source = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="evil-email",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset(),
+        reason="High taint from history.",
+    )
+    state = TurnTaintState.empty().add_source(high_history_source, from_history=True)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present is True
+
+    # Add 25 lower-tier sources so the original high taint source is compacted out of retained sources
+    for i in range(25):
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.USER_MESSAGE,
+                source_id=f"user-msg-{i}",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason=f"Lower tier message {i}.",
+            )
+        )
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present is True
+    assert high_history_source not in state.sources
+    assert state.omitted_source_count == 14
+
+    # Serializing and deserializing preserves max_tier and synthesizes replacement source
+    metadata = state.to_metadata()
+    assert metadata.get("max_tier") == SourceTrustTier.UNKNOWN_EXTERNAL.config_value
+    assert metadata.get("history_high_taint_present") is True
+
+    restored = TurnTaintState.from_metadata(metadata, from_history=True)
+    assert restored.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert restored.history_high_taint_present is True
+    assert restored.sources[-1].tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+    # Fresh live high taint
+    live_state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="web-search",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="Live web search result.",
+        )
+    )
+    assert live_state.fresh_high_taint_seen_at_sequence == 1
+
+    for i in range(20):
+        live_state = live_state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"trusted-db-{i}",
+                tier=SourceTrustTier.TRUSTED_INTERNAL,
+                labels=frozenset(),
+                reason=f"Internal db read {i}.",
+            )
+        )
+
+    assert live_state.fresh_high_taint_seen_at_sequence == 1
+    assert live_state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+def test_merge_history_taint_avoids_quadratic_explosion() -> None:
+    """Merging many history messages with repeated sources deduplicates and bounds."""
+    # Shared sources present across all historical turns
+    shared_sources: list[TaintMetadataSource] = [
+        {
+            "source_type": "user_message",
+            "source_id": f"prompt-{i}",
+            "tier": "trusted_user",
+            "labels": ["tag"],
+            "reason": f"Prompt {i}",
+        }
+        for i in range(5)
+    ]
+
+    messages: list[SimpleNamespace] = []
+    for turn_idx in range(40):
+        turn_sources: list[TaintMetadataSource] = list(shared_sources)
+        turn_sources.append({
+            "source_type": "tool_output",
+            "source_id": f"turn-{turn_idx}-tool",
+            "tier": "known_contact",
+            "labels": [],
+            "reason": f"Turn {turn_idx} output",
+        })
+        metadata: TaintMetadata = {
+            "version": "runtime_v2",
+            "max_tier": "known_contact",
+            "history_high_taint_present": False,
+            "fresh_high_taint_seen_at_sequence": None,
+            "sources": turn_sources,
+            "approved_sinks": [],
+        }
+        messages.append(SimpleNamespace(taint_metadata=metadata))
+
+    merged_state = merge_history_taint(messages)
+    assert len(merged_state.sources) == DEFAULT_MAX_SOURCES
+    # 5 shared + 40 per-turn = 45 distinct sources
+    assert merged_state.distinct_source_count == 45
+    # Total presentations = 40 * 6 = 240
+    assert merged_state.total_source_count == 240
+    assert merged_state.omitted_source_count == 33
+
+
+def test_legacy_metadata_round_trip_compatibility() -> None:
+    """Legacy metadata without counts round-trips canonically without adding count fields."""
+    legacy_metadata: TaintMetadata = {
+        "version": "runtime_v2",
+        "max_tier": "trusted_user",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "user_message",
+                "source_id": "prompt-1",
+                "tier": "trusted_user",
+                "labels": ["web"],
+                "reason": "Direct prompt",
+            }
+        ],
+        "approved_sinks": [],
+    }
+
+    state = TurnTaintState.from_metadata(legacy_metadata)
+    reserialized = state.to_metadata()
+    assert reserialized == legacy_metadata
+
+    # Metadata that already contains explicit count fields preserves them on round-trip
+    metadata_with_counts: TaintMetadata = {
+        "version": "runtime_v2",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "user_message",
+                "source_id": "prompt-1",
+                "tier": "unknown_external",
+                "labels": ["untrusted"],
+                "reason": "Direct prompt",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 50,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    }
+    state2 = TurnTaintState.from_metadata(metadata_with_counts)
+    reserialized2 = state2.to_metadata()
+    assert reserialized2.get("total_source_count") == 50
+    assert reserialized2.get("distinct_source_count") == 20
+    assert reserialized2.get("omitted_source_count") == 19
+
+
+def test_seen_keys_index_is_strictly_bounded() -> None:
+    """The deduplication index stays strictly bounded by DEFAULT_MAX_SEEN_KEYS and compacted to ints."""
+    state = TurnTaintState.empty()
+    for i in range(200):
+        source = TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id=f"tool-{i}",
+            tier=SourceTrustTier.TRUSTED_INTERNAL,
+            labels=frozenset({f"label-{i}"}),
+            reason=f"Reason {i}",
+        )
+        state = state.add_source(source)
+
+    # _seen_keys must never grow beyond DEFAULT_MAX_SEEN_KEYS and must store compacted integer hashes
+    assert len(state._seen_keys) <= DEFAULT_MAX_SEEN_KEYS
+    assert len(state._seen_keys) == DEFAULT_MAX_SEEN_KEYS
+    assert all(isinstance(h, int) for h in state._seen_keys)
+    # The most recent source is retained in the bounded window
+    latest_hash = hash(taint_source_semantic_key(source))
+    assert latest_hash in state._seen_keys
+
+
+def test_merge_history_taint_propagates_duplicate_presentation_counts() -> None:
+    """Duplicate presentation counts in history are carried through state merges."""
+    # 1 retained source, but 50 total presentations
+    metadata: TaintMetadata = {
+        "version": "runtime_v2",
+        "max_tier": SourceTrustTier.KNOWN_CONTACT.config_value,
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 50,
+        "distinct_source_count": 1,
+        "omitted_source_count": 0,
+    }
+
+    msg1 = SimpleNamespace(taint_metadata=metadata)
+    merged = merge_history_taint([msg1])
+    assert merged.total_source_count == 50
+    assert merged.distinct_source_count == 1
+    assert merged.omitted_source_count == 0
+
+    # Merging two such messages carrying the same source duplicates
+    msg2 = SimpleNamespace(taint_metadata=metadata)
+    merged2 = merge_history_taint([msg1, msg2])
+    assert merged2.total_source_count == 100
+    assert merged2.distinct_source_count == 1
+    assert merged2.omitted_source_count == 0
+
+
+def test_merge_taint_state_into_tracker_propagates_duplicate_presentation_counts() -> (
+    None
+):
+    """merge_taint_state_into_tracker carries duplicate presentation counts."""
+    tracker = InMemoryTurnTaintTracker()
+    state = TurnTaintState.from_metadata({
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 50,
+        "distinct_source_count": 1,
+        "omitted_source_count": 0,
+    })
+
+    merged = merge_taint_state_into_tracker(tracker, state)
+    assert merged.total_source_count == 50
+    assert merged.distinct_source_count == 1
+    assert merged.omitted_source_count == 0
+
+
+def test_from_metadata_invalid_counts_safe() -> None:
+    """Non-finite, negative, boolean, or invalid counts are handled safely."""
+    for invalid_val in [float("nan"), float("inf"), 1e400, True, -5, "not_a_number"]:
+        metadata = {
+            "version": "runtime_v2",
+            "max_tier": "known_contact",
+            "history_high_taint_present": False,
+            "sources": [],
+            "total_source_count": invalid_val,
+        }
+        state = TurnTaintState.from_metadata(metadata)
+        # Should conservatively return malformed_history_state without raising
+        assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+        assert (
+            state.sources[0].reason
+            == "Malformed taint metadata treated as unknown external."
+        )
+
+
+def test_merge_history_taint_bounds_omitted_sources_without_summing() -> None:
+    """Overlapping omitted provenance across history rows is bounded, not summed."""
+    metadata = {
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 20,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    }
+
+    msg1 = SimpleNamespace(taint_metadata=metadata)
+    msg2 = SimpleNamespace(taint_metadata=metadata)
+
+    merged = merge_history_taint([msg1, msg2])
+    # Total presentations sum across turns (20 + 20 = 40)
+    assert merged.total_source_count == 40
+    # Distinct count is bounded by 20 (not 1 + 19 + 19 = 39)
+    assert merged.distinct_source_count == 20
+    assert merged.omitted_source_count == 19
+
+
+def test_merge_taint_state_into_tracker_bounds_omitted_sources() -> None:
+    """Tracker merge bounds distinct count to upper bound rather than summing omitted."""
+    tracker = InMemoryTurnTaintTracker()
+    state1 = TurnTaintState.from_metadata({
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 20,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    })
+    state2 = TurnTaintState.from_metadata({
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 20,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    })
+
+    merge_taint_state_into_tracker(tracker, state1)
+    merged = merge_taint_state_into_tracker(tracker, state2)
+
+    assert merged.total_source_count == 40
+    assert merged.distinct_source_count == 20
+    assert merged.omitted_source_count == 19

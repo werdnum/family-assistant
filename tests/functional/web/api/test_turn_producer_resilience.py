@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.storage import init_db
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -155,9 +155,9 @@ async def test_send_message_propagates_publish_failure(
         async def publish(self, *args: object, **kwargs: object) -> None:
             raise RuntimeError("hub publish exploded")
 
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
 
     interface = WebChatInterface(
         db_engine,
@@ -172,11 +172,11 @@ async def test_send_message_propagates_publish_failure(
         )
 
     # The message was durably committed before the publish failure.
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     assert len(rows) == 1
     assert rows[0]["role"] == "assistant"

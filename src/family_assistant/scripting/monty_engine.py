@@ -246,76 +246,9 @@ class MontyEngine:
     ) -> Any:  # noqa: ANN401
         """Internal async implementation using manual start/resume loop."""
         try:
-            self._wake_llm_contexts.clear()
-            self._script_globals = globals_dict or {}
-
-            ext_fn_impls, inputs = await self._build_execution_context_async(
-                globals_dict, execution_context
+            return await self._run_monty_evaluation(
+                script, globals_dict, execution_context, output_buffer
             )
-
-            m = pydantic_monty.Monty(
-                script,
-                inputs=list(inputs.keys()) if inputs else [],
-            )
-
-            limits = self._build_resource_limits()
-            print_cb = self._create_print_callback(output_buffer)
-            loop = asyncio.get_running_loop()
-
-            # Start execution in thread pool (Monty execution is CPU-bound)
-            progress = await loop.run_in_executor(
-                None,
-                partial(
-                    m.start,
-                    inputs=inputs or None,
-                    limits=limits,
-                    print_callback=print_cb,
-                ),
-            )
-
-            # Resume loop: handle external function calls
-            while not isinstance(progress, pydantic_monty.MontyComplete):
-                if not isinstance(progress, pydantic_monty.FunctionSnapshot):
-                    raise ScriptExecutionError(
-                        f"Unexpected Monty progress type: {type(progress)}"
-                    )
-                snapshot: pydantic_monty.FunctionSnapshot = progress
-
-                fn_name = snapshot.function_name
-                fn = ext_fn_impls.get(fn_name)
-
-                if fn is None:
-                    name_error_result: pydantic_monty.ExternalResult = {
-                        "exception": NameError(f"name '{fn_name}' is not defined")
-                    }
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(snapshot.resume, name_error_result),
-                    )
-                    continue
-
-                try:
-                    if asyncio.iscoroutinefunction(fn):
-                        result = await fn(*snapshot.args, **snapshot.kwargs)
-                    else:
-                        result = fn(*snapshot.args, **snapshot.kwargs)
-                except Exception as e:
-                    exception_result: pydantic_monty.ExternalResult = {"exception": e}
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(snapshot.resume, exception_result),
-                    )
-                else:
-                    return_result: pydantic_monty.ExternalResult = {
-                        "return_value": result
-                    }
-                    progress = await loop.run_in_executor(
-                        None,
-                        partial(snapshot.resume, return_result),
-                    )
-
-            self._pending_wake_contexts = self._wake_llm_contexts.copy()
-            return progress.output
 
         except pydantic_monty.MontySyntaxError as e:
             error_str = str(e)
@@ -338,6 +271,78 @@ class MontyEngine:
             error_msg = f"Script execution failed: {e}"
             logger.exception(error_msg)
             raise ScriptExecutionError(error_msg) from e
+
+    async def _run_monty_evaluation(
+        self,
+        script: str,
+        globals_dict: dict[str, object] | None,
+        execution_context: "ToolExecutionContext | None",
+        output_buffer: ScriptOutputBuffer | None,
+    ) -> object:
+        self._wake_llm_contexts.clear()
+        self._script_globals = globals_dict or {}
+
+        ext_fn_impls, inputs = await self._build_execution_context_async(
+            globals_dict, execution_context
+        )
+        monty = pydantic_monty.Monty(
+            script,
+            inputs=list(inputs.keys()) if inputs else [],
+        )
+        limits = self._build_resource_limits()
+        print_cb = self._create_print_callback(output_buffer)
+        loop = asyncio.get_running_loop()
+
+        progress = await loop.run_in_executor(
+            None,
+            partial(
+                monty.start,
+                inputs=inputs or None,
+                limits=limits,
+                print_callback=print_cb,
+            ),
+        )
+
+        while not isinstance(progress, pydantic_monty.MontyComplete):
+            if not isinstance(progress, pydantic_monty.FunctionSnapshot):
+                raise ScriptExecutionError(
+                    f"Unexpected Monty progress type: {type(progress)}"
+                )
+            snapshot: pydantic_monty.FunctionSnapshot = progress
+            fn = ext_fn_impls.get(snapshot.function_name)
+
+            if fn is None:
+                name_error_result: pydantic_monty.ExternalResult = {
+                    "exception": NameError(
+                        f"name '{snapshot.function_name}' is not defined"
+                    )
+                }
+                progress = await loop.run_in_executor(
+                    None,
+                    partial(snapshot.resume, name_error_result),
+                )
+                continue
+
+            try:
+                if asyncio.iscoroutinefunction(fn):
+                    result = await fn(*snapshot.args, **snapshot.kwargs)
+                else:
+                    result = fn(*snapshot.args, **snapshot.kwargs)
+            except Exception as e:
+                exception_result: pydantic_monty.ExternalResult = {"exception": e}
+                progress = await loop.run_in_executor(
+                    None,
+                    partial(snapshot.resume, exception_result),
+                )
+            else:
+                return_result: pydantic_monty.ExternalResult = {"return_value": result}
+                progress = await loop.run_in_executor(
+                    None,
+                    partial(snapshot.resume, return_result),
+                )
+
+        self._pending_wake_contexts = self._wake_llm_contexts.copy()
+        return progress.output
 
     async def _build_execution_context_async(
         self,
@@ -377,7 +382,7 @@ class MontyEngine:
         if self.config.enable_time_api:
             self._add_time_api(ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:
-            self._add_llm_api(ext_fn_impls)
+            self._add_llm_api(ext_fn_impls, execution_context)
 
         if execution_context and execution_context.attachment_registry:
             try:
@@ -474,16 +479,17 @@ class MontyEngine:
                 kwargs, execution_context, tool_definition
             )
 
-            original_snapshot = execution_context.taint_policy_snapshot
-            execution_context.taint_policy_snapshot = None
-            try:
-                result = await self.tools_provider.execute_tool(
-                    name=tool_name,
-                    arguments=processed_kwargs,
-                    context=execution_context,
-                )
-            finally:
-                execution_context.taint_policy_snapshot = original_snapshot
+            result = await self.tools_provider.execute_tool(
+                name=tool_name,
+                arguments=processed_kwargs,
+                context=replace(
+                    execution_context,
+                    taint_policy_snapshot=None,
+                    prepared_script=None,
+                    definition_gate_outcome=None,
+                    pending_definition_review=None,
+                ),
+            )
 
             logger.debug(f"Tool '{tool_name}' executed successfully (async)")
             return await self._format_tool_result_async(
@@ -629,11 +635,10 @@ class MontyEngine:
                 for attachment in result.attachments:
                     if attachment.content:
                         try:
-                            file_ext = (
-                                mimetypes.guess_extension(attachment.mime_type)
-                                or ".bin"
+                            filename = (
+                                f"tool_result_{uuid.uuid4()}"
+                                f"{mimetypes.guess_extension(attachment.mime_type) or '.bin'}"
                             )
-                            filename = f"tool_result_{uuid.uuid4()}{file_ext}"
                             registered_metadata = await attachment_registry.store_and_register_tool_attachment(
                                 file_content=attachment.content,
                                 filename=filename,
@@ -890,12 +895,37 @@ class MontyEngine:
     def _add_llm_api(
         self,
         impls: dict[str, Callable[..., Any]],
+        execution_context: "ToolExecutionContext | None" = None,
     ) -> None:
-        """Add LLM API functions (llm, llm_json)."""
+        """Add model calls that end the enclosing program's inherited approval."""
         from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
 
-        impls["llm"] = llm_call_async
-        impls["llm_json"] = llm_call_json_async
+        def revoke() -> None:
+            if (
+                execution_context is not None
+                and execution_context.script_execution is not None
+            ):
+                execution_context.script_execution.revoke()
+
+        async def llm(
+            prompt: str, system: str | None = None, model: str | None = None
+        ) -> str:
+            revoke()
+            return await llm_call_async(prompt, system=system, model=model)
+
+        async def llm_json(
+            prompt: str,
+            schema: dict[str, object] | None = None,
+            system: str | None = None,
+            model: str | None = None,
+        ) -> object:
+            revoke()
+            return await llm_call_json_async(
+                prompt, schema=schema, system=system, model=model
+            )
+
+        impls["llm"] = llm
+        impls["llm_json"] = llm_json
 
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
         """Build Monty resource limits from config.

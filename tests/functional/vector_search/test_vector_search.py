@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
 
@@ -87,9 +87,9 @@ async def comprehensive_vector_client(
 ) -> AsyncGenerator[httpx.AsyncClient]:
     """API client with comprehensive test data setup."""
 
-    async def override_get_db() -> AsyncGenerator[DatabaseContext]:
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            yield db  # noqa: ASYNC119
+    async def override_get_db() -> AsyncGenerator[Database]:
+        db = Database(engine=pg_vector_db_engine)
+        yield db
 
     fastapi_app.dependency_overrides[get_db] = override_get_db
 
@@ -122,75 +122,75 @@ async def _setup_comprehensive_test_data(
     engine: AsyncEngine, embedder: MockEmbeddingGenerator
 ) -> None:
     """Setup comprehensive test data for vector search testing."""
-    async with DatabaseContext(engine=engine) as db:
-        # Create documents with different characteristics
-        test_docs = [
-            {
-                "source_type": "note",
-                "source_id": "finance_note",
-                "title": "Financial Planning Guide",
-                "content": "Investment strategies and portfolio management",
-                "query": "finance",
-                "metadata": {"category": "finance", "priority": "high"},
-            },
-            {
-                "source_type": "pdf",
-                "source_id": "tech_report",
-                "title": "Technology Trends 2024",
-                "content": "AI and machine learning developments",
-                "query": "technology",
-                "metadata": {"category": "technology", "year": 2024},
-            },
-            {
-                "source_type": "email",
-                "source_id": "health_newsletter",
-                "title": "Health Tips Newsletter",
-                "content": "Nutrition and exercise recommendations",
-                "query": "health",
-                "metadata": {"category": "health", "newsletter": True},
-            },
-            {
-                "source_type": "web_page",
-                "source_id": "edu_article",
-                "title": "Online Learning Best Practices",
-                "content": "Distance education methodologies",
-                "query": "education",
-                "metadata": {"category": "education", "difficulty": "intermediate"},
-            },
-            {
-                "source_type": "note",
-                "source_id": "business_plan",
-                "title": "Startup Business Plan",
-                "content": "Market analysis and revenue projections",
-                "query": "business",
-                "metadata": {"category": "business", "confidential": True},
-            },
-        ]
+    db = Database(engine=engine)
+    # Create documents with different characteristics
+    test_docs = [
+        {
+            "source_type": "note",
+            "source_id": "finance_note",
+            "title": "Financial Planning Guide",
+            "content": "Investment strategies and portfolio management",
+            "query": "finance",
+            "metadata": {"category": "finance", "priority": "high"},
+        },
+        {
+            "source_type": "pdf",
+            "source_id": "tech_report",
+            "title": "Technology Trends 2024",
+            "content": "AI and machine learning developments",
+            "query": "technology",
+            "metadata": {"category": "technology", "year": 2024},
+        },
+        {
+            "source_type": "email",
+            "source_id": "health_newsletter",
+            "title": "Health Tips Newsletter",
+            "content": "Nutrition and exercise recommendations",
+            "query": "health",
+            "metadata": {"category": "health", "newsletter": True},
+        },
+        {
+            "source_type": "web_page",
+            "source_id": "edu_article",
+            "title": "Online Learning Best Practices",
+            "content": "Distance education methodologies",
+            "query": "education",
+            "metadata": {"category": "education", "difficulty": "intermediate"},
+        },
+        {
+            "source_type": "note",
+            "source_id": "business_plan",
+            "title": "Startup Business Plan",
+            "content": "Market analysis and revenue projections",
+            "query": "business",
+            "metadata": {"category": "business", "confidential": True},
+        },
+    ]
 
-        for doc_data in test_docs:
-            # Create document
-            doc = TestDocument(
-                source_type=doc_data["source_type"],
-                source_id=doc_data["source_id"],
-                id=None,
-                source_uri=f"test://{doc_data['source_id']}",
-                title=doc_data["title"],
-                created_at=datetime.now(UTC),
-                metadata=doc_data["metadata"],
-                file_path=None,
-            )
-            doc_id = await db.vector.add_document(doc)
+    for doc_data in test_docs:
+        # Create document
+        doc = TestDocument(
+            source_type=doc_data["source_type"],
+            source_id=doc_data["source_id"],
+            id=None,
+            source_uri=f"test://{doc_data['source_id']}",
+            title=doc_data["title"],
+            created_at=datetime.now(UTC),
+            metadata=doc_data["metadata"],
+            file_path=None,
+        )
+        doc_id = await db.vector.add_document(doc)
 
-            # Add embedding
-            embedding = embedder.embedding_map[doc_data["query"]]
-            await db.vector.add_embedding(
-                document_id=doc_id,
-                chunk_index=0,
-                embedding_type="content_chunk",
-                embedding=embedding,
-                embedding_model="gemini-exp-03-07",  # Use correct model name
-                content=doc_data["content"],
-            )
+        # Add embedding
+        embedding = embedder.embedding_map[doc_data["query"]]
+        await db.vector.add_embedding(
+            document_id=doc_id,
+            chunk_index=0,
+            embedding_type="content_chunk",
+            embedding=embedding,
+            embedding_model="gemini-exp-03-07",  # Use correct model name
+            content=doc_data["content"],
+        )
 
 
 @pytest.mark.asyncio
@@ -425,19 +425,19 @@ async def test_vector_search_document_with_no_embeddings(
     comprehensive_vector_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
     """Test document detail for document without embeddings."""
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        # Create document without embeddings
-        doc = TestDocument(
-            source_type="orphan",
-            source_id="no_embeddings",
-            id=None,
-            source_uri=None,
-            title="Document Without Embeddings",
-            created_at=datetime.now(UTC),
-            metadata={"orphan": True},
-            file_path=None,
-        )
-        doc_id = await db.vector.add_document(doc)
+    db = Database(engine=pg_vector_db_engine)
+    # Create document without embeddings
+    doc = TestDocument(
+        source_type="orphan",
+        source_id="no_embeddings",
+        id=None,
+        source_uri=None,
+        title="Document Without Embeddings",
+        created_at=datetime.now(UTC),
+        metadata={"orphan": True},
+        file_path=None,
+    )
+    doc_id = await db.vector.add_document(doc)
 
     # Should still be able to get document details
     resp = await comprehensive_vector_client.get(
@@ -456,35 +456,35 @@ async def test_vector_search_performance_with_large_dataset(
     """Test search performance with a larger dataset."""
 
     # Add more documents for performance testing
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        # Create 50 additional documents
-        for i in range(50):
-            doc = TestDocument(
-                source_type="performance_test",
-                source_id=f"perf_doc_{i}",
-                id=None,
-                source_uri=None,
-                title=f"Performance Test Document {i}",
-                created_at=datetime.now(UTC),
-                metadata={"batch": "performance", "index": i},
-                file_path=None,
-            )
-            doc_id = await db.vector.add_document(doc)
+    db = Database(engine=pg_vector_db_engine)
+    # Create 50 additional documents
+    for i in range(50):
+        doc = TestDocument(
+            source_type="performance_test",
+            source_id=f"perf_doc_{i}",
+            id=None,
+            source_uri=None,
+            title=f"Performance Test Document {i}",
+            created_at=datetime.now(UTC),
+            metadata={"batch": "performance", "index": i},
+            file_path=None,
+        )
+        doc_id = await db.vector.add_document(doc)
 
-            # Add random embedding with correct dimensions
-            embedding = [0.1] * 1536  # Use correct dimensions
-            embedding[0] = 0.1 * (i % 10)  # Add some variation
-            if len(embedding) > 1:
-                embedding[1] = 0.2 * ((i + 1) % 10)
+        # Add random embedding with correct dimensions
+        embedding = [0.1] * 1536  # Use correct dimensions
+        embedding[0] = 0.1 * (i % 10)  # Add some variation
+        if len(embedding) > 1:
+            embedding[1] = 0.2 * ((i + 1) % 10)
 
-            await db.vector.add_embedding(
-                document_id=doc_id,
-                chunk_index=0,
-                embedding_type="content_chunk",
-                embedding=embedding,
-                embedding_model="gemini-exp-03-07",  # Use correct model
-                content=f"Performance test content for document {i}",
-            )
+        await db.vector.add_embedding(
+            document_id=doc_id,
+            chunk_index=0,
+            embedding_type="content_chunk",
+            embedding=embedding,
+            embedding_model="gemini-exp-03-07",  # Use correct model
+            content=f"Performance test content for document {i}",
+        )
 
     # Time the search
     start_time = time.time()

@@ -70,6 +70,16 @@ schedule_automations_table = Table(
         nullable=False,
         server_default=func.now(),  # pylint: disable=not-callable
     ),
+    # Definition record: the authoring turn's taint stamp, a hash over this
+    # definition's executable fields, and how the creation left its gate. A
+    # firing resolves it to decide whether the definition renders as trusted
+    # intent; a hash mismatch voids it and fails closed. See
+    # docs/design/executable-definition-taint.md.
+    Column(
+        "definition_record",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    ),
     Column("last_execution_at", DateTime(timezone=True), nullable=True),
     Column("execution_count", Integer, nullable=False, server_default="0"),
     # Constraints and indexes

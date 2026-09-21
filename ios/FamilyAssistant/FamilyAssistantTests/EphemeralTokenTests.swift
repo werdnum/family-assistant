@@ -31,17 +31,20 @@ final class EphemeralTokenTests: XCTestCase {
     {
       "token": "auth_tokens/xyz",
       "expires_at": "2026-06-20T12:30:00Z",
-      "model": "gemini-3.1-flash-live-preview",
+      "model": "gemini-3.8-live",
       "system_instruction": "You are a helpful voice assistant.",
       "tools": [
         {"functionDeclarations": [{"name": "get_weather", "description": "Weather"}]}
       ],
       "config": {
-        "model": "gemini-3.1-flash-live-preview",
+        "model": "gemini-3.8-live",
         "voice": {"name": "Charon"},
         "session": {"max_duration_minutes": 10},
-        "transcription": {"input_enabled": true, "output_enabled": false}
-      }
+        "transcription": {"input_enabled": true, "output_enabled": false, "language_codes": ["en-AU"]},
+        "vad": {"automatic": true, "start_of_speech_sensitivity": "DEFAULT", "silence_duration_ms": 700},
+        "car_audio_vad": {"start_of_speech_sensitivity": "START_SENSITIVITY_LOW", "prefix_padding_ms": 300}
+      },
+      "profile_id": "default_assistant"
     }
     """
 
@@ -51,14 +54,21 @@ final class EphemeralTokenTests: XCTestCase {
             from: Data(Self.sampleResponse.utf8)
         )
         XCTAssertEqual(token.token, "auth_tokens/xyz")
-        XCTAssertEqual(token.model, "gemini-3.1-flash-live-preview")
+        XCTAssertEqual(token.model, "gemini-3.8-live")
         XCTAssertEqual(token.systemInstruction, "You are a helpful voice assistant.")
         XCTAssertEqual(token.tools.count, 1)
         XCTAssertEqual(token.config.voiceName, "Charon")
         XCTAssertEqual(token.config.maxSessionMinutes, 10)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertFalse(token.config.outputTranscriptionEnabled)
+        XCTAssertEqual(token.config.inputTranscriptionLanguageCodes, ["en-AU"])
+        XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig(silenceDurationMs: 700))
+        XCTAssertEqual(
+            token.config.carAudioActivityDetection,
+            VoiceActivityDetectionConfig(startOfSpeechSensitivity: "START_SENSITIVITY_LOW", prefixPaddingMs: 300)
+        )
         XCTAssertNotNil(token.expiresAt)
+        XCTAssertEqual(token.profileID, "default_assistant")
     }
 
     func testDecodeUsesConfigDefaultsWhenSectionsMissing() throws {
@@ -77,6 +87,8 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(token.config.maxSessionMinutes, VoiceLiveConfig.defaultMaxSessionMinutes)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertTrue(token.config.outputTranscriptionEnabled)
+        XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig())
+        XCTAssertEqual(token.config.carAudioActivityDetection, VoiceActivityDetectionConfig())
         XCTAssertTrue(token.tools.isEmpty)
     }
 
@@ -137,12 +149,17 @@ final class EphemeralTokenTests: XCTestCase {
             VoiceTranscriptEntry(speaker: .user, text: "hi"),
             VoiceTranscriptEntry(speaker: .assistant, text: "hello"),
         ]
-        let conversationID = try await makeClient().saveVoiceSession(turns: entries, conversationID: nil)
+        let conversationID = try await makeClient().saveVoiceSession(
+            turns: entries,
+            conversationID: nil,
+            profileID: "complex_tasks"
+        )
 
         XCTAssertEqual(conversationID, "web_conv_42")
         let turns = try XCTUnwrap(capturedBody["turns"] as? [[String: Any]])
         XCTAssertEqual(turns.map { $0["role"] as? String }, ["user", "assistant"])
         XCTAssertEqual(turns.map { $0["text"] as? String }, ["hi", "hello"])
+        XCTAssertEqual(capturedBody["profile_id"] as? String, "complex_tasks")
     }
 
     private func makeClient() -> ChatAPIClient {

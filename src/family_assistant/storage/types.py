@@ -63,6 +63,8 @@ class EventListenerDict(TypedDict):
     daily_executions: int
     daily_reset_at: datetime | None
     last_execution_at: datetime | None
+    # ast-grep-ignore: no-dict-any - the stored definition record is JSON as written
+    definition_record: dict[str, Any] | None
 
 
 class ScheduleAutomationDict(TypedDict):
@@ -83,6 +85,8 @@ class ScheduleAutomationDict(TypedDict):
     created_at: datetime
     last_execution_at: datetime | None
     execution_count: int
+    # ast-grep-ignore: no-dict-any - the stored definition record is JSON as written
+    definition_record: dict[str, Any] | None
 
 
 class RecentEventDict(TypedDict):
@@ -116,6 +120,7 @@ class TaskDict(TypedDict):
     max_retries: int
     recurrence_rule: str | None
     original_task_id: str | None
+    priority: int
 
 
 class ErrorLogRow(TypedDict):
@@ -152,6 +157,21 @@ class TaintAuditArgumentsSummary(TypedDict):
     value_types: dict[str, str]
 
 
+class TaintAuditReviewContext(TypedDict, total=False):
+    """Audit-safe summary of the policy contexts delegated to a reviewer."""
+
+    parent_script_review_id: str | None
+    script_authorization: str
+    delegating_contexts: list[str]
+    allowed_verdicts: list[str]
+    fallback_verdict: str
+    used_fallback: bool
+    destination_echo: bool | None
+    total_source_count: int
+    distinct_source_count: int
+    omitted_source_count: int
+
+
 class TaintAuditEventRow(TypedDict):
     """Type definition for durable runtime taint audit events."""
 
@@ -170,6 +190,10 @@ class TaintAuditEventRow(TypedDict):
     requested_outcome: str | None
     effective_outcome: str | None
     mode: str | None
+    review_verdict: str | None
+    review_status: str | None
+    review_latency_ms: float | None
+    review_context_json: TaintAuditReviewContext | None
     reason: str
     arguments_summary_json: TaintAuditArgumentsSummary | None
     artifact_id: str | None
@@ -235,3 +259,4 @@ class ConversationSummaryRow(TypedDict):
     last_timestamp: datetime
     message_count: int
     interface_type: str
+    match_excerpt: str | None

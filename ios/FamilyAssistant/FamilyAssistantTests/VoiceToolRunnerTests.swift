@@ -194,6 +194,62 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
         XCTAssertTrue(arguments.isEmpty)
     }
 
+    func testExecuteToolSurfacesAuthWallForHTMLBody() async throws {
+        // An edge authentication wall answers 200 with HTML; without the sniff
+        // this surfaces as a cryptic DecodingError in voice mode.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><head><title>Just a moment...</title></head><body></body></html>",
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().executeTool(
+                name: "get_weather",
+                arguments: .object(["city": .string("NYC")]),
+                profileID: nil,
+                taintMetadata: VoiceToolRunner.initialTaintMetadata
+            )
+            XCTFail("Expected an auth-wall HTML body to throw authWall")
+        } catch ChatAPIError.authWall {}
+    }
+
+    func testExecuteToolSurfacesAuthWallForNonSuccessHTMLBody() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Sign in</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().executeTool(
+                name: "get_weather",
+                arguments: .object(["city": .string("NYC")]),
+                profileID: nil,
+                taintMetadata: VoiceToolRunner.initialTaintMetadata
+            )
+            XCTFail("Expected a non-success auth-wall body to throw authWall")
+        } catch ChatAPIError.authWall {}
+    }
+
+    func testExecuteToolNon2xxJSONErrorBodyStillDecodes() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"detail":"policy denied"}"#, statusCode: 400)
+        }
+
+        let result = try await makeClient().executeTool(
+            name: "rejected_tool",
+            arguments: .object([:]),
+            profileID: nil,
+            taintMetadata: VoiceToolRunner.initialTaintMetadata
+        )
+
+        XCTAssertEqual(result, .object(["detail": .string("policy denied")]))
+    }
+
     private func makeClient() -> ChatAPIClient {
         let authManager = AuthManager()
         authManager.serverURL = serverURL

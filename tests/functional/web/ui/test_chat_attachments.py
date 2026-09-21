@@ -79,6 +79,7 @@ async def create_test_attachment(
     if db_engine is None:
         raise ValueError("Database engine not available")
 
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         await conn.execute(
             attachment_metadata_table.insert().values(
@@ -209,6 +210,14 @@ async def test_attachment_response_flow(
     response_image = page.locator('[data-testid="response-image"]').first
     await response_image.wait_for(state="visible", timeout=30000)
     assert attachment_id in (await response_image.get_attribute("src") or "")
+
+    # Clicking the inline image opens the full-screen viewer, and Escape closes it.
+    await page.locator('[data-testid="response-image-trigger"]').first.click()
+    lightbox_image = page.locator('[data-testid="image-lightbox-image"]')
+    await lightbox_image.wait_for(state="visible", timeout=10000)
+    assert attachment_id in (await lightbox_image.get_attribute("src") or "")
+    await page.keyboard.press("Escape")
+    await lightbox_image.wait_for(state="detached", timeout=10000)
 
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
@@ -355,17 +364,16 @@ async def test_attachment_response_with_multiple_attachments(
     )
 
     # Verify attachment previews are now available
+    async def attachment_preview_count() -> int:
+        await chat_page.expand_tool_groups()
+        attachment_previews = page.locator('[data-testid="attachment-preview"]')
+        count = await attachment_previews.count()
+        if count == 0:
+            return 0
+        await attachment_previews.first.wait_for(state="visible", timeout=2000)
+        return count
+
     try:
-
-        async def attachment_preview_count() -> int:
-            await chat_page.expand_tool_groups()
-            attachment_previews = page.locator('[data-testid="attachment-preview"]')
-            count = await attachment_previews.count()
-            if count == 0:
-                return 0
-            await attachment_previews.first.wait_for(state="visible", timeout=2000)
-            return count
-
         preview_count = await wait_for_condition(
             attachment_preview_count,
             timeout=30.0,
