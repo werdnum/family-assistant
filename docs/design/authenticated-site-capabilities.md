@@ -412,8 +412,9 @@ trusted orchestration, bound to the parked session's record — whether by callb
 session's handover state is construction detail for the implementing PR — so that consuming the
 resume handle finds the lease already reclaimable. `needs_human` remains the fully terminal outcome
 for steps a human cannot unblock mid-session (an SSO redirect out of the confined origin set, hard
-bot blocks, a bad password on an autofill site), where the human path is refreshing the jar and
-retrying from the original objective. A challenge the human *can* complete in the parked session —
+bot blocks, a bad password on an autofill site), where the human path depends on the acquisition
+path — refresh the jar where one exists, correct the Keychute secret for an autofill-only site — and
+then retry from the original objective. A challenge the human *can* complete in the parked session —
 an MFA code, a captcha — is `handoff_pending`, not this; the one rule is stated in the autofill
 section's bounded-retries boundary and applied everywhere.
 
