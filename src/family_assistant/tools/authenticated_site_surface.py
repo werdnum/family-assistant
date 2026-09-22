@@ -49,9 +49,6 @@ NON_AUTHENTICATED_BROWSER_TOOLS: frozenset[str] = frozenset({
     "browser_extract",
     # A model-selected handback can replace this run's confined session.
     "browser_claim_handback",
-    # Dragging a selection into a visible control is a value-transfer channel
-    # out of a protected field.
-    "drag_and_drop",
 })
 
 NON_BROWSER_ADMISSIBLE_TOOLS: frozenset[str] = frozenset({

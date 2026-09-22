@@ -19,6 +19,8 @@ from family_assistant.config_loader import load_config
 from family_assistant.config_models import AppConfig
 from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.authenticated_site_surface import admissible_tools
+from family_assistant.tools.metadata import ToolDescriptor
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
 VALID_SITE: dict[str, Any] = {
     "display_name": "HelloFresh",
@@ -97,7 +99,7 @@ def test_shipped_visual_profile_is_rejected(
 
     The semantic profile's delegation is pinned to the *site's* configured
     visual profile, so redirecting a site at the shipped one is rejected before
-    that profile's own drag_and_drop grant is even reached -- which is the point
+    that profile's own tool policy is even reached -- which is the point
     of pinning to the configured id rather than to a fixed name.
     """
     with pytest.raises(ValidationError, match="without pinning target_service_id"):
@@ -111,7 +113,8 @@ def test_admissible_set_is_derived_from_the_tool_table() -> None:
     """The admissible set is the browser-server-mediated tools, minus the leaks."""
     admissible = admissible_tools(LOCAL_TOOL_METADATA_BY_NAME)
     assert {"browser_snapshot", "browser_autofill", "attach_to_response"} <= admissible
-    assert admissible.isdisjoint({"browser_exec", "browser_extract", "drag_and_drop"})
+    assert "drag_and_drop" in admissible
+    assert admissible.isdisjoint({"browser_exec", "browser_extract"})
     # A tool that reaches the network on its own is not tagged BROWSER, so it
     # is excluded without anyone having to remember to list it.
     assert admissible.isdisjoint({"ucp_add_to_cart", "spawn_worker", "gmail_search"})
@@ -469,3 +472,46 @@ def test_authenticated_roles_must_use_local_tools(
     }
     with pytest.raises(ValidationError, match="requires local browser roles"):
         _validate(data, {"hellofresh": VALID_SITE})
+
+
+def test_authenticated_visual_drag_is_advertised_and_allowed(
+    shipped_config_data: dict[str, Any],
+) -> None:
+    config = _validate(shipped_config_data, {"hellofresh": VALID_SITE})
+    profile = next(
+        p
+        for p in config.service_profiles
+        if p.id == "authenticated_browser_visual_profile"
+    )
+    excluded = profile.processing_config.computer_use_excluded_functions
+    assert "drag_and_drop" not in excluded
+    unsupported = {
+        "double_click",
+        "triple_click",
+        "middle_click",
+        "right_click",
+        "key_down",
+        "key_up",
+    }
+    assert unsupported <= set(excluded)
+    engine = PolicyEngine.from_policy_config(profile.tools_policy)
+    for name in {"drag_and_drop", *unsupported}:
+        descriptor = ToolDescriptor(
+            name=name,
+            definition={
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": "Test action",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            tags=LOCAL_TOOL_METADATA_BY_NAME[name].tags,
+            origin="local",
+        )
+        expected = (
+            ToolPolicyDecision.ALLOW
+            if name == "drag_and_drop"
+            else ToolPolicyDecision.DENY
+        )
+        assert engine.evaluate_for_execution(descriptor).decision is expected

@@ -1302,12 +1302,14 @@ service_profiles:
       provider: "google"
       llm_model: "gemini-3.8-flash"
       enable_computer_use: true
-      # The remote backend supports single left clicks only.
+      # The remote backend supports single left clicks and complete key chords.
       computer_use_excluded_functions:
         - "double_click"
         - "triple_click"
         - "middle_click"
         - "right_click"
+        - "key_down"
+        - "key_up"
       max_iterations: 60
       allowed_delegation_sources:
         - "authenticated_browser_profile"
@@ -1332,18 +1334,13 @@ service_profiles:
         - match:
             names:
               - "click"
-              - "double_click"
-              - "triple_click"
-              - "middle_click"
-              - "right_click"
               - "mouse_down"
               - "mouse_up"
               - "move"
               - "type"
               - "press_key"
-              - "key_down"
-              - "key_up"
               - "hotkey"
+              - "drag_and_drop"
               - "scroll"
               - "navigate"
               - "go_back"
