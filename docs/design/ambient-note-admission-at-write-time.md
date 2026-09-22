@@ -167,7 +167,12 @@ Every other sink keeps the shadow behaviour.
 What the verdict does:
 
 - An **admitting verdict** stamps the persisted note `machine_reviewed`, whatever tier the turn was
-  at.
+  at. So does an explicit **relaxed cell**: an operator who overrides this sink to `allow` or
+  `audit` at an external tier has chosen to admit unreviewed writes at that tier, and a write the
+  cell lets through without a verdict is admitted on the operator's authority, stamped
+  `machine_reviewed` with the override recorded in the audit record in place of a verdict. The
+  alternative — a successful write that still does not make the note ambient — would give the
+  override no advertised effect.
 - A **denial, a timeout, or a missing verdict cannot promote trust.** In enforce mode the write is
   refused and the stored note, if any, is untouched. In observe mode the write may still succeed
   under the ordinary write policy, but the note keeps the turn's external taint, so it is not
@@ -354,12 +359,13 @@ rollout.
    `operator_minimum` set for the trusted pole all resolve identically for `trusted_internal` and
    `machine_reviewed`.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
-   on the reuse predicate in the repository. Verified by repository and provider tests that an
-   `unknown_external` prompt note or skill is absent from bodies and the catalog, present by title,
-   and unchanged for `get_note`, `list_notes` and search; that a legacy row with null provenance is
-   excluded the same way and, when fetched through `get_note`, `list_notes` or search, raises the
-   turn to `unknown_external`; and by a functional test that a conversation with such a note starts
-   at `trusted_user`.
+   on the reuse predicate in the repository. The taint-audit endpoint reports the count of
+   prompt-intended notes and skills the derived rule excludes, so the operational rollout audit has
+   its measurement. Verified by repository and provider tests that an `unknown_external` prompt note
+   or skill is absent from bodies and the catalog, present by title, and unchanged for `get_note`,
+   `list_notes` and search; that a legacy row with null provenance is excluded the same way and,
+   when fetched through `get_note`, `list_notes` or search, raises the turn to `unknown_external`;
+   and by a functional test that a conversation with such a note starts at `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers and restamp an existing null-provenance core note as `trusted_internal` on
    first run; web API writes stamp `trusted_user`; call transcripts stamp `unknown_external`; the
@@ -380,8 +386,9 @@ rollout.
    denial refuses in enforce mode and leaves the row untouched, and in observe mode persists an
    unreviewed row that is not included; the `confirm` fallback holds and its prompt renders the
    resolved candidate rather than the call's arguments, for an append and for an import alike; an
-   append is reviewed and persisted as the resolved whole; an import with skill frontmatter is
-   reviewed and, unreviewed, is absent from the catalog.
+   operator override of an external cell to `allow` or `audit` admits the write and stamps
+   `machine_reviewed`; an append is reviewed and persisted as the resolved whole; an import with
+   skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge

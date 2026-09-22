@@ -405,7 +405,8 @@ aggregate diagnostics surface.
    high-tier snapshots, so resumed threads remain tainted until their configured history windows
    roll over; verify provenance sources rather than assuming the floor disappears immediately.
    Compare tool-call gates, distinct gated turns, duplicate prompts, failed no-channel calls, and
-   blocked prompt artifacts.
+   the count of prompt-intended notes and skills the derived eligibility rule excludes (the
+   replacement design's diagnostic, in place of the withdrawn `blocked_by_taint` status).
 8. Enable enforcement when the corrected data shows tolerable approval episodes, then pursue
    capability-scoped confirmation reuse and brokered-network sink refinement based on actual
    remaining friction.
