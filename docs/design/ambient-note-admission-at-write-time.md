@@ -303,14 +303,14 @@ Readers change in one way only. `get_note`, `list_notes`, `search_documents` and
 tool restore stored provenance as they do today — a reviewed note propagates `machine_reviewed` and
 an unreviewed one propagates its external taint — except that the shared resolver they restore it
 through treats an **absent envelope as `unknown_external`** rather than skipping it. Today both the
-note tool and the shared artifact helper return early on missing metadata, so a pre-rollout import
-with attacker-controlled text enters a turn untainted when fetched explicitly; after this change it
-enters at the tier absence has always meant. The notes context provider does the same for the notes
-it includes: a reviewed note in the prompt merges a `machine_reviewed` source into the turn, so the
-turn's tier says that the model processed reviewed external text. That costs no friction — the
-tier's sink cells are `trusted_internal`'s — and it keeps authorship honest: the assistant rows
-stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would let paraphrased
-web material pass the memory review as household-authored.
+note tool and the shared artifact helper return early on missing metadata. After the rollout batch
+restamp no row should be null, so this is a tripwire for write-path regressions rather than a source
+of friction. The notes context provider does the same for the notes it includes: a reviewed note in
+the prompt merges a `machine_reviewed` source into the turn, so the turn's tier says that the model
+processed reviewed external text. That costs no friction — the tier's sink cells are
+`trusted_internal`'s — and it keeps authorship honest: the assistant rows stamped from that turn
+carry `machine_reviewed`, not a trusted-pole tier that would let paraphrased web material pass the
+memory review as household-authored.
 
 ### Titles stay in the catalog
 
@@ -326,26 +326,37 @@ re-litigated, and it can be tightened later without touching the rest of the des
 
 ### Existing rows
 
-No general backfill is needed. Eligibility derives from the stored tier, so the production notes
-whose `unknown_external` stamp is poisoning every turn simply stop being included the moment the
-derived rule ships; their content and labels are untouched. One row is the exception: the
-household's **core-memory note** was created by the bootstrap with no provenance, so
-absent-is-untrusted would drop the always-loaded core memory from every prompt on upgrade. The core
-note is the one null-provenance row the system can identify with certainty — the memory invariants
-name it — so the bootstrap and index-refresh helpers, which now stamp `trusted_internal` on every
-write, restamp it on their first run after rollout. Every other null-provenance row, including the
-indistinguishable legacy imports, stays conservatively external. A user who wants one back asks for
-it in a clean turn (a `trusted_user` write, or a reviewed one if the turn is tainted) or edits it in
-the Notes UI. Rows with no provenance at all — including every note the current import path has
-written — are absent-is-untrusted, as `is_externally_authored` already treats a missing tier. The
-eligibility resolver reads the stored envelope and treats its absence as external directly; it must
-not parse the row through `TurnTaintState.from_metadata()` first, which turns a missing envelope
-into an empty trusted state and would leave those imported prompt notes and skills ambient after
-rollout.
+Rows that carry provenance need no backfill. Eligibility derives from the stored tier, so the
+production notes whose `unknown_external` stamp is poisoning every turn simply stop being included
+the moment the derived rule ships; their content and labels are untouched. A user who wants one back
+asks for it in a clean turn (a `trusted_user` write, or a reviewed one if the turn is tainted) or
+edits it in the Notes UI.
+
+Rows with **no provenance at all** are handled once, by a **batch restamp** the operator runs at
+rollout. These are the notes written before provenance stamping existed, the core-memory note the
+bootstrap created, and everything the current import path has written; the stored data cannot tell
+them apart. Treating them all as external on every read would make the pre-rollout corpus the
+largest new source of taint in the system — one `list_notes` over old household notes would raise
+the turn to `unknown_external` — which is the friction this design exists to remove. The restamp
+script stamps every null-provenance row `trusted_internal`, records the batch in each row's audit
+record, and accepts a title pattern or an explicit list to exclude rows the operator knows to be
+imports, which it stamps `unknown_external` instead. It is a deliberate operator judgment that the
+pre-rollout corpus is household material, of the same kind as the history epoch amnesty, and it is
+recorded below as an accepted residual.
+
+After the batch, a null envelope is a write-path regression, not a legacy condition: the eligibility
+resolver and the shared explicit-read resolver still treat absence as external, and they log it at
+ERROR the way the history reader alarms on a post-epoch row with missing metadata. Neither parses a
+missing envelope through `TurnTaintState.from_metadata()`, which would turn it into an empty trusted
+state.
 
 ## Deliberate simplifications
 
 - **Titles are neither reviewed nor bounded.** Recorded above with its residual.
+- **The batch restamp trusts the pre-rollout corpus.** A pre-rollout workspace import with
+  web-derived text is restamped `trusted_internal` along with everything else unless the operator
+  excludes it, because the stored data cannot distinguish it. Accepted against a zero-enforcement
+  baseline, as the history epoch amnesty was; the operator's exclusion list is the mitigation.
 - **Memory keeps its authorship rule, with a consequence to decide.** Reviewed web-derived material
   stays out of household memory. Because a reviewed ambient note raises every turn it is included in
   to `machine_reviewed`, the memory review as written will skip every chunk of every conversation
@@ -374,20 +385,22 @@ rollout.
    prompt-intended notes and skills the derived rule excludes, so the operational rollout audit has
    its measurement. Verified by repository and provider tests that an `unknown_external` prompt note
    or skill is absent from bodies and the catalog, present by title, and unchanged for `get_note`,
-   `list_notes` and search; that a legacy row with null provenance is excluded the same way and,
-   when fetched through `get_note`, `list_notes` or search, raises the turn to `unknown_external`;
-   and by a functional test that a conversation with such a note starts at `trusted_user`.
+   `list_notes` and search; that a row with null provenance is excluded the same way and, when
+   fetched through `get_note`, `list_notes` or search, raises the turn to `unknown_external` and
+   logs the regression; and by a functional test that a conversation with such a note starts at
+   `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
-   repository helpers and restamp an existing null-provenance core note as `trusted_internal` on
-   first run; web API writes stamp `trusted_user`; call transcripts stamp `unknown_external`; the
-   ast-grep rule forbids raw note-table writes outside the repository; `get_note` routes returned
-   attachments through the shared attachment-provenance resolver. Verified by the conformance check
-   rejecting a raw write, by a repository test that a clean-turn tool write stamps
-   `trusted_internal` while a web API write stamps `trusted_user`, by a fresh-database memory
-   bootstrap, by an upgrade test in which a pre-existing core note with null provenance is included
-   in the prompt after the first refresh while a null-provenance imported note is not, and by a tool
-   test that reading a reviewed note with an email-derived attachment raises the turn to the
-   attachment's tier.
+   repository helpers; a rollout script batch-restamps null-provenance rows `trusted_internal`, with
+   an operator exclusion list stamped `unknown_external`; web API writes stamp `trusted_user`; call
+   transcripts stamp `unknown_external`; the ast-grep rule forbids raw note-table writes outside the
+   repository; `get_note` routes returned attachments through the shared attachment-provenance
+   resolver. Verified by the conformance check rejecting a raw write, by a repository test that a
+   clean-turn tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
+   fresh-database memory bootstrap, by a test of the batch script that restamps a null row
+   `trusted_internal`, stamps an excluded row `unknown_external`, and leaves stamped rows untouched,
+   and by a test that a null row surviving the batch is excluded from ambient reads and logged at
+   ERROR, and by a tool test that reading a reviewed note with an email-derived attachment raises
+   the turn to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict, and otherwise with the
