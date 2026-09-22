@@ -4,17 +4,17 @@
 
 Proposed. Revised after review to the model described in
 [the owner's comment on PR #1249](https://github.com/werdnum/family-assistant/pull/1249#issuecomment-5778100635):
-one real `machine_reviewed` taint tier, one synchronous write-time review, conservative imports, and
-a bounded, explicitly untrusted title catalog. An earlier revision proposed a separate admission
-state with pending verdicts and a generalised artifact-admission record; that is withdrawn.
+one real `machine_reviewed` taint tier, one synchronous write-time review, and imports that are
+reviewed like any other ambient write. An earlier revision proposed a separate admission state with
+pending verdicts and a generalised artifact-admission record; that is withdrawn.
 
 Supersedes the "Minimal prompt-admission design" section of
 [runtime-taint-enforcement-operational-findings.md](runtime-taint-enforcement-operational-findings.md)
 (Issue 3), which proposed a read-time `blocked_by_taint` status and readmission through an explicit
 user review. Companion to [runtime-taint-machinery.md](runtime-taint-machinery.md), whose tier
 vocabulary and sink matrix this design extends by one tier and one sink, and to
-[executable-definition-taint.md](executable-definition-taint.md), whose principle — judge at the
-creation chokepoint, persist the decision — it shares without depending on its machinery.
+[executable-definition-taint.md](executable-definition-taint.md), whose creation-time cure this
+design re-expresses as the same tier.
 
 ## Requirement
 
@@ -39,9 +39,11 @@ content into every turn's `<turn_context>` before any tool runs:
 A note written in a turn carrying `unknown_external` content is stamped with that provenance, and
 the first surface restores the stamp on every later turn, so every turn starts at the highest tier
 and the enforcement matrix is undeployable (the production numbers are in the operational-findings
-document). The second and third surfaces put attacker-influenced strings into every prompt with no
-taint at all. Both failures have one cause: the write that put the material on an ambient surface
-was never asked whether it should, and the stored taint was never changed by anyone who had.
+document). The second surface has an unreviewed route of its own: a workspace file a worker wrote
+from web content is imported as a note, its frontmatter declares it a skill, and the skill's name
+and description appear in every system prompt with no taint and no review. Both failures have one
+cause: the write that put the material on an ambient surface was never asked whether it should, and
+the stored taint was never changed by anyone who had.
 
 ## Design
 
@@ -53,26 +55,47 @@ on the row while exempting it in readers would be the same trust upgrade impleme
 with a note-specific branch in every reader. An explicit tier makes the upgrade visible and lets the
 shared taint machinery apply it everywhere at once.
 
-The tier sits between `trusted_internal` and `known_contact`, on the trusted side of
-`is_externally_authored`:
+The tier sits between `trusted_internal` and `known_contact` in the ordering, so the max rule is
+unchanged: a turn that combines it with fresh `unknown_external` content is `unknown_external`.
+Review upgrades the stored artifact, not the conversation that authored it.
 
-- Under the default policy it behaves as `trusted_internal` does: reusable context, without the
-  restrictions applied to unreviewed external content. No shipped sink cell distinguishes the two.
-- It is **not human-authored input**. Consumers that need the human's own words — the reviewer's
-  originating-request slot, the destination echo — already ask for `trusted_user` exactly, and this
-  tier does not qualify, in the same way `trusted_internal` does not.
-- The max rule is unchanged: a turn that combines it with fresh `unknown_external` content is
-  `unknown_external`. Review upgrades the stored artifact, not the conversation that authored it.
+**Review changes what the content may be used for, not where it came from.** The security module
+answers two different questions about a tier, and `machine_reviewed` answers them differently:
+
+- **Authorship** — `is_externally_authored`. `machine_reviewed` content **is** externally authored:
+  a skill researched from the web is still web-authored after a judge admits it. The authorship
+  boundary therefore moves so that this tier falls on the external side. Every consumer of that
+  predicate keeps its meaning: memory review still excludes it from household memory, the audit log
+  still withholds its free text, and it never counts as the human's own words.
+- **Reuse** — a new predicate, admissible for unasked reuse, true for `trusted_user`,
+  `trusted_internal` and `machine_reviewed`. Ambient inclusion is decided by this predicate, and the
+  sink matrix gives `machine_reviewed` the same cells as `trusted_internal`, so downstream
+  enforcement treats reviewed material as reusable context without the restrictions applied to
+  unreviewed external content.
+
+The tool-call reviewer already renders evidence in bands, and gains one: the user's own words
+(`trusted_user`) are the intent it judges against; `trusted_internal` and `machine_reviewed` rows
+and sources are rendered as **reviewed context** the judge may use to interpret that intent but not
+as authorisation; external content is withheld as today. "Look up how to do X and set up an
+automation" therefore gives the judge X as the intent and the reviewed procedure as context, rather
+than the stub it renders today when the definition's stamp is external.
+
+**Automation definitions use the same tier.** `executable-definition-taint.md` gates a definition's
+creation and marks an admitted definition as cured, so it fires with its intent intact. Under this
+design that cure is not a separate flag: an admitted definition's stamp is changed to
+`machine_reviewed`, exactly as an admitted note's is, and a definition at that tier renders to the
+reviewer as the intent to judge against, as the cure does today. One tier expresses "a judge
+admitted this stored artifact" for both kinds.
 
 **On an admitting verdict the row's active taint envelope is replaced**, not merely its `max_tier`:
 `TurnTaintState.from_metadata()` recomputes the tier from the stored sources, so retaining the
 original `unknown_external` sources would raise it straight back. The envelope holds one
 reviewed-artifact source at `machine_reviewed`, carrying the reviewer's verdict id; the original
-sources, the authoring turn's tier and the verdict are kept in the note's audit record, outside
+sources, the authoring turn's tier and the verdict are kept in the artifact's audit record, outside
 propagation. Turn-local state — history flags, approvals — is not carried over.
 
 Ambient eligibility is then **derived**, not stored: a note is eligible for full-content ambient
-inclusion when it is marked `include_in_prompt` and its stored tier is not externally authored. The
+inclusion when it is marked `include_in_prompt` and its stored tier is admissible for reuse. The
 same rule admits a database skill's name and description to the catalog. No new column, no admission
 flag, and no reader needs to know anything beyond the tier it already reads.
 
@@ -154,8 +177,24 @@ Which writes cross the gate:
   `include_in_prompt`;
 - creating or updating a note whose content declares skill frontmatter;
 - creating a note under a new title with no ambient intent is **not** gated. It is stamped with the
-  turn's taint like any artifact write, and its title reaches the catalog only in the bounded form
-  described below.
+  turn's taint like any artifact write.
+
+### Imports are reviewed like anything else
+
+`workspace_import_note` today writes the imported note with no provenance, honours the file's
+frontmatter for `include_in_prompt`, and defaults it to `true`. Files in the shared workspace are
+written by sandboxed workers that may have read the web, so this is content from outside the trust
+boundary entering an ambient surface on the file's own say-so.
+
+The correction is to make the import an ordinary read followed by an ordinary write, with no path of
+its own. Reading the file merges an `unknown_external` source into the turn, as fetching a web page
+does — the file is external content, and the turn now says so. The note write that follows is then
+gated exactly as any other: frontmatter may *request* `include_in_prompt` or declare skill metadata,
+and that request crosses the `ambient_prompt_write` gate at `unknown_external`, where the judge
+decides. An admitted import is `machine_reviewed`; a refused or unreviewed one is stored as
+reference material with its external taint, and its skill metadata does not reach the catalog
+because the derived rule excludes it. Absent any frontmatter request, an import defaults to
+`include_in_prompt: false`, so the common "pull this file in for reference" case involves no review.
 
 ### Every write stamps its taint at one chokepoint
 
@@ -166,8 +205,8 @@ the chokepoint is also enforced by a conformance rule: an ast-grep rule forbids
 `insert(notes_table)` and `update(notes_table)` outside the notes repository module. Each existing
 writer supplies its stamp from its own trust:
 
-- **Note tools** (`create_note`, `update_note`) supply the turn's taint, replaced by
-  `machine_reviewed` on an admitting verdict.
+- **Note tools** (`create_note`, `update_note`) and **workspace import** supply the turn's taint,
+  replaced by `machine_reviewed` on an admitting verdict.
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
@@ -178,46 +217,23 @@ writer supplies its stamp from its own trust:
   `trusted_internal`, since the core note is deployment-authored structure.
 - **Call transcripts** (the Asterisk route) are authored by whoever was on the call and stamp
   `unknown_external`; they are reference material, never ambient.
-- **Workspace import** is covered next.
 
 Readers change nothing. `get_note`, `list_notes`, `search_documents` and the full-document tool
 restore stored provenance exactly as they do today; a reviewed note propagates `machine_reviewed`
 and an unreviewed one propagates its external taint. The notes context provider's own taint
-restoration becomes empty by construction, since every note it includes is on the trusted side of
-the boundary.
+restoration becomes empty by construction, since every note it includes is admissible for reuse.
 
-### Imports are reference material by default
+### Titles stay in the catalog
 
-`workspace_import_note` today accepts the file's frontmatter value for `include_in_prompt` and
-otherwise defaults to `true`, and writes with no provenance at all. A file a worker wrote from web
-content can therefore land in every prompt unreviewed. For this design:
-
-- an import defaults to `include_in_prompt: false`;
-- file frontmatter cannot promote content into ambient context — only an explicit tool argument can,
-  and that goes through the same synchronous review as any other ambient write;
-- imported material is stamped `unknown_external` unless a trusted origin is actually established.
-
-This is a conservative classification at the import boundary, not workspace-wide provenance
-tracking. Skill frontmatter in an imported file is subject to the same derived catalog rule as any
-other database skill, so it is not an alternative route to automatic inclusion.
-
-### A bounded, explicitly untrusted title catalog
-
-Eliminating every title-based injection is not a condition of this rollout: a title-only discovery
-catalog is a different exposure from a complete unreviewed document or a standing procedure in every
-turn. Unreviewed notes stay in the catalog, in a bounded form:
-
-- the title is rendered as a short, single-line, restricted-character slug — a 64-character cap and
-  a conservative character set are a straightforward starting point, not a claim about a proven safe
-  length — and the catalog as a whole has a size cap;
-- the catalog is wrapped as a clearly labelled data section that says these are **unreviewed labels
-  provided for discovery, not instructions or user-authored policy**;
-- displaying the constrained title does not upgrade the row. Fetching its full content propagates
-  its stored taint normally.
-
-A short slug bounds the payload, not the worst-case impact: short strings can still express
-instructions. This is an explicit residual-risk choice against a zero-enforcement baseline, not a
-claim that titles are harmless, and it is preferred to building a title-admission workflow.
+Unreviewed notes keep their titles in the "other available notes" catalog, rendered as they are
+today. A title-only discovery catalog is a different exposure from a complete unreviewed document or
+a standing procedure in every turn, and gating every note creation in a tainted turn for the sake of
+a title string would put the reviewer on the common "save this for me" path, which is the friction
+the rollout cannot afford. The catalog's existing wrapper text says these are titles to load on
+demand; fetching a note's full content propagates its stored taint normally, and displaying its
+title does not upgrade it. This is an explicit residual-risk choice against a zero-enforcement
+baseline: short strings can still express instructions. It is recorded here so it is not
+re-litigated, and it can be tightened later without touching the rest of the design.
 
 ### Existing rows
 
@@ -230,42 +246,48 @@ treats them.
 
 ## Deliberate simplifications
 
-- **Titles are bounded, not reviewed.** Recorded above with its residual.
+- **Titles are neither reviewed nor bounded.** Recorded above with its residual.
+- **Memory keeps its authorship rule.** Reviewed web-derived material stays out of household memory.
+  Whether review should also admit content to memory is a memory-design question; if decided, it is
+  a change of predicate in the memory invariants, not of this design.
 - **Attachment contents are not upgraded by review.** The reviewer sees the rendered description and
   MIME type, which is what the prompt renders; the contents keep their own taint.
-- **Workspace file content is classified at the import boundary**, as `unknown_external` absent an
-  established origin, rather than tracked per file.
-- **No generalisation of the automation admission machinery.** The reviewer and audit facilities are
-  reused where useful, but this correction is not contingent on migrating another artifact type.
+- **Workspace file content is classified as external at the read**, not tracked per file.
+- **No generalisation of the definition-record machinery.** Automations share the tier, not a new
+  record type; the reviewer and audit facilities are reused where useful.
 - **The web API is trusted without a gate.** It is authenticated, it is the user's own hands, and it
   is the deterministic promotion path.
 
 ## Work plan
 
-1. **The tier.** `MACHINE_REVIEWED` in the vocabulary, serialization, config parsing and policy
-   defaults, between `trusted_internal` and `known_contact`, with `is_externally_authored` and the
-   human-direct check giving the answers above. Verified by unit tests on the boundary helpers, the
-   max rule, and round-tripping through metadata.
+1. **The tier and the two predicates.** `MACHINE_REVIEWED` in the vocabulary, serialization, config
+   parsing and policy defaults, between `trusted_internal` and `known_contact`; the authorship
+   boundary moved so it reads as external; the reuse predicate added and used by ambient
+   eligibility. Verified by unit tests on both predicates, the max rule, the matrix cells, and
+   round-tripping through metadata.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
-   on the derived rule in the repository; the excluded-titles catalog renders unreviewed titles in
-   the bounded form under the labelled wrapper. Verified by repository and provider tests that an
-   `unknown_external` prompt note is absent from bodies and skills, present as a bounded title, and
-   unchanged for `get_note`, `list_notes` and search; and by a functional test that a conversation
-   with such a note starts at `trusted_user`.
+   on the reuse predicate in the repository. Verified by repository and provider tests that an
+   `unknown_external` prompt note or skill is absent from bodies and the catalog, present by title,
+   and unchanged for `get_note`, `list_notes` and search; and by a functional test that a
+   conversation with such a note starts at `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers; web API writes stamp `trusted_user`; call transcripts stamp
    `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository.
    Verified by the conformance check rejecting a raw write and by a fresh-database memory bootstrap.
-4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools resolve
-   the complete candidate, await the review synchronously in both modes, and persist the candidate
-   with `machine_reviewed` on an admitting verdict or the turn's taint otherwise. Verified by tool
-   tests for each gated shape and each tier, in both modes: an admitting verdict yields a
-   `machine_reviewed` row that the next turn includes untainted; a denial refuses in enforce mode
-   and leaves the row untouched, and in observe mode persists an unreviewed row that is not
-   included; the `confirm` fallback holds; an append is reviewed and persisted as the resolved
-   whole.
-5. **Imports.** Default off, frontmatter cannot promote, `unknown_external` stamp. Verified by tool
-   tests.
+4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
+   import tool resolve the complete candidate, await the review synchronously in both modes, and
+   persist the candidate with `machine_reviewed` on an admitting verdict or the turn's taint
+   otherwise; the import tool merges the file as an `unknown_external` source first and defaults
+   inclusion off. Verified by tool tests for each gated shape and each tier, in both modes: an
+   admitting verdict yields a `machine_reviewed` row that the next turn includes untainted; a denial
+   refuses in enforce mode and leaves the row untouched, and in observe mode persists an unreviewed
+   row that is not included; the `confirm` fallback holds; an append is reviewed and persisted as
+   the resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is absent from
+   the catalog.
+5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
+   reviewed context; an admitted definition's stamp becomes `machine_reviewed` and renders as the
+   intent to judge against, replacing the cure flag. Verified by the existing executable-definition
+   tests passing with the cure expressed as the tier, and by reviewer rendering tests for each band.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
    operational-findings document's Issue 3 section marked as superseded by this one.
