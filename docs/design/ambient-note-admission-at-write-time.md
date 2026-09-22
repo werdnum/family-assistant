@@ -68,10 +68,14 @@ answers two different questions about a tier, and `machine_reviewed` answers the
   predicate keeps its meaning: memory review still excludes it from household memory, the audit log
   still withholds its free text, and it never counts as the human's own words.
 - **Reuse** — a new predicate, admissible for unasked reuse, true for `trusted_user`,
-  `trusted_internal` and `machine_reviewed`. Ambient inclusion is decided by this predicate, and the
-  sink matrix gives `machine_reviewed` the same cells as `trusted_internal`, so downstream
-  enforcement treats reviewed material as reusable context without the restrictions applied to
-  unreviewed external content.
+  `trusted_internal` and `machine_reviewed`. Ambient inclusion is decided by this predicate, and for
+  sink policy `machine_reviewed` **is** `trusted_internal`: the equivalence is defined once, at the
+  shared policy-lookup chokepoint where `trusted_internal` already resolves to the trusted pole, so
+  the shipped cells, an operator's `matrix_overrides` and any `operator_minimum` configured for the
+  trusted pole all apply to it unchanged. A row of its own in the default matrix would silently
+  bypass a deployment's configured confirmation or denial. Downstream enforcement therefore treats
+  reviewed material as reusable context without the restrictions applied to unreviewed external
+  content.
 
 The tool-call reviewer already renders evidence in bands, and gains one: the user's own words
 (`trusted_user`) are the intent it judges against; `trusted_internal` and `machine_reviewed` rows
@@ -178,9 +182,13 @@ and MIME type rendered as the prompt will render it — and *that* is what the r
 is persisted. If the whole resulting object was reviewed, there is no reason to refuse promotion
 because the request was expressed as an append. The converse holds too: material the candidate
 **retains** from the stored note carries the stored note's taint into the decision. The tier the
-gate evaluates is the maximum of the turn's tier and the tier of whatever the candidate keeps — the
-existing body under an append, the existing attachments when the call omits them — so a clean turn
-that appends to an unreviewed note is reviewed at that note's tier rather than promoting its old
+gate evaluates is the maximum of the turn's tier, the tier of whatever the candidate keeps — the
+existing body under an append, the existing attachments when the call omits them — and the stored
+provenance of **every attachment whose metadata the candidate renders**, kept or newly associated.
+Today the note tool only validates an attachment id, so a clean turn associating an email-derived
+attachment would take the `trusted_user` allow cell and put its description in every prompt
+unreviewed; merging the attachment's provenance into the gate state closes that. A clean turn that
+appends to an unreviewed note is likewise reviewed at that note's tier rather than promoting its old
 body to `trusted_user` unread. A write that replaces every part of the ambient material is evaluated
 at the turn's tier alone. Synchronous review does not remove every concurrent update race; what
 remains is ordinary database correctness — persist the candidate that was actually reviewed, under
@@ -319,8 +327,10 @@ trusted state and would leave those imported prompt notes and skills ambient aft
 1. **The tier and the two predicates.** `MACHINE_REVIEWED` in the vocabulary, serialization, config
    parsing and policy defaults, between `trusted_internal` and `known_contact`; the authorship
    boundary moved so it reads as external; the reuse predicate added and used by ambient
-   eligibility. Verified by unit tests on both predicates, the max rule, the matrix cells, and
-   round-tripping through metadata.
+   eligibility. Verified by unit tests on both predicates, the max rule, round-tripping through
+   metadata, and the policy lookup: the shipped cells, a custom `matrix_overrides` entry and an
+   `operator_minimum` set for the trusted pole all resolve identically for `trusted_internal` and
+   `machine_reviewed`.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
    on the reuse predicate in the repository. Verified by repository and provider tests that an
    `unknown_external` prompt note or skill is absent from bodies and the catalog, present by title,
