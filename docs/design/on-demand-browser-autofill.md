@@ -15,16 +15,25 @@ ordinary browsing.
 
 ## Approach
 
-The ordinary semantic and visual browser profiles expose `browser_autofill` with a `secret_name`.
-Browser-server receives the name and resolves the actual current HTTPS document origin, requests the
-credential from Keychute, checks the granted destination and the still-current form, and fills it
-directly. The agent submits the form and continues browsing. FA receives outcomes, never credential
-bytes.
+The dedicated credential semantic and visual browser profiles expose `browser_autofill` with a
+`secret_name`. Browser-server receives the name and resolves the actual current HTTPS document
+origin, requests the credential from Keychute, checks the granted destination and the still-current
+form, and fills it directly. The agent submits the form and continues browsing. FA receives
+outcomes, never credential bytes.
 
-Remote FA browsers are credential-protected from creation. Existing masking and input protections
-apply; arbitrary JavaScript and raw DOM extraction are denied before any fill, so the agent cannot
-install a listener first. Public navigation and cross-site browsing remain available. Local
-Playwright browsers cannot fill Keychute credentials.
+Ordinary browsing retains arbitrary JavaScript and raw DOM extraction, but cannot request autofill.
+For a login task, delegate directly to `credential_browser_profile`, or switch there when ordinary
+browsing encounters a login wall. Its `credential_browser_visual_profile` handles visual steps.
+Neither requires a configured site. These profiles use a separate remote browser context, protected
+from creation: no cookies, page state or refs are copied from the ordinary browser. They share their
+protected context with each other across turns, including approval retries. JavaScript and raw DOM
+extraction are denied there before any fill, so an ordinary browser's injected listeners cannot
+observe credentials. Public navigation and cross-site browsing remain available. Local Playwright
+browsers cannot fill Keychute credentials.
+
+The model chooses the profile, but browser-server enforces the session's tool boundary. Session
+caching includes credential mode, so profile delegation cannot silently reuse an unprotected tab.
+Existing configured-site profiles retain their separately bound lifecycle.
 
 Approval that outlasts a tool call returns the existing pending result and its approval link. The
 conversation keeps the browser session and request key so a user can approve and ask the agent to
@@ -51,19 +60,19 @@ again. Configured site runs retain their existing parked-run handling.
   persistence is required. Ask for a name when it is unknown; use human handoff for challenges the
   agent cannot complete.
 - Existing bad-password and per-session fill limits remain bounded failure handling. Reporting a
-  rejected password discards an ordinary browser session; a later user-requested task can open a
-  fresh session in the same conversation after the stored secret is corrected.
+  rejected password discards the on-demand credential browser session; a later user-requested task
+  can open a fresh session in the same conversation after the stored secret is corrected.
 
 These are explicit product choices for the requested workflow, not missing static-site validation to
 add during review.
 
 ## Milestones and verification
 
-1. Browser-server accepts per-request secrets in credential-protected ordinary sessions. Verify
-   pending approval and retry, granted-origin mismatch, navigation during approval, and denial of
-   raw readback before the first fill.
-2. FA exposes on-demand requests in both browser profiles and preserves pending request identity
-   across turns. Verify against the actual browser-server ASGI application with a fake Keychute
-   transport, and verify policy availability.
+1. Browser-server accepts per-request secrets in credential-protected sessions without configured
+   sites. Verify pending approval and retry, granted-origin mismatch, navigation during approval,
+   and denial of raw readback before the first fill.
+2. FA separates ordinary and credential browser profiles, preserving pending request identity across
+   turns in the protected session. Verify normal JavaScript/extraction, isolated contexts, protected
+   readback denial, and approval retries against the actual browser-server ASGI application.
 3. Publish user/operator guidance and matching PRs. Pin FA's integration-test dependency to the
    browser-server change and check both current-head CI runs.

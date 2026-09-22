@@ -485,3 +485,10 @@ def test_walker_js_is_byte_identical_to_browser_servers() -> None:
     """
     assert SNAPSHOT_JS == SERVER_SNAPSHOT_JS
     assert CHECK_REF_JS == SERVER_CHECK_REF_JS
+
+
+@pytest.mark.asyncio
+async def test_credential_browser_requires_enabled_remote_backend() -> None:
+    ctx = _exec_context(enabled=False, profile_id="credential_browser_profile")
+    with pytest.raises(BrowserBackendError, match="requires browser-server"):
+        await get_browser_backend(ctx)

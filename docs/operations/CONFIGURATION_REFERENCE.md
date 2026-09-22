@@ -2965,7 +2965,7 @@ ______________________________________________________________________
 
 ## On-demand browser autofill
 
-With `browser_handoff_config.enabled`, ordinary browser profiles can request
+With `browser_handoff_config.enabled`, the dedicated credential browser profiles can request
 `browser_autofill(secret_name=...)` on the page they are visiting. Configure Keychute on
 **browser-server**, using its `BROWSER_KEYCHUTE_URL` and `BROWSER_KEYCHUTE_TOKEN` settings and an
 autofill-capable trusted client. Set `BROWSER_KEYCHUTE_EXTERNAL_URL` to the user-facing Keychute URL
@@ -2978,9 +2978,12 @@ belong to the Keychute grant: browser-server checks the actual HTTPS document or
 constraints before filling. FA has no separate list of sites for this path. A secret can be a
 password string or a JSON object with `username` and `password`.
 
-All ordinary remote FA sessions enable credential protection from creation. Arbitrary JavaScript and
-raw DOM extraction are unavailable; use accessibility snapshots or screenshots. Local Playwright
-does not support Keychute autofill.
+`browser_handoff_config.autofill_capable_profiles` defaults to `credential_browser_profile` and
+`credential_browser_visual_profile`. Include these in `handoff_capable_profiles` when overriding
+that list. They share a credential-protected session separate from ordinary browsing; JavaScript and
+raw DOM extraction are unavailable there. The ordinary browser profiles retain those tools and
+cannot autofill. Delegation into credential browsing does not transfer cookies or page state. Local
+Playwright does not support Keychute autofill.
 
 Standing grants are shared authority of the browser-server Keychute client; acting-user context is
 audit metadata, not Keychute user authentication. A grant therefore applies to browser requests made
@@ -2991,7 +2994,7 @@ trade-off described in [the design](../design/on-demand-browser-autofill.md).
 ## Authenticated Sites (`authenticated_sites`)
 
 Optional configured account presets with saved logins and origin confinement. Empty by default;
-ordinary on-demand autofill works without any entries. Requires `browser_handoff_config.enabled`.
+on-demand credential browsing works without any entries. Requires `browser_handoff_config.enabled`.
 The design is [authenticated-site-capabilities.md](../design/authenticated-site-capabilities.md);
 the user-facing half is [authenticated-sites.md](../user/authenticated-sites.md).
 
@@ -3049,8 +3052,8 @@ use.
 The pin is load-bearing even though it authorizes nothing. Two household accounts on one origin are
 two site ids with two secrets and two rows for the *same* origin, and Keychute cannot tell them
 apart; without the pin a page-influenced model in a run authorized for one account could name the
-other's alias. `browser_autofill` may name a secret for ordinary browsing; a configured-site session
-rejects a name different from its pinned alias.
+other's alias. `browser_autofill` may name a secret for on-demand credential browsing; a
+configured-site session rejects a name different from its pinned alias.
 
 A jar that a human **revoked** (invalidated or deleted) disables autofill for that site as well: the
 run returns `login_required` regardless of the alias, and the capability re-enables only by a

@@ -15,11 +15,11 @@ once, so each stays cheap and focused.
   coordinates from screenshots. Best for `<canvas>`, image maps, and drag-and-drop on non-DOM
   surfaces.
 
-Both can request a stored Keychute credential when they encounter a login wall. Tell the assistant
-the secret's name, or let it ask you which one to request. Approve the release in Keychute and ask
-it to continue. No preconfigured site is needed; see
-[signing into websites](authenticated-sites.md). Remote browser sessions protect credential fields
-and do not expose arbitrary JavaScript or raw DOM extraction.
+For stored credentials, use `/browse_authenticated` or let the assistant delegate to it after
+encountering a login wall. It opens a separate protected session and can request a named Keychute
+secret without preconfigured sites. Ordinary browsing retains JavaScript and raw extraction; the
+credential browser uses snapshots and visual actions. See
+[signing into websites](authenticated-sites.md).
 
 By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse_visual` only when
 the DOM-based path cannot see what it needs to interact with.
@@ -70,11 +70,14 @@ Prefix your request with `/browse` to use the semantic DOM profile:
 - **`browser_select`** — select a `<select>` option by label or value.
 - **`browser_wait`** — wait for a load state or CSS selector to appear.
 - **`browser_screenshot`** — take an explicit screenshot to attach to the conversation.
-- **`browser_extract`** — read page content as Markdown in a local browser session.
-- **`browser_exec`** — run in-page JavaScript in a local browser session. These two tools are
-  unavailable in remote credential-protected sessions; use snapshots or visual actions instead.
-- **`browser_autofill`** — request a named Keychute credential for the current login form.
-- **`browser_report_login_outcome`** — stop further fills after a rejected password.
+- **`browser_extract`** — read page content as Markdown.
+- **`browser_exec`** — run in-page JavaScript when the fixed actions do not fit.
+
+For stored-password login tasks, use `/browse_authenticated`, or let the assistant switch when it
+encounters a login wall. That browser can request named Keychute credentials without site
+registration. It uses a separate session: cookies and page progress do not transfer from `/browse`.
+JavaScript and raw extraction are unavailable in the credential browser; it uses snapshots and
+visual actions instead. See [signing into websites](authenticated-sites.md).
 
 ## The `/browse_visual` Command (fallback, coordinate-based)
 

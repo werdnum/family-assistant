@@ -15,22 +15,20 @@ rather than pixel screenshots, so interactions are cheaper and faster.
 
 - **Activation**: prefix your request with `/browse`.
 - **Tools**: `browser_open`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_select`,
-  `browser_wait`, `browser_screenshot`, `browser_autofill`, `browser_report_login_outcome`. Local
-  browsers also support `browser_extract` and `browser_exec`; remote credential-protected sessions
-  deny raw extraction and arbitrary JavaScript.
+  `browser_wait`, `browser_screenshot`, `browser_extract`, `browser_exec` (local and remote).
 - **How it works**: each interaction uses a semantic ref like `e12` returned by the previous
   snapshot, not coordinates. Snapshots can be filtered with a `query` substring to keep context
   small.
-- **Local-only escape hatch**: `browser_exec` runs JavaScript in the page via `page.evaluate`. Use
-  it when the fixed tools don't fit — shadow DOM, iframes, reading same-origin JSON endpoints, or
-  multi-step DOM mutation in one turn.
+- **Escape hatch**: `browser_exec` runs JavaScript in the page via `page.evaluate`. Use it when the
+  fixed tools don't fit — shadow DOM, iframes, reading same-origin JSON endpoints, or multi-step DOM
+  mutation in one turn.
 
 ### When to use `/browse`
 
 - Read a page and answer a question about it.
 - Search a site (open → fill → submit → snapshot).
 - Click through links or navigate forms where elements have accessible labels.
-- In a local browser, pull structured data out of a same-origin JSON endpoint via `browser_exec`.
+- Pull structured data out of a same-origin JSON endpoint via `browser_exec`.
 
 ## `/browse_visual` — fallback, coordinate-based
 
@@ -40,8 +38,7 @@ Reserved for tasks that genuinely can't be done from the DOM.
 - **Activation**: prefix your request with `/browse_visual`.
 - **Tools**: `click`, `double_click`, `triple_click`, `middle_click`, `right_click`, `move`,
   `mouse_down`, `mouse_up`, `type`, `press_key`, `key_down`, `key_up`, `hotkey`, `scroll`,
-  `drag_and_drop`, `navigate`, `go_back`, `go_forward`, `take_screenshot`, `wait`,
-  `browser_autofill`, `browser_report_login_outcome`.
+  `drag_and_drop`, `navigate`, `go_back`, `go_forward`, `take_screenshot`, `wait`.
 - **How it works**: every action returns a screenshot; the model visually locates elements and
   commands clicks by coordinates.
 - **Safety**: prompt-injection detection over screenshots is always on, and actions the model flags
@@ -63,8 +60,14 @@ task. The delegated agent picks up the same live browser tab (same `conversation
 
 ## Signing in with Keychute
 
-When remote browser-server integration is enabled, either profile can encounter a login wall and
-request `browser_autofill(secret_name="the-name-the-user-supplied")` on the current page. No
+Use `/browse_authenticated` or delegate to `credential_browser_profile` for tasks requiring stored
+credentials. When ordinary browsing encounters a login wall, delegate with the URL, objective, and
+secret name if known. The credential profile starts a separate protected remote browser: ordinary
+cookies, page state, and element refs do not transfer. Its visual helper is
+`credential_browser_visual_profile`, which shares the protected tab. Ordinary browser profiles
+cannot autofill; both retain their usual tools.
+
+The credential profiles request `browser_autofill(secret_name="the-name-the-user-supplied")`. No
 preconfigured site or standing grant is needed. If the name is unknown, ask the user for the
 Keychute secret name, never its value. The browser checks the actual HTTPS page origin, and Keychute
 approves or denies release; a standing grant can authorize later requests automatically.
@@ -76,9 +79,9 @@ and then `kind="password"` on the next page. If the site explicitly rejects the 
 `browser_report_login_outcome(outcome="bad_password")` and stop rather than retrying passwords.
 
 Credentials go directly from Keychute to the browser; tool results do not contain their values.
-Remote browsers protect credential controls from creation and deny `browser_exec` and
-`browser_extract`. Use snapshots and screenshots there. Local Playwright sessions retain those
-advanced tools but cannot request Keychute autofill. For MFA or CAPTCHA, use human browser handoff.
+Credential browsers protect controls from creation and deny `browser_exec` and `browser_extract`.
+Use snapshots and screenshots there. Ordinary browsers retain these advanced tools but cannot
+request Keychute autofill. For MFA or CAPTCHA, use human browser handoff.
 
 ## Limitations (both profiles)
 

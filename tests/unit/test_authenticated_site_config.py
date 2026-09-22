@@ -517,8 +517,16 @@ def test_authenticated_visual_drag_is_advertised_and_allowed(
         assert engine.evaluate_for_execution(descriptor).decision is expected
 
 
-@pytest.mark.parametrize("profile_id", ["browser_profile", "browser_visual_profile"])
-def test_ordinary_browser_profiles_offer_autofill_without_sites(
+@pytest.mark.parametrize(
+    "profile_id",
+    [
+        "browser_profile",
+        "browser_visual_profile",
+        "credential_browser_profile",
+        "credential_browser_visual_profile",
+    ],
+)
+def test_only_credential_browser_profiles_offer_autofill_without_sites(
     profile_id: str,
 ) -> None:
     config = load_config("defaults.yaml")
@@ -527,13 +535,12 @@ def test_ordinary_browser_profiles_offer_autofill_without_sites(
     engine = PolicyEngine.from_policy_config(profile.tools_policy)
     for descriptor in LOCAL_TOOL_DESCRIPTORS:
         if descriptor.name in {"browser_autofill", "browser_report_login_outcome"}:
-            assert (
-                engine.evaluate_for_execution(descriptor).decision
-                is ToolPolicyDecision.ALLOW
+            assert engine.evaluate_for_execution(descriptor).decision is (
+                ToolPolicyDecision.ALLOW
+                if profile_id.startswith("credential_")
+                else ToolPolicyDecision.DENY
             )
         if descriptor.name in {"browser_exec", "browser_extract"}:
-            # Local semantic browsers still support these tools. Remote browser-server
-            # sessions enforce their credential protection independently of FA policy.
             expected = (
                 ToolPolicyDecision.ALLOW
                 if profile_id == "browser_profile"

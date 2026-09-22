@@ -107,6 +107,12 @@ async def _autofill_backend(
             "Autofill requires browser-server with Keychute configured; "
             "the local browser cannot request credentials."
         )
+    if not backend.autofill_enabled:
+        raise AutofillUnavailableError(
+            "This is an ordinary browser session. Delegate the login task to "
+            "credential_browser_profile with the URL and Keychute secret name; "
+            "it uses a separate credential-protected browser."
+        )
     return binding, backend
 
 
@@ -296,7 +302,7 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "description": (
                             "Keychute secret name supplied by the user. Required for "
-                            "ordinary browsing; optional for a configured site's pinned login. "
+                            "the credential browser profile; optional for a configured site's pinned login. "
                             "This requests access, it does not grant it."
                         ),
                     },

@@ -10,6 +10,12 @@ You can give the assistant a URL and the name of a password stored in Keychute:
 > Open https://www.amazon.com and check my delivery. If you need to sign in, request the Keychute
 > secret `amazon-password`.
 
+For login tasks, the assistant uses a separate browser that can request stored credentials. You can
+also select it with `/browse_authenticated`. If a login wall appears during ordinary browsing, the
+assistant can switch to this browser; it opens a separate session, so page progress and cookies do
+not transfer. Ordinary browsing retains its JavaScript tools. The credential browser uses page
+snapshots and visual actions instead.
+
 No site configuration or standing grant is needed. When the assistant reaches the login form, it
 requests the named credential. If approval is needed, it gives you the Keychute approval link. Check
 the account and destination, approve it, then tell the assistant to continue. You can add a standing

@@ -56,6 +56,7 @@ def _make_backend(
     *,
     conversation_id: str = "integ-conv-1",
     authenticated: AuthenticatedSessionSpec | None = None,
+    autofill_enabled: bool = False,
 ) -> RemoteBrowserBackend:
     """Return a RemoteBrowserBackend wired to the real browser-server app via ASGITransport."""
     transport = httpx.ASGITransport(app=browser_server_app)
@@ -76,6 +77,7 @@ def _make_backend(
         conversation_id=conversation_id,
         client=client,
         authenticated=authenticated,
+        autofill_enabled=autofill_enabled,
     )
 
 
@@ -162,7 +164,7 @@ async def test_screenshot_png_returns_valid_png_bytes() -> None:
 @pytest.mark.integration
 async def test_extract_html_is_denied_in_credential_protected_session() -> None:
     """Raw DOM cannot reveal values filled later in the same session."""
-    backend = _make_backend(conversation_id="integ-extract")
+    backend = _make_backend(conversation_id="integ-extract", autofill_enabled=True)
     try:
         await backend.goto("https://example.test/page")
         with pytest.raises(BrowserBackendError, match="denied"):
@@ -174,7 +176,7 @@ async def test_extract_html_is_denied_in_credential_protected_session() -> None:
 @pytest.mark.integration
 async def test_evaluate_is_denied_before_any_credential_fill() -> None:
     """The agent cannot install a listener before asking for a password."""
-    backend = _make_backend(conversation_id="integ-eval")
+    backend = _make_backend(conversation_id="integ-eval", autofill_enabled=True)
     try:
         await backend.goto("https://example.test/page")
         with pytest.raises(BrowserBackendError, match="denied"):
