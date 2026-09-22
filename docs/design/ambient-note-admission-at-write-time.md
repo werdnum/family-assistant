@@ -164,9 +164,15 @@ What the verdict does:
 complete resulting note — merged body, full attachment set with each attachment's stored description
 and MIME type rendered as the prompt will render it — and *that* is what the reviewer sees and what
 is persisted. If the whole resulting object was reviewed, there is no reason to refuse promotion
-because the request was expressed as an append. Synchronous review does not remove every concurrent
-update race; what remains is ordinary database correctness — persist the candidate that was actually
-reviewed, under the transaction and locking semantics the repository already uses.
+because the request was expressed as an append. The converse holds too: material the candidate
+**retains** from the stored note carries the stored note's taint into the decision. The tier the
+gate evaluates is the maximum of the turn's tier and the tier of whatever the candidate keeps — the
+existing body under an append, the existing attachments when the call omits them — so a clean turn
+that appends to an unreviewed note is reviewed at that note's tier rather than promoting its old
+body to `trusted_user` unread. A write that replaces every part of the ambient material is evaluated
+at the turn's tier alone. Synchronous review does not remove every concurrent update race; what
+remains is ordinary database correctness — persist the candidate that was actually reviewed, under
+the transaction and locking semantics the repository already uses.
 
 **What the reviewer judges** is the complete proposed note or skill as *reusable material*, not
 merely whether the user asked for a save. Two cases fix the boundary:

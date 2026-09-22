@@ -375,6 +375,10 @@ aggregate diagnostics surface.
 
 ## Rollout sequence
 
+> **Superseded** by
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md), whose work
+> plan replaces this sequence; it is kept for the record of what was considered.
+
 1. Add one read-time ambient-admission snapshot covering included regular notes, excluded-note
    titles, database-skill catalog entries, derived status, and context taint.
 2. Apply the same rule at note and skill write-feedback boundaries and add explicit content-bound
@@ -399,6 +403,11 @@ aggregate diagnostics surface.
    remaining friction.
 
 ## Acceptance criteria
+
+> **Superseded** by
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): the criteria
+> below describe the read-time design and are not the acceptance bar for the replacement, which
+> deliberately leaves unreviewed titles in the catalog and uses no hash-bound review.
 
 - A high-tier database artifact without a valid review contributes no title, content, attachment
   reference or metadata, skill name, skill description, or taint to initial turn context.
