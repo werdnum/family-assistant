@@ -75,7 +75,10 @@ answers two different questions about a tier, and `machine_reviewed` answers the
   trusted pole all apply to it unchanged. A row of its own in the default matrix would silently
   bypass a deployment's configured confirmation or denial. Downstream enforcement therefore treats
   reviewed material as reusable context without the restrictions applied to unreviewed external
-  content.
+  content. The one sink this equivalence does not reach is `ambient_prompt_write` itself, below: a
+  verdict attests to the candidate it examined, not to what a model later composes with that
+  candidate in its prompt, so at the admission sink `machine_reviewed` resolves as `known_contact`,
+  the lowest external cell, and the same lookup chokepoint carries that exception.
 
 The tool-call reviewer already renders evidence in bands, and gains one: the user's own words
 (`trusted_user`) are the intent it judges against; `trusted_internal` and `machine_reviewed` rows
@@ -103,15 +106,15 @@ The firing rule follows from the tier rather than from a trusted-or-not branch. 
 callback either contributes no taint source, when its definition's stamp is non-external, or enters
 as an `unknown_external` trigger. A reviewed definition does neither: it **contributes a
 `machine_reviewed` source** — its own stamp — and renders as the intent to judge against. The turn
-is then at `machine_reviewed`, which the sink matrix treats as `trusted_internal` for enforcement
-while authorship stays honest, exactly as a reviewed note included in the prompt does. In general
-the callback contributes the definition's **resolved** tier, not the raw stamp on the row: nothing
-for a trusted-pole stamp, `machine_reviewed` for an admitted one, `unknown_external` for anything
-else; a payload is judged separately, as today. Resolution is what makes the two record forms one: a
-prior-version record whose curing disposition still resolves it as valid intent resolves to
-`machine_reviewed`, exactly as a record stamped with the tier does, so an existing automation keeps
-firing at its cured baseline rather than dropping to `unknown_external` because its row was never
-rewritten.
+is then at `machine_reviewed`, which the sink matrix treats as `trusted_internal` for enforcement —
+at every sink but `ambient_prompt_write` — while authorship stays honest, exactly as a reviewed note
+included in the prompt does. In general the callback contributes the definition's **resolved** tier,
+not the raw stamp on the row: nothing for a trusted-pole stamp, `machine_reviewed` for an admitted
+one, `unknown_external` for anything else; a payload is judged separately, as today. Resolution is
+what makes the two record forms one: a prior-version record whose curing disposition still resolves
+it as valid intent resolves to `machine_reviewed`, exactly as a record stamped with the tier does,
+so an existing automation keeps firing at its cured baseline rather than dropping to
+`unknown_external` because its row was never rewritten.
 
 Records that already exist are not rewritten. A `definition_v1` record cured by its disposition
 (judge-allowed, human-confirmed, or amnestied) keeps resolving exactly as it does today; only
@@ -145,10 +148,18 @@ future prompt unasked.
 | -------------------- | ----------------------------- |
 | `trusted_user`       | allow                         |
 | `trusted_internal`   | allow                         |
-| `machine_reviewed`   | allow                         |
+| `machine_reviewed`   | adjudicate                    |
 | `known_contact`      | adjudicate                    |
 | `recognized_machine` | adjudicate                    |
 | `unknown_external`   | adjudicate (fallback confirm) |
+
+The `machine_reviewed` row is the sink's one departure from the tier's equivalence to
+`trusted_internal`. A turn is at that tier because a reviewed note or definition was in its prompt;
+the verdict that admitted it examined that artifact and nothing else. Letting the tier's inherited
+provenance admit a new candidate would make one admission a transferable attestation for whatever
+the model composes afterwards, which is what the requirement forbids, so the new candidate is
+reviewed on its own. The cost is one more machine review per ambient write in such a turn, never a
+human one unless the deployment has no reviewer.
 
 The write proceeds as one synchronous sequence:
 
@@ -310,10 +321,10 @@ note tool and the shared artifact helper return early on missing metadata. After
 restamp no row should be null, so this is a tripwire for write-path regressions rather than a source
 of friction. The notes context provider does the same for the notes it includes: a reviewed note in
 the prompt merges a `machine_reviewed` source into the turn, so the turn's tier says that the model
-processed reviewed external text. That costs no friction — the tier's sink cells are
-`trusted_internal`'s — and it keeps authorship honest: the assistant rows stamped from that turn
-carry `machine_reviewed`, not a trusted-pole tier that would let paraphrased web material pass the
-memory review as household-authored.
+processed reviewed external text. That costs no friction at any sink but the admission sink — the
+tier's other cells are `trusted_internal`'s — and it keeps authorship honest: the assistant rows
+stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would let paraphrased
+web material pass the memory review as household-authored.
 
 ### Titles stay in the catalog
 
@@ -393,7 +404,8 @@ state.
    eligibility. Verified by unit tests on both predicates, the max rule, round-tripping through
    metadata, and the policy lookup: the shipped cells, a custom `matrix_overrides` entry and an
    `operator_minimum` set for the trusted pole all resolve identically for `trusted_internal` and
-   `machine_reviewed`.
+   `machine_reviewed` at every sink but `ambient_prompt_write`, where `machine_reviewed` resolves as
+   `known_contact`.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
    on the reuse predicate in the repository. The taint-audit endpoint reports the count of
    prompt-intended notes and skills the derived rule excludes, so the operational rollout audit has
@@ -432,8 +444,10 @@ state.
    the call's arguments, for an append and for an import alike; an operator override of an external
    cell to `allow` or `audit` admits the write and stamps `machine_reviewed`; a trusted cell
    strengthened to `adjudicate` runs the review and an admitting verdict leaves the `trusted_user`
-   stamp in place; an append is reviewed and persisted as the resolved whole; an import with skill
-   frontmatter is reviewed and, unreviewed, is absent from the catalog.
+   stamp in place; an ambient write in a turn whose only external source is a reviewed note in the
+   prompt is reviewed, and persists `machine_reviewed` only on its own admitting verdict; an append
+   is reviewed and persisted as the resolved whole; an import with skill frontmatter is reviewed
+   and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
