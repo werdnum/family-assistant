@@ -105,9 +105,13 @@ as an `unknown_external` trigger. A reviewed definition does neither: it **contr
 `machine_reviewed` source** — its own stamp — and renders as the intent to judge against. The turn
 is then at `machine_reviewed`, which the sink matrix treats as `trusted_internal` for enforcement
 while authorship stays honest, exactly as a reviewed note included in the prompt does. In general
-the callback contributes the definition's stored tier: nothing for a trusted-pole stamp, the
-reviewed tier for an admitted one, `unknown_external` for anything else; a payload is judged
-separately, as today.
+the callback contributes the definition's **resolved** tier, not the raw stamp on the row: nothing
+for a trusted-pole stamp, `machine_reviewed` for an admitted one, `unknown_external` for anything
+else; a payload is judged separately, as today. Resolution is what makes the two record forms one: a
+prior-version record whose curing disposition still resolves it as valid intent resolves to
+`machine_reviewed`, exactly as a record stamped with the tier does, so an existing automation keeps
+firing at its cured baseline rather than dropping to `unknown_external` because its row was never
+rewritten.
 
 Records that already exist are not rewritten. A `definition_v1` record cured by its disposition
 (judge-allowed, human-confirmed, or amnestied) keeps resolving exactly as it does today; only
@@ -393,10 +397,11 @@ rollout.
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
    against, replacing the cure flag. Verified by the existing executable-definition tests passing
-   with the cure expressed as the tier; by a task-worker test that a payload-free callback of a
+   with the cure expressed as the tier; by task-worker tests that a payload-free callback of a
    reviewed definition enters at `machine_reviewed` with its intent rendered, neither untainted nor
-   `unknown_external`; and by reviewer rendering tests for each band, including that an unreviewed
-   title in the turn-context block does not appear in the reviewer's input.
+   `unknown_external`, for both record forms — a row stamped with the tier and a prior-version row
+   cured by its disposition; and by reviewer rendering tests for each band, including that an
+   unreviewed title in the turn-context block does not appear in the reviewer's input.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
    operational-findings document's Issue 3 section marked as superseded by this one; and the three
