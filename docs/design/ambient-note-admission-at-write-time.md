@@ -335,14 +335,19 @@ edits it in the Notes UI.
 Rows with **no provenance at all** are handled once, by a **batch restamp** the operator runs at
 rollout. These are the notes written before provenance stamping existed, the core-memory note the
 bootstrap created, and everything the current import path has written; the stored data cannot tell
-them apart. Treating them all as external on every read would make the pre-rollout corpus the
-largest new source of taint in the system — one `list_notes` over old household notes would raise
-the turn to `unknown_external` — which is the friction this design exists to remove. The restamp
-script stamps every null-provenance row `trusted_internal`, records the batch in each row's audit
-record, and accepts a title pattern or an explicit list to exclude rows the operator knows to be
-imports, which it stamps `unknown_external` instead. It is a deliberate operator judgment that the
-pre-rollout corpus is household material, of the same kind as the history epoch amnesty, and it is
-recorded below as an accepted residual.
+them apart in general. Treating them all as external on every read would make the pre-rollout corpus
+the largest new source of taint in the system — one `list_notes` over old household notes would
+raise the turn to `unknown_external` — which is the friction this design exists to remove. The
+restamp script first stamps `unknown_external` every row that the stored data *can* identify as
+externally authored: the cohorts the write paths above classify as external, which today means the
+call transcripts (the `Call Transcript:` title the Asterisk route writes, and the labels its profile
+applies to them). Adding a cohort to the script is part of adding the write path's stamp, so the
+script's classification and the chokepoint's never disagree. Every other null-provenance row it
+stamps `trusted_internal`, minus a title pattern or an explicit list the operator supplies for rows
+they know to be imports, which it stamps `unknown_external` as well. Each row's audit record records
+the batch and which rule classified it. It is a deliberate operator judgment that the
+indistinguishable remainder of the pre-rollout corpus is household material, of the same kind as the
+history epoch amnesty, and it is recorded below as an accepted residual.
 
 After the batch, a null envelope is a write-path regression, not a legacy condition: the eligibility
 resolver and the shared explicit-read resolver still treat absence as external, and they log it at
@@ -353,10 +358,12 @@ state.
 ## Deliberate simplifications
 
 - **Titles are neither reviewed nor bounded.** Recorded above with its residual.
-- **The batch restamp trusts the pre-rollout corpus.** A pre-rollout workspace import with
-  web-derived text is restamped `trusted_internal` along with everything else unless the operator
-  excludes it, because the stored data cannot distinguish it. Accepted against a zero-enforcement
-  baseline, as the history epoch amnesty was; the operator's exclusion list is the mitigation.
+- **The batch restamp trusts the indistinguishable part of the pre-rollout corpus.** A pre-rollout
+  workspace import with web-derived text is restamped `trusted_internal` along with everything else
+  unless the operator excludes it, because the stored data cannot distinguish it from a hand-written
+  note. Cohorts the data can distinguish (call transcripts) are classified by the script, not left
+  to the operator. Accepted against a zero-enforcement baseline, as the history epoch amnesty was;
+  the operator's exclusion list is the mitigation for the rest.
 - **Memory keeps its authorship rule, with a consequence to decide.** Reviewed web-derived material
   stays out of household memory. Because a reviewed ambient note raises every turn it is included in
   to `machine_reviewed`, the memory review as written will skip every chunk of every conversation
@@ -391,16 +398,17 @@ state.
    `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers; a rollout script batch-restamps null-provenance rows `trusted_internal`, with
-   an operator exclusion list stamped `unknown_external`; web API writes stamp `trusted_user`; call
-   transcripts stamp `unknown_external`; the ast-grep rule forbids raw note-table writes outside the
-   repository; `get_note` routes returned attachments through the shared attachment-provenance
-   resolver. Verified by the conformance check rejecting a raw write, by a repository test that a
-   clean-turn tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
+   the identifiable external cohorts (call transcripts) and an operator exclusion list stamped
+   `unknown_external`; web API writes stamp `trusted_user`; call transcripts stamp
+   `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
+   `get_note` routes returned attachments through the shared attachment-provenance resolver.
+   Verified by the conformance check rejecting a raw write, by a repository test that a clean-turn
+   tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
    fresh-database memory bootstrap, by a test of the batch script that restamps a null row
-   `trusted_internal`, stamps an excluded row `unknown_external`, and leaves stamped rows untouched,
-   and by a test that a null row surviving the batch is excluded from ambient reads and logged at
-   ERROR, and by a tool test that reading a reviewed note with an email-derived attachment raises
-   the turn to the attachment's tier.
+   `trusted_internal`, stamps a null call-transcript row and an operator-excluded row
+   `unknown_external`, and leaves stamped rows untouched, and by a test that a null row surviving
+   the batch is excluded from ambient reads and logged at ERROR, and by a tool test that reading a
+   reviewed note with an email-derived attachment raises the turn to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict, and otherwise with the
