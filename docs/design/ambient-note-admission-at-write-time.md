@@ -158,7 +158,11 @@ resolve the complete candidate note
 These writes are rare and this is not a high-throughput system, so the review is awaited **in
 observe mode as well as enforce mode**. Observe describes the effect of a disallowed operation, not
 whether the verdict is waited for. There are no durable pending writes, no eventual eligibility
-transitions and no UI states for delayed verdicts. The tool result reports the final outcome.
+transitions and no UI states for delayed verdicts. The tool result reports the final outcome. This
+is a deliberate carve-out from `auto-tool-call-review.md`'s rule that observe-mode adjudication runs
+off the critical path: for this one sink the gated call awaits its verdict in both modes, because a
+persisted note must carry the verdict's stamp and the writes are too rare for the latency to matter.
+Every other sink keeps the shadow behaviour.
 
 What the verdict does:
 
@@ -387,6 +391,8 @@ rollout.
    `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance (an admitting
    verdict on an `ambient_prompt_write` now does, to `machine_reviewed` and only there);
    `risk-adjudicated-taint-enforcement.md`'s reservation of note promotion for human attestation
-   (machine adjudication now promotes, human confirmation remaining one admitting path); and
+   (machine adjudication now promotes, human confirmation remaining one admitting path);
    `executable-definition-taint.md`'s statement that a cure never rewrites the authoring stamp (an
-   admission now stamps the tier, the authoring taint moving to the audit record).
+   admission now stamps the tier, the authoring taint moving to the audit record); and
+   `auto-tool-call-review.md`'s rule, with its verification, that observe-mode adjudication never
+   runs on the critical path (`ambient_prompt_write` alone awaits its verdict in observe mode).

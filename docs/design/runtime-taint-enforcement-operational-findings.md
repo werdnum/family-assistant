@@ -412,10 +412,12 @@ aggregate diagnostics surface.
 
 ## Acceptance criteria
 
-> **Superseded** by
-> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): the criteria
-> below describe the read-time design and are not the acceptance bar for the replacement, which
-> deliberately leaves unreviewed titles in the catalog and uses no hash-bound review.
+> The first seven criteria — through "Profiles cannot relax the deployment's ambient-admission
+> threshold" — are **superseded** by
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): they describe
+> the read-time design and are not the acceptance bar for the replacement, which deliberately leaves
+> unreviewed titles in the catalog and uses no hash-bound review. The remaining criteria verify
+> rollout steps 5–8 and stand.
 
 - A high-tier database artifact without a valid review contributes no title, content, attachment
   reference or metadata, skill name, skill description, or taint to initial turn context.
