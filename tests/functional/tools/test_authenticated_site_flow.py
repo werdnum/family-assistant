@@ -147,6 +147,7 @@ class FakeBrowserServer:
     """
 
     session_read_status: int = 200
+    outcome_status: int = 200
     jar_invalidated: bool = False
     autofill_replies: list[JsonDict] = field(default_factory=list)
     requests: list[tuple[str, str, JsonDict]] = field(default_factory=list)
@@ -210,7 +211,9 @@ class FakeBrowserServer:
         if path.endswith("/agent-command"):
             return httpx.Response(200, json={"result": _command_result(body)})
         if path.endswith("/autofill/outcome"):
-            return httpx.Response(200, json={"autofill_bad_password": True})
+            return httpx.Response(
+                self.outcome_status, json={"autofill_bad_password": True}
+            )
         if path.endswith("/autofill"):
             reply = (
                 self.autofill_replies.pop(0)
@@ -836,6 +839,28 @@ async def test_failed_handoff_cannot_settle_as_completed(
         worker_llm=_worker_llm("browser_request_handoff", {"reason": "OTP required"}),
         resume=ResumeHandle(),
         conversation_id="conv-failed-handoff",
+    )
+    reply = await harness.ask("Please check my order.")
+    assert f"{DISPLAY_NAME}: needs_human." in reply
+    assert browser_server.sessions_closed == 1
+
+
+async def test_bad_password_report_failure_preserves_observed_rejection(
+    app_config: AppConfig,
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[object, object, object]],
+    browser_server: FakeBrowserServer,
+) -> None:
+    browser_server.outcome_status = 500
+    harness = await _harness(
+        app_config=app_config,
+        db_engine=db_engine,
+        task_worker_manager=task_worker_manager,
+        worker_llm=_worker_llm(
+            "browser_report_login_outcome", {"outcome": "bad_password"}
+        ),
+        resume=ResumeHandle(),
+        conversation_id="conv-failed-outcome",
     )
     reply = await harness.ask("Please check my order.")
     assert f"{DISPLAY_NAME}: needs_human." in reply

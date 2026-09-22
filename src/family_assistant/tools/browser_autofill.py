@@ -274,8 +274,8 @@ async def browser_report_login_outcome_tool(
         )
     binding, backend = await _require_authenticated_backend(exec_context)
     logger.info("browser_report_login_outcome: site=%s", binding.site_id)
-    await backend.report_autofill_outcome(outcome)
     binding.bad_password_recorded = True
+    await backend.report_autofill_outcome(outcome)
     return ToolResult(
         text=(
             "Recorded that the stored password was rejected. No further fill "
