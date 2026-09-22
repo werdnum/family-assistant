@@ -135,6 +135,7 @@ if TYPE_CHECKING:
     )
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.authenticated_sites import AuthenticatedRunSettlement
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
@@ -169,6 +170,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.authenticated_site_results import authenticated_site_result
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
@@ -2087,6 +2089,23 @@ class TaskWorker:
         await self._finalize_delegation_run(exec_context, delegation_id, result)
 
     @staticmethod
+    async def _prepare_authenticated_run(
+        exec_context: ToolExecutionContext,
+        delegation_id: str,
+        *,
+        failed: bool,
+        result_text: str | None = None,
+    ) -> AuthenticatedRunSettlement | None:
+        # Local import: family_assistant.tools imports this module.
+        from family_assistant.tools.authenticated_sites import (  # noqa: PLC0415
+            prepare_authenticated_run,
+        )
+
+        return await prepare_authenticated_run(
+            exec_context, delegation_id, failed=failed, result_text=result_text
+        )
+
+    @staticmethod
     def _terminal_metrics_recorder(
         target_service: object,
         remote_task_id: str,
@@ -2138,11 +2157,18 @@ class TaskWorker:
         """
         clock = exec_context.clock or self.clock
         completed_at = clock.now()
+        settlement = await self._prepare_authenticated_run(
+            exec_context,
+            delegation_id,
+            failed=result.error_traceback is not None,
+            result_text=result.text_reply,
+        )
         if result.error_traceback:
             terminal_run = await exec_context.db_context.delegation_runs.mark_failed(
                 delegation_id=delegation_id,
                 error=result.error_traceback,
                 completed_at=completed_at,
+                authenticated_site_state=settlement.envelope if settlement else None,
                 local_failure_kind=local_failure_kind,
             )
         else:
@@ -2151,6 +2177,7 @@ class TaskWorker:
                 result_text=result.text_reply,
                 result_attachment_ids=result.attachment_ids or [],
                 completed_at=completed_at,
+                authenticated_site_state=settlement.envelope if settlement else None,
             )
         if terminal_run is None:
             # Already terminal (a concurrent reaper/poll won) or gone; the winner
@@ -2160,6 +2187,8 @@ class TaskWorker:
                 delegation_id,
             )
             return False
+        if settlement is not None:
+            await settlement.on_committed()
         if on_committed is not None:
             await on_committed()
         await self._schedule_delegation_reconcile(exec_context, terminal_run)
@@ -2744,24 +2773,28 @@ class TaskWorker:
             "running_timeout_seconds", DELEGATION_RUN_STALE_SECONDS
         )
         created_before = now - timedelta(seconds=running_timeout_seconds)
-        reaped = await exec_context.db_context.delegation_runs.reap_stale(
-            now=now,
+        stale = await exec_context.db_context.delegation_runs.find_stale(
             created_before=created_before,
-            error=(
-                "The delegated run did not complete within the allowed time "
-                "and was marked failed."
-            ),
         )
+        reaped = 0
+        for run in stale:
+            if await self._fail_delegation_run(
+                exec_context,
+                delegation_id=run["delegation_id"],
+                error=(
+                    "The delegated run did not complete within the allowed time "
+                    "and was marked failed."
+                ),
+                local_failure_kind="stranded",
+                force_notify=True,
+            ):
+                reaped += 1
         if reaped:
             logger.warning(
                 "Reaped %d stale delegation run(s) older than %.0fs.",
-                len(reaped),
+                reaped,
                 running_timeout_seconds,
             )
-        # A reaped run has no live caller waiting to deliver inline, so notify
-        # unconditionally even if it was never handed off.
-        for run in reaped:
-            await self._force_notify_delegation(exec_context, run)
 
         # Awaiting-remote runs whose poll task was lost (so the per-poll
         # wall-clock cap never fires) are given up here once past the cap:
@@ -2770,7 +2803,7 @@ class TaskWorker:
         await self._reap_stale_awaiting_remote(exec_context, now=now)
 
         # Recover terminal runs whose completion notification was never
-        # delivered. Two cases reap_stale (queued/running only) cannot reach:
+        # delivered. Two cases the stale-run sweep (queued/running only) cannot reach:
         # a caller that crashed after the run finished but before delivering
         # inline or claiming the handoff leaves a terminal run with
         # handed_off_at NULL that the worker's gated notify skipped; and a
@@ -3155,6 +3188,7 @@ class TaskWorker:
         error: str,
         local_failure_kind: DelegationLocalFailureKind | None = None,
         on_committed: Callable[[], Awaitable[None]] | None = None,
+        force_notify: bool = False,
     ) -> bool:
         """Mark a delegation run failed (committed immediately) and notify.
 
@@ -3172,18 +3206,24 @@ class TaskWorker:
         Returns whether this caller won the CAS.
         """
         clock = exec_context.clock or self.clock
+        settlement = await self._prepare_authenticated_run(
+            exec_context, delegation_id, failed=True
+        )
         run = await exec_context.db_context.delegation_runs.mark_failed(
             delegation_id=delegation_id,
             error=error,
             completed_at=clock.now(),
+            authenticated_site_state=settlement.envelope if settlement else None,
             local_failure_kind=local_failure_kind,
         )
         if run is None:
             return False
+        if settlement is not None:
+            await settlement.on_committed()
         if on_committed is not None:
             await on_committed()
         await self._schedule_delegation_reconcile(exec_context, run)
-        await self._deliver_terminal_delegation(exec_context, run, force=False)
+        await self._deliver_terminal_delegation(exec_context, run, force=force_notify)
         return True
 
     def _observable_target_for(
@@ -4099,6 +4139,18 @@ class TaskWorker:
 
     def _delegation_wakeup_data_text(self, run: DelegationRunDict) -> str:
         """Build lower-priority data for a completed delegation wakeup."""
+        envelope = run["authenticated_site_json"]
+        if envelope is not None:
+            result = authenticated_site_result(
+                envelope["site_id"], envelope, delegation_id=run["delegation_id"]
+            )
+            return (
+                f"Authenticated site task outcome.\n\n"
+                f"Delegation reference: {run['delegation_id']}\n"
+                f"Target profile: {run['target_service_id']}\n"
+                f"Original request: {run['request_text']}\n\n"
+                f"{result.text}"
+            )
         if run["status"] == "completed":
             result_text = (
                 run["result_text"]
@@ -4157,6 +4209,14 @@ class TaskWorker:
         received one would be a claim this cannot check -- the failure notice
         can itself have failed to deliver.
         """
+        envelope = run["authenticated_site_json"]
+        if envelope is not None:
+            return (
+                authenticated_site_result(
+                    envelope["site_id"], envelope, delegation_id=run["delegation_id"]
+                ).text
+                or ""
+            )
         if run["status"] == "completed":
             result_text = (
                 run["result_text"]

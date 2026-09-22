@@ -15,6 +15,11 @@ once, so each stays cheap and focused.
   coordinates from screenshots. Best for `<canvas>`, image maps, and drag-and-drop on non-DOM
   surfaces.
 
+Both browse a site as an anonymous visitor. For a site your household has a saved login for -- where
+the assistant signs in and acts on your account -- see
+[authenticated-sites.md](authenticated-sites.md); that is a separate, operator-configured
+capability, not something `/browse` can reach.
+
 By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse_visual` only when
 the DOM-based path cannot see what it needs to interact with.
 

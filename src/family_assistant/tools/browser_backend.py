@@ -27,6 +27,7 @@ import base64
 import contextlib
 import logging
 import os
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -77,7 +78,16 @@ _WALKER_HELPERS_JS = r"""
   const REF_ATTR = 'data-fa-ref';
   const ROLE_ATTR = 'data-fa-role';
   const NAME_ATTR = 'data-fa-name';
+  // A control whose value must never be copied into a snapshot: every password
+  // input, plus any element an autofill has touched (which keeps the stamp when
+  // a "show password" toggle changes the input's type).
+  const PROTECTED_ATTR = 'data-fa-protected';
   const REF_PATTERN = /^e[0-9]+$/;
+
+  function isProtected(el) {
+    if (el.hasAttribute && el.hasAttribute(PROTECTED_ATTR)) return true;
+    return el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'password';
+  }
 
   const ROLE_MAP = {
     A: 'link', BUTTON: 'button', SELECT: 'combobox',
@@ -228,8 +238,16 @@ SNAPSHOT_JS = (
       const node = { ref, role, name };
       const href = el.getAttribute('href');
       if (href) node.href = href;
-      const value = el.value;
-      if (typeof value === 'string' && value) node.value = value;
+      if (isProtected(el)) {
+        // Stamp on sight so the control stays protected after a type change, and
+        // report only whether it holds something — never what.
+        if (!el.hasAttribute(PROTECTED_ATTR)) el.setAttribute(PROTECTED_ATTR, '1');
+        node.value_masked = true;
+        node.has_value = typeof el.value === 'string' && el.value.length > 0;
+      } else {
+        const value = el.value;
+        if (typeof value === 'string' && value) node.value = value;
+      }
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
         node.tag = el.tagName.toLowerCase();
         const t = el.getAttribute('type');
@@ -311,6 +329,10 @@ def wrap_exec_code(code: str) -> str:
 
 class BrowserBackendError(RuntimeError):
     """Raised when a backend operation fails (remote HTTP error, JS error, …)."""
+
+
+class BrowserSessionGoneError(BrowserBackendError):
+    """The server expired or forgot the bound browser session."""
 
 
 class HandoffUnavailableError(BrowserBackendError):
@@ -599,6 +621,41 @@ _REMOTE_VIEWPORT_WIDTH = 1280
 _REMOTE_VIEWPORT_HEIGHT = 720
 
 
+@dataclass(frozen=True, slots=True)
+class AuthenticatedSessionSpec:
+    """Everything trusted orchestration pins onto an authenticated session.
+
+    Assembled from the site's configuration, never from model-supplied
+    arguments: the jar, the complete origin set browser-server must confine to,
+    and the one Keychute alias this session's fills may ask for.
+    """
+
+    site_id: str
+    jar_id: str | None
+    confine_origins: frozenset[str]
+    credential_alias: str | None
+
+
+class AuthenticatedSessionMismatchError(BrowserBackendError):
+    """browser-server created a session that is not the one we asked for.
+
+    Raised when the created session's effective origin set or jar generation
+    does not match what the configuration named. The session is closed and the
+    run fails rather than proceeding against a wider boundary than the operator
+    declared.
+    """
+
+
+class AuthenticatedSessionUnavailableError(BrowserBackendError):
+    """An authenticated session was lost and must not be silently replaced.
+
+    The ordinary backend replaces a lost-lease or expired session with a fresh
+    one on navigate so a conversation is never wedged. For an authenticated-site
+    run that recovery would be an unconfined escape hatch opened mid-handoff by
+    page-controlled input, so every command fails closed with this instead.
+    """
+
+
 class RemoteBrowserBackend:
     """Backend that drives a remote ``browser-server`` session over HTTP."""
 
@@ -608,6 +665,7 @@ class RemoteBrowserBackend:
         conversation_id: str,
         client: httpx.AsyncClient | None = None,
         timezone_id: str | None = None,
+        authenticated: AuthenticatedSessionSpec | None = None,
     ) -> None:
         if not config.service_url:
             raise BrowserBackendError(
@@ -623,10 +681,21 @@ class RemoteBrowserBackend:
         # ``client`` is an injection seam for tests (e.g. httpx.MockTransport).
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
         self._last_url: str = ""
+        self._authenticated = authenticated
 
     @property
     def current_url(self) -> str:
         return self._last_url
+
+    @property
+    def authenticated_spec(self) -> AuthenticatedSessionSpec | None:
+        """The authenticated-site pin on this backend, if it has one."""
+        return self._authenticated
+
+    @property
+    def session_id(self) -> str | None:
+        """The live browser-server session id, or ``None`` before one exists."""
+        return self._session_id
 
     def _headers(self) -> dict[str, str]:
         auth = self._config.auth
@@ -641,9 +710,217 @@ class RemoteBrowserBackend:
             return {auth.header_name: token}
         return {auth.header_name: f"Bearer {token}"}
 
+    async def get_jar(self, jar_id: str) -> JsonDict:
+        """Read a saved login's non-secret status record.
+
+        Carries ``invalidated_at`` and the tombstone marker, which is how a
+        deliberate human revocation is told apart from a session that merely
+        lapsed -- the distinction the whole autofill routing turns on.
+        """
+        resp = await self._client.get(
+            f"{self._base_url}/v1/jars/{jar_id}",
+            headers=self._headers(),
+        )
+        if resp.status_code == 404:
+            return {"jar_id": jar_id, "missing": True}
+        self._raise_for_status(resp, f"read jar {jar_id}")
+        return cast("JsonDict", resp.json())
+
+    async def probe_jar(self, jar_id: str) -> JsonDict:
+        """Ask browser-server whether a saved login is still usable."""
+        resp = await self._client.post(
+            f"{self._base_url}/v1/jars/{jar_id}/probe",
+            headers=self._headers(),
+            json={},
+        )
+        if resp.status_code == 404:
+            return {"jar_id": jar_id, "missing": True, "fresh": False}
+        self._raise_for_status(resp, f"probe jar {jar_id}")
+        return cast("JsonDict", resp.json())
+
+    async def start_authenticated_session(
+        self, *, expected_jar_generation: int | None = None
+    ) -> str:
+        """Create the confined session this backend is pinned to, and verify it.
+
+        The session-creation call is the chokepoint the design puts the origin
+        check at: browser-server answers with the effective set it will actually
+        enforce, and a set that is not exactly the configured one -- a jar whose
+        saved navigation allowlist reaches somewhere the configuration does not
+        declare, say -- fails the run instead of widening it.
+        """
+        spec = self._authenticated
+        if spec is None:
+            raise BrowserBackendError(
+                "start_authenticated_session called on a backend with no "
+                "authenticated-site pin"
+            )
+        if self._session_id is not None:
+            raise BrowserBackendError(
+                "this backend already has a browser-server session; an "
+                "authenticated session is created once and never replaced"
+            )
+        payload: JsonDict = {
+            "conversation_id": self._conversation_id,
+            "interface_type": "research",
+            "initial_owner": "agent",
+            "authenticated_site": True,
+            "confine_origins": sorted(spec.confine_origins),
+        }
+        if spec.jar_id is not None:
+            payload["jar_id"] = spec.jar_id
+        if spec.credential_alias is not None:
+            payload["credential_alias"] = spec.credential_alias
+        if self._timezone_id:
+            payload["timezone_id"] = self._timezone_id
+        resp = await self._client.post(
+            f"{self._base_url}/v1/sessions",
+            headers=self._headers(),
+            json=payload,
+        )
+        self._raise_for_status(resp, "create authenticated session")
+        body = cast("JsonDict", resp.json())
+        session_id = str(body["session_id"])
+        self._session_id = session_id
+        try:
+            self._verify_created_session(body, expected_jar_generation)
+        except AuthenticatedSessionMismatchError:
+            await self.close()
+            raise
+        return session_id
+
+    def _verify_created_session(
+        self, body: JsonDict, expected_jar_generation: int | None
+    ) -> None:
+        """Fail closed unless the created session is the one we asked for."""
+        spec = self._authenticated
+        assert spec is not None
+        if body.get("authenticated_site") is not True:
+            raise AuthenticatedSessionMismatchError(
+                f"browser-server did not mark the session for site "
+                f"{spec.site_id!r} as an authenticated-site session"
+            )
+        effective = _origin_set(body.get("confine_origins"))
+        if effective != spec.confine_origins:
+            raise AuthenticatedSessionMismatchError(
+                f"browser-server confined the session for site {spec.site_id!r} "
+                f"to {sorted(effective)}, but the configuration declares "
+                f"{sorted(spec.confine_origins)}"
+            )
+        jar_reachable = _origin_set(body.get("jar_origins")) | _origin_set(
+            body.get("jar_nav_allowlist")
+        )
+        if not jar_reachable <= spec.confine_origins:
+            raise AuthenticatedSessionMismatchError(
+                f"the jar bound to site {spec.site_id!r} reaches origins the "
+                f"configuration does not declare: "
+                f"{sorted(jar_reachable - spec.confine_origins)}"
+            )
+        generation = body.get("jar_generation")
+        if expected_jar_generation is not None and generation != (
+            expected_jar_generation
+        ):
+            raise AuthenticatedSessionMismatchError(
+                f"the jar bound to site {spec.site_id!r} changed between the "
+                f"status read (generation {expected_jar_generation}) and session "
+                f"creation (generation {generation!r})"
+            )
+        if body.get("credential_alias") != spec.credential_alias:
+            raise AuthenticatedSessionMismatchError(
+                f"browser-server pinned credential alias "
+                f"{body.get('credential_alias')!r} to the session for site "
+                f"{spec.site_id!r}, not the configured {spec.credential_alias!r}"
+            )
+
+        if body.get("jar_id") != spec.jar_id:
+            raise AuthenticatedSessionMismatchError(
+                f"browser-server returned a different jar for site {spec.site_id!r}"
+            )
+
+    def adopt_session(self, session_id: str) -> None:
+        """Bind this backend to a session that already exists.
+
+        How a parked session is picked up again: the run that resumes it
+        rebuilds the backend from the same configuration and adopts the id
+        recorded on the delegation run, rather than creating a second session.
+        """
+        self._session_id = session_id
+
+    async def session_state(self) -> JsonDict:
+        """Read the live session record, including its handover state.
+
+        The handback token that reclaims a lease is minted by browser-server
+        only when the human finishes, so it is read from here rather than
+        carried through the conversation.
+        """
+        session_id = self._session_id
+        if session_id is None:
+            raise BrowserBackendError("no browser-server session to read")
+        resp = await self._client.get(
+            f"{self._base_url}/v1/sessions/{session_id}",
+            headers=self._headers(),
+        )
+        if self._is_session_gone_response(resp):
+            raise BrowserSessionGoneError("the browser session is gone")
+        self._raise_for_status(resp, "read session")
+        return cast("JsonDict", resp.json())
+
+    async def autofill(
+        self,
+        *,
+        step_key: str,
+        fields: list[JsonDict] | None = None,
+        wait_seconds: float | None = None,
+        context: JsonDict | None = None,
+    ) -> JsonDict:
+        """Ask browser-server to fill the session's pinned credential.
+
+        The outcome comes back as a 200 with a typed status, so a policy result
+        never has to be inferred from an HTTP code. No secret crosses this
+        boundary in either direction.
+        """
+        session_id = await self._ensure_session()
+        payload: JsonDict = {"step_key": step_key}
+        if fields is not None:
+            payload["fields"] = fields
+        if wait_seconds is not None:
+            payload["wait_seconds"] = wait_seconds
+        if context is not None:
+            payload["context"] = context
+        resp = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/autofill",
+            headers=self._headers(),
+            json=payload,
+        )
+        if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
+            raise self._session_lost_error("autofill", session_id)
+        self._raise_for_status(resp, "autofill")
+        return cast("JsonDict", resp.json())
+
+    async def report_autofill_outcome(self, outcome: str) -> JsonDict:
+        """Latch a login outcome on the session; a bad password refuses later fills."""
+        session_id = await self._ensure_session()
+        resp = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/autofill/outcome",
+            headers=self._headers(),
+            json={"outcome": outcome},
+        )
+        if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
+            raise self._session_lost_error("autofill outcome", session_id)
+        self._raise_for_status(resp, "autofill outcome")
+        return cast("JsonDict", resp.json())
+
     async def _ensure_session(self) -> str:
         if self._session_id is not None:
             return self._session_id
+        if self._authenticated is not None:
+            raise AuthenticatedSessionUnavailableError(
+                f"the authenticated browser session for site "
+                f"{self._authenticated.site_id!r} is no longer available. It is "
+                "never replaced automatically, because a fresh session would "
+                "not carry the login this task was authorised for. The run ends "
+                "here; start it again."
+            )
         payload: JsonDict = {
             "conversation_id": self._conversation_id,
             "interface_type": "research",
@@ -744,6 +1021,15 @@ class RemoteBrowserBackend:
         # conversation is never wedged after a handoff; other commands surface a
         # clear "start with browser_open" error instead of silently retargeting.
         if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
+            if self._authenticated is not None:
+                # Never re-provisioned: see AuthenticatedSessionUnavailableError.
+                raise AuthenticatedSessionUnavailableError(
+                    f"browser-server refused command {command_type} on the "
+                    f"authenticated session for site "
+                    f"{self._authenticated.site_id!r}: the session is gone or "
+                    "the agent no longer holds its lease. Authenticated sessions "
+                    "are never replaced with a fresh one, so this run ends here."
+                )
             if command_type != "navigate":
                 raise self._session_lost_error(f"command {command_type}", session_id)
             self._clear_remote_session(session_id)
@@ -910,7 +1196,13 @@ class RemoteBrowserBackend:
         payload: JsonDict = {
             "reason": reason,
             "handoff_note": handoff_note,
-            "allowed_resume": "after_sanitize" if allow_resume else "never",
+            # Authenticated handback is a separate server-side transition that
+            # always sanitizes. Legacy resumable handoffs reject OTP/jar sessions.
+            "allowed_resume": (
+                "after_sanitize"
+                if allow_resume and self._authenticated is None
+                else "never"
+            ),
         }
         if expected_origin is not None:
             payload["expected_origin"] = expected_origin
@@ -934,6 +1226,35 @@ class RemoteBrowserBackend:
         self._session_id = session_id
         return resp.json()
 
+    async def claim_handback_server_side(self, session_id: str) -> JsonDict:
+        """Take an authenticated session's lease back with no token at all.
+
+        The handback token is minted for the human who finished the step and
+        the design forbids routing it through the conversation, so trusted
+        orchestration has nothing to present. browser-server accepts the
+        human's own handover POST as the signal instead, and this service
+        token as the authority -- which is no weaker, since the same token
+        created the session and drives it. The claim is refused unless the
+        session is an authenticated-site one awaiting handover, and the page is
+        sanitized and reopened inside the confinement set before anything here
+        can observe it.
+        """
+        if self._authenticated is None:
+            raise BrowserBackendError(
+                "a token-less handback claim is only for authenticated-site "
+                "sessions; an ordinary session is reclaimed with the handback "
+                "token the human was shown"
+            )
+        resp = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/agent-claim",
+            headers=self._headers(),
+        )
+        if self._is_session_gone_response(resp):
+            raise BrowserSessionGoneError("the browser session is gone")
+        self._raise_for_status(resp, "agent-claim")
+        self._session_id = session_id
+        return cast("JsonDict", resp.json())
+
     async def close(self) -> None:
         try:
             if self._session_id is not None:
@@ -948,9 +1269,154 @@ class RemoteBrowserBackend:
             self._session_id = None
 
 
+def _origin_set(value: object) -> frozenset[str]:
+    """Normalize a browser-server origin list into a comparable set."""
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(item.rstrip("/") for item in value if isinstance(item, str))
+
+
 # Remote backends are keyed by conversation_id, mirroring the local
 # BrowserSession registry so each conversation drives its own remote session.
 _remote_backends: dict[str, RemoteBrowserBackend] = {}
+
+
+@dataclass(slots=True)
+class AuthenticatedSessionBinding:
+    """One authenticated run's browser session, bound to that run.
+
+    The conversation-keyed registry above is not the binding for an
+    authenticated run: a caller can emit concurrent tool calls, and two runs
+    sharing one conversation slot would overwrite each other's session or tear
+    down the other's on cleanup. This is keyed to the run instead and reaches
+    the delegated worker through trusted execution context, never through a
+    model-visible argument.
+    """
+
+    site_id: str
+    delegation_id: str
+    backend: RemoteBrowserBackend
+    # Autofill step signature -> the idempotency key sent to Keychute for it.
+    # Held on the binding rather than derived per call so an approval_pending
+    # retry of the same step replays the same request instead of opening a
+    # second one, and a later step of the same login gets its own.
+    step_keys: dict[str, str] = field(default_factory=dict)
+    # Latched by the autofill tools and read when the run is finalized. The
+    # run's outcome is derived from what actually happened rather than from the
+    # worker saying the right word in its reply: a model that forgets to report
+    # an outstanding approval must not turn a parked run into a completed one.
+    approval_pending_request_id: str | None = None
+    bad_password_recorded: bool = False
+    autofill_refusal: str | None = None
+    operation_failures: set[str] = field(default_factory=set)
+
+
+# Keyed by the delegated run's subconversation id, which is what a running
+# turn knows about itself. The visual hop is a nested delegation with its own
+# subconversation, so resolution walks one parent link (see
+# `resolve_authenticated_binding`) -- exactly the two hops an authenticated run
+# has.
+_authenticated_bindings: dict[str, AuthenticatedSessionBinding] = {}
+
+
+def bind_authenticated_session(
+    subconversation_id: str, binding: AuthenticatedSessionBinding
+) -> None:
+    """Bind an authenticated session to the run that owns it."""
+    _authenticated_bindings[subconversation_id] = binding
+
+
+def release_borrowed_session(subconversation_id: str) -> None:
+    """Drop one borrowed entry, leaving the owning run's binding in place.
+
+    A child turn that borrowed its parent's session releases through here. The
+    owner's cascading release would take the parent's own entry with it, since
+    both name the same binding object, and the parent run is still using it.
+    """
+    _authenticated_bindings.pop(subconversation_id, None)
+
+
+def release_authenticated_session(subconversation_id: str) -> None:
+    """Drop a binding and every memoized child of it."""
+    binding = _authenticated_bindings.pop(subconversation_id, None)
+    if binding is None:
+        return
+    for key, candidate in list(_authenticated_bindings.items()):
+        if candidate is binding:
+            del _authenticated_bindings[key]
+
+
+def authenticated_binding_for(
+    subconversation_id: str | None,
+) -> AuthenticatedSessionBinding | None:
+    """The binding registered directly against *subconversation_id*, if any."""
+    if subconversation_id is None:
+        return None
+    return _authenticated_bindings.get(subconversation_id)
+
+
+def authenticated_profile_ids(
+    exec_context: ToolExecutionContext,
+) -> frozenset[str]:
+    """Profiles that may only ever operate inside an authenticated session.
+
+    Read from the site configuration rather than from a hard-coded list, so an
+    operator who points a site at their own profile gets the same fail-closed
+    treatment as the shipped ones.
+    """
+    service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(service, "app_config", None) if service is not None else None
+    sites = getattr(app_config, "authenticated_sites", None) if app_config else None
+    if not sites:
+        return frozenset()
+    return frozenset(
+        profile_id
+        for site in sites.values()
+        for profile_id in (site.browser_profile, site.visual_profile)
+    )
+
+
+def _requires_authenticated_binding(exec_context: ToolExecutionContext) -> bool:
+    profile_id = getattr(exec_context, "processing_profile_id", None)
+    return profile_id is not None and profile_id in authenticated_profile_ids(
+        exec_context
+    )
+
+
+async def resolve_authenticated_binding(
+    exec_context: ToolExecutionContext,
+) -> AuthenticatedSessionBinding | None:
+    """The authenticated session this turn is running inside, if any.
+
+    Resolves the turn's own subconversation first. A turn that is the visual
+    hop of an authenticated run has its own subconversation, so one parent link
+    is followed through the delegation run record and then memoized; nothing
+    deeper is walked, because ownership deliberately does not fan out past that
+    hop.
+    """
+    # Checked first so the ordinary browsing path -- every conversation in a
+    # deployment that configures no authenticated site -- costs one dict test
+    # and never touches the context or the database. A turn that *must* have a
+    # binding is not let through on this shortcut: its absence is the
+    # fail-closed case, decided by the caller.
+    if not _authenticated_bindings:
+        return None
+    subconversation_id = getattr(exec_context, "subconversation_id", None)
+    if subconversation_id is None:
+        return None
+    binding = _authenticated_bindings.get(subconversation_id)
+    if binding is not None:
+        return binding
+    run = await exec_context.db_context.delegation_runs.get_by_subconversation_id(
+        subconversation_id
+    )
+    parent = run["source_subconversation_id"] if run is not None else None
+    if parent is None:
+        return None
+    binding = _authenticated_bindings.get(parent)
+    if binding is not None:
+        _authenticated_bindings[subconversation_id] = binding
+    return binding
 
 
 def _remote_enabled(exec_context: ToolExecutionContext) -> BrowserHandoffConfig | None:
@@ -981,6 +1447,22 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
     ``conversation_id``, so the tab state (URL, cookies, form fills) is preserved
     across profile delegation.
     """
+    binding = await resolve_authenticated_binding(exec_context)
+    if binding is not None:
+        return binding.backend
+    if _requires_authenticated_binding(exec_context):
+        # An authenticated browser profile with no bound session has nothing it
+        # is allowed to drive. Falling through would hand it the conversation's
+        # ordinary backend, which would create a fresh *unconfined* session --
+        # the exact escape the never-re-provision rule exists to prevent. It
+        # happens for real after a restart, when a queued authenticated run
+        # outlives the in-process binding, so it fails closed rather than
+        # quietly widening.
+        raise AuthenticatedSessionUnavailableError(
+            "This profile only operates inside an authenticated-site session, "
+            "and no session is bound to this run. The run cannot continue; "
+            "start the task again."
+        )
     config = _remote_enabled(exec_context)
     if config is not None:
         session_key = exec_context.conversation_id or "default"

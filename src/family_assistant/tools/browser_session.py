@@ -222,7 +222,24 @@ def browser_operation[**P](
         ) -> ToolResult:
             session = await get_browser_session(exec_context)
             async with session.operation(exec_context):
-                return await func(exec_context, *args, **kwargs)
+                from family_assistant.tools.browser_backend import (  # noqa: PLC0415 - backend depends on session types
+                    authenticated_binding_for,
+                )
+
+                binding = authenticated_binding_for(exec_context.subconversation_id)
+                try:
+                    result = await func(exec_context, *args, **kwargs)
+                except Exception:
+                    if binding is not None:
+                        binding.operation_failures.add(name)
+                    raise
+                if binding is not None:
+                    data = result.get_data()
+                    if isinstance(data, dict) and data.get("error"):
+                        binding.operation_failures.add(name)
+                    else:
+                        binding.operation_failures.discard(name)
+                return result
 
         # The marker a test reads to check the registry against the tool table.
         wrapper.browser_tool_name = name  # pyright: ignore[reportAttributeAccessIssue]

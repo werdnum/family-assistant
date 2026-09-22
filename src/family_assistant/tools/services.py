@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -39,7 +40,7 @@ from family_assistant.tools.types import (
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
     from datetime import datetime
 
     from family_assistant.config_models import ToolsConfig
@@ -206,6 +207,22 @@ def _resume_already_in_progress_result(resume_delegation_id: str) -> ToolResult:
     )
 
 
+def delegation_belongs_to_caller(
+    run: DelegationRunDict,
+    exec_context: ToolExecutionContext,
+    *,
+    source_service_id: str | None,
+) -> bool:
+    """Whether the caller owns this delegated history, including its parent task."""
+    return (
+        run["conversation_id"] == exec_context.conversation_id
+        and run["interface_type"] == exec_context.interface_type
+        and run["user_id"] == exec_context.user_id
+        and run["source_profile_id"] == source_service_id
+        and run["source_subconversation_id"] == exec_context.subconversation_id
+    )
+
+
 async def _resolve_resume_subconversation(
     exec_context: ToolExecutionContext,
     *,
@@ -243,12 +260,8 @@ async def _resolve_resume_subconversation(
     prior_run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         resume_delegation_id
     )
-    if prior_run is None or (
-        prior_run["conversation_id"] != exec_context.conversation_id
-        or prior_run["interface_type"] != exec_context.interface_type
-        or prior_run["user_id"] != exec_context.user_id
-        or prior_run["source_profile_id"] != source_service_id
-        or prior_run["source_subconversation_id"] != exec_context.subconversation_id
+    if prior_run is None or not delegation_belongs_to_caller(
+        prior_run, exec_context, source_service_id=source_service_id
     ):
         return None, ToolResult(
             text=(
@@ -417,6 +430,62 @@ async def _synchronous_delegation_result(
         len(content_parts),
         subconversation_id,
     )
+    # This path mints a subconversation with no delegation-run row, so a child
+    # turn cannot find its way back to a parent run. An authenticated-site
+    # session therefore has to be handed down explicitly: the semantic-to-visual
+    # hop runs here (async handoff is off for that profile), and without this
+    # the visual worker would resolve no binding and be handed the
+    # conversation's ordinary, unconfined browser instead of the authenticated
+    # tab it is supposed to share.
+    async with _inherited_authenticated_binding(exec_context, subconversation_id):
+        return await _run_synchronous_delegation(
+            exec_context,
+            target_service=target_service,
+            target_service_id=target_service_id,
+            content_parts=content_parts,
+            model_selection=model_selection,
+            subconversation_id=subconversation_id,
+        )
+
+
+@asynccontextmanager
+async def _inherited_authenticated_binding(
+    exec_context: ToolExecutionContext, subconversation_id: str
+) -> AsyncIterator[None]:
+    """Lend this turn's authenticated session to one inline child turn.
+
+    Bound for the child's lifetime only, and released afterwards, so ownership
+    still does not fan out: the child borrows the parent's session and never
+    outlives it.
+    """
+    # Local import: browser_backend imports the tools package transitively.
+    from family_assistant.tools.browser_backend import (  # noqa: PLC0415
+        bind_authenticated_session,
+        release_borrowed_session,
+        resolve_authenticated_binding,
+    )
+
+    binding = await resolve_authenticated_binding(exec_context)
+    if binding is None:
+        yield
+        return
+    bind_authenticated_session(subconversation_id, binding)
+    try:
+        yield
+    finally:
+        release_borrowed_session(subconversation_id)
+
+
+async def _run_synchronous_delegation(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service: Any,  # noqa: ANN401 - target is a registry-resolved processing service
+    target_service_id: str,
+    content_parts: list[ContentPartDict],
+    model_selection: ResolvedModelSelection,
+    subconversation_id: str,
+) -> ToolResult:
+    """Run the inline delegated turn and render its result."""
     try:
         result = await target_service.handle_chat_interaction(
             db_context=exec_context.db_context,
@@ -613,6 +682,23 @@ def _format_delegation_summary(summary: DelegationRunSummary) -> str:
 class _QueuedDelegation:
     delegation_id: str
     target_service_id: str
+    wait_seconds: float
+    subconversation_id: str
+
+
+@dataclass(frozen=True)
+class StartedDelegation:
+    """A delegated run that exists durably but has not been awaited yet.
+
+    The seam trusted orchestration needs: a caller that must do something with
+    the run *between* persisting it and waiting on it -- the authenticated-site
+    tool binds its browser session to the run's subconversation there -- cannot
+    use `delegate_to_service_tool`, which does both in one call.
+    """
+
+    delegation_id: str
+    target_service_id: str
+    subconversation_id: str
     wait_seconds: float
 
 
@@ -972,6 +1058,8 @@ async def _enqueue_delegation(
     resume_delegation_id: str | None,
     subconversation_id: str,
     model_selection: ResolvedModelSelection,
+    prepare_run: Callable[[DatabaseTransaction, str, str], Awaitable[None]]
+    | None = None,
 ) -> _QueuedDelegation | ToolResult:
     """Atomically persist a delegated run and its task, including resume claims.
 
@@ -1019,6 +1107,8 @@ async def _enqueue_delegation(
             # change the models of a run that was already authorized.
             "model_selection_json": model_selection.to_json(),
         })
+        if prepare_run is not None:
+            await prepare_run(txn, delegation_id, subconversation_id)
         await txn.tasks.enqueue(
             task_id=task_id,
             task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
@@ -1065,6 +1155,7 @@ async def _enqueue_delegation(
         delegation_id=delegation_id,
         target_service_id=target_service_id,
         wait_seconds=wait_seconds,
+        subconversation_id=subconversation_id,
     )
 
 
@@ -1419,6 +1510,101 @@ async def delegate_to_service_tool(
         return enqueue_result
 
     return await _await_or_handoff_delegation(exec_context, enqueue_result)
+
+
+async def start_delegation(
+    exec_context: ToolExecutionContext,
+    *,
+    target_service_id: str,
+    user_request: str,
+    delivery_hint: Literal["auto", "background"] = "auto",
+    resume_delegation_id: str | None = None,
+    prepare_run: Callable[[DatabaseTransaction, str, str], Awaitable[None]]
+    | None = None,
+) -> StartedDelegation | ToolResult:
+    """Persist a delegated run without waiting for it.
+
+    For trusted orchestration only: there is no confirmation gate and no
+    attachment handling here, because the one caller composes the request text
+    itself from configuration. Returns a :class:`ToolResult` describing the
+    refusal when the run cannot be created.
+    """
+    target_service, source_service_id, target_error = _resolve_delegation_target(
+        exec_context,
+        target_service_id,
+    )
+    if target_error is not None:
+        return target_error
+    target_service = cast("DelegatableService", target_service)
+    source_service_id = cast("str", source_service_id)
+
+    model_selection = resolve_model_selection(
+        target_service.service_config.tier_eligibility,
+        None,
+        profile_id=target_service.service_config.id,
+    )
+
+    (
+        resume_delegation_id,
+        resumed_subconversation_id,
+        resume_error,
+    ) = await _resolve_requested_subconversation(
+        exec_context,
+        resume_delegation_id=resume_delegation_id,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+    )
+    if resume_error is not None:
+        return resume_error
+
+    content_parts: list[ContentPartDict] = [text_content(user_request)]
+    subconversation_id = resumed_subconversation_id or str(uuid.uuid4())
+    model_selection = await target_service.resolve_model_selection_for_run(
+        model_selection,
+        db_context=exec_context.db_context,
+        interface_type=exec_context.interface_type,
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=subconversation_id,
+        trigger_content_parts=content_parts,
+        acting_user_id=exec_context.user_id,
+    )
+
+    enqueue_result = await _enqueue_delegation(
+        exec_context,
+        source_service_id=source_service_id,
+        target_service_id=target_service_id,
+        user_request=user_request,
+        content_parts=content_parts,
+        handoff_after_seconds=None,
+        delivery_hint=delivery_hint,
+        resume_delegation_id=resume_delegation_id,
+        subconversation_id=subconversation_id,
+        model_selection=model_selection,
+        prepare_run=prepare_run,
+    )
+    if isinstance(enqueue_result, ToolResult):
+        return enqueue_result
+    return StartedDelegation(
+        delegation_id=enqueue_result.delegation_id,
+        target_service_id=enqueue_result.target_service_id,
+        subconversation_id=enqueue_result.subconversation_id,
+        wait_seconds=enqueue_result.wait_seconds,
+    )
+
+
+async def await_started_delegation(
+    exec_context: ToolExecutionContext, started: StartedDelegation
+) -> ToolResult:
+    """Wait briefly for a started run, or hand its delivery to the worker."""
+    return await _await_or_handoff_delegation(
+        exec_context,
+        _QueuedDelegation(
+            delegation_id=started.delegation_id,
+            target_service_id=started.target_service_id,
+            wait_seconds=started.wait_seconds,
+            subconversation_id=started.subconversation_id,
+        ),
+    )
 
 
 async def get_delegation_status_tool(

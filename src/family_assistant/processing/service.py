@@ -1218,6 +1218,41 @@ class ProcessingService:
             f"{catalog}"
         )
 
+    async def authenticated_site_catalog_addition(
+        self, *, user_name: str, user_id: str | None
+    ) -> str:
+        """List only sites this caller may ask this profile to use."""
+        if (
+            self.app_config is None
+            or not self.app_config.browser_handoff_config.enabled
+        ):
+            return ""
+        sites = [
+            f"- `{site_id}`: {site.display_name}"
+            for site_id, site in sorted(self.app_config.authenticated_sites.items())
+            if site.authorizes_caller(
+                profile_id=self.service_config.id, user_name=user_name, user_id=user_id
+            )
+        ]
+        if not sites:
+            return ""
+        from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+            get_tool_definitions_for_advertisement,
+        )
+
+        advertised = await get_tool_definitions_for_advertisement(
+            self.tools_provider, can_confirm=True
+        )
+        if not any(
+            definition.get("function", {}).get("name") == "run_authenticated_site_task"
+            for definition in advertised
+        ):
+            return ""
+        return (
+            "## Authenticated websites available to you\nUse run_authenticated_site_task with these site IDs:\n"
+            + "\n".join(sites)
+        )
+
     def validate_system_prompt_renders(self) -> None:
         """Render the system prompt once, raising ValueError if the template is bad.
 
@@ -1627,6 +1662,11 @@ class ProcessingService:
             final_system_prompt = (
                 f"{final_system_prompt}\n\n{delegation_addition}".strip()
             )
+        site_catalog = await self.authenticated_site_catalog_addition(
+            user_name=user_name, user_id=user_id
+        )
+        if site_catalog:
+            final_system_prompt = f"{final_system_prompt}\n\n{site_catalog}".strip()
         if final_system_prompt:
             messages_for_llm.insert(0, self._build_system_message(final_system_prompt))
 

@@ -359,6 +359,7 @@ def _build_profile_policy_engine(
             decision=ToolPolicyDecision.ALLOW,
             priority=50,
             description=f"Allow self-delegation for profile '{profile_id}'",
+            advertise_conditional_grant=False,
         )
     )
     if global_tools_policy is not None:

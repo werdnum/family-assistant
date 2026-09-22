@@ -43,6 +43,7 @@ just the part you need.
 | [troubleshooting.md](troubleshooting.md)                   | What to do when something doesn't work, and how to report a bug           |
 | [scripting.md](scripting.md)                               | Writing automation scripts                                                |
 | [browser_automation.md](browser_automation.md)             | `/browse` and `/browse_visual` in detail                                  |
+| [authenticated-sites.md](authenticated-sites.md)           | Websites the assistant can sign into on your behalf                       |
 | [camera_integration.md](camera_integration.md)             | Live camera feeds and reviewing footage                                   |
 | [image_tools.md](image_tools.md)                           | Image generation, editing, and annotation in detail                       |
 | [data_visualization.md](data_visualization.md)             | Building charts, plus [vega_lite_reference.md](vega_lite_reference.md)    |

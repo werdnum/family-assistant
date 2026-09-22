@@ -12,6 +12,7 @@ from sqlalchemy.sql import functions as func
 from family_assistant.storage.delegation_runs import (
     RECONCILABLE_FAILURE_KINDS,
     TERMINAL_DELEGATION_STATUSES,
+    AuthenticatedSiteEnvelope,
     DelegationLocalFailureKind,
     DelegationNotifyStage,
     DelegationRunStatus,
@@ -107,6 +108,7 @@ class DelegationRunDict(TypedDict):
     reconcile_attempts: int
     reconciled_at: datetime | None
     late_recovered_at: datetime | None
+    authenticated_site_json: AuthenticatedSiteEnvelope | None
     created_at: datetime
 
 
@@ -161,6 +163,32 @@ class DelegationRunsRepository(BaseRepository):
         if row is None:
             return None
         return self._row_to_dict(row)
+
+    async def get_by_subconversation_id(
+        self, subconversation_id: str
+    ) -> DelegationRunDict | None:
+        """Return the most recent run targeting a delegated history.
+
+        The authenticated-session binding resolves a nested run's owner through
+        this: the visual hop's own subconversation names a run whose
+        ``source_subconversation_id`` is the owning semantic run's.
+        """
+        stmt = (
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.subconversation_id == subconversation_id)
+            .order_by(delegation_runs_table.c.created_at.desc())
+            .limit(1)
+        )
+        row = await self._db.fetch_one(stmt)
+        if row is None:
+            return None
+        return self._row_to_dict(row)
+
+    async def set_authenticated_site_state(
+        self, delegation_id: str, state: AuthenticatedSiteEnvelope | None
+    ) -> DelegationRunDict | None:
+        """Persist a run's authenticated-site binding and typed result."""
+        return await self._update_run(delegation_id, authenticated_site_json=state)
 
     async def list_for_conversation(
         self,
@@ -393,6 +421,7 @@ class DelegationRunsRepository(BaseRepository):
         result_text: str | None,
         result_attachment_ids: list[str],
         completed_at: datetime,
+        authenticated_site_state: AuthenticatedSiteEnvelope | None = None,
     ) -> DelegationRunDict | None:
         """Mark a non-terminal delegation run completed (atomic CAS).
 
@@ -403,6 +432,11 @@ class DelegationRunsRepository(BaseRepository):
         """
         return await self._terminate(
             delegation_id,
+            **(
+                {"authenticated_site_json": authenticated_site_state}
+                if authenticated_site_state is not None
+                else {}
+            ),
             status="completed",
             result_text=result_text,
             result_attachment_ids_json=result_attachment_ids,
@@ -415,6 +449,7 @@ class DelegationRunsRepository(BaseRepository):
         delegation_id: str,
         error: str,
         completed_at: datetime,
+        authenticated_site_state: AuthenticatedSiteEnvelope | None = None,
         local_failure_kind: DelegationLocalFailureKind | None = None,
     ) -> DelegationRunDict | None:
         """Mark a non-terminal delegation run failed (atomic CAS).
@@ -429,6 +464,11 @@ class DelegationRunsRepository(BaseRepository):
         """
         return await self._terminate(
             delegation_id,
+            **(
+                {"authenticated_site_json": authenticated_site_state}
+                if authenticated_site_state is not None
+                else {}
+            ),
             status="failed",
             error=error,
             completed_at=completed_at,
@@ -639,6 +679,8 @@ class DelegationRunsRepository(BaseRepository):
             .values(**values, updated_at=datetime.now(UTC))
             .returning(delegation_runs_table)
         )
+        if values.get("local_failure_kind") == "stranded":
+            stmt = stmt.where(delegation_runs_table.c.status.in_(["queued", "running"]))
         result = await self._execute_with_logging("terminate_delegation_run", stmt)
         row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
@@ -657,35 +699,15 @@ class DelegationRunsRepository(BaseRepository):
             notified_at=notified_at,
         )
 
-    async def reap_stale(
-        self,
-        *,
-        now: datetime,
-        created_before: datetime,
-        error: str,
-    ) -> list[DelegationRunDict]:
-        """Fail non-terminal delegation runs created before ``created_before``.
-
-        Covers both ``queued`` runs (whose owning task was lost before it ever
-        started) and ``running`` runs (interrupted mid-flight), keyed on
-        ``created_at`` so a run with no ``started_at`` is still reaped. Returns
-        the rows that were transitioned so the caller can notify for each.
-        """
+    async def find_stale(self, *, created_before: datetime) -> list[DelegationRunDict]:
+        """Find stranded queued/running runs for settlement by the task worker."""
         stmt = (
-            update(delegation_runs_table)
+            select(delegation_runs_table)
             .where(delegation_runs_table.c.status.in_(["queued", "running"]))
             .where(delegation_runs_table.c.created_at < created_before)
-            .values(
-                status="failed",
-                error=error,
-                completed_at=now,
-                local_failure_kind="stranded",
-                updated_at=now,
-            )
-            .returning(delegation_runs_table)
         )
-        result = await self._execute_with_logging("reap_stale_delegation_runs", stmt)
-        return [self._row_to_dict(dict(row)) for row in result.all()]
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
 
     async def find_terminal_unnotified(
         self, *, completed_before: datetime
@@ -863,8 +885,24 @@ class DelegationRunsRepository(BaseRepository):
             reconcile_attempts=row.get("reconcile_attempts") or 0,
             reconciled_at=row.get("reconciled_at"),
             late_recovered_at=row.get("late_recovered_at"),
+            authenticated_site_json=cast(
+                "AuthenticatedSiteEnvelope | None",
+                self._json_object(row.get("authenticated_site_json")),
+            ),
             created_at=row["created_at"],
         )
+
+    @staticmethod
+    # ast-grep-ignore: no-dict-any - the authenticated-site envelope is free JSON
+    def _json_object(value: Any) -> dict[str, Any] | None:  # noqa: ANN401
+        """Return a JSON column's value when it decoded to an object."""
+        if isinstance(value, dict):
+            return cast("dict[str, Any]", value)
+        if isinstance(value, str):
+            decoded = json.loads(value)
+            if isinstance(decoded, dict):
+                return cast("dict[str, Any]", decoded)
+        return None
 
     @staticmethod
     def _json_list(value: Any) -> list[ContentPartDict]:  # noqa: ANN401

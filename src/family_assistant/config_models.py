@@ -52,6 +52,7 @@ from email.utils import parseaddr
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from urllib.parse import urlsplit
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
 from pydantic import (
@@ -1369,6 +1370,116 @@ class KeychuteConfig(BaseModel):
     max_response_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
 
 
+class AuthenticatedSiteMitigations(BaseModel):
+    """Best-effort review settings for one authenticated site.
+
+    These describe defence in depth, not a read/write barrier: see
+    docs/design/authenticated-site-capabilities.md, "Imperfect mitigations".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    native_computer_use_safety: bool = True
+    action_review: Literal["off", "observe"] = "off"
+    # Named here so a site can declare the check it intends; running it is
+    # deferred (M4), so the runtime only carries the name.
+    postcondition_check: str | None = None
+
+
+class AuthenticatedSiteConfig(BaseModel):
+    """One operator-configured authenticated browsing capability.
+
+    Everything a run is allowed to reach comes from here, never from the model:
+    the jar, the start URL, the complete origin set, who may act on the bound
+    account, which caller profiles may ask for it, and which two browser
+    profiles execute it. See docs/design/authenticated-site-capabilities.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str
+    # A saved browser-server cookie jar. Optional when `credential_alias` is
+    # set: such a site logs itself in from a jarless session instead.
+    jar_id: str | None = None
+    start_url: str
+    authenticated_origins: list[str]
+    navigation_allowlist: list[str] = Field(default_factory=list)
+    # Routing, not release authority. It names the one Keychute secret this
+    # site's runs may ask for, and tells the tool that an absent or probe-stale
+    # jar (never a revoked one) should lead to a login attempt rather than
+    # `login_required`. Whether that secret is released, for which page
+    # origins, and with what approval lives in the Keychute policy row.
+    credential_alias: str | None = None
+    authorized_users: list[str]
+    caller_profiles: list[str]
+    browser_profile: str = "authenticated_browser_profile"
+    visual_profile: str = "authenticated_browser_visual_profile"
+    damage_envelope: str
+    mitigations: AuthenticatedSiteMitigations = Field(
+        default_factory=AuthenticatedSiteMitigations
+    )
+
+    def authorizes_caller(
+        self, *, profile_id: str | None, user_name: str | None, user_id: str | None
+    ) -> bool:
+        return profile_id in self.caller_profiles and not (
+            {user_name, user_id} - {None}
+        ).isdisjoint(self.authorized_users)
+
+    @property
+    def effective_origins(self) -> frozenset[str]:
+        """The complete origin set browser-server confines the session to."""
+        return frozenset(self.authenticated_origins) | frozenset(
+            self.navigation_allowlist
+        )
+
+    @model_validator(mode="after")
+    def validate_acquisition_path(self) -> AuthenticatedSiteConfig:
+        """Reject a site with no way to acquire a login."""
+        if self.jar_id is None and self.credential_alias is None:
+            msg = (
+                "An authenticated site needs at least one login-acquisition "
+                "path: set jar_id (a saved login), credential_alias (Keychute "
+                "autofill), or both."
+            )
+            raise ValueError(msg)
+        return self
+
+    @field_validator("authenticated_origins", "navigation_allowlist")
+    @classmethod
+    def validate_origins(cls, value: list[str]) -> list[str]:
+        """Require exact https origins, because confinement compares them exactly."""
+        for origin in value:
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme != "https"
+                or not parsed.netloc
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                msg = (
+                    f"{origin!r} is not an exact https origin. Write origins as "
+                    "https://host or https://host:port, with no path."
+                )
+                raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def validate_start_url_is_in_scope(self) -> AuthenticatedSiteConfig:
+        """Reject a start URL the session would be confined away from."""
+        parsed = urlsplit(self.start_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin not in self.effective_origins:
+            msg = (
+                f"start_url {self.start_url!r} is on origin {origin!r}, which is "
+                "not in authenticated_origins or navigation_allowlist, so the "
+                "session would be confined away from its own starting page."
+            )
+            raise ValueError(msg)
+        return self
+
+
 class DatabaseErrorsLoggingConfig(BaseModel):
     """Configuration for database error logging."""
 
@@ -2018,6 +2129,12 @@ class AppConfig(BaseSettings):
     browser_handoff_config: BrowserHandoffConfig = Field(
         default_factory=BrowserHandoffConfig
     )
+    # Operator-configured authenticated browsing capabilities, keyed by the
+    # stable site id the high-level tool takes. Empty by default: a deployment
+    # that configures none has the feature switched off entirely.
+    authenticated_sites: dict[str, AuthenticatedSiteConfig] = Field(
+        default_factory=dict
+    )
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
     memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
@@ -2245,6 +2362,179 @@ class AppConfig(BaseSettings):
                     f"{', '.join(sorted(granted)) or '(none granted)'}."
                 )
                 raise ValueError(msg)
+        return self
+
+    def _globally_granted_tool_names(
+        self, known_tools: frozenset[str]
+    ) -> frozenset[str]:
+        """Tool names `global_tools_policy` confers on every profile.
+
+        A glob is expanded against the tool registry rather than skipped. A
+        global grant lands in a layer a profile's own policy cannot refuse, so a
+        grant of `get_*` reaches an authenticated profile exactly as a literal
+        name does; leaving it out would let the widest kind of grant be the one
+        the check never sees.
+        """
+        if self.global_tools_policy is None:
+            return frozenset()
+        granted: set[str] = set()
+        for rule in self.global_tools_policy.rules:
+            if rule.decision is ToolPolicyDecision.DENY:
+                continue
+            for name in rule.match.names or ():
+                if _is_glob(name):
+                    granted.update(
+                        tool for tool in known_tools if fnmatchcase(tool, name)
+                    )
+                else:
+                    granted.add(name)
+        return frozenset(granted)
+
+    def _unanalysable_global_grants(self) -> list[str]:
+        """Global granting rules whose reach cannot be decided statically.
+
+        Argument-only grants have no bounded set of tool names.
+        A tag or MCP-server matcher grants by a property the registry supplies
+        at runtime, so which tools it hands an authenticated profile is not
+        knowable here. Since those grants outrank the profile's own policy, the
+        honest answer is to refuse the site configuration rather than to
+        validate a surface that may be wider than it looks.
+        """
+        if self.global_tools_policy is None:
+            return []
+        return [
+            (rule.description or f"rule {index}")
+            for index, rule in enumerate(self.global_tools_policy.rules)
+            if rule.decision is not ToolPolicyDecision.DENY
+            and (
+                not rule.match.names
+                or rule.match.tags_all
+                or rule.match.tags_any
+                or rule.match.mcp_server_ids
+            )
+        ]
+
+    @model_validator(mode="after")
+    def validate_authenticated_sites(self) -> AppConfig:
+        """Reject an authenticated site whose profiles are not bounded.
+
+        Pointing a site at the shipped `browser_profile` is a configuration
+        error rather than a silent widening: that profile grants `browser_exec`,
+        receives the globally granted tools, and delegates without a pin. The
+        check is the profile's *effective* surface and is mechanical -- see
+        :mod:`family_assistant.tools.authenticated_site_surface` -- so a rule it
+        cannot analyse statically fails closed.
+        """
+        if not self.authenticated_sites:
+            return self
+
+        if (
+            self.browser_handoff_config.enabled
+            and not self.browser_handoff_config.service_url
+        ):
+            raise ValueError(
+                "Authenticated sites require browser_handoff_config.service_url"
+            )
+
+        # Deferred: the tool table lives in `family_assistant.tools`, which
+        # imports far more than a configuration model should at import time.
+        from family_assistant.tools import (  # noqa: PLC0415
+            LOCAL_TOOL_METADATA_BY_NAME,
+        )
+        from family_assistant.tools.authenticated_site_surface import (  # noqa: PLC0415
+            admissible_tools,
+            surface_violations,
+        )
+
+        unanalysable = self._unanalysable_global_grants()
+        if unanalysable:
+            msg = (
+                "global_tools_policy grants tools without explicit names, or by tag or MCP server "
+                f"({', '.join(unanalysable)}), which outranks an authenticated "
+                "browser profile's own policy and cannot be checked against the "
+                "admissible tool set. Configuring an authenticated site with "
+                "such a rule in place would validate a surface that may be "
+                "wider than it looks; name the tools instead."
+            )
+            raise ValueError(msg)
+
+        admissible = admissible_tools(LOCAL_TOOL_METADATA_BY_NAME)
+        globally_granted = self._globally_granted_tool_names(
+            frozenset(LOCAL_TOOL_METADATA_BY_NAME)
+        )
+        profiles_by_id = {profile.id: profile for profile in self.service_profiles}
+
+        for site_id, site in sorted(self.authenticated_sites.items()):
+            missing_callers = sorted(set(site.caller_profiles) - set(profiles_by_id))
+            if missing_callers:
+                msg = (
+                    f"Authenticated site {site_id!r} names caller profile(s) "
+                    f"{', '.join(missing_callers)}, which do not exist."
+                )
+                raise ValueError(msg)
+
+            for role, profile_id, pinned_target in (
+                ("browser_profile", site.browser_profile, site.visual_profile),
+                ("visual_profile", site.visual_profile, None),
+            ):
+                profile = profiles_by_id.get(profile_id)
+                if profile is None:
+                    msg = (
+                        f"Authenticated site {site_id!r} names {role} "
+                        f"{profile_id!r}, which is not a configured service profile."
+                    )
+                    raise ValueError(msg)
+                if profile.remote_a2a is not None:
+                    raise ValueError(
+                        f"Authenticated site {site_id!r} requires local browser roles; "
+                        f"{profile_id!r} configures remote_a2a."
+                    )
+                violations = surface_violations(
+                    tools_policy=profile.tools_policy,
+                    operator_tools_policy=profile.operator_tools_policy,
+                    excluded_global_tools=frozenset(profile.excluded_global_tools),
+                    excluded_context_providers=frozenset(
+                        profile.processing_config.excluded_context_providers
+                    ),
+                    include_aggregated_context=(
+                        profile.processing_config.include_aggregated_context
+                    ),
+                    globally_granted_tools=globally_granted,
+                    admissible=admissible,
+                    pinned_delegation_target=pinned_target,
+                )
+                if violations:
+                    detail = "; ".join(violations)
+                    msg = (
+                        f"Authenticated site {site_id!r} cannot use {role} "
+                        f"{profile_id!r}: {detail}."
+                    )
+                    raise ValueError(msg)
+                if (
+                    role == "browser_profile"
+                    and profile.tools_config.async_delegation_enabled
+                ):
+                    msg = (
+                        f"Authenticated site {site_id!r} browser profile {profile_id!r} "
+                        "must disable async_delegation_enabled so visual delegation "
+                        "finishes within the authenticated session lifetime."
+                    )
+                    raise ValueError(msg)
+                allowed_sources = profile.processing_config.allowed_delegation_sources
+                required_sources = (
+                    set(site.caller_profiles)
+                    if role == "browser_profile"
+                    else {site.browser_profile}
+                )
+                if allowed_sources is not None:
+                    rejected_sources = sorted(required_sources - set(allowed_sources))
+                    if rejected_sources:
+                        msg = (
+                            f"Authenticated site {site_id!r} {role} {profile_id!r} "
+                            "must accept allowed_delegation_sources from "
+                            f"{', '.join(rejected_sources)}."
+                        )
+                        raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

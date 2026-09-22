@@ -552,3 +552,155 @@ def test_argument_equals_type_strict_comparison() -> None:
     # 1 should not match True
     assert int_matcher.matches(descriptor, arguments={"flag": 1})
     assert not int_matcher.matches(descriptor, arguments={"flag": True})
+
+
+def _delegate_descriptor() -> ToolDescriptor:
+    return make_descriptor(name="delegate_to_service", tags={ToolTag.STATE_CHANGING})
+
+
+def _pinned_allow(priority: int) -> PolicyRule:
+    return PolicyRule(
+        match=ToolMatcher(
+            names=["delegate_to_service"],
+            argument_equals={"target_service_id": "visual"},
+        ),
+        decision=ToolPolicyDecision.ALLOW,
+        priority=priority,
+    )
+
+
+def test_argument_pinned_grant_is_advertised() -> None:
+    """A tool allowed only for some arguments still has to reach the model.
+
+    An ``argument_equals`` matcher never matches without arguments, so without
+    this the one call the pin exists to permit could never be made.
+    """
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(names=["delegate_to_service"]),
+                    decision=ToolPolicyDecision.DENY,
+                    priority=10,
+                ),
+                _pinned_allow(99),
+            ],
+            default_decision=ToolPolicyDecision.DENY,
+        )
+    )
+    advertised = engine.evaluate_for_advertisement(
+        _delegate_descriptor(), can_confirm=True
+    )
+    assert advertised.decision is ToolPolicyDecision.ALLOW
+    assert "specific arguments" in advertised.reason
+
+
+def test_a_higher_priority_deny_beats_a_pinned_allow() -> None:
+    """Advertisement asks the question execution would, not a weaker one.
+
+    The pin is outranked, so the pinned call would itself be refused; showing
+    the tool would advertise a call that cannot be made.
+    """
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(
+            rules=[
+                _pinned_allow(10),
+                PolicyRule(
+                    match=ToolMatcher(names=["delegate_to_service"]),
+                    decision=ToolPolicyDecision.DENY,
+                    priority=50,
+                ),
+            ],
+            default_decision=ToolPolicyDecision.DENY,
+        )
+    )
+    advertised = engine.evaluate_for_advertisement(
+        _delegate_descriptor(), can_confirm=True
+    )
+    assert advertised.decision is ToolPolicyDecision.DENY
+
+
+def test_a_pinned_grant_carries_its_confirmation_requirement() -> None:
+    """A pin that resolves to `confirm` advertises as `confirm`, not `allow`."""
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(names=["delegate_to_service"]),
+                    decision=ToolPolicyDecision.DENY,
+                    priority=10,
+                ),
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": "visual"},
+                    ),
+                    decision=ToolPolicyDecision.CONFIRM,
+                    priority=99,
+                ),
+            ],
+            default_decision=ToolPolicyDecision.DENY,
+        )
+    )
+    descriptor = _delegate_descriptor()
+    assert (
+        engine.evaluate_for_advertisement(descriptor, can_confirm=True).decision
+        is ToolPolicyDecision.CONFIRM
+    )
+    # Unavailable confirmation still collapses to a denial, as everywhere else.
+    assert (
+        engine.evaluate_for_advertisement(descriptor, can_confirm=False).decision
+        is ToolPolicyDecision.DENY
+    )
+
+
+def test_the_synthesised_self_delegation_pin_advertises_nothing() -> None:
+    """The synthetic self-delegation rule adds no advertised surface.
+
+    Every profile receives a self-delegation rule pinned to its own id. Reading
+    that as a conditional grant would advertise delegate_to_service in profiles
+    built to hold no tools at all.
+    """
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(rules=[], default_decision=ToolPolicyDecision.DENY),
+        profile=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": "memory_curator"},
+                    ),
+                    decision=ToolPolicyDecision.ALLOW,
+                    priority=50,
+                    advertise_conditional_grant=False,
+                )
+            ]
+        ),
+    )
+    advertised = engine.evaluate_for_advertisement(
+        _delegate_descriptor(), can_confirm=True
+    )
+    assert advertised.decision is ToolPolicyDecision.DENY
+
+
+def test_argument_pinned_global_grant_is_advertised() -> None:
+    engine = PolicyEngine.from_layers(
+        defaults=ToolPolicyConfig(default_decision=ToolPolicyDecision.DENY),
+        profile=ToolPolicyConfig(
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(
+                        names=["delegate_to_service"],
+                        argument_equals={"target_service_id": "worker"},
+                    ),
+                    decision=ToolPolicyDecision.ALLOW,
+                )
+            ]
+        ),
+    )
+    assert (
+        engine.evaluate_for_advertisement(
+            _delegate_descriptor(), can_confirm=True
+        ).decision
+        is ToolPolicyDecision.ALLOW
+    )

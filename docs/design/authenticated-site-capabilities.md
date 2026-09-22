@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed.
+Accepted — implemented for M1–M3 and the autofill section.
 
-If accepted, this design supersedes the **Family Assistant policy and product surface** in
+This design supersedes the **Family Assistant policy and product surface** in
 [browser-cookie-jars.md](browser-cookie-jars.md) and the implementation direction in
 [PR #1018](https://github.com/werdnum/family-assistant/pull/1018). It does not replace
 browser-server's cookie-jar mechanism. It also now contains the **Keychute credential autofill**
@@ -390,7 +390,10 @@ lifetime backstop expires. The background completion machinery persists only tex
 and its notification is advisory, so the typed `AuthenticatedSiteTaskResult` — any resume handle
 included — is persisted durably on the delegation run's record at terminal state, wherever the run
 executed; the caller retrieves it by presenting the run's opaque handle back to the high-level tool,
-never by reconstructing it from notification text. Exactly one owner closes the session. An
+never by reconstructing it from notification text. The terminal row is what wakes a waiting caller,
+so the session is settled and that result persisted **before** the row becomes terminal — otherwise
+a caller woken by the row reads a run that has already finished or parked as still `running`, and a
+parked session's resume handle is not there to read. Exactly one owner closes the session. An
 idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
 state, and jar revocation still terminates the session immediately regardless of owner.
 
@@ -407,16 +410,19 @@ and in-progress form state do not. Losing mid-form progress to a challenge is ac
 behaviour for reversible household sites; a workflow that needs same-page resumption is a future
 explicit policy, not the default. The handback token that reclaims the lease is minted by
 browser-server only when the human finishes, so it cannot ride in the resume handle and must not
-ride in the conversation: it is exchanged server-side between browser-server and Family Assistant's
-trusted orchestration, bound to the parked session's record — whether by callback or by polling the
-session's handover state is construction detail for the implementing PR — so that consuming the
-resume handle finds the lease already reclaimable. `needs_human` remains the fully terminal outcome
-for steps a human cannot unblock mid-session (an SSO redirect out of the confined origin set, hard
-bot blocks, a bad password on an autofill site), where the human path depends on the acquisition
-path — refresh the jar where one exists, correct the Keychute secret for an autofill-only site — and
-then retry from the original objective. A challenge the human *can* complete in the parked session —
-an MFA code, a captcha — is `handoff_pending`, not this; the one rule is stated in the autofill
-section's bounded-retries boundary and applied everywhere.
+ride in the conversation: reclaiming the lease is therefore a server-side exchange between trusted
+orchestration and browser-server, in which the human's own handover is the signal that they are
+finished and the service credential that already creates and drives these sessions is the authority.
+The resume reads the parked session's handover state and, where it says the browser has been handed
+back, takes the lease with no token at all; while the human still holds it the run stays parked and
+says so, and a session that is gone fails the run rather than being re-provisioned. Nobody is ever
+asked to relay a code. `needs_human` remains the fully terminal outcome for steps a human cannot
+unblock mid-session (an SSO redirect out of the confined origin set, hard bot blocks, a bad password
+on an autofill site), where the human path depends on the acquisition path — refresh the jar where
+one exists, correct the Keychute secret for an autofill-only site — and then retry from the original
+objective. A challenge the human *can* complete in the parked session — an MFA code, a captcha — is
+`handoff_pending`, not this; the one rule is stated in the autofill section's bounded-retries
+boundary and applied everywhere.
 
 The browser session closes when its owning run ends, unless the run ended in a resumable parked
 outcome — `handoff_pending` (the user has taken human control) or `approval_pending` (a Keychute
@@ -948,11 +954,11 @@ rendering surface, and there is no confidence that every channel by which a fill
 a model-visible observation has been spotted in advance. What the design commits to is the property,
 the place it is enforced, and how holes are handled:
 
-- **The property.** A value the fill placed in a protected control does not reach the model through
-  browser-server's observation channels (snapshots, screenshots, extraction) or through any
-  model-driven input that moves it somewhere those channels can see. The secret appears in no tool
-  argument, result, event, exception text, trace, or log.
-- **The enforcement.** Deterministic controls in browser-server, at its observation and input
+- **The goal.** Prevent direct read-back of filled credentials through browser-server's observations
+  and ordinary model-driven value transfers. This is best-effort protection of known controls, not a
+  guarantee covering every way a page can render or move a value. The credential-release path keeps
+  the secret out of tool arguments, results, events, exception text, traces, and logs.
+- **The enforcement.** Targeted controls in browser-server, at its observation and input
   chokepoints, applied uniformly to every authenticated-site session from creation: protected
   controls (every `input[type=password]`, plus the exact elements a fill touched) are tracked by
   element — surviving type changes such as a "show password" toggle — masked in observations, and
@@ -962,12 +968,13 @@ the place it is enforced, and how holes are handled:
 - **The known channels are the initial test set, not the specification.** Today's list — the
   snapshot walker copying `el.value`, screenshots of a revealed field, copy/paste into a visible
   text control, `drag_and_drop` of a selection into one — is what the first implementation must
-  close and test. Session-wide clipboard denial and withholding `drag_and_drop` from the
-  authenticated visual profile are cheap conveniences on top, not the boundary.
+  address and test. Drag protection applies to transfers originating from protected controls;
+  ordinary drag-and-drop remains available, including on pages containing password fields.
 - **How holes are handled.** Further channels will be found. They are implementation findings for
   the browser-server PR that builds these controls, where the specific mechanism can be debated and
-  tested, not reasons to reopen this design. A newly found channel is closed at the same chokepoints
-  under the same property; it does not change the architecture.
+  tested, not reasons to promise comprehensive prevention. Prefer small guards using the existing
+  protected-control machinery. Preserve ordinary browser usability and accept bounded residuals
+  rather than adding layers to defend an absolute guarantee.
 
 The accepted residuals, stated plainly: the boundary is best-effort against a determined
 prompt-injection campaign, not proof; and once filled, the approved origin's own JavaScript can read
@@ -1143,8 +1150,8 @@ HelloFresh adapter or keep the task human-operated.
 - Surface `login_required` without exposing the full jar inventory to the model.
 - Support human refresh of the same jar ID and retry from the original objective.
 - Park a handed-off session under exclusive human control, and rebind it when a follow-up invocation
-  resumes the terminal delegated run after handback, receiving the handback token from
-  browser-server server-side rather than through the conversation.
+  resumes the terminal delegated run after handback, reclaiming the lease server-side on the service
+  credential rather than through anything relayed in the conversation.
 - Resolve browser-server refresh/UI gaps only as required by this flow.
 
 ### M4 — HelloFresh end-to-end workflow
@@ -1275,6 +1282,41 @@ The following are deliberately **not** security properties of a general browser 
   completion without evidence.
 - Some sites will block automated or cloud browsers and remain human-operated.
 
+## Deliberate simplifications
+
+What the implementation left out on purpose, so a reviewer does not have to rediscover each one:
+
+- **The session lifetime backstop is browser-server's, not Family Assistant's.** A run whose worker
+  dies without settling leaves a session that FA no longer tracks; it is reclaimed by the service's
+  own idle and maximum-lifetime limits rather than by a sweep on this side. A sweep here would be a
+  second, weaker copy of a reaper that already exists.
+- **The run-scoped session binding lives in process.** It is keyed by the delegated run's
+  subconversation and resolved one parent link deep, which is exactly the two hops an authenticated
+  run has. A restart loses the binding; the session is then reclaimed by the backstop above and the
+  run fails closed rather than picking up a session it can no longer account for. Making the binding
+  survive a restart would mean trusting a session id across a process the operator may have
+  redeployed.
+- **`login_required` is surfaced without any jar inventory.** The model is told the saved login
+  needs attention and nothing more -- no jar id, no list, no freshness detail. Refreshing one
+  remains a human operation in browser-server's own UI, as M3 scopes it.
+- **One authenticated run per conversation.** A second concurrent invocation is refused rather than
+  queued. Queuing would mean holding a browser session open for a task nobody has started yet.
+- **`postcondition_check` is a configuration stub.** A site may name a check; nothing runs it yet.
+  It is recorded so the first real check does not need a configuration change, and it makes no
+  promise in the meantime.
+- **The action-review judge, jar refresh, TOTP and SSO are not built**, as the design defers them.
+  `mitigations.action_review` accepts `observe` but changes nothing today.
+- **The outcome is derived, not declared.** There is no structured status the worker returns. The
+  run's status is read off the autofill latches and the session's own handover state, because a
+  model that forgets to mention an outstanding approval must not be able to turn a parked run into a
+  completed one. The cost is that outcomes the orchestration cannot observe -- `blocked_by_scope`,
+  `site_changed`, `review_blocked` -- are defined in the contract but are not yet distinguished from
+  `completed` or `failed` at runtime.
+- **`start_delegation` duplicates part of `delegate_to_service`'s setup** rather than the tool being
+  refactored onto the new seam. The tool's confirmation gate runs between steps the seam merges, so
+  unifying them would move a confirmation prompt relative to target resolution; that is a change to
+  existing behaviour this work did not need to make.
+
 ## Review questions
 
 1. Is the high-level `run_authenticated_site_task` surface preferable to generic model-facing jar
@@ -1312,5 +1354,5 @@ This is a design-only change. Before implementation:
 - add end-to-end tests for jar opacity, origin confinement, human-control exclusivity, stale login,
   session cleanup, revocation, result provenance, inability of browser profiles to acquire a second
   authenticated session, and the complete handoff-and-resume cycle: takeover-link delivery,
-  server-side receipt of the handback token, and resumption after sanitized fresh-page recovery with
-  the authenticated session and worker context preserved.
+  server-side reclaim of the lease once the human hands back, and resumption after sanitized
+  fresh-page recovery with the authenticated session and worker context preserved.

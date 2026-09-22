@@ -12,6 +12,10 @@ from family_assistant.tools.attachments import (
     attach_to_response_tool,
     read_text_attachment_tool,
 )
+from family_assistant.tools.authenticated_sites import (
+    AUTHENTICATED_SITE_TOOLS_DEFINITION,
+    run_authenticated_site_task_tool,
+)
 from family_assistant.tools.automations import (
     AUTOMATIONS_TOOLS_DEFINITION,
     create_automation_tool,
@@ -22,6 +26,11 @@ from family_assistant.tools.automations import (
     get_automation_tool,
     list_automations_tool,
     update_automation_tool,
+)
+from family_assistant.tools.browser_autofill import (
+    BROWSER_AUTOFILL_TOOLS_DEFINITION,
+    browser_autofill_tool,
+    browser_report_login_outcome_tool,
 )
 from family_assistant.tools.browser_dom import (
     BROWSER_DOM_TOOLS_DEFINITION,
@@ -393,12 +402,14 @@ __all__ = [
     "add_or_update_note_tool",
     "annotate_image_tool",
     "attach_to_response_tool",
+    "browser_autofill_tool",
     "browser_claim_handback_tool",
     "browser_click_tool",
     "browser_exec_tool",
     "browser_extract_tool",
     "browser_fill_tool",
     "browser_open_tool",
+    "browser_report_login_outcome_tool",
     "browser_request_handoff_tool",
     "browser_screenshot_tool",
     "browser_select_tool",
@@ -496,6 +507,7 @@ __all__ = [
     "render_modify_calendar_event_confirmation",
     "report_technical_problem_tool",
     "resolve_tool_policy",
+    "run_authenticated_site_task_tool",
     "save_script_tool",
     "scan_camera_frames_tool",
     "schedule_action_tool",
@@ -580,6 +592,8 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + MOCK_IMAGE_TOOLS_DEFINITION
     + COMPUTER_USE_TOOLS_DEFINITION
     + BROWSER_DOM_TOOLS_DEFINITION
+    + BROWSER_AUTOFILL_TOOLS_DEFINITION
+    + AUTHENTICATED_SITE_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
     + WORKER_TOOLS_DEFINITION
     + ENGINEERING_TOOLS_DEFINITION
@@ -700,6 +714,9 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "browser_extract": browser_extract_tool,
     "browser_screenshot": browser_screenshot_tool,
     "browser_exec": browser_exec_tool,
+    "run_authenticated_site_task": run_authenticated_site_task_tool,
+    "browser_autofill": browser_autofill_tool,
+    "browser_report_login_outcome": browser_report_login_outcome_tool,
     "browser_request_handoff": browser_request_handoff_tool,
     # Workspace file tools
     "workspace_read": workspace_read_tool,
@@ -1397,6 +1414,30 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    # Deliberately NOT tagged BROWSER: this is the tool that *acquires* an
+    # authenticated session, and the admissible set for a profile running
+    # inside one is derived from that tag. Tagging it would make an
+    # authenticated browser profile able to open a second authenticated
+    # session from inside the first.
+    "run_authenticated_site_task": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    # Browser-server-mediated, so admissible in an authenticated profile. It
+    # changes page state and reaches Keychute through browser-server, but it
+    # returns no page content: the value it writes is never observable here.
+    "browser_autofill": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+    ),
+    "browser_report_login_outcome": _metadata(
+        ToolTag.BROWSER,
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
     ),
     "browser_request_handoff": _metadata(
         ToolTag.BROWSER,
