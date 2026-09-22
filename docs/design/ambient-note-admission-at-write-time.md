@@ -80,6 +80,14 @@ as authorisation; external content is withheld as today. "Look up how to do X an
 automation" therefore gives the judge X as the intent and the reviewed procedure as context, rather
 than the stub it renders today when the definition's stamp is external.
 
+Ambient notes need a channel of their own to reach that band. Prompt-included notes travel in the
+turn-context scaffolding message, which the reviewer's conversation rendering deliberately skips,
+because that block also carries unreviewed titles and the other context providers' output. The
+reviewer's input therefore gains one bounded section fed from the **eligible prompt notes only** —
+the same set the derived rule admits to the prompt — rendered as reviewed context. Nothing else in
+the turn-context block reaches the judge, so an ambient household procedure is evidence the judge
+can match an action against without the unreviewed catalog riding along.
+
 **Automation definitions use the same tier.** `executable-definition-taint.md` gates a definition's
 creation and marks an admitted definition as cured, so it fires with its intent intact. Under this
 design that cure is not a separate flag: an admitted definition's stamp is changed to
@@ -167,17 +175,23 @@ merely whether the user asked for a save. Two cases fix the boundary:
 Legitimate procedural instructions are the object of review, not automatically suspicious for being
 instructions. And reviewing a note or an attachment's description does not upgrade the attachment's
 **contents**, which the reviewer never examined; those remain separate artifacts with their own
-taint.
+taint. That has to hold on the read as well as the write: today `get_note` merges only the note's
+provenance and returns attachment bytes without their own stamp, unlike ordinary attachment
+injection. Attachments returned by a note read go through the shared attachment-provenance resolver,
+so an email-derived attachment on a reviewed note still raises the turn to its own tier.
 
-Which writes cross the gate:
+Which writes cross the gate is decided by the **resolved candidate**, not by the call or by the
+note's previous state:
 
-- creating or updating a note with `include_in_prompt: true`;
-- any write to a note that is already prompt-included — content, attachment associations, or
-  anything else that changes what the prompt renders — whether or not the call names
-  `include_in_prompt`;
-- creating or updating a note whose content declares skill frontmatter;
-- creating a note under a new title with no ambient intent is **not** gated. It is stamped with the
-  turn's taint like any artifact write.
+- a candidate that is prompt-included, whether the call set `include_in_prompt: true` or the note
+  already was and the call changed anything the prompt renders — content, attachment associations,
+  anything else;
+- a candidate whose content declares skill frontmatter;
+- a candidate that ends up reference-only — `include_in_prompt: false` and no skill metadata — takes
+  the ordinary `artifact_write` path even if the note was ambient before, since the write removes
+  ambient exposure rather than adding it. A user can always demote a note, in any turn;
+- creating a note under a new title with no ambient intent is likewise an ordinary artifact write,
+  stamped with the turn's taint.
 
 ### Imports are reviewed like anything else
 
@@ -272,8 +286,11 @@ treats them.
    conversation with such a note starts at `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers; web API writes stamp `trusted_user`; call transcripts stamp
-   `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository.
-   Verified by the conformance check rejecting a raw write and by a fresh-database memory bootstrap.
+   `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
+   `get_note` routes returned attachments through the shared attachment-provenance resolver.
+   Verified by the conformance check rejecting a raw write, by a fresh-database memory bootstrap,
+   and by a tool test that reading a reviewed note with an email-derived attachment raises the turn
+   to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict or the turn's taint
@@ -285,9 +302,11 @@ treats them.
    the resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is absent from
    the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
-   reviewed context; an admitted definition's stamp becomes `machine_reviewed` and renders as the
-   intent to judge against, replacing the cure flag. Verified by the existing executable-definition
-   tests passing with the cure expressed as the tier, and by reviewer rendering tests for each band.
+   reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
+   admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
+   against, replacing the cure flag. Verified by the existing executable-definition tests passing
+   with the cure expressed as the tier, and by reviewer rendering tests for each band, including
+   that an unreviewed title in the turn-context block does not appear in the reviewer's input.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
    operational-findings document's Issue 3 section marked as superseded by this one.
