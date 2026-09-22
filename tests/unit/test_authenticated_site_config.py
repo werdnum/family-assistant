@@ -88,7 +88,7 @@ def test_shipped_browser_profile_is_rejected(
             {"hellofresh": {**VALID_SITE, "browser_profile": "browser_profile"}},
         )
     message = str(failure.value)
-    assert "ucp_add_to_cart" in message
+    assert "browser_exec" in message
     assert "not browser-server-mediated" in message
 
 
@@ -532,7 +532,11 @@ def test_ordinary_browser_profiles_offer_autofill_without_sites(
                 is ToolPolicyDecision.ALLOW
             )
         if descriptor.name in {"browser_exec", "browser_extract"}:
-            assert (
-                engine.evaluate_for_execution(descriptor).decision
-                is ToolPolicyDecision.DENY
+            # Local semantic browsers still support these tools. Remote browser-server
+            # sessions enforce their credential protection independently of FA policy.
+            expected = (
+                ToolPolicyDecision.ALLOW
+                if profile_id == "browser_profile"
+                else ToolPolicyDecision.DENY
             )
+            assert engine.evaluate_for_execution(descriptor).decision is expected

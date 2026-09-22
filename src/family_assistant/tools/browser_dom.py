@@ -925,7 +925,9 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
             "description": (
                 "Return the current page (or a subtree by CSS selector) as "
                 "Markdown. Use this when you want page text content rather than "
-                "the element tree."
+                "the element tree. Available on local browsers only; remote "
+                "credential-protected sessions deny raw extraction. Use "
+                "browser_snapshot there instead."
             ),
             "parameters": {
                 "type": "object",
@@ -968,7 +970,8 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "don't fit: shadow DOM traversal, iframes, reading JSON from "
                 "same-origin endpoints, or custom DOM mutation. Refs you already "
                 "have keep working afterwards for elements the script left on "
-                "the page."
+                "the page. Available on local browsers only; remote "
+                "credential-protected sessions deny arbitrary JavaScript."
             ),
             "parameters": {
                 "type": "object",

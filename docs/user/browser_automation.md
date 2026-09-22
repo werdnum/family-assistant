@@ -70,6 +70,9 @@ Prefix your request with `/browse` to use the semantic DOM profile:
 - **`browser_select`** — select a `<select>` option by label or value.
 - **`browser_wait`** — wait for a load state or CSS selector to appear.
 - **`browser_screenshot`** — take an explicit screenshot to attach to the conversation.
+- **`browser_extract`** — read page content as Markdown in a local browser session.
+- **`browser_exec`** — run in-page JavaScript in a local browser session. These two tools are
+  unavailable in remote credential-protected sessions; use snapshots or visual actions instead.
 - **`browser_autofill`** — request a named Keychute credential for the current login form.
 - **`browser_report_login_outcome`** — stop further fills after a rejected password.
 
