@@ -345,9 +345,13 @@ applies to them). Adding a cohort to the script is part of adding the write path
 script's classification and the chokepoint's never disagree. Every other null-provenance row it
 stamps `trusted_internal`, minus a title pattern or an explicit list the operator supplies for rows
 they know to be imports, which it stamps `unknown_external` as well. Each row's audit record records
-the batch and which rule classified it. It is a deliberate operator judgment that the
-indistinguishable remainder of the pre-rollout corpus is household material, of the same kind as the
-history epoch amnesty, and it is recorded below as an accepted residual.
+the batch and which rule classified it. The script writes through the repository, so each restamp
+enqueues the row's indexing task exactly as an ordinary write does: the indexed copy of a note
+carries its own snapshot of the provenance envelope, which is what `search_documents` and the
+full-document tool restore, and a restamp that left that snapshot null would make the same rows
+external again through search. It is a deliberate operator judgment that the indistinguishable
+remainder of the pre-rollout corpus is household material, of the same kind as the history epoch
+amnesty, and it is recorded below as an accepted residual.
 
 After the batch, a null envelope is a write-path regression, not a legacy condition: the eligibility
 resolver and the shared explicit-read resolver still treat absence as external, and they log it at
@@ -406,9 +410,11 @@ state.
    tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
    fresh-database memory bootstrap, by a test of the batch script that restamps a null row
    `trusted_internal`, stamps a null call-transcript row and an operator-excluded row
-   `unknown_external`, and leaves stamped rows untouched, and by a test that a null row surviving
-   the batch is excluded from ambient reads and logged at ERROR, and by a tool test that reading a
-   reviewed note with an email-derived attachment raises the turn to the attachment's tier.
+   `unknown_external`, leaves stamped rows untouched, and enqueues indexing for every row it
+   restamps so that a document search over a restamped note restores the new tier, and by a test
+   that a null row surviving the batch is excluded from ambient reads and logged at ERROR, and by a
+   tool test that reading a reviewed note with an email-derived attachment raises the turn to the
+   attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict, and otherwise with the
@@ -434,8 +440,11 @@ state.
    unreviewed title in the turn-context block does not appear in the reviewer's input.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
-   operational-findings document's Issue 3 section marked as superseded by this one; and the three
-   companion contracts this design changes marked at the sentence, not the document:
+   operational-findings document's Issue 3 section marked as superseded by this one;
+   `runtime-taint-machinery.md`'s tier enumeration, sink table and policy matrix extended with
+   `machine_reviewed` and `ambient_prompt_write`, since that document is the contract implementers
+   read for the tier ordering and the sink surface and it must not disagree with this one; and the
+   three companion contracts this design changes marked at the sentence, not the document:
    `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance (an admitting
    verdict on an `ambient_prompt_write` now does, to `machine_reviewed` and only there);
    `risk-adjudicated-taint-enforcement.md`'s reservation of note promotion for human attestation
