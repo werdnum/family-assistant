@@ -319,12 +319,15 @@ an unreviewed one propagates its external taint — except that the shared resol
 through treats an **absent envelope as `unknown_external`** rather than skipping it. Today both the
 note tool and the shared artifact helper return early on missing metadata. After the rollout batch
 restamp no row should be null, so this is a tripwire for write-path regressions rather than a source
-of friction. The notes context provider does the same for the notes it includes: a reviewed note in
-the prompt merges a `machine_reviewed` source into the turn, so the turn's tier says that the model
-processed reviewed external text. That costs no friction at any sink but the admission sink — the
-tier's other cells are `trusted_internal`'s — and it keeps authorship honest: the assistant rows
-stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would let paraphrased
-web material pass the memory review as household-authored.
+of friction. The notes context provider does the same for everything it places in the prompt, the
+included note bodies and the catalogued database skills alike: a reviewed note or skill in the
+prompt merges a `machine_reviewed` source into the turn, so the turn's tier says that the model
+processed reviewed external text. Today the provider's taint sources come from the prompt notes
+only, which exclude skills; the eligible skills join them, since a skill's name and description are
+in every prompt exactly as an included body is. That costs no friction at any sink but the admission
+sink — the tier's other cells are `trusted_internal`'s — and it keeps authorship honest: the
+assistant rows stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would
+let paraphrased web material pass the memory review as household-authored.
 
 ### Titles stay in the catalog
 
@@ -411,10 +414,11 @@ state.
    prompt-intended notes and skills the derived rule excludes, so the operational rollout audit has
    its measurement. Verified by repository and provider tests that an `unknown_external` prompt note
    or skill is absent from bodies and the catalog, present by title, and unchanged for `get_note`,
-   `list_notes` and search; that a row with null provenance is excluded the same way and, when
-   fetched through `get_note`, `list_notes` or search, raises the turn to `unknown_external` and
-   logs the regression; and by a functional test that a conversation with such a note starts at
-   `trusted_user`.
+   `list_notes` and search; that a turn whose prompt carries a reviewed skill and nothing else
+   external starts at `machine_reviewed`, as one whose prompt carries a reviewed note does; that a
+   row with null provenance is excluded the same way and, when fetched through `get_note`,
+   `list_notes` or search, raises the turn to `unknown_external` and logs the regression; and by a
+   functional test that a conversation with such a note starts at `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers; a rollout script batch-restamps null-provenance rows `trusted_internal`, with
    the identifiable external cohorts (call transcripts) and an operator exclusion list stamped
@@ -425,11 +429,12 @@ state.
    tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
    fresh-database memory bootstrap, by a test of the batch script that restamps a null row
    `trusted_internal`, stamps a null call-transcript row and an operator-excluded row
-   `unknown_external`, leaves stamped rows untouched, and enqueues indexing for every row it
-   restamps so that a document search over a restamped note restores the new tier, and by a test
-   that a null row surviving the batch is excluded from ambient reads and logged at ERROR, and by a
-   tool test that reading a reviewed note with an email-derived attachment raises the turn to the
-   attachment's tier.
+   `unknown_external`, leaves stamped rows untouched, writes into each restamped row's audit record
+   the batch and the rule that classified it, and enqueues indexing for every row it restamps so
+   that a document search over a restamped note restores the new tier, and by a test that a null row
+   surviving the batch is excluded from ambient reads and logged at ERROR, and by a tool test that
+   reading a reviewed note with an email-derived attachment raises the turn to the attachment's
+   tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
