@@ -178,7 +178,10 @@ What the verdict does:
   confirmation is less friction than a refusal that sends the user off to redo the write in a clean
   turn. A sighted human confirmation is an **admitting decision**: it stamps `machine_reviewed`
   exactly as a judge's admission does, as a human-confirmed executable definition is cured today. A
-  declined or timed-out confirmation follows the denial rule above. The fallback is reached in
+  declined or timed-out confirmation follows the denial rule above. The confirmation shows the human
+  the **same resolved candidate the judge would have seen** — merged body, full attachment set with
+  rendered metadata, or the imported file's contents — never the raw call arguments, since an append
+  or an import path says nothing about the material being promoted. The fallback is reached in
   **enforce mode only**: observe mode never surfaces enforcement to the user, so with no reviewer
   configured an observe-mode write is simply not admitted — persisted as reference material with its
   external taint, without prompting.
@@ -368,14 +371,17 @@ rollout.
    with an email-derived attachment raises the turn to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
-   persist the candidate with `machine_reviewed` on an admitting verdict or the turn's taint
-   otherwise; the import tool merges the file as an `unknown_external` source first and defaults
-   inclusion off. Verified by tool tests for each gated shape and each tier, in both modes: an
-   admitting verdict yields a `machine_reviewed` row, and the next turn that includes it merges
-   exactly one `machine_reviewed` source and no external one; a denial refuses in enforce mode and
-   leaves the row untouched, and in observe mode persists an unreviewed row that is not included;
-   the `confirm` fallback holds; an append is reviewed and persisted as the resolved whole; an
-   import with skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
+   persist the candidate with `machine_reviewed` on an admitting verdict, and otherwise with the
+   maximum of the turn's taint and the stored taint of whatever the candidate retains, so a denied
+   or unreviewed partial write never lowers a stamp; the import tool merges the file as an
+   `unknown_external` source first and defaults inclusion off. Verified by tool tests for each gated
+   shape and each tier, in both modes: an admitting verdict yields a `machine_reviewed` row, and the
+   next turn that includes it merges exactly one `machine_reviewed` source and no external one; a
+   denial refuses in enforce mode and leaves the row untouched, and in observe mode persists an
+   unreviewed row that is not included; the `confirm` fallback holds and its prompt renders the
+   resolved candidate rather than the call's arguments, for an append and for an import alike; an
+   append is reviewed and persisted as the resolved whole; an import with skill frontmatter is
+   reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
