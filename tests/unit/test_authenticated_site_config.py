@@ -454,3 +454,18 @@ def test_enabled_authenticated_sites_require_service_url(
         ValidationError, match="require browser_handoff_config.service_url"
     ):
         _validate(data, {"hellofresh": VALID_SITE})
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    ["authenticated_browser_profile", "authenticated_browser_visual_profile"],
+)
+def test_authenticated_roles_must_use_local_tools(
+    shipped_config_data: dict[str, Any], profile_id: str
+) -> None:
+    data = copy.deepcopy(shipped_config_data)
+    _profile(data, profile_id)["remote_a2a"] = {
+        "agent_url": "https://remote.example/agent"
+    }
+    with pytest.raises(ValidationError, match="requires local browser roles"):
+        _validate(data, {"hellofresh": VALID_SITE})

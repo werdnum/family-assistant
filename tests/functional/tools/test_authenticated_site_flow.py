@@ -735,7 +735,8 @@ async def test_resume_after_losing_the_binding_fails_closed(
 
 
 @pytest.mark.parametrize(
-    "changed", ["user_id", "processing_profile_id", "subconversation_id"]
+    "changed",
+    ["user_id", "processing_profile_id", "subconversation_id", "withdrawn_completed"],
 )
 async def test_other_callers_cannot_touch_a_parked_run(
     changed: str,
@@ -770,14 +771,26 @@ async def test_other_callers_cannot_touch_a_parked_run(
         subconversation_id=None,
         processing_service=harness.caller,
     )
-    setattr(context, changed, "another-caller")
+    if changed == "withdrawn_completed":
+        before = {**before, "status": "completed", "session_id": None}
+        await context.db_context.delegation_runs.set_authenticated_site_state(
+            delegation_id, before
+        )
+        config = app_config.model_copy(deep=True)
+        config.authenticated_sites[SITE_ID].authorized_users = ["another-user"]
+        harness.caller.app_config = config
+    else:
+        setattr(context, changed, "another-caller")
     result = await run_authenticated_site_task_tool(
         cast("ToolExecutionContext", context),
         SITE_ID,
         OBJECTIVE,
         resume=delegation_id,
     )
-    assert "No authenticated site task" in result.get_text()
+    if changed == "withdrawn_completed":
+        assert "not one of the people configured" in result.get_text()
+    else:
+        assert "No authenticated site task" in result.get_text()
     assert len(browser_server.requests) == requests_before
     assert await _envelope(db_engine, delegation_id) == before
 

@@ -372,7 +372,8 @@ async def _resume(
     # Re-resolved and re-enforced: a handle is not a durable grant.
     denied = _authorize(exec_context, site_id, site)
     if denied is not None:
-        await _discard_parked_session(exec_context, run, envelope, config)
+        if envelope["status"] in PARKED_AUTHENTICATED_STATUSES:
+            await _discard_parked_session(exec_context, run, envelope, config)
         return denied
 
     if envelope["status"] not in PARKED_AUTHENTICATED_STATUSES:

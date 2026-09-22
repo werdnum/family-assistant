@@ -2484,6 +2484,11 @@ class AppConfig(BaseSettings):
                         f"{profile_id!r}, which is not a configured service profile."
                     )
                     raise ValueError(msg)
+                if profile.remote_a2a is not None:
+                    raise ValueError(
+                        f"Authenticated site {site_id!r} requires local browser roles; "
+                        f"{profile_id!r} configures remote_a2a."
+                    )
                 violations = surface_violations(
                     tools_policy=profile.tools_policy,
                     operator_tools_policy=profile.operator_tools_policy,
