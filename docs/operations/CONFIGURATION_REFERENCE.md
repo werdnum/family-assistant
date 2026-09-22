@@ -2968,8 +2968,10 @@ ______________________________________________________________________
 With `browser_handoff_config.enabled`, ordinary browser profiles can request
 `browser_autofill(secret_name=...)` on the page they are visiting. Configure Keychute on
 **browser-server**, using its `BROWSER_KEYCHUTE_URL` and `BROWSER_KEYCHUTE_TOKEN` settings and an
-autofill-capable trusted client. No `authenticated_sites` entry is required. Use the browser-server
-version that supports `autofill_enabled` sessions and the autofill request's `secret_name`.
+autofill-capable trusted client. Set `BROWSER_KEYCHUTE_EXTERNAL_URL` to the user-facing Keychute URL
+so pending requests include an approval link. No `authenticated_sites` entry is required. Use the
+browser-server version that supports `autofill_enabled` sessions and the autofill request's
+`secret_name`.
 
 Keychute decides release interactively unless a policy/standing grant permits it. Origin constraints
 belong to the Keychute grant: browser-server checks the actual HTTPS document origin and the granted
