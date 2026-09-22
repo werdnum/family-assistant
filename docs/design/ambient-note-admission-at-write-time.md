@@ -95,6 +95,16 @@ design that cure is not a separate flag: an admitted definition's stamp is chang
 reviewer as the intent to judge against, as the cure does today. One tier expresses "a judge
 admitted this stored artifact" for both kinds.
 
+The firing rule follows from the tier rather than from a trusted-or-not branch. Today a payload-free
+callback either contributes no taint source, when its definition's stamp is non-external, or enters
+as an `unknown_external` trigger. A reviewed definition does neither: it **contributes a
+`machine_reviewed` source** — its own stamp — and renders as the intent to judge against. The turn
+is then at `machine_reviewed`, which the sink matrix treats as `trusted_internal` for enforcement
+while authorship stays honest, exactly as a reviewed note included in the prompt does. In general
+the callback contributes the definition's stored tier: nothing for a trusted-pole stamp, the
+reviewed tier for an admitted one, `unknown_external` for anything else; a payload is judged
+separately, as today.
+
 Records that already exist are not rewritten. A `definition_v1` record cured by its disposition
 (judge-allowed, human-confirmed, or amnestied) keeps resolving exactly as it does today; only
 admissions made after this ships stamp the tier. Resolution therefore accepts either form — a
@@ -250,14 +260,18 @@ writer supplies its stamp from its own trust:
 - **Call transcripts** (the Asterisk route) are authored by whoever was on the call and stamp
   `unknown_external`; they are reference material, never ambient.
 
-Readers change nothing. `get_note`, `list_notes`, `search_documents` and the full-document tool
-restore stored provenance exactly as they do today; a reviewed note propagates `machine_reviewed`
-and an unreviewed one propagates its external taint. The notes context provider does the same for
-the notes it includes: a reviewed note in the prompt merges a `machine_reviewed` source into the
-turn, so the turn's tier says that the model processed reviewed external text. That costs no
-friction — the tier's sink cells are `trusted_internal`'s — and it keeps authorship honest: the
-assistant rows stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would
-let paraphrased web material pass the memory review as household-authored.
+Readers change in one way only. `get_note`, `list_notes`, `search_documents` and the full-document
+tool restore stored provenance as they do today — a reviewed note propagates `machine_reviewed` and
+an unreviewed one propagates its external taint — except that the shared resolver they restore it
+through treats an **absent envelope as `unknown_external`** rather than skipping it. Today both the
+note tool and the shared artifact helper return early on missing metadata, so a pre-rollout import
+with attacker-controlled text enters a turn untainted when fetched explicitly; after this change it
+enters at the tier absence has always meant. The notes context provider does the same for the notes
+it includes: a reviewed note in the prompt merges a `machine_reviewed` source into the turn, so the
+turn's tier says that the model processed reviewed external text. That costs no friction — the
+tier's sink cells are `trusted_internal`'s — and it keeps authorship honest: the assistant rows
+stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would let paraphrased
+web material pass the memory review as household-authored.
 
 ### Titles stay in the catalog
 
@@ -311,8 +325,9 @@ trusted state and would leave those imported prompt notes and skills ambient aft
    on the reuse predicate in the repository. Verified by repository and provider tests that an
    `unknown_external` prompt note or skill is absent from bodies and the catalog, present by title,
    and unchanged for `get_note`, `list_notes` and search; that a legacy row with null provenance is
-   excluded the same way; and by a functional test that a conversation with such a note starts at
-   `trusted_user`.
+   excluded the same way and, when fetched through `get_note`, `list_notes` or search, raises the
+   turn to `unknown_external`; and by a functional test that a conversation with such a note starts
+   at `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers; web API writes stamp `trusted_user`; call transcripts stamp
    `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
@@ -334,8 +349,10 @@ trusted state and would leave those imported prompt notes and skills ambient aft
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
    against, replacing the cure flag. Verified by the existing executable-definition tests passing
-   with the cure expressed as the tier, and by reviewer rendering tests for each band, including
-   that an unreviewed title in the turn-context block does not appear in the reviewer's input.
+   with the cure expressed as the tier; by a task-worker test that a payload-free callback of a
+   reviewed definition enters at `machine_reviewed` with its intent rendered, neither untainted nor
+   `unknown_external`; and by reviewer rendering tests for each band, including that an unreviewed
+   title in the turn-context block does not appear in the reviewer's input.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
    operational-findings document's Issue 3 section marked as superseded by this one.
