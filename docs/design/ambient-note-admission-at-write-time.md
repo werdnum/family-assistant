@@ -213,10 +213,12 @@ its own. Reading the file merges an `unknown_external` source into the turn, as 
 does — the file is external content, and the turn now says so. The note write that follows is then
 gated exactly as any other: frontmatter may *request* `include_in_prompt` or declare skill metadata,
 and that request crosses the `ambient_prompt_write` gate at `unknown_external`, where the judge
-decides. An admitted import is `machine_reviewed`; a refused or unreviewed one is stored as
-reference material with its external taint, and its skill metadata does not reach the catalog
-because the derived rule excludes it. Absent any frontmatter request, an import defaults to
-`include_in_prompt: false`, so the common "pull this file in for reference" case involves no review.
+decides. An admitted import is `machine_reviewed`. A denied one follows the general rule: in enforce
+mode nothing is stored, and retrying the unchanged file crosses the gate again because its
+frontmatter still asks; in observe mode it may be stored as reference material with its external
+taint, and its skill metadata does not reach the catalog because the derived rule excludes it.
+Absent any frontmatter request, an import defaults to `include_in_prompt: false`, so the common
+"pull this file in for reference" case involves no review.
 
 ### Every write stamps its taint at one chokepoint
 
@@ -311,11 +313,11 @@ treats them.
    persist the candidate with `machine_reviewed` on an admitting verdict or the turn's taint
    otherwise; the import tool merges the file as an `unknown_external` source first and defaults
    inclusion off. Verified by tool tests for each gated shape and each tier, in both modes: an
-   admitting verdict yields a `machine_reviewed` row that the next turn includes untainted; a denial
-   refuses in enforce mode and leaves the row untouched, and in observe mode persists an unreviewed
-   row that is not included; the `confirm` fallback holds; an append is reviewed and persisted as
-   the resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is absent from
-   the catalog.
+   admitting verdict yields a `machine_reviewed` row, and the next turn that includes it merges
+   exactly one `machine_reviewed` source and no external one; a denial refuses in enforce mode and
+   leaves the row untouched, and in observe mode persists an unreviewed row that is not included;
+   the `confirm` fallback holds; an append is reviewed and persisted as the resolved whole; an
+   import with skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
