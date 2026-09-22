@@ -50,8 +50,9 @@ again. Configured site runs retain their existing parked-run handling.
 - No vault enumeration, automatic secret-name discovery, new MFA system, or automatic session
   persistence is required. Ask for a name when it is unknown; use human handoff for challenges the
   agent cannot complete.
-- Existing bad-password and per-session fill limits remain bounded failure handling. Another task
-  can start a fresh session after the stored secret is corrected.
+- Existing bad-password and per-session fill limits remain bounded failure handling. Reporting a
+  rejected password discards an ordinary browser session; a later user-requested task can open a
+  fresh session in the same conversation after the stored secret is corrected.
 
 These are explicit product choices for the requested workflow, not missing static-site validation to
 add during review.

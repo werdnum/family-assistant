@@ -22,7 +22,10 @@ from browser_handoff_service.main import registry as browser_server_registry
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools import browser_backend as backend_module
-from family_assistant.tools.browser_autofill import browser_autofill_tool
+from family_assistant.tools.browser_autofill import (
+    browser_autofill_tool,
+    browser_report_login_outcome_tool,
+)
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionSpec,
     AuthenticatedSessionUnavailableError,
@@ -320,13 +323,10 @@ async def test_authenticated_otp_handoff_returns_through_server_side_claim(
     await backend.close()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("profile_id", ["browser_profile", "browser_visual_profile"])
-async def test_ordinary_browser_requests_named_secret_and_resumes_approval(
+def _ordinary_tool_context(
     monkeypatch: pytest.MonkeyPatch,
     profile_id: str,
-) -> None:
-    pending_requests = _fake_keychute(monkeypatch, approved=False)
+) -> tuple[RemoteBrowserBackend, ToolExecutionContext]:
     backend = _backend(ordinary=True)
     monkeypatch.setitem(backend_module._remote_backends, "on-demand-conv", backend)
     context = cast(
@@ -351,6 +351,17 @@ async def test_ordinary_browser_requests_named_secret_and_resumes_approval(
             tool_call_id=None,
         ),
     )
+    return backend, context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile_id", ["browser_profile", "browser_visual_profile"])
+async def test_ordinary_browser_requests_named_secret_and_resumes_approval(
+    monkeypatch: pytest.MonkeyPatch,
+    profile_id: str,
+) -> None:
+    pending_requests = _fake_keychute(monkeypatch, approved=False)
+    backend, context = _ordinary_tool_context(monkeypatch, profile_id)
     try:
         await backend.goto(f"{ORIGIN}/login")
         assert backend.session_id is not None
@@ -387,5 +398,42 @@ async def test_ordinary_browser_requests_named_secret_and_resumes_approval(
         ]
         assert not backend.autofill_step_keys
         await backend.goto("https://another.example.test/")
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_rejected_password_can_be_corrected_in_the_same_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_keychute(monkeypatch)
+    backend, context = _ordinary_tool_context(monkeypatch, "browser_profile")
+    try:
+        await backend.goto(f"{ORIGIN}/login")
+        failed_session_id = backend.session_id
+        assert failed_session_id is not None
+        reported = await browser_report_login_outcome_tool(
+            context, outcome="bad_password"
+        )
+        assert "discarded" in reported.get_text()
+        assert backend.session_id is None
+        assert _session_record(failed_session_id).state == "cancelled"
+        await backend.goto(f"{ORIGIN}/login")
+        assert (
+            backend.session_id is not None and backend.session_id != failed_session_id
+        )
+        record = _session_record(backend.session_id)
+        worker = cast(
+            "FakeBrowserWorker", browser_server_registry.workers[record.worker_id]
+        )
+        worker.autofill_fields = [
+            {"ref": "e12", "input_type": "password", "name": "Password"}
+        ]
+        filled = await browser_autofill_tool(
+            context, secret_name="corrected-password", kind="password"
+        )
+        data = filled.get_data()
+        assert isinstance(data, dict)
+        assert data["status"] == "filled", filled.get_text()
     finally:
         await backend.close()

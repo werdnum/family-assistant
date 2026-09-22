@@ -901,6 +901,18 @@ class RemoteBrowserBackend:
         self._raise_for_status(resp, "autofill")
         return cast("JsonDict", resp.json())
 
+    async def discard_session(self) -> None:
+        """Discard a failed browser session while keeping this backend reusable."""
+        session_id = self._session_id
+        if session_id is None:
+            return
+        response = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/close",
+            headers=self._headers(),
+        )
+        self._raise_for_status(response, "discard session")
+        self._clear_remote_session(session_id)
+
     async def report_autofill_outcome(self, outcome: str) -> JsonDict:
         """Latch a login outcome on the session; a bad password refuses later fills."""
         session_id = await self._ensure_session()

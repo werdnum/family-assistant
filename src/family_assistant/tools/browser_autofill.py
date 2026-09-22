@@ -249,6 +249,17 @@ async def browser_report_login_outcome_tool(
     if binding is not None:
         binding.bad_password_recorded = True
     await backend.report_autofill_outcome(outcome)
+    if binding is None:
+        await backend.discard_session()
+        return ToolResult(
+            text=(
+                "Recorded that the stored password was rejected and discarded "
+                "this browser session. Stop and ask the user to correct the "
+                "stored password. When they ask to try again, browser_open "
+                "starts a fresh session in this conversation."
+            ),
+            data={"status": "bad_password_recorded", "session_discarded": True},
+        )
     return ToolResult(
         text=(
             "Recorded that the stored password was rejected. No further fill "

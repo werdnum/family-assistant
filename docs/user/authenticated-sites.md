@@ -18,8 +18,9 @@ website origins.
 
 If you did not specify a secret name, the assistant can ask which one to request. Give it the name,
 never the password itself. Keychute delivers the credential directly to the browser; the assistant
-submits the form and continues your task. If the password is rejected, it stops and asks you to
-correct the stored secret.
+submits the form and continues your task. If the password is rejected, it stops, discards the failed
+browser session, and asks you to correct the stored secret. After correcting it, ask it to try again
+in the same conversation.
 
 The browser stays open while you approve, subject to its normal expiry. If it expires or the service
 restarts, ask the assistant to start the task again. For MFA or a captcha, it can give you a browser
