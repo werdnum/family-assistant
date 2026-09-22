@@ -303,15 +303,22 @@ re-litigated, and it can be tightened later without touching the rest of the des
 
 ### Existing rows
 
-No backfill is needed. Eligibility derives from the stored tier, so the production notes whose
-`unknown_external` stamp is poisoning every turn simply stop being included the moment the derived
-rule ships; their content and labels are untouched. A user who wants one back asks for it in a clean
-turn (a `trusted_user` write, or a reviewed one if the turn is tainted) or edits it in the Notes UI.
-Rows with no provenance at all — including every note the current import path has written — are
-absent-is-untrusted, as `is_externally_authored` already treats a missing tier. The eligibility
-resolver reads the stored envelope and treats its absence as external directly; it must not parse
-the row through `TurnTaintState.from_metadata()` first, which turns a missing envelope into an empty
-trusted state and would leave those imported prompt notes and skills ambient after rollout.
+No general backfill is needed. Eligibility derives from the stored tier, so the production notes
+whose `unknown_external` stamp is poisoning every turn simply stop being included the moment the
+derived rule ships; their content and labels are untouched. One row is the exception: the
+household's **core-memory note** was created by the bootstrap with no provenance, so
+absent-is-untrusted would drop the always-loaded core memory from every prompt on upgrade. The core
+note is the one null-provenance row the system can identify with certainty — the memory invariants
+name it — so the bootstrap and index-refresh helpers, which now stamp `trusted_internal` on every
+write, restamp it on their first run after rollout. Every other null-provenance row, including the
+indistinguishable legacy imports, stays conservatively external. A user who wants one back asks for
+it in a clean turn (a `trusted_user` write, or a reviewed one if the turn is tainted) or edits it in
+the Notes UI. Rows with no provenance at all — including every note the current import path has
+written — are absent-is-untrusted, as `is_externally_authored` already treats a missing tier. The
+eligibility resolver reads the stored envelope and treats its absence as external directly; it must
+not parse the row through `TurnTaintState.from_metadata()` first, which turns a missing envelope
+into an empty trusted state and would leave those imported prompt notes and skills ambient after
+rollout.
 
 ## Deliberate simplifications
 
@@ -347,12 +354,14 @@ trusted state and would leave those imported prompt notes and skills ambient aft
    turn to `unknown_external`; and by a functional test that a conversation with such a note starts
    at `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
-   repository helpers; web API writes stamp `trusted_user`; call transcripts stamp
-   `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
-   `get_note` routes returned attachments through the shared attachment-provenance resolver.
-   Verified by the conformance check rejecting a raw write, by a fresh-database memory bootstrap,
-   and by a tool test that reading a reviewed note with an email-derived attachment raises the turn
-   to the attachment's tier.
+   repository helpers and restamp an existing null-provenance core note as `trusted_internal` on
+   first run; web API writes stamp `trusted_user`; call transcripts stamp `unknown_external`; the
+   ast-grep rule forbids raw note-table writes outside the repository; `get_note` routes returned
+   attachments through the shared attachment-provenance resolver. Verified by the conformance check
+   rejecting a raw write, by a fresh-database memory bootstrap, by an upgrade test in which a
+   pre-existing core note with null provenance is included in the prompt after the first refresh
+   while a null-provenance imported note is not, and by a tool test that reading a reviewed note
+   with an email-derived attachment raises the turn to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict or the turn's taint
