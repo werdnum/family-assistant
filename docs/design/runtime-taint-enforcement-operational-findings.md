@@ -6,6 +6,14 @@ Proposed operational correction and follow-up design.
 
 ## Summary
 
+> **Partly superseded.** The note-admission parts of this document — the read-time
+> `blocked_by_taint` status, exact authenticated-user review of prompt material, hidden titles, and
+> the non-goal that leaves `known_contact` and `recognized_machine` eligible unreviewed — are
+> replaced by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
+> which reviews at the write through machine adjudication, gates every externally authored tier, and
+> keeps unreviewed titles in the catalog as a recorded residual. The production evidence, the
+> sandbox-denial correction, and the other operational issues below stand.
+
 Runtime taint tracking is collecting useful provenance in production, but enabling the shipped
 enforcement matrix today would impose enough false-positive friction that the deployment remains in
 `observe` mode. That is not a neutral outcome: a policy too disruptive to enable provides no runtime
@@ -375,9 +383,9 @@ aggregate diagnostics surface.
 
 ## Rollout sequence
 
-> **Superseded** by
+> Steps 1–4 are **superseded** by
 > [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md), whose work
-> plan replaces this sequence; it is kept for the record of what was considered.
+> plan replaces them; they are kept for the record of what was considered. Steps 5–8 stand.
 
 1. Add one read-time ambient-admission snapshot covering included regular notes, excluded-note
    titles, database-skill catalog entries, derived status, and context taint.
