@@ -785,7 +785,7 @@ async def test_caller_prompt_and_discovery_list_only_authorized_sites(
     assert DISPLAY_NAME in seen[0]
     assert "private-owner-service" not in seen[0]
     assert "Private account" not in seen[0]
-    assert not caller.authenticated_site_catalog_addition(
+    assert not await caller.authenticated_site_catalog_addition(
         user_name="stranger", user_id=None
     )
     context = cast(
@@ -865,3 +865,20 @@ async def test_bad_password_report_failure_preserves_observed_rejection(
     reply = await harness.ask("Please check my order.")
     assert f"{DISPLAY_NAME}: needs_human." in reply
     assert browser_server.sessions_closed == 1
+
+
+async def test_denied_task_tool_suppresses_site_catalog(app_config: AppConfig) -> None:
+    caller = await _service(
+        profile_id=CALLER_PROFILE_ID,
+        app_config=app_config,
+        llm=RuleBasedMockLLMClient(rules=[]),
+    )
+    caller.tools_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.DENY, rules=[])
+        ),
+    )
+    assert not await caller.authenticated_site_catalog_addition(
+        user_name=TEST_USER, user_id=None
+    )

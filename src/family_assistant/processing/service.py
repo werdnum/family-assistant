@@ -1218,7 +1218,7 @@ class ProcessingService:
             f"{catalog}"
         )
 
-    def authenticated_site_catalog_addition(
+    async def authenticated_site_catalog_addition(
         self, *, user_name: str, user_id: str | None
     ) -> str:
         """List only sites this caller may ask this profile to use."""
@@ -1235,6 +1235,18 @@ class ProcessingService:
             )
         ]
         if not sites:
+            return ""
+        from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+            get_tool_definitions_for_advertisement,
+        )
+
+        advertised = await get_tool_definitions_for_advertisement(
+            self.tools_provider, can_confirm=True
+        )
+        if not any(
+            definition.get("function", {}).get("name") == "run_authenticated_site_task"
+            for definition in advertised
+        ):
             return ""
         return (
             "## Authenticated websites available to you\nUse run_authenticated_site_task with these site IDs:\n"
@@ -1650,7 +1662,7 @@ class ProcessingService:
             final_system_prompt = (
                 f"{final_system_prompt}\n\n{delegation_addition}".strip()
             )
-        site_catalog = self.authenticated_site_catalog_addition(
+        site_catalog = await self.authenticated_site_catalog_addition(
             user_name=user_name, user_id=user_id
         )
         if site_catalog:

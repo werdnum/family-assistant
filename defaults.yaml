@@ -891,8 +891,8 @@ default_profile_settings:
             - "drive_write_file"
             # Acting on a saved login is a standing operator grant, but a
             # newly configured site starts behind the confirmation rule
-            # below until the operator relaxes it: one prompt per task,
-            # not per action, so it does not train rubber-stamping.
+            # below until the operator relaxes it: prompts on starts and resumes,
+            # not on each browser action.
             - "run_authenticated_site_task"
         decision: "allow"
         priority: 10
@@ -2116,8 +2116,8 @@ service_profiles:
               - "drive_write_file"
               # Acting on a saved login is a standing operator grant, but a
               # newly configured site starts behind the confirmation rule
-              # below until the operator relaxes it: one prompt per task,
-              # not per action, so it does not train rubber-stamping.
+              # below until the operator relaxes it: prompts on starts and resumes,
+              # not on each browser action.
               - "run_authenticated_site_task"
           decision: "allow"
           priority: 10
