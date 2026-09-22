@@ -15,10 +15,11 @@ once, so each stays cheap and focused.
   coordinates from screenshots. Best for `<canvas>`, image maps, and drag-and-drop on non-DOM
   surfaces.
 
-Both browse a site as an anonymous visitor. For a site your household has a saved login for -- where
-the assistant signs in and acts on your account -- see
-[authenticated-sites.md](authenticated-sites.md); that is a separate, operator-configured
-capability, not something `/browse` can reach.
+For stored credentials, use `/browse_authenticated` or let the assistant delegate to it after
+encountering a login wall. It opens a separate protected session and can request a named Keychute
+secret without preconfigured sites. Ordinary browsing retains JavaScript and raw extraction; the
+credential browser uses snapshots and visual actions. See
+[signing into websites](authenticated-sites.md).
 
 By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse_visual` only when
 the DOM-based path cannot see what it needs to interact with.
@@ -67,11 +68,16 @@ Prefix your request with `/browse` to use the semantic DOM profile:
 - **`browser_click`** — click an element by its ref.
 - **`browser_fill`** — fill an input by ref, optionally pressing Enter to submit.
 - **`browser_select`** — select a `<select>` option by label or value.
-- **`browser_extract`** — convert the current page (or a subtree) to Markdown.
 - **`browser_wait`** — wait for a load state or CSS selector to appear.
 - **`browser_screenshot`** — take an explicit screenshot to attach to the conversation.
-- **`browser_exec`** — run JavaScript in the page (escape hatch for shadow DOM, iframes, reading
-  same-origin JSON endpoints, or multi-step DOM mutation in a single turn).
+- **`browser_extract`** — read page content as Markdown.
+- **`browser_exec`** — run in-page JavaScript when the fixed actions do not fit.
+
+For stored-password login tasks, use `/browse_authenticated`, or let the assistant switch when it
+encounters a login wall. That browser can request named Keychute credentials without site
+registration. It uses a separate session: cookies and page progress do not transfer from `/browse`.
+JavaScript and raw extraction are unavailable in the credential browser; it uses snapshots and
+visual actions instead. See [signing into websites](authenticated-sites.md).
 
 ## The `/browse_visual` Command (fallback, coordinate-based)
 

@@ -666,6 +666,7 @@ class RemoteBrowserBackend:
         client: httpx.AsyncClient | None = None,
         timezone_id: str | None = None,
         authenticated: AuthenticatedSessionSpec | None = None,
+        autofill_enabled: bool = False,
     ) -> None:
         if not config.service_url:
             raise BrowserBackendError(
@@ -682,10 +683,17 @@ class RemoteBrowserBackend:
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
         self._last_url: str = ""
         self._authenticated = authenticated
+        self._autofill_enabled = autofill_enabled or authenticated is not None
+        self.autofill_step_keys: dict[str, str] = {}
 
     @property
     def current_url(self) -> str:
         return self._last_url
+
+    @property
+    def autofill_enabled(self) -> bool:
+        """Whether this backend was created for credential-protected browsing."""
+        return self._autofill_enabled
 
     @property
     def authenticated_spec(self) -> AuthenticatedSessionSpec | None:
@@ -869,11 +877,12 @@ class RemoteBrowserBackend:
         self,
         *,
         step_key: str,
+        secret_name: str | None = None,
         fields: list[JsonDict] | None = None,
         wait_seconds: float | None = None,
         context: JsonDict | None = None,
     ) -> JsonDict:
-        """Ask browser-server to fill the session's pinned credential.
+        """Ask browser-server to request and fill a Keychute credential.
 
         The outcome comes back as a 200 with a typed status, so a policy result
         never has to be inferred from an HTTP code. No secret crosses this
@@ -881,6 +890,8 @@ class RemoteBrowserBackend:
         """
         session_id = await self._ensure_session()
         payload: JsonDict = {"step_key": step_key}
+        if secret_name is not None:
+            payload["secret_name"] = secret_name
         if fields is not None:
             payload["fields"] = fields
         if wait_seconds is not None:
@@ -896,6 +907,18 @@ class RemoteBrowserBackend:
             raise self._session_lost_error("autofill", session_id)
         self._raise_for_status(resp, "autofill")
         return cast("JsonDict", resp.json())
+
+    async def discard_session(self) -> None:
+        """Discard a failed browser session while keeping this backend reusable."""
+        session_id = self._session_id
+        if session_id is None:
+            return
+        response = await self._client.post(
+            f"{self._base_url}/v1/sessions/{session_id}/close",
+            headers=self._headers(),
+        )
+        self._raise_for_status(response, "discard session")
+        self._clear_remote_session(session_id)
 
     async def report_autofill_outcome(self, outcome: str) -> JsonDict:
         """Latch a login outcome on the session; a bad password refuses later fills."""
@@ -925,6 +948,7 @@ class RemoteBrowserBackend:
             "conversation_id": self._conversation_id,
             "interface_type": "research",
             "initial_owner": "agent",
+            "autofill_enabled": self._autofill_enabled,
         }
         if self._timezone_id:
             payload["timezone_id"] = self._timezone_id
@@ -944,6 +968,7 @@ class RemoteBrowserBackend:
         )
         self._session_id = None
         self._last_url = ""
+        self.autofill_step_keys.clear()
 
     def _is_unknown_session_response(self, resp: httpx.Response) -> bool:
         if resp.status_code != 404:
@@ -1276,9 +1301,9 @@ def _origin_set(value: object) -> frozenset[str]:
     return frozenset(item.rstrip("/") for item in value if isinstance(item, str))
 
 
-# Remote backends are keyed by conversation_id, mirroring the local
-# BrowserSession registry so each conversation drives its own remote session.
-_remote_backends: dict[str, RemoteBrowserBackend] = {}
+# Each conversation has independent ordinary and credential-protected contexts.
+# Semantic and visual profiles share only within the same mode.
+_remote_backends: dict[tuple[str, bool], RemoteBrowserBackend] = {}
 
 
 @dataclass(slots=True)
@@ -1444,8 +1469,9 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
     enabled for the active profile (including ``browser_visual_profile``); otherwise
     the shared local Playwright session.  Both the semantic DOM profile and the
     visual Computer Use profile share the same remote session keyed by
-    ``conversation_id``, so the tab state (URL, cookies, form fills) is preserved
-    across profile delegation.
+    ``conversation_id`` and credential-protection mode. Semantic and visual
+    delegation within a mode preserves the tab; moving to credential browsing
+    uses a separate context, never the ordinary tab or its cookies.
     """
     binding = await resolve_authenticated_binding(exec_context)
     if binding is not None:
@@ -1463,14 +1489,31 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
             "and no session is bound to this run. The run cannot continue; "
             "start the task again."
         )
+    service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(service, "app_config", None) if service is not None else None
+    handoff = app_config.browser_handoff_config if app_config else None
+    autofill_enabled = bool(
+        handoff
+        and exec_context.processing_profile_id in handoff.autofill_capable_profiles
+    )
     config = _remote_enabled(exec_context)
+    if autofill_enabled and config is None:
+        raise BrowserBackendError(
+            "Credential browsing requires browser-server enabled for this profile."
+        )
     if config is not None:
-        session_key = exec_context.conversation_id or "default"
+        conversation_id = exec_context.conversation_id or "default"
+        session_key = (conversation_id, autofill_enabled)
         backend = _remote_backends.get(session_key)
         if backend is None:
             tz = getattr(exec_context, "timezone", None)
             timezone_id = str(tz) if tz else None
-            backend = RemoteBrowserBackend(config, session_key, timezone_id=timezone_id)
+            backend = RemoteBrowserBackend(
+                config,
+                conversation_id,
+                timezone_id=timezone_id,
+                autofill_enabled=autofill_enabled,
+            )
             _remote_backends[session_key] = backend
         return backend
     session: BrowserSession = await get_browser_session(exec_context)
@@ -1479,8 +1522,9 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
 
 async def close_browser_backend(exec_context: ToolExecutionContext) -> None:
     """Close and remove any backend (local or remote) for this context."""
-    session_key = exec_context.conversation_id or "default"
-    remote = _remote_backends.pop(session_key, None)
-    if remote is not None:
-        await remote.close()
+    conversation_id = exec_context.conversation_id or "default"
+    for autofill_enabled in (False, True):
+        remote = _remote_backends.pop((conversation_id, autofill_enabled), None)
+        if remote is not None:
+            await remote.close()
     await close_browser_session(exec_context)

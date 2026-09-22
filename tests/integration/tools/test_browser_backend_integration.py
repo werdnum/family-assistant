@@ -56,6 +56,7 @@ def _make_backend(
     *,
     conversation_id: str = "integ-conv-1",
     authenticated: AuthenticatedSessionSpec | None = None,
+    autofill_enabled: bool = False,
 ) -> RemoteBrowserBackend:
     """Return a RemoteBrowserBackend wired to the real browser-server app via ASGITransport."""
     transport = httpx.ASGITransport(app=browser_server_app)
@@ -76,6 +77,7 @@ def _make_backend(
         conversation_id=conversation_id,
         client=client,
         authenticated=authenticated,
+        autofill_enabled=autofill_enabled,
     )
 
 
@@ -160,25 +162,25 @@ async def test_screenshot_png_returns_valid_png_bytes() -> None:
 
 
 @pytest.mark.integration
-async def test_extract_html_returns_string() -> None:
-    """extract_html() returns the page HTML content."""
-    backend = _make_backend(conversation_id="integ-extract")
+async def test_extract_html_is_denied_in_credential_protected_session() -> None:
+    """Raw DOM cannot reveal values filled later in the same session."""
+    backend = _make_backend(conversation_id="integ-extract", autofill_enabled=True)
     try:
         await backend.goto("https://example.test/page")
-        html = await backend.extract_html(selector=None)
-        assert isinstance(html, str)
+        with pytest.raises(BrowserBackendError, match="denied"):
+            await backend.extract_html(selector=None)
     finally:
         await backend.close()
 
 
 @pytest.mark.integration
-async def test_evaluate_returns_serialisable_result() -> None:
-    """evaluate() runs JS in the page V8 context and returns a serialisable result."""
-    backend = _make_backend(conversation_id="integ-eval")
+async def test_evaluate_is_denied_before_any_credential_fill() -> None:
+    """The agent cannot install a listener before asking for a password."""
+    backend = _make_backend(conversation_id="integ-eval", autofill_enabled=True)
     try:
         await backend.goto("https://example.test/page")
-        result = await backend.evaluate("1 + 1")
-        assert result is not None
+        with pytest.raises(BrowserBackendError, match="denied"):
+            await backend.evaluate("document.title")
     finally:
         await backend.close()
 

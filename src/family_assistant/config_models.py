@@ -634,6 +634,14 @@ class BrowserHandoffConfig(BaseModel):
         default_factory=lambda: ["browser_profile"]
     )
 
+    # These profiles use a separate credential-protected remote session.
+    autofill_capable_profiles: list[str] = Field(
+        default_factory=lambda: [
+            "credential_browser_profile",
+            "credential_browser_visual_profile",
+        ]
+    )
+
 
 class ServiceProfile(BaseModel):
     """Configuration for a service profile.
