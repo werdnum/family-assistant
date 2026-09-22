@@ -265,7 +265,7 @@ def _derive_status(
     if (
         binding.bad_password_recorded
         or binding.autofill_refusal is not None
-        or binding.handoff_failed
+        or binding.operation_failures
     ):
         return "needs_human", None
     return "completed", None

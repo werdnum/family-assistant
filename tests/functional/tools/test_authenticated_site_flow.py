@@ -148,6 +148,7 @@ class FakeBrowserServer:
 
     session_read_status: int = 200
     outcome_status: int = 200
+    command_status: int = 200
     jar_invalidated: bool = False
     autofill_replies: list[JsonDict] = field(default_factory=list)
     requests: list[tuple[str, str, JsonDict]] = field(default_factory=list)
@@ -209,7 +210,10 @@ class FakeBrowserServer:
                 },
             )
         if path.endswith("/agent-command"):
-            return httpx.Response(200, json={"result": _command_result(body)})
+            return httpx.Response(
+                200 if body.get("type") == "navigate" else self.command_status,
+                json={"result": _command_result(body)},
+            )
         if path.endswith("/autofill/outcome"):
             return httpx.Response(
                 self.outcome_status, json={"autofill_bad_password": True}
@@ -900,3 +904,23 @@ async def test_denied_task_tool_suppresses_site_catalog(app_config: AppConfig) -
     assert not await caller.authenticated_site_catalog_addition(
         user_name=TEST_USER, user_id=None
     )
+
+
+async def test_browser_operation_failure_cannot_settle_as_completed(
+    app_config: AppConfig,
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[object, object, object]],
+    browser_server: FakeBrowserServer,
+) -> None:
+    browser_server.command_status = 500
+    harness = await _harness(
+        app_config=app_config,
+        db_engine=db_engine,
+        task_worker_manager=task_worker_manager,
+        worker_llm=_worker_llm("browser_snapshot", {}),
+        resume=ResumeHandle(),
+        conversation_id="conv-failed-operation",
+    )
+    reply = await harness.ask("Please check my order.")
+    assert f"{DISPLAY_NAME}: needs_human." in reply
+    assert browser_server.sessions_closed == 1

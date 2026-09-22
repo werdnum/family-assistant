@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -31,6 +32,7 @@ from family_assistant.tools.browser_autofill import (
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
+    BrowserBackendError,
     RemoteBrowserBackend,
     bind_authenticated_session,
     release_authenticated_session,
@@ -409,3 +411,25 @@ async def test_probe_time_revocation_disables_autofill(probe: JsonDict) -> None:
     assert routing.jar_id is None
     assert routing.login_required is not None
     assert "revoked" in routing.login_required
+
+
+@pytest.mark.asyncio
+async def test_successful_retry_clears_only_its_operation_failure(
+    bound: tuple[AuthenticatedSessionBinding, list[httpx.Request]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binding, _ = bound
+    monkeypatch.setattr(
+        binding.backend,
+        "report_autofill_outcome",
+        AsyncMock(side_effect=[BrowserBackendError("offline"), {}]),
+    )
+    binding.operation_failures.add("browser_click")
+    with pytest.raises(BrowserBackendError):
+        await browser_report_login_outcome_tool(_exec_context(), outcome="bad_password")
+    assert binding.operation_failures == {
+        "browser_click",
+        "browser_report_login_outcome",
+    }
+    await browser_report_login_outcome_tool(_exec_context(), outcome="bad_password")
+    assert binding.operation_failures == {"browser_click"}

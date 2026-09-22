@@ -1303,7 +1303,7 @@ class AuthenticatedSessionBinding:
     approval_pending_request_id: str | None = None
     bad_password_recorded: bool = False
     autofill_refusal: str | None = None
-    handoff_failed: bool = False
+    operation_failures: set[str] = field(default_factory=set)
 
 
 # Keyed by the delegated run's subconversation id, which is what a running

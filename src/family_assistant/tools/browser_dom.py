@@ -39,7 +39,6 @@ from family_assistant.tools.browser_backend import (
     BrowserBackendError,
     HandoffUnavailableError,
     StaleRefError,
-    authenticated_binding_for,
     get_browser_backend,
 )
 from family_assistant.tools.browser_session import (
@@ -683,7 +682,6 @@ async def browser_request_handoff_tool(
     Only available when the optional browser-server integration is configured.
     """
     backend = await get_browser_backend(exec_context)
-    binding = authenticated_binding_for(exec_context.subconversation_id)
     logger.info("browser_request_handoff: reason=%s", reason)
     try:
         result = await backend.request_handoff(
@@ -693,21 +691,15 @@ async def browser_request_handoff_tool(
             allow_resume=allow_resume,
         )
     except HandoffUnavailableError as exc:
-        if binding is not None:
-            binding.handoff_failed = True
         return ToolResult(
             text=f"Browser handoff is not available: {exc}",
             data={"error": "handoff_unavailable", "detail": str(exc)},
         )
     except BrowserBackendError as exc:
-        if binding is not None:
-            binding.handoff_failed = True
         return ToolResult(
             text=f"Browser handoff failed: {exc}",
             data={"error": "handoff_failed", "detail": str(exc)},
         )
-    if binding is not None:
-        binding.handoff_failed = False
     handoff_url = result.get("handoff_url")
     return ToolResult(
         text=(
