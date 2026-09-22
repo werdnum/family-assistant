@@ -273,19 +273,26 @@ The notes repository write is the chokepoint. It **requires** the taint stamp, w
 writer that does not supply one fails at the type checker rather than persisting a silent default.
 Because a raw `UPDATE` would sidestep a required parameter and leave stale taint under new content,
 the chokepoint is also enforced by a conformance rule: an ast-grep rule forbids
-`insert(notes_table)` and `update(notes_table)` outside the notes repository module. Each existing
-writer supplies its stamp from its own trust:
+`insert(notes_table)` and `update(notes_table)` outside the notes repository module. The chokepoint
+also applies the existing **machine-authorship floor** (`with_authorship_floor`, which raises a
+`trusted_user` state to `trusted_internal`) to every stamp except the web API's: note text a model
+composed in a clean turn is `trusted_internal`, never the human's own words, so a later explicit
+read cannot present model-generated instructions as user-authored evidence to the reviewer. Only an
+authenticated user's own edit stamps `trusted_user`. Each existing writer supplies its stamp from
+its own trust:
 
 - **Note tools** (`create_note`, `update_note`) and **workspace import** stamp the maximum of the
-  turn's taint and the stored taint of whatever the candidate retains — body under an append,
-  attachments the call omits — replaced by `machine_reviewed` on an admitting verdict. Only a full
-  replacement of the ambient material, or an admission, lowers a stamp; a partial write in a clean
-  turn, including a demotion, never launders retained external text into `trusted_user`.
+  turn's taint, floored at `trusted_internal`, and the stored taint of whatever the candidate
+  retains — body under an append, attachments the call omits — replaced by `machine_reviewed` on an
+  admitting verdict. Only a full replacement of the ambient material, or an admission, lowers a
+  stamp; a partial write in a clean turn, including a demotion, never launders retained external
+  text into `trusted_user`.
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
 - **Memory apply** writes only from transcript chunks the review already rejected for external
-  taint, and stamps the (clean) reviewing turn's tier.
+  taint, and stamps the (clean) reviewing turn's tier, floored at `trusted_internal` like any other
+  machine-composed write.
 - **Core-memory bootstrap and index refresh** (`ensure_core_note`, `refresh_core_memory_index`)
   today write directly against the table; they move into repository helpers and stamp
   `trusted_internal`, since the core note is deployment-authored structure.
@@ -375,10 +382,12 @@ rollout.
    first run; web API writes stamp `trusted_user`; call transcripts stamp `unknown_external`; the
    ast-grep rule forbids raw note-table writes outside the repository; `get_note` routes returned
    attachments through the shared attachment-provenance resolver. Verified by the conformance check
-   rejecting a raw write, by a fresh-database memory bootstrap, by an upgrade test in which a
-   pre-existing core note with null provenance is included in the prompt after the first refresh
-   while a null-provenance imported note is not, and by a tool test that reading a reviewed note
-   with an email-derived attachment raises the turn to the attachment's tier.
+   rejecting a raw write, by a repository test that a clean-turn tool write stamps
+   `trusted_internal` while a web API write stamps `trusted_user`, by a fresh-database memory
+   bootstrap, by an upgrade test in which a pre-existing core note with null provenance is included
+   in the prompt after the first refresh while a null-provenance imported note is not, and by a tool
+   test that reading a reviewed note with an email-derived attachment raises the turn to the
+   attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict, and otherwise with the
