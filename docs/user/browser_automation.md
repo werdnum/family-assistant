@@ -15,10 +15,11 @@ once, so each stays cheap and focused.
   coordinates from screenshots. Best for `<canvas>`, image maps, and drag-and-drop on non-DOM
   surfaces.
 
-Both browse a site as an anonymous visitor. For a site your household has a saved login for -- where
-the assistant signs in and acts on your account -- see
-[authenticated-sites.md](authenticated-sites.md); that is a separate, operator-configured
-capability, not something `/browse` can reach.
+Both can request a stored Keychute credential when they encounter a login wall. Tell the assistant
+the secret's name, or let it ask you which one to request. Approve the release in Keychute and ask
+it to continue. No preconfigured site is needed; see
+[signing into websites](authenticated-sites.md). Remote browser sessions protect credential fields
+and do not expose arbitrary JavaScript or raw DOM extraction.
 
 By default, start with `/browse`. It's cheaper and faster. Fall back to `/browse_visual` only when
 the DOM-based path cannot see what it needs to interact with.
@@ -67,11 +68,10 @@ Prefix your request with `/browse` to use the semantic DOM profile:
 - **`browser_click`** — click an element by its ref.
 - **`browser_fill`** — fill an input by ref, optionally pressing Enter to submit.
 - **`browser_select`** — select a `<select>` option by label or value.
-- **`browser_extract`** — convert the current page (or a subtree) to Markdown.
 - **`browser_wait`** — wait for a load state or CSS selector to appear.
 - **`browser_screenshot`** — take an explicit screenshot to attach to the conversation.
-- **`browser_exec`** — run JavaScript in the page (escape hatch for shadow DOM, iframes, reading
-  same-origin JSON endpoints, or multi-step DOM mutation in a single turn).
+- **`browser_autofill`** — request a named Keychute credential for the current login form.
+- **`browser_report_login_outcome`** — stop further fills after a rejected password.
 
 ## The `/browse_visual` Command (fallback, coordinate-based)
 

@@ -3,7 +3,39 @@
 **What's here:** how to ask the assistant to do something on a website your household has a saved
 login for, what it can and cannot do there, and what to do when it comes back asking for help.
 
-## Asking for something
+## Sign in while browsing
+
+You can give the assistant a URL and the name of a password stored in Keychute:
+
+> Open https://www.amazon.com and check my delivery. If you need to sign in, request the Keychute
+> secret `amazon-password`.
+
+No site configuration or standing grant is needed. When the assistant reaches the login form, it
+requests the named credential. If approval is needed, it gives you the Keychute approval link. Check
+the account and destination, approve it, then tell the assistant to continue. You can add a standing
+grant in Keychute later to permit future requests automatically, restricted to the appropriate
+website origins.
+
+If you did not specify a secret name, the assistant can ask which one to request. Give it the name,
+never the password itself. Keychute delivers the credential directly to the browser; the assistant
+submits the form and continues your task. If the password is rejected, it stops and asks you to
+correct the stored secret.
+
+The browser stays open while you approve, subject to its normal expiry. If it expires or the service
+restarts, ask the assistant to start the task again. For MFA or a captcha, it can give you a browser
+handoff link.
+
+This is general browsing: the assistant can navigate between websites and make changes using
+accounts you approve. Granting a password fill does not constrain all later account actions. Read
+its report of what it did.
+
+## Optional saved-site presets
+
+The rest of this guide describes preconfigured sites, which can supply a saved login and restrict
+browsing to a particular account and set of web addresses. They are optional; ordinary password
+requests above do not require them.
+
+### Asking for something
 
 Each site has to be set up for you first, with the login saved (or the password stored) and the
 people who are allowed to act on that account named. Once it is, you just ask:

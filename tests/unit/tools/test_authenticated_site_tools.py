@@ -79,6 +79,8 @@ def _exec_context() -> ToolExecutionContext:
             tool_call_batch=None,
             tool_call_id=None,
             timezone=None,
+            processing_profile_id="browser_profile",
+            processing_service=None,
         ),
     )
 
@@ -141,9 +143,9 @@ def bound(
 
 
 @pytest.mark.asyncio
-async def test_autofill_without_a_bound_session_is_refused() -> None:
-    """Autofill exists only on a session whose alias was pinned at creation."""
-    with pytest.raises(AutofillUnavailableError, match="not an authenticated-site"):
+async def test_autofill_on_local_browser_is_refused() -> None:
+    """Only browser-server can receive credentials directly from Keychute."""
+    with pytest.raises(AutofillUnavailableError, match="requires browser-server"):
         await browser_autofill_tool(_exec_context(), kind="password")
 
 

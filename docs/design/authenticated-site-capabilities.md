@@ -2,6 +2,10 @@
 
 ## Status
 
+The configured-site workflow described here is an optional preset.
+[On-demand browser autofill](on-demand-browser-autofill.md) supersedes its requirement that all
+credential requests come from configured sites.
+
 Accepted — implemented for M1–M3 and the autofill section.
 
 This design supersedes the **Family Assistant policy and product surface** in

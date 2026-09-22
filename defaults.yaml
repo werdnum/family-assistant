@@ -1123,7 +1123,7 @@ service_profiles:
     processing_config:
       max_iterations: 25
       prompts: # MERGES with default_profile_settings.processing_config.prompts
-        system_prompt: "You browse the web via accessibility snapshots on behalf of {user_name}. Start every session with browser_open, which navigates to a URL and returns a snapshot of the page structure. Each snapshot is rendered as indented text where interesting elements are tagged with refs like `e12`; use those refs with browser_click, browser_fill, and browser_select. A ref names one element for the whole conversation: it survives later snapshots and actions, including browser_exec and anything the visual profile does, and any ref you have been shown either targets the element it was issued for or fails — so re-snapshot to see elements you have not been shown, not to refresh refs you already have. A failed action returns a fresh snapshot of the current page, so retarget from that rather than calling browser_snapshot again. Pass `query` on an action to keep its post-action snapshot to the part of the page you care about. When you issue several browser actions in one response they run in the order you wrote them, each against the page the previous one left, and only the last one's snapshot carries refs. Use browser_extract when {user_name} wants the page content as Markdown, browser_wait when you need to wait for load states or a specific element, and browser_screenshot only when you need a visual to attach to your reply. When the fixed tools don't fit — shadow DOM traversal, iframes, reading JSON endpoints via fetch, or complex multi-step DOM mutation in a single turn — use browser_exec to run JavaScript in-page via page.evaluate. For tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes), call delegate_to_service with target_service_id='browser_visual_profile'; the visual profile shares the same browser tab so the session state (URL, cookies, form progress) carries over. When a step requires the human — entering payment details, credentials, a one-time passcode, accepting legal consent, or solving a CAPTCHA — call browser_request_handoff with allow_resume=true, which returns a one-time link for {user_name} to take over the same live browser; share that link and wait. When {user_name} finishes and clicks 'Hand over to agent', they will see a handback token and session ID — ask them to share both, then call browser_claim_handback to resume control and continue where they left off. (Handoff only works when the browser-server integration is enabled; if it isn't, the tool reports that and you should ask {user_name} to do the step themselves.) After any tool calls, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
+        system_prompt: "You browse the web via accessibility snapshots on behalf of {user_name}. Start every session with browser_open, which navigates to a URL and returns a snapshot of the page structure. Each snapshot is rendered as indented text where interesting elements are tagged with refs like `e12`; use those refs with browser_click, browser_fill, and browser_select. A ref names one element for the whole conversation: it survives later snapshots and actions, including anything the visual profile does, and any ref you have been shown either targets the element it was issued for or fails — so re-snapshot to see elements you have not been shown, not to refresh refs you already have. A failed action returns a fresh snapshot of the current page, so retarget from that rather than calling browser_snapshot again. Pass `query` on an action to keep its post-action snapshot to the part of the page you care about. When you issue several browser actions in one response they run in the order you wrote them, each against the page the previous one left, and only the last one's snapshot carries refs. Use browser_snapshot to read page content, browser_wait when you need to wait for load states or a specific element, and browser_screenshot only when you need a visual to attach to your reply. For tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes), call delegate_to_service with target_service_id='browser_visual_profile'; the visual profile shares the same browser tab so the session state (URL, cookies, form progress) carries over. When a step requires the human — entering payment details, a one-time passcode, accepting legal consent, or solving a CAPTCHA — call browser_request_handoff with allow_resume=true, which returns a one-time link for {user_name} to take over the same live browser; share that link and wait. When {user_name} finishes and clicks 'Hand over to agent', they will see a handback token and session ID — ask them to share both, then call browser_claim_handback to resume control and continue where they left off. (Handoff only works when the browser-server integration is enabled; if it isn't, the tool reports that and you should ask {user_name} to do the step themselves.) After any tool calls, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. If you hit a login wall, call browser_autofill with the Keychute secret_name supplied by the user, or ask for the name (never the password). Keychute requests approval for the actual page origin; no configured site or standing grant is required. On approval_pending, relay the approval link and stop; retry the same fill after the user approves and asks to continue. Submit the form yourself after filling. Report a rejected password with browser_report_login_outcome and stop. Arbitrary JavaScript and raw DOM extraction are unavailable in credential-protected sessions."
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
@@ -1134,12 +1134,12 @@ service_profiles:
               - "browser_click"
               - "browser_fill"
               - "browser_select"
-              - "browser_extract"
               - "browser_wait"
               - "browser_screenshot"
-              - "browser_exec"
               - "browser_request_handoff"
               - "browser_claim_handback"
+              - "browser_autofill"
+              - "browser_report_login_outcome"
               - "attach_to_response"
               - "ucp_add_to_cart"
               - "ucp_get_cart"
@@ -1175,7 +1175,7 @@ service_profiles:
       enable_computer_use: true
       max_iterations: 100
       prompts: # MERGES with default_profile_settings.processing_config.prompts
-        system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. Every browser action you take (navigate, click, scroll, etc.) automatically captures a screenshot which you will see. By default, ALL screenshots from your actions are sent to the user. For multi-step workflows where you only want to show specific screenshots (e.g., just the final result), use attach_to_response to select which ones to send. Some sensitive actions (payments, sending messages, agreeing to terms) are paused for {user_name} to approve before they run; continue once approved, and respect a decline. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
+        system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. Every browser action you take (navigate, click, scroll, etc.) automatically captures a screenshot which you will see. By default, ALL screenshots from your actions are sent to the user. For multi-step workflows where you only want to show specific screenshots (e.g., just the final result), use attach_to_response to select which ones to send. Some sensitive actions (payments, sending messages, agreeing to terms) are paused for {user_name} to approve before they run; continue once approved, and respect a decline. If you hit a login wall, use browser_autofill with the Keychute secret_name the user supplied. If no name was supplied, ask for the secret name, never the password. Keychute handles approval for the actual page origin; no site configuration or standing grant is required. On approval_pending, relay the approval link and stop, then retry the same fill when the user asks you to continue. Submit the form after filling and continue the task. If the site rejects the password, call browser_report_login_outcome and stop. Browser sessions protect credential controls from the start; arbitrary JavaScript and raw DOM extraction are unavailable. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
@@ -1201,6 +1201,8 @@ service_profiles:
               - "go_forward"
               - "take_screenshot"
               - "wait"
+              - "browser_autofill"
+              - "browser_report_login_outcome"
               - "attach_to_response"
           decision: "allow"
           priority: 10
@@ -1208,7 +1210,7 @@ service_profiles:
       - "/browse_visual"
   # --- Authenticated-site variants ---------------------------------------
   # The two profiles an authenticated-site run executes under. They are not the
-  # shipped browser profiles: those grant browser_exec, receive the globally
+  # shipped browser profiles: those receive the globally
   # granted tools and the household's ambient context, and delegate without a
   # pin. Startup validation (AppConfig.validate_authenticated_sites) recomputes
   # the effective surface of whatever profiles a site names and refuses to start
@@ -2506,9 +2508,8 @@ browser_handoff_config:
     - "browser_visual_profile"
     - "authenticated_browser_profile"
     - "authenticated_browser_visual_profile"
-# Operator-configured authenticated browsing capabilities. Empty by default: a
-# deployment that configures no site cannot run an authenticated browser task at
-# all. Each entry binds one site to one saved login (jar_id), one Keychute
+# Optional authenticated-site presets. Ordinary browser autofill works without
+# any configured site. Each entry binds one site to one saved login (jar_id), one Keychute
 # secret (credential_alias), or both, and declares the same-site damage the
 # operator accepts. See docs/design/authenticated-site-capabilities.md and
 # docs/operations/CONFIGURATION_REFERENCE.md.

@@ -1,19 +1,13 @@
-"""Credential autofill inside an authenticated-site browser session.
+"""Request Keychute credentials for the current browser page.
 
-``browser_autofill`` is a fill primitive, not a login engine: the agent
-navigates to the form, asks for the fill, clicks Sign in and looks at what
-happened. The credential is chosen by the session's pinned alias, released (or
-refused) by Keychute against the origin of the document actually on screen, and
-written into the page by browser-server. It never crosses into this process, so
-no argument, result, log line or exception here can carry it.
-
-See docs/design/authenticated-site-capabilities.md, "Keychute credential
-autofill", and the shared wire contract with browser-server.
+The agent names a secret; Keychute authorizes release against the actual
+origin checked by browser-server. Plaintext goes directly to the protected
+browser, never through Family Assistant. Configured sites remain optional
+presets whose account binding cannot be overridden.
 """
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 from typing import TYPE_CHECKING
@@ -21,6 +15,7 @@ from typing import TYPE_CHECKING
 from family_assistant.tools.browser_backend import (
     BrowserBackendError,
     RemoteBrowserBackend,
+    get_browser_backend,
     resolve_authenticated_binding,
 )
 from family_assistant.tools.browser_session import browser_operation
@@ -32,8 +27,6 @@ if TYPE_CHECKING:
         JsonDict,
     )
     from family_assistant.tools.types import ToolExecutionContext
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "BROWSER_AUTOFILL_TOOLS_DEFINITION",
@@ -50,8 +43,8 @@ _AUTOFILL_WAIT_SECONDS = 25
 
 _REFUSAL_GUIDANCE: dict[str, str] = {
     "no_alias": (
-        "This site has no stored credential, so there is nothing to fill. Ask "
-        "the household to sign in themselves."
+        "No credential was selected. Ask the user for the Keychute secret name, "
+        "never the password itself."
     ),
     "bad_password_recorded": (
         "A wrong password was already recorded for this session, so no further "
@@ -101,46 +94,20 @@ _REFUSAL_GUIDANCE: dict[str, str] = {
 
 
 class AutofillUnavailableError(BrowserBackendError):
-    """This turn is not running inside an authenticated-site session.
-
-    Autofill exists only on a session whose alias trusted orchestration pinned
-    at creation. A turn with no such binding has nothing to ask for, and must
-    not fall back to the conversation's ordinary browser session.
-    """
+    """Autofill requires a remote browser with credential protection."""
 
 
-async def _require_authenticated_backend(
+async def _autofill_backend(
     exec_context: ToolExecutionContext,
-) -> tuple[AuthenticatedSessionBinding, RemoteBrowserBackend]:
+) -> tuple[AuthenticatedSessionBinding | None, RemoteBrowserBackend]:
     binding = await resolve_authenticated_binding(exec_context)
-    if binding is None or not isinstance(binding.backend, RemoteBrowserBackend):
+    backend = await get_browser_backend(exec_context)
+    if not isinstance(backend, RemoteBrowserBackend):
         raise AutofillUnavailableError(
-            "This browser session is not an authenticated-site session, so it "
-            "has no credential to fill."
+            "Autofill requires browser-server with Keychute configured; "
+            "the local browser cannot request credentials."
         )
-    return binding, binding.backend
-
-
-def _step_key(
-    binding: AuthenticatedSessionBinding,
-    *,
-    kind: str | None,
-    field_refs: list[str] | None,
-) -> str:
-    """The idempotency key for this fill step.
-
-    One key per distinct step of the login, reused across `approval_pending`
-    retries of that step so Keychute replays the same request rather than
-    opening a second one. A different step -- the password after the identifier
-    -- is a different signature and so a different key.
-    """
-    signature = f"{kind or 'auto'}:{','.join(sorted(field_refs or ()))}"
-    existing = binding.step_keys.get(signature)
-    if existing is not None:
-        return existing
-    step_key = f"{kind or 'auto'}-{uuid.uuid4().hex}"
-    binding.step_keys[signature] = step_key
-    return step_key
+    return binding, backend
 
 
 def _validate_refs(field_refs: list[str] | None) -> None:
@@ -170,7 +137,7 @@ def _filled_result(response: JsonDict) -> ToolResult:
         text=(
             f"Filled the stored {kinds or 'credential'} into the form on "
             f"{origin}. Submit the form yourself and check the result. The "
-            "value is not shown to you and cannot be read back off the page."
+            "value is not included in this result. Continue using protected snapshots."
         ),
         data={"status": "filled", "origin": origin, "filled": filled},
     )
@@ -206,16 +173,22 @@ def _refused_result(response: JsonDict) -> ToolResult:
 async def browser_autofill_tool(
     exec_context: ToolExecutionContext,
     field_refs: list[str] | None = None,
+    secret_name: str | None = None,
     kind: str | None = None,
 ) -> ToolResult:
-    """Fill this site's stored credential into the login form on the page."""
+    """Request the named Keychute secret for the current login form."""
     if kind is not None and kind not in {"username", "password"}:
         raise ValueError(
             f"kind must be 'username' or 'password', not {kind!r}; omit it to "
             "let the login form decide."
         )
     _validate_refs(field_refs)
-    binding, backend = await _require_authenticated_backend(exec_context)
+    binding, backend = await _autofill_backend(exec_context)
+    if binding is None and not secret_name:
+        raise ValueError(
+            "Name the Keychute secret with secret_name. If you do not know "
+            "which secret to use, ask the user for its name, never its value."
+        )
     fields: list[JsonDict] | None = None
     if field_refs:
         fields = [
@@ -224,40 +197,40 @@ async def browser_autofill_tool(
         ]
     elif kind is not None:
         fields = [{"kind": kind}]
-    step_key = _step_key(binding, kind=kind, field_refs=field_refs)
-    logger.info(
-        "browser_autofill: site=%s step=%s kind=%s refs=%s",
-        binding.site_id,
-        step_key,
-        kind,
-        field_refs,
+    step_keys = binding.step_keys if binding is not None else backend.autofill_step_keys
+    signature = (
+        f"{secret_name or ''}:{backend.current_url}:"
+        f"{kind or 'auto'}:{','.join(sorted(field_refs or ()))}"
     )
+    step_key = step_keys.setdefault(signature, f"{kind or 'auto'}-{uuid.uuid4().hex}")
     response = await backend.autofill(
         step_key=step_key,
+        secret_name=secret_name,
         fields=fields,
         wait_seconds=_AUTOFILL_WAIT_SECONDS,
         context={
-            "site": binding.site_id,
+            "site": binding.site_id if binding is not None else secret_name,
             "acting_user": exec_context.user_name,
         },
     )
     status = response.get("status")
     if status != "approval_pending":
-        binding.approval_pending_request_id = None
-        signature = f"{kind or 'auto'}:{','.join(sorted(field_refs or ()))}"
-        binding.step_keys.pop(signature, None)
+        step_keys.pop(signature, None)
+    if binding is not None:
+        binding.approval_pending_request_id = (
+            str(response.get("request_id") or step_key)
+            if status == "approval_pending"
+            else None
+        )
+        binding.autofill_refusal = (
+            str(response.get("reason") or "refused") if status == "refused" else None
+        )
+        if response.get("reason") == "bad_password_recorded":
+            binding.bad_password_recorded = True
     if status == "filled":
-        binding.autofill_refusal = None
         return _filled_result(response)
     if status == "approval_pending":
-        request_id = response.get("request_id")
-        binding.approval_pending_request_id = (
-            str(request_id) if request_id is not None else step_key
-        )
         return _approval_pending_result(response)
-    binding.autofill_refusal = str(response.get("reason") or "refused")
-    if response.get("reason") == "bad_password_recorded":
-        binding.bad_password_recorded = True
     return _refused_result(response)
 
 
@@ -272,9 +245,9 @@ async def browser_report_login_outcome_tool(
             f"outcome must be 'bad_password', not {outcome!r}. There is nothing "
             "to report when the login worked."
         )
-    binding, backend = await _require_authenticated_backend(exec_context)
-    logger.info("browser_report_login_outcome: site=%s", binding.site_id)
-    binding.bad_password_recorded = True
+    binding, backend = await _autofill_backend(exec_context)
+    if binding is not None:
+        binding.bad_password_recorded = True
     await backend.report_autofill_outcome(outcome)
     return ToolResult(
         text=(
@@ -293,18 +266,29 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "browser_autofill",
             "description": (
-                "Fill this site's stored credential into the login form in "
+                "Request a Keychute secret by name and fill it into the login form in "
                 "front of you. It fills; you drive the login — navigate to the "
                 "form, call this, then submit the form yourself and check what "
                 "happened. A username-first login is two calls: the identifier, "
                 "then the password on the next page. You never see the value "
-                "and cannot read it back off the page. Returns filled, "
+                "in tool results. Keychute approves release for the actual page origin. "
+                "No configured site or standing grant is required. If you encounter "
+                "a login wall, request the secret the user named, or ask for its "
+                "name (never its value). Returns filled, "
                 "approval_pending (the household must approve the release — "
                 "stop and say so), or refused with a reason."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "secret_name": {
+                        "type": "string",
+                        "description": (
+                            "Keychute secret name supplied by the user. Required for "
+                            "ordinary browsing; optional for a configured site's pinned login. "
+                            "This requests access, it does not grant it."
+                        ),
+                    },
                     "field_refs": {
                         "type": "array",
                         "items": {"type": "string"},

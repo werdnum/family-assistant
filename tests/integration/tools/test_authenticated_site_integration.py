@@ -10,7 +10,8 @@ implementation of the flow.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -20,6 +21,8 @@ from browser_handoff_service.main import app as browser_server_app
 from browser_handoff_service.main import registry as browser_server_registry
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
+from family_assistant.tools import browser_backend as backend_module
+from family_assistant.tools.browser_autofill import browser_autofill_tool
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionSpec,
     AuthenticatedSessionUnavailableError,
@@ -29,6 +32,10 @@ from family_assistant.tools.browser_backend import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from browser_handoff_service.runtime import FakeBrowserWorker
+
+    from family_assistant.tools.types import ToolExecutionContext
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +66,10 @@ async def _clear_browser_server_state() -> None:
 
 
 def _backend(
-    *, alias: str | None = "test-site", origins: frozenset[str] | None = None
+    *,
+    alias: str | None = "test-site",
+    origins: frozenset[str] | None = None,
+    ordinary: bool = False,
 ) -> RemoteBrowserBackend:
     config = BrowserHandoffConfig(
         enabled=True,
@@ -77,7 +87,9 @@ def _backend(
         config,
         "integ-auth-conv",
         client=client,
-        authenticated=AuthenticatedSessionSpec(
+        authenticated=None
+        if ordinary
+        else AuthenticatedSessionSpec(
             site_id="test_site",
             jar_id=None,
             confine_origins=origins if origins is not None else frozenset({ORIGIN}),
@@ -94,7 +106,7 @@ def _fake_keychute(
 ) -> list[httpx.Request]:
     """Point browser-server's Keychute client at a fake that always decides."""
     seen: list[httpx.Request] = []
-    grant_id = "grant_1"
+    grant_id = "11111111-1111-4111-8111-111111111111"
     payload = secret or {"username": "someone@example.test", "password": "hunter2"}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -104,7 +116,7 @@ def _fake_keychute(
             return httpx.Response(
                 200,
                 json={
-                    "request_id": "req_1",
+                    "request_id": "22222222-2222-4222-8222-222222222222",
                     "state": "approved" if approved else "pending",
                     "grant_id": grant_id if approved else None,
                     "server_time": "2026-09-21T00:00:00Z",
@@ -114,7 +126,7 @@ def _fake_keychute(
             return httpx.Response(
                 200,
                 json={
-                    "request_id": "req_1",
+                    "request_id": "22222222-2222-4222-8222-222222222222",
                     "state": "pending",
                     "server_time": "2026-09-21T00:00:00Z",
                 },
@@ -228,9 +240,9 @@ async def test_autofill_fills_without_the_value_reaching_this_side(
     created = [r for r in keychute_requests if r.url.path == "/v1/access-requests"]
     for request in created:
         body = json.loads(request.content)
-        assert body["idempotency_key"] == f"{session_id}:password-1"
+        assert body["idempotency_key"].startswith(f"{session_id}:")
         assert body["mechanism"] == "autofill"
-        assert body["constraints"]["origins"] == [{"host": "example.test"}]
+        assert body["constraints"]["origins"] == [{"host": "example.test", "port": 443}]
     await backend.close()
 
 
@@ -306,3 +318,74 @@ async def test_authenticated_otp_handoff_returns_through_server_side_claim(
     assert state["state"] == "agent_active"
     assert state["confine_origins"] == [ORIGIN]
     await backend.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile_id", ["browser_profile", "browser_visual_profile"])
+async def test_ordinary_browser_requests_named_secret_and_resumes_approval(
+    monkeypatch: pytest.MonkeyPatch,
+    profile_id: str,
+) -> None:
+    pending_requests = _fake_keychute(monkeypatch, approved=False)
+    backend = _backend(ordinary=True)
+    monkeypatch.setitem(backend_module._remote_backends, "on-demand-conv", backend)
+    context = cast(
+        "ToolExecutionContext",
+        SimpleNamespace(
+            conversation_id="on-demand-conv",
+            subconversation_id=None,
+            processing_profile_id=profile_id,
+            processing_service=SimpleNamespace(
+                app_config=SimpleNamespace(
+                    authenticated_sites={},
+                    browser_handoff_config=BrowserHandoffConfig(
+                        enabled=True,
+                        service_url=_SERVICE_URL,
+                        handoff_capable_profiles=[profile_id],
+                    ),
+                )
+            ),
+            user_name="andrew",
+            timezone=None,
+            tool_call_batch=None,
+            tool_call_id=None,
+        ),
+    )
+    try:
+        await backend.goto(f"{ORIGIN}/login")
+        assert backend.session_id is not None
+        record = _session_record(backend.session_id)
+        assert record.autofill_enabled and not record.authenticated_site
+        worker = cast(
+            "FakeBrowserWorker", browser_server_registry.workers[record.worker_id]
+        )
+        worker.autofill_fields = [
+            {"ref": "e12", "input_type": "password", "name": "Password"}
+        ]
+        pending = await browser_autofill_tool(
+            context, secret_name="my-password", kind="password"
+        )
+        pending_data = pending.get_data()
+        assert isinstance(pending_data, dict)
+        assert pending_data["status"] == "approval_pending", pending.get_text()
+        assert not worker.filled
+        approved_requests = _fake_keychute(monkeypatch, approved=True)
+        filled = await browser_autofill_tool(
+            context, secret_name="my-password", kind="password"
+        )
+        filled_data = filled.get_data()
+        assert isinstance(filled_data, dict)
+        assert filled_data["status"] == "filled"
+        assert worker.filled == [{"ref": "e12", "kind": "password", "value": "hunter2"}]
+        assert "hunter2" not in filled.get_text()
+        initial = json.loads(pending_requests[0].content)
+        resumed = json.loads(approved_requests[0].content)
+        assert initial["idempotency_key"] == resumed["idempotency_key"]
+        assert resumed["secret_name"] == "my-password"
+        assert resumed["constraints"]["origins"] == [
+            {"host": "example.test", "port": 443}
+        ]
+        assert not backend.autofill_step_keys
+        await backend.goto("https://another.example.test/")
+    finally:
+        await backend.close()

@@ -682,6 +682,7 @@ class RemoteBrowserBackend:
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
         self._last_url: str = ""
         self._authenticated = authenticated
+        self.autofill_step_keys: dict[str, str] = {}
 
     @property
     def current_url(self) -> str:
@@ -869,11 +870,12 @@ class RemoteBrowserBackend:
         self,
         *,
         step_key: str,
+        secret_name: str | None = None,
         fields: list[JsonDict] | None = None,
         wait_seconds: float | None = None,
         context: JsonDict | None = None,
     ) -> JsonDict:
-        """Ask browser-server to fill the session's pinned credential.
+        """Ask browser-server to request and fill a Keychute credential.
 
         The outcome comes back as a 200 with a typed status, so a policy result
         never has to be inferred from an HTTP code. No secret crosses this
@@ -881,6 +883,8 @@ class RemoteBrowserBackend:
         """
         session_id = await self._ensure_session()
         payload: JsonDict = {"step_key": step_key}
+        if secret_name is not None:
+            payload["secret_name"] = secret_name
         if fields is not None:
             payload["fields"] = fields
         if wait_seconds is not None:
@@ -925,6 +929,7 @@ class RemoteBrowserBackend:
             "conversation_id": self._conversation_id,
             "interface_type": "research",
             "initial_owner": "agent",
+            "autofill_enabled": True,
         }
         if self._timezone_id:
             payload["timezone_id"] = self._timezone_id
@@ -944,6 +949,7 @@ class RemoteBrowserBackend:
         )
         self._session_id = None
         self._last_url = ""
+        self.autofill_step_keys.clear()
 
     def _is_unknown_session_response(self, resp: httpx.Response) -> bool:
         if resp.status_code != 404:

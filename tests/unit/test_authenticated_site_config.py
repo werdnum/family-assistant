@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from family_assistant.config_loader import load_config
 from family_assistant.config_models import AppConfig
-from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
+from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.authenticated_site_surface import admissible_tools
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
@@ -88,7 +88,7 @@ def test_shipped_browser_profile_is_rejected(
             {"hellofresh": {**VALID_SITE, "browser_profile": "browser_profile"}},
         )
     message = str(failure.value)
-    assert "browser_exec" in message
+    assert "ucp_add_to_cart" in message
     assert "not browser-server-mediated" in message
 
 
@@ -515,3 +515,24 @@ def test_authenticated_visual_drag_is_advertised_and_allowed(
             else ToolPolicyDecision.DENY
         )
         assert engine.evaluate_for_execution(descriptor).decision is expected
+
+
+@pytest.mark.parametrize("profile_id", ["browser_profile", "browser_visual_profile"])
+def test_ordinary_browser_profiles_offer_autofill_without_sites(
+    profile_id: str,
+) -> None:
+    config = load_config("defaults.yaml")
+    assert not config.authenticated_sites
+    profile = next(p for p in config.service_profiles if p.id == profile_id)
+    engine = PolicyEngine.from_policy_config(profile.tools_policy)
+    for descriptor in LOCAL_TOOL_DESCRIPTORS:
+        if descriptor.name in {"browser_autofill", "browser_report_login_outcome"}:
+            assert (
+                engine.evaluate_for_execution(descriptor).decision
+                is ToolPolicyDecision.ALLOW
+            )
+        if descriptor.name in {"browser_exec", "browser_extract"}:
+            assert (
+                engine.evaluate_for_execution(descriptor).decision
+                is ToolPolicyDecision.DENY
+            )
