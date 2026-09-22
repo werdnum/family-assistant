@@ -95,6 +95,14 @@ design that cure is not a separate flag: an admitted definition's stamp is chang
 reviewer as the intent to judge against, as the cure does today. One tier expresses "a judge
 admitted this stored artifact" for both kinds.
 
+Records that already exist are not rewritten. A `definition_v1` record cured by its disposition
+(judge-allowed, human-confirmed, or amnestied) keeps resolving exactly as it does today; only
+admissions made after this ships stamp the tier. Resolution therefore accepts either form — a
+`machine_reviewed` stamp, or a prior-version record whose disposition cures it — and the disposition
+stays recorded on every record in either case, since it is audit data that consumers such as the
+destination echo still read. This is read-time compatibility for persisted rows, as the history
+epoch amnesty is, not a data migration and not a compatibility layer in code.
+
 **On an admitting verdict the row's active taint envelope is replaced**, not merely its `max_tier`:
 `TurnTaintState.from_metadata()` recomputes the tier from the stored sources, so retaining the
 original `unknown_external` sources would raise it straight back. The envelope holds one
@@ -234,8 +242,12 @@ writer supplies its stamp from its own trust:
 
 Readers change nothing. `get_note`, `list_notes`, `search_documents` and the full-document tool
 restore stored provenance exactly as they do today; a reviewed note propagates `machine_reviewed`
-and an unreviewed one propagates its external taint. The notes context provider's own taint
-restoration becomes empty by construction, since every note it includes is admissible for reuse.
+and an unreviewed one propagates its external taint. The notes context provider does the same for
+the notes it includes: a reviewed note in the prompt merges a `machine_reviewed` source into the
+turn, so the turn's tier says that the model processed reviewed external text. That costs no
+friction — the tier's sink cells are `trusted_internal`'s — and it keeps authorship honest: the
+assistant rows stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would
+let paraphrased web material pass the memory review as household-authored.
 
 ### Titles stay in the catalog
 
@@ -261,9 +273,12 @@ treats them.
 ## Deliberate simplifications
 
 - **Titles are neither reviewed nor bounded.** Recorded above with its residual.
-- **Memory keeps its authorship rule.** Reviewed web-derived material stays out of household memory.
-  Whether review should also admit content to memory is a memory-design question; if decided, it is
-  a change of predicate in the memory invariants, not of this design.
+- **Memory keeps its authorship rule, with a consequence to decide.** Reviewed web-derived material
+  stays out of household memory. Because a reviewed ambient note raises every turn it is included in
+  to `machine_reviewed`, the memory review as written will skip every chunk of every conversation
+  that has such a note in its prompt. Whether memory should instead use the reuse predicate — admit
+  reviewed material, exclude unreviewed — is a memory-design decision, recorded here as open; it is
+  a one-predicate change in the memory review and invariants, not a change to this design.
 - **Attachment contents are not upgraded by review.** The reviewer sees the rendered description and
   MIME type, which is what the prompt renders; the contents keep their own taint.
 - **Workspace file content is classified as external at the read**, not tracked per file.
