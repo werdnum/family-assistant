@@ -170,10 +170,13 @@ Every other sink keeps the shadow behaviour.
 
 What the verdict does:
 
-- An **admitting verdict** stamps the persisted note `machine_reviewed`, whatever tier the turn was
-  at. So does an explicit **relaxed cell**: an operator who overrides this sink to `allow` or
-  `audit` at an external tier has chosen to admit unreviewed writes at that tier, and a write the
-  cell lets through without a verdict is admitted on the operator's authority, stamped
+- An **admitting verdict** stamps the persisted note `machine_reviewed`, whatever external tier the
+  turn was at. Admission only ever raises trust: a candidate already at the trusted pole keeps its
+  `trusted_user` or `trusted_internal` stamp, so an operator who strengthens a trusted cell of this
+  sink to `adjudicate` or `confirm` adds a check without turning the user's own words into reviewed
+  external material. So does an explicit **relaxed cell**: an operator who overrides this sink to
+  `allow` or `audit` at an external tier has chosen to admit unreviewed writes at that tier, and a
+  write the cell lets through without a verdict is admitted on the operator's authority, stamped
   `machine_reviewed` with the override recorded in the audit record in place of a verdict. The
   alternative — a successful write that still does not make the note ambient — would give the
   override no advertised effect.
@@ -417,18 +420,20 @@ state.
    attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
-   persist the candidate with `machine_reviewed` on an admitting verdict, and otherwise with the
-   maximum of the turn's taint and the stored taint of whatever the candidate retains, so a denied
-   or unreviewed partial write never lowers a stamp; the import tool merges the file as an
-   `unknown_external` source first and defaults inclusion off. Verified by tool tests for each gated
-   shape and each tier, in both modes: an admitting verdict yields a `machine_reviewed` row, and the
-   next turn that includes it merges exactly one `machine_reviewed` source and no external one; a
-   denial refuses in enforce mode and leaves the row untouched, and in observe mode persists an
-   unreviewed row that is not included; the `confirm` fallback holds and its prompt renders the
-   resolved candidate rather than the call's arguments, for an append and for an import alike; an
-   operator override of an external cell to `allow` or `audit` admits the write and stamps
-   `machine_reviewed`; an append is reviewed and persisted as the resolved whole; an import with
-   skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
+   persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
+   trusted-pole candidate keeps its trusted stamp), and otherwise with the maximum of the turn's
+   taint and the stored taint of whatever the candidate retains, so a denied or unreviewed partial
+   write never lowers a stamp; the import tool merges the file as an `unknown_external` source first
+   and defaults inclusion off. Verified by tool tests for each gated shape and each tier, in both
+   modes: an admitting verdict yields a `machine_reviewed` row, and the next turn that includes it
+   merges exactly one `machine_reviewed` source and no external one; a denial refuses in enforce
+   mode and leaves the row untouched, and in observe mode persists an unreviewed row that is not
+   included; the `confirm` fallback holds and its prompt renders the resolved candidate rather than
+   the call's arguments, for an append and for an import alike; an operator override of an external
+   cell to `allow` or `audit` admits the write and stamps `machine_reviewed`; a trusted cell
+   strengthened to `adjudicate` runs the review and an admitting verdict leaves the `trusted_user`
+   stamp in place; an append is reviewed and persisted as the resolved whole; an import with skill
+   frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
    admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
