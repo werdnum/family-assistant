@@ -2428,6 +2428,14 @@ class AppConfig(BaseSettings):
         if not self.authenticated_sites:
             return self
 
+        if (
+            self.browser_handoff_config.enabled
+            and not self.browser_handoff_config.service_url
+        ):
+            raise ValueError(
+                "Authenticated sites require browser_handoff_config.service_url"
+            )
+
         # Deferred: the tool table lives in `family_assistant.tools`, which
         # imports far more than a configuration model should at import time.
         from family_assistant.tools import (  # noqa: PLC0415

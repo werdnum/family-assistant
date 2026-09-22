@@ -649,7 +649,15 @@ def _observe_binding_before_worker_notification(
 
 
 @pytest.mark.parametrize(
-    "failure", ["binding", "gone_404", "gone_410", "transient_503", "removed"]
+    "failure",
+    [
+        "binding",
+        "binding_with_other",
+        "gone_404",
+        "gone_410",
+        "transient_503",
+        "removed",
+    ],
 )
 async def test_resume_after_losing_the_binding_fails_closed(
     failure: str,
@@ -678,8 +686,12 @@ async def test_resume_after_losing_the_binding_fails_closed(
         resume.delegation_id
     )
     assert run is not None
-    if failure == "binding":
+    if failure in {"binding", "binding_with_other"}:
         release_authenticated_session(run["subconversation_id"])
+        if failure == "binding_with_other":
+            authenticated_sites_module._active_runs[run["conversation_id"]] = (
+                "other-run"
+            )
     elif failure == "removed":
         app_config.authenticated_sites.clear()
     else:
@@ -699,12 +711,18 @@ async def test_resume_after_losing_the_binding_fails_closed(
     )
     assert browser_server.sessions_created == 1
     assert browser_server.sessions_closed == (
-        1 if failure in {"binding", "removed"} else 0
+        1 if failure in {"binding", "binding_with_other", "removed"} else 0
     )
     assert len(browser_server.autofill_step_keys) == 1
     envelope = await _envelope(db_engine, resume.delegation_id)
     assert envelope["status"] == "failed"
     assert authenticated_binding_for(run["subconversation_id"]) is None
+    if failure == "binding_with_other":
+        assert (
+            authenticated_sites_module._active_runs[run["conversation_id"]]
+            == "other-run"
+        )
+        return
     app_config.authenticated_sites.update(configured_sites)
     browser_server.session_read_status = 200
     resume.delegation_id = None

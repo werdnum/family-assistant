@@ -443,3 +443,14 @@ def test_glob_exclusions_withhold_global_grants(
     ):
         _profile(data, profile_id)["excluded_global_tools"] = ["*"]
     _validate(data, {"hellofresh": VALID_SITE})
+
+
+def test_enabled_authenticated_sites_require_service_url(
+    shipped_config_data: dict[str, Any],
+) -> None:
+    data = copy.deepcopy(shipped_config_data)
+    data["browser_handoff_config"].update(enabled=True, service_url=None)
+    with pytest.raises(
+        ValidationError, match="require browser_handoff_config.service_url"
+    ):
+        _validate(data, {"hellofresh": VALID_SITE})

@@ -31,6 +31,9 @@ from family_assistant.storage.repositories.delegation_runs import (
 )
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
+from family_assistant.tools.authenticated_sites import (
+    _derive_status,  # noqa: PLC2701 - settlement boundary regression
+)
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
@@ -344,3 +347,14 @@ async def test_the_envelope_is_published_with_the_terminal_run_row(
     assert run["status"] == ("failed" if failure == "cleanup" else "completed")
     if failure in {"cleanup", "cleanup_loses"}:
         assert authenticated_binding_for(subconversation_id) is None
+
+
+@pytest.mark.parametrize(
+    "state", [None, [], {}, {"state": "new_parked_state"}, {"state": "expired"}]
+)
+async def test_unknown_browser_state_cannot_settle_successfully(state: object) -> None:
+    binding = AuthenticatedSessionBinding(
+        site_id="testsite", delegation_id="run", backend=_backend()
+    )
+    with pytest.raises(BrowserBackendError, match="unrecognized browser session state"):
+        _derive_status(binding, state)

@@ -258,6 +258,8 @@ def _derive_status(
         return "handoff_pending", (
             str(handoff_url) if isinstance(handoff_url, str) else None
         )
+    if state.get("state") not in _AGENT_HELD_STATES:
+        raise BrowserBackendError("Cannot settle an unrecognized browser session state")
     if binding.approval_pending_request_id is not None:
         return "approval_pending", None
     if (
@@ -325,7 +327,8 @@ async def prepare_authenticated_run(
             if binding is not None:
                 await _close_session(binding.backend)
             release_authenticated_session(run["subconversation_id"])
-            _active_runs.pop(run["conversation_id"], None)
+            if _active_runs.get(run["conversation_id"]) == run["delegation_id"]:
+                _active_runs.pop(run["conversation_id"], None)
         logger.info(
             "Authenticated run %s for site %s settled as %s (parked=%s)",
             delegation_id,
@@ -394,7 +397,8 @@ async def _discard_parked_session(
         backend.adopt_session(session_id)
         await _close_session(backend)
     release_authenticated_session(run["subconversation_id"])
-    _active_runs.pop(run["conversation_id"], None)
+    if _active_runs.get(run["conversation_id"]) == run["delegation_id"]:
+        _active_runs.pop(run["conversation_id"], None)
     await exec_context.db_context.delegation_runs.set_authenticated_site_state(
         run["delegation_id"], {**envelope, "status": "failed", "session_id": None}
     )
@@ -422,7 +426,8 @@ async def _persist_resume_verdict(
         run["delegation_id"], settled
     )
     release_authenticated_session(run["subconversation_id"])
-    _active_runs.pop(run["conversation_id"], None)
+    if _active_runs.get(run["conversation_id"]) == run["delegation_id"]:
+        _active_runs.pop(run["conversation_id"], None)
 
 
 async def _resume_parked(
