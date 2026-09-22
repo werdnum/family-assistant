@@ -158,7 +158,9 @@ What the verdict does:
 - The **fallback** when no reviewer is configured or none answers is `confirm`, as for the other
   adjudicated cells. It is reached only when the non-manual gate is absent, and there a single
   confirmation is less friction than a refusal that sends the user off to redo the write in a clean
-  turn.
+  turn. A sighted human confirmation is an **admitting decision**: it stamps `machine_reviewed`
+  exactly as a judge's admission does, as a human-confirmed executable definition is cured today. A
+  declined or timed-out confirmation follows the denial rule above.
 
 **Resolve first, then review the whole thing.** An append or a partial edit is resolved into the
 complete resulting note — merged body, full attachment set with each attachment's stored description
@@ -275,8 +277,11 @@ No backfill is needed. Eligibility derives from the stored tier, so the producti
 `unknown_external` stamp is poisoning every turn simply stop being included the moment the derived
 rule ships; their content and labels are untouched. A user who wants one back asks for it in a clean
 turn (a `trusted_user` write, or a reviewed one if the turn is tainted) or edits it in the Notes UI.
-Rows with no provenance at all remain absent-is-untrusted, as `is_externally_authored` already
-treats them.
+Rows with no provenance at all — including every note the current import path has written — are
+absent-is-untrusted, as `is_externally_authored` already treats a missing tier. The eligibility
+resolver reads the stored envelope and treats its absence as external directly; it must not parse
+the row through `TurnTaintState.from_metadata()` first, which turns a missing envelope into an empty
+trusted state and would leave those imported prompt notes and skills ambient after rollout.
 
 ## Deliberate simplifications
 
@@ -305,8 +310,9 @@ treats them.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
    on the reuse predicate in the repository. Verified by repository and provider tests that an
    `unknown_external` prompt note or skill is absent from bodies and the catalog, present by title,
-   and unchanged for `get_note`, `list_notes` and search; and by a functional test that a
-   conversation with such a note starts at `trusted_user`.
+   and unchanged for `get_note`, `list_notes` and search; that a legacy row with null provenance is
+   excluded the same way; and by a functional test that a conversation with such a note starts at
+   `trusted_user`.
 3. **The chokepoint.** The repository write requires the stamp; core-memory writes move into
    repository helpers; web API writes stamp `trusted_user`; call transcripts stamp
    `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
