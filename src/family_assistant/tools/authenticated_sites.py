@@ -195,9 +195,11 @@ async def route_jar(
         )
     if probe.get("fresh"):
         generation = jar.get("generation")
+        if type(generation) is not int:
+            raise BrowserBackendError("Saved login status has no valid generation")
         return _JarRouting(
             jar_id=site.jar_id,
-            generation=generation if isinstance(generation, int) else None,
+            generation=generation,
             login_required=None,
         )
     if site.credential_alias is not None:
@@ -605,6 +607,31 @@ async def run_authenticated_site_task_tool(
         return await _start_run(exec_context, config, site_id, site, objective)
 
 
+async def _clear_expired_active_run(
+    exec_context: ToolExecutionContext, active: str
+) -> None:
+    """Release a parked run only when its browser is confirmed gone."""
+    run = await exec_context.db_context.delegation_runs.get_by_delegation_id(active)
+    if run is None or run["status"] not in TERMINAL_DELEGATION_STATUSES:
+        return
+    envelope = run["authenticated_site_json"]
+    if envelope is None or envelope["status"] not in PARKED_AUTHENTICATED_STATUSES:
+        return
+    binding = authenticated_binding_for(run["subconversation_id"])
+    if binding is None:
+        return
+    try:
+        state = await binding.backend.session_state()
+    except BrowserSessionGoneError:
+        state = {"state": "gone"}
+    except BrowserBackendError:
+        return
+    if state.get("state") in {"gone", "completed", "cancelled", "expired", "failed"}:
+        await _persist_resume_verdict(
+            exec_context, run, _lost_session_result(envelope, str(state["state"]))
+        )
+
+
 async def _start_run(
     exec_context: ToolExecutionContext,
     config: AppConfig,
@@ -614,6 +641,8 @@ async def _start_run(
 ) -> ToolResult:
     active = _active_runs.get(exec_context.conversation_id)
     if active is not None:
+        await _clear_expired_active_run(exec_context, active)
+    if _active_runs.get(exec_context.conversation_id) is not None:
         return _error(
             f"An authenticated website task ({active}) is already running in "
             "this conversation. Wait for it to finish before starting another."

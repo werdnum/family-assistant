@@ -77,6 +77,7 @@ def _server(
             "jar_origins": [ORIGIN],
             "jar_nav_allowlist": [],
             "jar_generation": 3,
+            "jar_id": "jar_1",
             "credential_alias": "hellofresh",
         }
     )
@@ -300,3 +301,22 @@ async def test_autofill_carries_the_step_key_and_never_a_secret() -> None:
     assert "alias" not in body
     assert "password" not in json.dumps(body["context"])
     await backend.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expected", [None, "jar_1"])
+async def test_wrong_jar_identity_is_refused(expected: str | None) -> None:
+    server = partial(
+        _server,
+        session_body={
+            "session_id": "bs_auth",
+            "authenticated_site": True,
+            "confine_origins": [ORIGIN],
+            "credential_alias": "hellofresh",
+            "jar_id": "jar_other",
+        },
+    )
+    backend, _ = await _backend(server, _spec(jar_id=expected))
+    with pytest.raises(AuthenticatedSessionMismatchError, match="different jar"):
+        await backend.start_authenticated_session()
+    assert backend.session_id is None

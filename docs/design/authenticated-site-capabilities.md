@@ -954,11 +954,11 @@ rendering surface, and there is no confidence that every channel by which a fill
 a model-visible observation has been spotted in advance. What the design commits to is the property,
 the place it is enforced, and how holes are handled:
 
-- **The property.** A value the fill placed in a protected control does not reach the model through
-  browser-server's observation channels (snapshots, screenshots, extraction) or through any
-  model-driven input that moves it somewhere those channels can see. The secret appears in no tool
-  argument, result, event, exception text, trace, or log.
-- **The enforcement.** Deterministic controls in browser-server, at its observation and input
+- **The goal.** Prevent direct read-back of filled credentials through browser-server's observations
+  and ordinary model-driven value transfers. This is best-effort protection of known controls, not a
+  guarantee covering every way a page can render or move a value. The credential-release path keeps
+  the secret out of tool arguments, results, events, exception text, traces, and logs.
+- **The enforcement.** Targeted controls in browser-server, at its observation and input
   chokepoints, applied uniformly to every authenticated-site session from creation: protected
   controls (every `input[type=password]`, plus the exact elements a fill touched) are tracked by
   element — surviving type changes such as a "show password" toggle — masked in observations, and
@@ -968,12 +968,13 @@ the place it is enforced, and how holes are handled:
 - **The known channels are the initial test set, not the specification.** Today's list — the
   snapshot walker copying `el.value`, screenshots of a revealed field, copy/paste into a visible
   text control, `drag_and_drop` of a selection into one — is what the first implementation must
-  close and test. Session-wide clipboard denial and withholding `drag_and_drop` from the
-  authenticated visual profile are cheap conveniences on top, not the boundary.
+  address and test. Drag protection applies to transfers originating from protected controls;
+  ordinary drag-and-drop remains available, including on pages containing password fields.
 - **How holes are handled.** Further channels will be found. They are implementation findings for
   the browser-server PR that builds these controls, where the specific mechanism can be debated and
-  tested, not reasons to reopen this design. A newly found channel is closed at the same chokepoints
-  under the same property; it does not change the architecture.
+  tested, not reasons to promise comprehensive prevention. Prefer small guards using the existing
+  protected-control machinery. Preserve ordinary browser usability and accept bounded residuals
+  rather than adding layers to defend an absolute guarantee.
 
 The accepted residuals, stated plainly: the boundary is best-effort against a determined
 prompt-injection campaign, not proof; and once filled, the approved origin's own JavaScript can read

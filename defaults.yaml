@@ -1302,10 +1302,12 @@ service_profiles:
       provider: "google"
       llm_model: "gemini-3.8-flash"
       enable_computer_use: true
-      # Dragging a selection out of a protected field is a value-transfer
-      # channel, so the visual half of an authenticated run does not get it.
+      # The remote backend supports single left clicks only.
       computer_use_excluded_functions:
-        - "drag_and_drop"
+        - "double_click"
+        - "triple_click"
+        - "middle_click"
+        - "right_click"
       max_iterations: 60
       allowed_delegation_sources:
         - "authenticated_browser_profile"

@@ -832,6 +832,11 @@ class RemoteBrowserBackend:
                 f"{spec.site_id!r}, not the configured {spec.credential_alias!r}"
             )
 
+        if body.get("jar_id") != spec.jar_id:
+            raise AuthenticatedSessionMismatchError(
+                f"browser-server returned a different jar for site {spec.site_id!r}"
+            )
+
     def adopt_session(self, session_id: str) -> None:
         """Bind this backend to a session that already exists.
 

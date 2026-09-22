@@ -206,6 +206,7 @@ class FakeBrowserServer:
                     "authenticated_site": True,
                     "confine_origins": [ORIGIN],
                     "jar_generation": JAR_GENERATION,
+                    "jar_id": body.get("jar_id"),
                     "credential_alias": CREDENTIAL_ALIAS,
                 },
             )
@@ -659,6 +660,8 @@ def _observe_binding_before_worker_notification(
         "binding_with_other",
         "gone_404",
         "gone_410",
+        "start_gone_404",
+        "start_transient_503",
         "transient_503",
         "removed",
     ],
@@ -700,6 +703,19 @@ async def test_resume_after_losing_the_binding_fails_closed(
         app_config.authenticated_sites.clear()
     else:
         browser_server.session_read_status = int(failure.rsplit("_", 1)[1])
+
+    if failure.startswith("start_"):
+        prior_id = resume.delegation_id
+        resume.delegation_id = None
+        await harness.ask("Start a fresh order check.")
+        envelope = await _envelope(db_engine, prior_id)
+        if failure == "start_transient_503":
+            assert envelope["status"] == "approval_pending"
+            assert browser_server.sessions_created == 1
+        else:
+            assert envelope["status"] == "failed"
+            assert browser_server.sessions_created == 2
+        return
 
     reply = await harness.ask("They approved it, carry on.")
 

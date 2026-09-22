@@ -433,3 +433,13 @@ async def test_successful_retry_clears_only_its_operation_failure(
     }
     await browser_report_login_outcome_tool(_exec_context(), outcome="bad_password")
     assert binding.operation_failures == {"browser_click"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generation", [None, "4", True])
+async def test_fresh_jar_requires_generation(generation: str | int | None) -> None:
+    backend = _jar_backend(
+        {"generation": generation, "invalidated_at": None}, {"fresh": True}
+    )
+    with pytest.raises(BrowserBackendError, match="valid generation"):
+        await route_jar(backend, _site())
