@@ -174,7 +174,10 @@ What the verdict does:
   confirmation is less friction than a refusal that sends the user off to redo the write in a clean
   turn. A sighted human confirmation is an **admitting decision**: it stamps `machine_reviewed`
   exactly as a judge's admission does, as a human-confirmed executable definition is cured today. A
-  declined or timed-out confirmation follows the denial rule above.
+  declined or timed-out confirmation follows the denial rule above. The fallback is reached in
+  **enforce mode only**: observe mode never surfaces enforcement to the user, so with no reviewer
+  configured an observe-mode write is simply not admitted — persisted as reference material with its
+  external taint, without prompting.
 
 **Resolve first, then review the whole thing.** An append or a partial edit is resolved into the
 complete resulting note — merged body, full attachment set with each attachment's stored description
@@ -223,7 +226,9 @@ note's previous state:
 - a candidate whose content declares skill frontmatter;
 - a candidate that ends up reference-only — `include_in_prompt: false` and no skill metadata — takes
   the ordinary `artifact_write` path even if the note was ambient before, since the write removes
-  ambient exposure rather than adding it. A user can always demote a note, in any turn;
+  ambient exposure rather than adding it. A user can always demote a note, in any turn. Demotion
+  changes the note's exposure, not its provenance: the stamp keeps whatever the candidate retains,
+  as the next rule says;
 - creating a note under a new title with no ambient intent is likewise an ordinary artifact write,
   stamped with the turn's taint.
 
@@ -255,8 +260,11 @@ the chokepoint is also enforced by a conformance rule: an ast-grep rule forbids
 `insert(notes_table)` and `update(notes_table)` outside the notes repository module. Each existing
 writer supplies its stamp from its own trust:
 
-- **Note tools** (`create_note`, `update_note`) and **workspace import** supply the turn's taint,
-  replaced by `machine_reviewed` on an admitting verdict.
+- **Note tools** (`create_note`, `update_note`) and **workspace import** stamp the maximum of the
+  turn's taint and the stored taint of whatever the candidate retains — body under an append,
+  attachments the call omits — replaced by `machine_reviewed` on an admitting verdict. Only a full
+  replacement of the ambient material, or an admission, lowers a stamp; a partial write in a clean
+  turn, including a demotion, never launders retained external text into `trusted_user`.
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
@@ -365,4 +373,11 @@ trusted state and would leave those imported prompt notes and skills ambient aft
    title in the turn-context block does not appear in the reviewer's input.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
-   operational-findings document's Issue 3 section marked as superseded by this one.
+   operational-findings document's Issue 3 section marked as superseded by this one; and the three
+   companion contracts this design changes marked at the sentence, not the document:
+   `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance (an admitting
+   verdict on an `ambient_prompt_write` now does, to `machine_reviewed` and only there);
+   `risk-adjudicated-taint-enforcement.md`'s reservation of note promotion for human attestation
+   (machine adjudication now promotes, human confirmation remaining one admitting path); and
+   `executable-definition-taint.md`'s statement that a cure never rewrites the authoring stamp (an
+   admission now stamps the tier, the authoring taint moving to the audit record).
