@@ -186,8 +186,10 @@ provenance rule because they are deployment-controlled files rather than databas
 
 > **Superseded.** The read-time `blocked_by_taint` status and explicit-review readmission below are
 > replaced by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
-> which decides ambient eligibility at the write that produces the note. The problem statement in
-> Issue 3 still stands.
+> which decides ambient eligibility at the write that produces the note. Of Issue 3, the poisoning
+> problem it describes still stands; its requirement that admission cover every database-derived
+> ambient string, titles included, is superseded — the replacement design deliberately leaves
+> unreviewed titles in the catalog as a recorded residual.
 
 ### Effective status
 
