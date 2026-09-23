@@ -168,6 +168,7 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(turns.map { $0["role"] as? String }, ["user", "assistant"])
         XCTAssertEqual(turns.map { $0["text"] as? String }, ["hi", "hello"])
         XCTAssertTrue(turns.allSatisfy { ($0["timestamp"] as? String)?.contains("T") == true })
+        XCTAssertTrue((capturedBody["client_saved_at"] as? String)?.contains("T") == true)
         XCTAssertEqual(capturedBody["profile_id"] as? String, "complex_tasks")
     }
 

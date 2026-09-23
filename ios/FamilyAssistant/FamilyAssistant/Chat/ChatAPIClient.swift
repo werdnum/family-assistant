@@ -203,6 +203,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder().encode(
             VoiceSessionBody(
                 conversationID: conversationID,
+                clientSavedAt: timestampFormatter.string(from: Date()),
                 turns: turns.map {
                     VoiceSessionTurnBody(
                         role: $0.speaker.rawValue,
@@ -1040,11 +1041,13 @@ private struct VoiceSessionTurnBody: Encodable {
 
 private struct VoiceSessionBody: Encodable {
     let conversationID: String?
+    let clientSavedAt: String
     let turns: [VoiceSessionTurnBody]
     let profileID: String?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
+        case clientSavedAt = "client_saved_at"
         case turns
         case profileID = "profile_id"
     }

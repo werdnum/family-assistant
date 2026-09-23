@@ -27,9 +27,11 @@ The notification retains the conversation ID as a fallback. iOS routes `open_url
 URL opener instead of interpreting it as an in-app path. Web Push uses the same primary action.
 Other notification types continue using their existing navigation behavior.
 
-The transcript carries each line's first transcription time, so a link sent halfway through a call
-appears between the surrounding spoken turns when the transcript arrives. The handoff remains in
-Chat even if the final transcript upload fails.
+The transcript carries each line's first transcription time and the device time when the upload
+begins. The server translates transcript times into its own clock domain before saving, so device
+clock skew does not shift the whole transcript away from a handoff. Upload latency may still move
+lines close to the handoff by a few seconds. The handoff remains in Chat if the final transcript
+upload fails.
 
 ## Boundaries
 

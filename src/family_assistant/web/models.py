@@ -306,6 +306,7 @@ class VoiceSessionRequest(BaseModel):
         description="Client-supplied conversation id. Generated when omitted.",
     )
     turns: list[VoiceSessionTurn]
+    client_saved_at: datetime | None = None
     profile_id: str | None = Field(
         default=None,
         description=(

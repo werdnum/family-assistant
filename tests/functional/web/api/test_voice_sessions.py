@@ -1,6 +1,6 @@
 """Tests for POST /api/v1/chat/voice-sessions (native voice transcript save)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
@@ -198,6 +198,91 @@ async def test_voice_handoff_and_transcript_share_one_conversation(
             row for row in rows if row["content"] == visible[2]["content"]
         )
         assert handoff_row["processing_profile_id"] == "default_assistant"
+
+
+@pytest.mark.asyncio
+async def test_voice_session_normalizes_device_clock_to_server_clock(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    device_saved_at = datetime.now(UTC) + timedelta(days=1)
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "client_saved_at": device_saved_at.isoformat(),
+                "turns": [
+                    {
+                        "role": "user",
+                        "text": "send directions",
+                        "timestamp": (
+                            device_saved_at - timedelta(seconds=5)
+                        ).isoformat(),
+                    },
+                    {
+                        "role": "assistant",
+                        "text": "sent",
+                        "timestamp": (
+                            device_saved_at - timedelta(seconds=2)
+                        ).isoformat(),
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        messages = await client.get(
+            f"/api/v1/chat/conversations/{response.json()['conversation_id']}/messages"
+        )
+        assert messages.status_code == 200
+        timestamps = [
+            datetime.fromisoformat(message["timestamp"]).replace(tzinfo=UTC)
+            for message in messages.json()["messages"]
+        ]
+        assert timestamps[0] < timestamps[1]
+        assert all(
+            timedelta(seconds=0) < datetime.now(UTC) - timestamp < timedelta(seconds=15)
+            for timestamp in timestamps
+        )
+
+
+@pytest.mark.asyncio
+async def test_voice_session_rejects_naive_timestamp_without_partial_save(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    conversation_id = f"web_conv_{uuid4()}"
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "conversation_id": conversation_id,
+                "turns": [
+                    {
+                        "role": "user",
+                        "text": "first",
+                        "timestamp": "2026-01-01T12:00:00Z",
+                    },
+                    {
+                        "role": "assistant",
+                        "text": "second",
+                        "timestamp": "2026-01-01T12:00:01",
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 400
+    db = Database(db_engine)
+    rows = await db.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id
+    )
+    assert rows == []
 
 
 @pytest.mark.asyncio
