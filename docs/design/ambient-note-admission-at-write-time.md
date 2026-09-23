@@ -64,9 +64,9 @@ answers two different questions about a tier, and `machine_reviewed` answers the
 
 - **Authorship** — `is_externally_authored`. `machine_reviewed` content **is** externally authored:
   a skill researched from the web is still web-authored after a judge admits it. The authorship
-  boundary therefore moves so that this tier falls on the external side. Every consumer of that
-  predicate keeps its meaning: memory review still excludes it from household memory, the audit log
-  still withholds its free text, and it never counts as the human's own words.
+  boundary therefore moves so that this tier falls on the external side. The audit log still
+  withholds its free text and it never counts as the human's own words. Memory is the one consumer
+  that changes predicate, below.
 - **Reuse** — a new predicate, admissible for unasked reuse, true for `trusted_user`,
   `trusted_internal` and `machine_reviewed`. Ambient inclusion is decided by this predicate, and for
   sink policy `machine_reviewed` **is** `trusted_internal`: the equivalence is defined once, at the
@@ -75,10 +75,7 @@ answers two different questions about a tier, and `machine_reviewed` answers the
   trusted pole all apply to it unchanged. A row of its own in the default matrix would silently
   bypass a deployment's configured confirmation or denial. Downstream enforcement therefore treats
   reviewed material as reusable context without the restrictions applied to unreviewed external
-  content. The one sink this equivalence does not reach is `ambient_prompt_write` itself, below: a
-  verdict attests to the candidate it examined, not to what a model later composes with that
-  candidate in its prompt, so at the admission sink `machine_reviewed` resolves as `known_contact`,
-  the lowest external cell, and the same lookup chokepoint carries that exception.
+  content, the admission sink included.
 
 The tool-call reviewer already renders evidence in bands, and gains one: the user's own words
 (`trusted_user`) are the intent it judges against; `trusted_internal` and `machine_reviewed` rows
@@ -108,15 +105,15 @@ The firing rule follows from the tier rather than from a trusted-or-not branch. 
 callback either contributes no taint source, when its definition's stamp is non-external, or enters
 as an `unknown_external` trigger. A reviewed definition does neither: it **contributes a
 `machine_reviewed` source** — its own stamp — and renders as the intent to judge against. The turn
-is then at `machine_reviewed`, which the sink matrix treats as `trusted_internal` for enforcement —
-at every sink but `ambient_prompt_write` — while authorship stays honest, exactly as a reviewed note
-included in the prompt does. In general the callback contributes the definition's **resolved** tier,
-not the raw stamp on the row: nothing for a trusted-pole stamp, `machine_reviewed` for an admitted
-one, `unknown_external` for anything else; a payload is judged separately, as today. Resolution is
-what makes the two record forms one: a prior-version record whose curing disposition still resolves
-it as valid intent resolves to `machine_reviewed`, exactly as a record stamped with the tier does,
-so an existing automation keeps firing at its cured baseline rather than dropping to
-`unknown_external` because its row was never rewritten.
+is then at `machine_reviewed`, which the sink matrix treats as `trusted_internal` for enforcement
+while authorship stays honest, exactly as a reviewed note included in the prompt does. In general
+the callback contributes the definition's **resolved** tier, not the raw stamp on the row: nothing
+for a trusted-pole stamp, `machine_reviewed` for an admitted one, `unknown_external` for anything
+else; a payload is judged separately, as today. Resolution is what makes the two record forms one: a
+prior-version record whose curing disposition still resolves it as valid intent resolves to
+`machine_reviewed`, exactly as a record stamped with the tier does, so an existing automation keeps
+firing at its cured baseline rather than dropping to `unknown_external` because its row was never
+rewritten.
 
 Records that already exist are not rewritten. A `definition_v1` record cured by its disposition
 (judge-allowed, human-confirmed, or amnestied) keeps resolving exactly as it does today; only
@@ -150,18 +147,18 @@ future prompt unasked.
 | -------------------- | ----------------------------- |
 | `trusted_user`       | allow                         |
 | `trusted_internal`   | allow                         |
-| `machine_reviewed`   | adjudicate                    |
+| `machine_reviewed`   | allow                         |
 | `known_contact`      | adjudicate                    |
 | `recognized_machine` | adjudicate                    |
 | `unknown_external`   | adjudicate (fallback confirm) |
 
-The `machine_reviewed` row is the sink's one departure from the tier's equivalence to
-`trusted_internal`. A turn is at that tier because a reviewed note or definition was in its prompt;
-the verdict that admitted it examined that artifact and nothing else. Letting the tier's inherited
-provenance admit a new candidate would make one admission a transferable attestation for whatever
-the model composes afterwards, which is what the requirement forbids, so the new candidate is
-reviewed on its own. The cost is one more machine review per ambient write in such a turn, never a
-human one unless the deployment has no reviewer.
+A turn is at exactly `machine_reviewed` when its only external influence is reviewed material — a
+reviewed note or skill in the prompt, a reviewed definition firing. Transforming that material
+without any other external influence is the point of curing it, so the row is `allow` and the write
+persists at the turn's tier, `machine_reviewed`, eligible without a second review. Any other
+external content in the turn raises its tier past this row and the candidate is reviewed as usual.
+That one admission thereby vouches for what the model later composes from it alone is an accepted
+residual, recorded below.
 
 The write proceeds as one synchronous sequence:
 
@@ -196,16 +193,19 @@ What the verdict does:
 - A **denial, a timeout, or a missing verdict cannot promote trust.** In enforce mode the write is
   refused and the stored note, if any, is untouched. In observe mode the write may still succeed
   under the ordinary write policy, but it persists with an **unadmitted stamp**: the maximum of the
-  turn's tier, the retained material's tier and `known_contact`, the same floor the lookup applies
-  to a `machine_reviewed` turn at this sink. That floor is what makes the outcome general. Without
-  it, a reviewed-context turn whose write is denied would persist `machine_reviewed` — the turn's
-  own tier — and a denied replacement of an already reviewed note would stay in every prompt. With
-  it, a non-admitted candidate is never eligible for full-content ambient inclusion, whatever tier
-  its sources or the note it replaces were at; the tool result says so, and the same content can be
-  kept as an ordinary reference note. The original sources go to the audit record as they do on
-  admission.
-- The **fallback** when no reviewer is configured or none answers is `confirm`, as for the other
-  adjudicated cells. It is reached only when the non-manual gate is absent, and there a single
+  turn's tier, the retained material's tier and `known_contact`. The floor makes the outcome
+  general: a non-admitted candidate is never eligible for full-content ambient inclusion, whatever
+  tier the note it replaces was at, so a denied replacement of an already reviewed note drops out of
+  the prompt rather than riding on the old admission; the tool result says so, and the same content
+  can be kept as an ordinary reference note. The original sources go to the audit record as they do
+  on admission.
+- A **configured reviewer is a precondition of admission.** A deployment with no tool-call reviewer
+  has no path from an external candidate to `machine_reviewed` short of an operator override: in
+  enforce mode the adjudicated cells refuse the write, in observe mode they persist it non-admitted,
+  and the tool result says the note is reference material because no reviewer is configured. Nothing
+  is silently admitted, and the clean-turn and Notes UI paths remain open.
+- The **fallback** when a configured reviewer does not answer is `confirm`, as for the other
+  adjudicated cells. It is reached only when the non-manual gate has failed, and there a single
   confirmation is less friction than a refusal that sends the user off to redo the write in a clean
   turn. A sighted human confirmation is an **admitting decision**: it stamps `machine_reviewed`
   exactly as a judge's admission does, as a human-confirmed executable definition is cured today. A
@@ -213,8 +213,8 @@ What the verdict does:
   the **same resolved candidate the judge would have seen** — merged body, full attachment set with
   rendered metadata, or the imported file's contents — never the raw call arguments, since an append
   or an import path says nothing about the material being promoted. The fallback is reached in
-  **enforce mode only**: observe mode never surfaces enforcement to the user, so with no reviewer
-  configured an observe-mode write is simply not admitted — persisted as reference material with its
+  **enforce mode only**: observe mode never surfaces enforcement to the user, so when the reviewer
+  fails an observe-mode write is simply not admitted — persisted as reference material with its
   external taint, without prompting.
 
 **Resolve first, then review the whole thing.** An append or a partial edit is resolved into the
@@ -312,9 +312,10 @@ its own trust:
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
-- **Memory apply** writes only from transcript chunks the review already rejected for external
-  taint, and stamps the (clean) reviewing turn's tier, floored at `trusted_internal` like any other
-  machine-composed write.
+- **Memory apply** writes only from transcript chunks the review admits under the reuse predicate —
+  unreviewed external taint is still rejected — and stamps the reviewing turn's tier, floored at
+  `trusted_internal` like any other machine-composed write, so a memory note built from reviewed
+  material carries `machine_reviewed`.
 - **Core-memory bootstrap and index refresh** (`ensure_core_note`, `refresh_core_memory_index`)
   today write directly against the table; they move into repository helpers and stamp
   `trusted_internal`, since the core note is deployment-authored structure.
@@ -332,10 +333,10 @@ included note bodies and the catalogued database skills alike: a reviewed note o
 prompt merges a `machine_reviewed` source into the turn, so the turn's tier says that the model
 processed reviewed external text. Today the provider's taint sources come from the prompt notes
 only, which exclude skills; the eligible skills join them, since a skill's name and description are
-in every prompt exactly as an included body is. That costs no friction at any sink but the admission
-sink — the tier's other cells are `trusted_internal`'s — and it keeps authorship honest: the
-assistant rows stamped from that turn carry `machine_reviewed`, not a trusted-pole tier that would
-let paraphrased web material pass the memory review as household-authored.
+in every prompt exactly as an included body is. That costs no friction — the tier's sink cells are
+`trusted_internal`'s — and it keeps authorship honest: the assistant rows stamped from that turn
+carry `machine_reviewed`, not a trusted-pole tier, so what memory keeps from such a turn is stamped
+for what it is.
 
 ### Titles stay in the catalog
 
@@ -393,12 +394,20 @@ state.
   note. Cohorts the data can distinguish (call transcripts) are classified by the script, not left
   to the operator. Accepted against a zero-enforcement baseline, as the history epoch amnesty was;
   the operator's exclusion list is the mitigation for the rest.
-- **Memory keeps its authorship rule, with a consequence to decide.** Reviewed web-derived material
-  stays out of household memory. Because a reviewed ambient note raises every turn it is included in
-  to `machine_reviewed`, the memory review as written will skip every chunk of every conversation
-  that has such a note in its prompt. Whether memory should instead use the reuse predicate — admit
-  reviewed material, exclude unreviewed — is a memory-design decision, recorded here as open; it is
-  a one-predicate change in the memory review and invariants, not a change to this design.
+- **Memory admits reviewed material.** The memory review and the memory-store invariants switch from
+  the authorship predicate to the reuse predicate: a chunk from a turn at `machine_reviewed` is
+  curated, and a memory note may carry that tier. The alternative was decided against: because a
+  reviewed ambient note or skill raises every turn it is included in to `machine_reviewed`, an
+  authorship-based memory review would skip every chunk of every conversation that had such a note
+  in its prompt, which after rollout is most of them, and memory would be useless. The residual is
+  that paraphrased reviewed web material can reach household memory; the memory curator's own review
+  still sees it, and the `machine_reviewed` stamp on the chunk says what it is.
+- **One admission vouches for what is composed from it alone.** A turn whose only external influence
+  is reviewed material writes new ambient notes and skills at `machine_reviewed` without a second
+  review. Transforming reviewed material is what curing it is for, and any other external content in
+  the turn raises the tier and brings the review back. The residual is a reviewer miss that survives
+  into a derived note; the derived note carries the same tier and the same reference-only fallback
+  as its source.
 - **Attachment contents are not upgraded by review.** The reviewer sees the rendered description and
   MIME type, which is what the prompt renders; the contents keep their own taint.
 - **Workspace file content is classified as external at the read**, not tracked per file.
@@ -415,8 +424,9 @@ state.
    eligibility. Verified by unit tests on both predicates, the max rule, round-tripping through
    metadata, and the policy lookup: the shipped cells, a custom `matrix_overrides` entry and an
    `operator_minimum` set for the trusted pole all resolve identically for `trusted_internal` and
-   `machine_reviewed` at every sink but `ambient_prompt_write`, where `machine_reviewed` resolves as
-   `known_contact`.
+   `machine_reviewed`; and by memory-review and invariant tests that a `machine_reviewed` chunk is
+   curated and a `machine_reviewed` memory write is accepted while an `unknown_external` one is
+   still refused.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
    on the reuse predicate in the repository. The taint-audit endpoint reports the count of
    prompt-intended notes and skills the derived rule excludes, so the operational rollout audit has
@@ -453,15 +463,16 @@ state.
    tool tests for each gated shape and each tier, in both modes: an admitting verdict yields a
    `machine_reviewed` row, and the next turn that includes it merges exactly one `machine_reviewed`
    source and no external one; a denial refuses in enforce mode and leaves the row untouched, and in
-   observe mode persists an unreviewed row that is not included, including when the turn is at
-   `machine_reviewed` and the candidate replaces an already reviewed note, which then drops out of
-   the prompt; the `confirm` fallback holds and its prompt renders the resolved candidate rather
-   than the call's arguments, for an append and for an import alike; an operator override of an
-   external cell to `allow` or `audit` admits the write and stamps `machine_reviewed`; a trusted
-   cell strengthened to `adjudicate` runs the review and an admitting verdict leaves the
-   `trusted_user` stamp in place; an ambient write in a turn whose only external source is a
-   reviewed note in the prompt is reviewed, and persists `machine_reviewed` only on its own
-   admitting verdict; an append is reviewed and persisted as the resolved whole; an import with
+   observe mode persists an unreviewed row that is not included, including when the candidate
+   replaces an already reviewed note, which then drops out of the prompt; the `confirm` fallback
+   holds when a configured reviewer fails and its prompt renders the resolved candidate rather than
+   the call's arguments, for an append and for an import alike; with no reviewer configured the
+   write is refused in enforce mode and persisted non-admitted in observe mode, with a tool result
+   that says why; an operator override of an external cell to `allow` or `audit` admits the write
+   and stamps `machine_reviewed`; a trusted cell strengthened to `adjudicate` runs the review and an
+   admitting verdict leaves the `trusted_user` stamp in place; an ambient write in a turn whose only
+   external source is a reviewed note in the prompt is allowed without a review and persists
+   `machine_reviewed`; an append is reviewed and persisted as the resolved whole; an import with
    skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
