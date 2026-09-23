@@ -173,13 +173,13 @@ the tier.
 `_llm_callback_review_trigger` and the script-execution seeding path stop hard-coding
 `definition_taint_metadata=None` and instead resolve the definition record:
 
-| record state                                  | definition renders to reviewer as        | trigger taint contribution |
-| --------------------------------------------- | ---------------------------------------- | -------------------------- |
-| stamp ≤ `trusted_internal`, hash valid        | trusted definition                       | none                       |
-| tainted stamp + `human_confirmed`, hash valid | trusted definition, marked attested      | none                       |
-| tainted stamp + `judge_allowed`, hash valid   | trusted definition, marked judge-allowed | none                       |
-| tainted stamp, no curing disposition          | stub (today)                             | `unknown_external` (today) |
-| absent record or hash mismatch                | stub (today)                             | `unknown_external` (today) |
+| record state                                  | definition renders to reviewer as        | trigger taint contribution              |
+| --------------------------------------------- | ---------------------------------------- | --------------------------------------- |
+| stamp ≤ `trusted_internal`, hash valid        | trusted definition                       | none                                    |
+| tainted stamp + `human_confirmed`, hash valid | trusted definition, marked attested      | none *(superseded: `machine_reviewed`)* |
+| tainted stamp + `judge_allowed`, hash valid   | trusted definition, marked judge-allowed | none *(superseded: `machine_reviewed`)* |
+| tainted stamp, no curing disposition          | stub (today)                             | `unknown_external` (today)              |
+| absent record or hash mismatch                | stub (today)                             | `unknown_external` (today)              |
 
 "Marked" means the review-status vocabulary (`clean` / `attested` / `judge-allowed at creation`,
 plus creator identity) renders as closed-vocabulary context alongside the definition, so the
@@ -294,6 +294,14 @@ document's activation rule. A definition mutated outside the write path resolves
 and fails closed.
 
 ### Shadow measurement measures the real system
+
+> **Superseded in one respect.** Under
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md) a cured
+> definition — one stamped `machine_reviewed`, or a prior-version row cured by its disposition —
+> fires **at `machine_reviewed`**, contributing that source and rendering as the intent to judge
+> against, rather than firing clean with no contribution as the table above and this section say.
+> The shadow-measurement argument is unchanged, since `machine_reviewed` takes `trusted_internal`'s
+> cells at every sink.
 
 Because `allow` cures in every mode, the dry run needs no correction: a definition the judge
 approves at creation fires clean under `observe` exactly as it would under `enforce`, so the shadow
