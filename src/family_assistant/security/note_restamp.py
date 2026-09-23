@@ -23,6 +23,7 @@ docs/design/ambient-note-admission-at-write-time.md, "Existing rows".
 from __future__ import annotations
 
 import fnmatch
+import functools
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
@@ -39,7 +40,7 @@ from family_assistant.security.taint_audit import taint_audit_sources
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from family_assistant.storage.database import Database
+    from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.storage.repositories.notes import UnstampedNote
 
 CALL_TRANSCRIPT_TITLE_PREFIX = "Call Transcript:"
@@ -123,6 +124,45 @@ async def plan_note_restamp(
     ]
 
 
+async def _restamp_one(
+    txn: DatabaseTransaction, *, decision: RestampDecision, batch: str
+) -> bool:
+    """Stamp one row and record its audit event, committed together.
+
+    A stamp without its audit record would be permanent: a rerun skips rows
+    that already carry an envelope.
+    """
+    state = _restamp_state(decision, batch_id=batch)
+    stamped = await txn.notes.restamp_provenance(
+        decision.note.id, state=state, expected_title=decision.note.title
+    )
+    if not stamped:
+        return False
+    await txn.taint_audit_events.add(
+        event_id=str(uuid.uuid4()),
+        event_type=RESTAMP_EVENT_TYPE,
+        conversation_id=batch,
+        turn_id=None,
+        processing_profile_id=None,
+        subconversation_id=None,
+        tool_name="restamp_note_provenance",
+        tool_call_id=None,
+        sink_class=None,
+        max_tier=state.max_tier.config_value,
+        sources=taint_audit_sources(state),
+        requested_outcome=None,
+        effective_outcome=decision.rule.value,
+        mode=None,
+        reason=(
+            f"Batch {batch} stamped a pre-stamping note "
+            f"{state.max_tier.config_value} by rule {decision.rule.value}."
+        ),
+        arguments_summary=None,
+        artifact_id=f"note:{decision.note.id}",
+    )
+    return True
+
+
 async def apply_note_restamp(
     db: Database,
     decisions: Iterable[RestampDecision],
@@ -136,33 +176,8 @@ async def apply_note_restamp(
     batch = batch_id or f"note-restamp-{uuid.uuid4()}"
     applied: list[RestampDecision] = []
     for decision in decisions:
-        state = _restamp_state(decision, batch_id=batch)
-        stamped = await db.notes.restamp_provenance(
-            decision.note.id, state=state, expected_title=decision.note.title
-        )
-        if not stamped:
-            continue
-        await db.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
-            event_type=RESTAMP_EVENT_TYPE,
-            conversation_id=batch,
-            turn_id=None,
-            processing_profile_id=None,
-            subconversation_id=None,
-            tool_name="restamp_note_provenance",
-            tool_call_id=None,
-            sink_class=None,
-            max_tier=state.max_tier.config_value,
-            sources=taint_audit_sources(state),
-            requested_outcome=None,
-            effective_outcome=decision.rule.value,
-            mode=None,
-            reason=(
-                f"Batch {batch} stamped a pre-stamping note "
-                f"{state.max_tier.config_value} by rule {decision.rule.value}."
-            ),
-            arguments_summary=None,
-            artifact_id=f"note:{decision.note.id}",
-        )
-        applied.append(decision)
+        if await db.atomic(
+            functools.partial(_restamp_one, decision=decision, batch=batch)
+        ):
+            applied.append(decision)
     return applied

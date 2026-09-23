@@ -23,6 +23,14 @@ from family_assistant.security.note_restamp import (
 from family_assistant.security.taint import SourceTrustTier
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import (
+    NoteChangedError,
+    NoteWritePolicy,
+    note_revision,
+)
+from family_assistant.storage.repositories.taint_audit import (
+    TaintAuditEventsRepository,
+)
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.notes import add_or_update_note_tool
 from tests.functional.notes.ambient_helpers import (
@@ -243,3 +251,45 @@ async def test_a_null_row_surviving_the_restamp_is_excluded_and_logged(
 
     assert "body of Written after the batch" not in prompt
     assert any(record.levelno == logging.ERROR for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_restamp_whose_audit_fails_leaves_the_row_unstamped(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stamp and its audit record commit together, so a rerun can finish it."""
+    db = Database(db_engine)
+    await _insert_unstamped(db, "Household rules")
+
+    async def _fail(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("audit store unavailable")
+
+    monkeypatch.setattr(TaintAuditEventsRepository, "add", _fail)
+    with pytest.raises(RuntimeError, match="audit store unavailable"):
+        await _restamp(db, RestampExclusions())
+
+    remaining = await plan_note_restamp(db, RestampExclusions())
+    assert [decision.note.title for decision in remaining] == ["Household rules"]
+
+
+@pytest.mark.asyncio
+async def test_a_write_decided_against_no_note_does_not_overwrite_a_new_one(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await write_note(
+        db, "Groceries", "written meanwhile", provenance=NoteProvenanceStamp.user_edit()
+    )
+
+    with pytest.raises(NoteChangedError):
+        await db.notes.add_or_update(
+            "Groceries",
+            "decided against an absent note",
+            # ast-grep-ignore: no-unconstrained-note-write-policy - test seeding, no profile in play
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
+            expected_revision=note_revision(None),
+        )
+
+    assert await stored_tier(db, "Groceries") is SourceTrustTier.TRUSTED_USER

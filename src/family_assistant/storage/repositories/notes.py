@@ -808,6 +808,14 @@ class NotesRepository(BaseRepository):
             now = datetime.now(UTC)
             note_content = content
 
+            if expected_revision is not None:
+                # Hold the row until commit, so the revision checked below is
+                # the revision the write replaces.
+                await txn.fetch_one(
+                    select(notes_table.c.id)
+                    .where(notes_table.c.title == title)
+                    .with_for_update()
+                )
             existing_note = await txn.notes.get_by_title(
                 title, read_policy=NoteReadPolicy.UNRESTRICTED
             )
@@ -930,6 +938,12 @@ class NotesRepository(BaseRepository):
                         "updated_at": stmt.excluded.updated_at,
                     }
                     writable = self._writable_under_policy_condition(write_policy)
+                    if expected_revision is not None and existing_note is None:
+                        # The write was decided against no note at all; a row
+                        # another writer inserted meanwhile is not overwritten.
+                        return stmt.on_conflict_do_nothing(
+                            index_elements=["title"]
+                        ), sa.false()
                     return (
                         stmt.on_conflict_do_update(
                             index_elements=["title"],
@@ -942,6 +956,14 @@ class NotesRepository(BaseRepository):
                 def _ensure_write_allowed(
                     writable: sa.ColumnElement[bool] | None, rowcount: int
                 ) -> None:
+                    if (
+                        expected_revision is not None
+                        and existing_note is None
+                        and rowcount == 0
+                    ):
+                        raise NoteChangedError(
+                            f"Note '{title}' was created after this write was decided."
+                        )
                     if writable is not None and rowcount == 0:
                         raise NoteWritePolicyError(
                             f"Cannot modify note '{title}' - a concurrently written "
@@ -998,6 +1020,11 @@ class NotesRepository(BaseRepository):
                 except SQLAlchemyError as e:
                     # Check specifically for unique constraint violation
                     if isinstance(e, IntegrityError):
+                        if expected_revision is not None and existing_note is None:
+                            raise NoteChangedError(
+                                f"Note '{title}' was created after this write was "
+                                "decided."
+                            ) from e
                         self._logger.info(
                             f"Note '{title}' already exists (SQLite fallback), attempting update."
                         )
@@ -1256,14 +1283,17 @@ class NotesRepository(BaseRepository):
 
         Refuses to touch a row that has gained an envelope in the meantime, and
         enqueues the row's indexing task so the indexed copy's provenance
-        snapshot follows the row.
+        snapshot follows the row. Called on a transaction, it joins it, so the
+        caller can commit the stamp with its own audit record.
         """
 
         async def _restamp(txn: DatabaseTransaction) -> bool:
+            # Locked so a note write cannot land between the absence check and
+            # the update: the check and the write it guards are one decision.
             row = await txn.fetch_one(
-                select(
-                    notes_table.c.title, notes_table.c.provenance_metadata_json
-                ).where(notes_table.c.id == note_id)
+                select(notes_table.c.title, notes_table.c.provenance_metadata_json)
+                .where(notes_table.c.id == note_id)
+                .with_for_update()
             )
             if (
                 row is None
@@ -1271,11 +1301,14 @@ class NotesRepository(BaseRepository):
                 or row["provenance_metadata_json"] is not None
             ):
                 return False
-            await txn.execute(
+            result = await txn.execute(
                 update(notes_table)
                 .where(notes_table.c.id == note_id)
+                .where(notes_table.c.title == expected_title)
                 .values(provenance_metadata_json=note_provenance_metadata(state))
             )
+            if result.rowcount == 0:
+                return False
             await self._enqueue_indexing_task(txn, expected_title)
             return True
 
