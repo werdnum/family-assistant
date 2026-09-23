@@ -385,8 +385,9 @@ re-litigated, and it can be tightened later without touching the rest of the des
 Rows that carry provenance need no backfill. Eligibility derives from the stored tier, so the
 production notes whose `unknown_external` stamp is poisoning every turn simply stop being included
 the moment the derived rule ships; their content and labels are untouched. A user who wants one back
-asks for it in a clean turn (a `trusted_user` write, or a reviewed one if the turn is tainted) or
-edits it in the Notes UI.
+has two paths: ask the assistant to rewrite it, which is reviewed at the note's stored tier because
+the title is retained and admits it as `machine_reviewed`; or edit it in the Notes UI, which stamps
+`trusted_user`.
 
 Rows with **no provenance at all** are handled once, by a **batch restamp** the operator runs at
 rollout. These are the notes written before provenance stamping existed, the core-memory note the
@@ -490,9 +491,10 @@ state.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
-   trusted-pole candidate keeps its trusted stamp), and otherwise with the maximum of the turn's
-   taint, the stored taint of whatever the candidate retains and `known_contact`, so a denied or
-   unreviewed partial write never lowers a stamp and never persists a reusable one; the import tool
+   trusted-pole candidate keeps its trusted stamp), and otherwise, for an external candidate, with
+   the maximum of the turn's taint, the stored taint of whatever the candidate retains and
+   `known_contact`, so a denied or unreviewed partial write never lowers a stamp and never persists
+   a reusable one, while a denied trusted-pole candidate keeps its trusted stamp; the import tool
    merges the file as an `unknown_external` source first and defaults inclusion off. Verified by
    tool tests for each gated shape and each tier, in both modes: an admitting verdict yields a
    `machine_reviewed` row, and the next turn that includes it merges exactly one `machine_reviewed`
@@ -542,4 +544,8 @@ state.
    `executable-definition-taint.md`'s statement that a cure never rewrites the authoring stamp (an
    admission now stamps the tier, the authoring taint moving to the audit record); and
    `auto-tool-call-review.md`'s rule, with its verification, that observe-mode adjudication never
-   runs on the critical path (`ambient_prompt_write` alone awaits its verdict in observe mode).
+   runs on the critical path (`ambient_prompt_write` alone awaits its verdict in observe mode); and
+   `auto-tool-call-review.md`'s input contract, which stubs every conversation row above
+   `trusted_internal` and applies the same rule to trigger definitions (`machine_reviewed` rows,
+   sources and definitions now render as the reviewed-context band and as the intent to judge
+   against, per milestone 5, rather than as stubs).
