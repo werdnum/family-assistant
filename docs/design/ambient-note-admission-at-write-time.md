@@ -269,9 +269,14 @@ cannot replace it, and the title is rendered in full ambient inclusion and in th
 so a tool update of a stored note is always evaluated at no less than the note's stored tier, even
 when the call replaces the body and clears the attachments. A tool write therefore never lowers a
 stamp on its own; a stamp is lowered by an admission or by the user's own edit through the web API,
-which replaces the title along with everything else. Synchronous review does not remove every
-concurrent update race; what remains is ordinary database correctness — persist the candidate that
-was actually reviewed, under the transaction and locking semantics the repository already uses.
+which replaces the title along with everything else. Synchronous review opens a window in which
+another writer — the Notes UI, another turn — can change the same note while the reviewer is
+running, and the repository's upsert today carries no revision predicate, so the reviewed candidate
+would silently overwrite that edit. The rule is that **the candidate the reviewer saw is the
+candidate that is persisted, or nothing is**: the write records the stored note's revision when it
+resolves the candidate, the persist is conditional on that revision, and a mismatch refuses the
+write with a result that says the note changed during review, so the tool re-resolves against the
+new state and reviews again, once. A stale candidate is never written.
 
 **What the reviewer judges** is the complete proposed note or skill as *reusable material*, not
 merely whether the user asked for a save. Two cases fix the boundary:
@@ -562,12 +567,13 @@ state.
    admission, human confirmation, operator override and observe-mode denial — a taint audit event
    keyed to the note holds the bounded source summary the audit store retains (with its omission
    count), the authoring turn's tier and the verdict, confirmation or override that decided it; an
-   append is reviewed and persisted as the resolved whole; a clean-turn write that associates an
-   attachment with no stored envelope is reviewed rather than allowed, while an explicit read of the
-   same attachment still contributes no taint; a clean-turn `update_note` that replaces an
-   unreviewed note's body, clears its attachments and enables inclusion is reviewed at the stored
-   tier rather than allowed; an import with skill frontmatter is reviewed and, unreviewed, is absent
-   from the catalog.
+   append is reviewed and persisted as the resolved whole; a note edited by another writer while its
+   review is running is not overwritten — the stale candidate is refused and the write re-resolves
+   and re-reviews once; a clean-turn write that associates an attachment with no stored envelope is
+   reviewed rather than allowed, while an explicit read of the same attachment still contributes no
+   taint; a clean-turn `update_note` that replaces an unreviewed note's body, clears its attachments
+   and enables inclusion is reviewed at the stored tier rather than allowed; an import with skill
+   frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section, produced by the prompt's own renderer; an admitted definition's stamp
