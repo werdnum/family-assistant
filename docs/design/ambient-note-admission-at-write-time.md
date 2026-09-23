@@ -57,7 +57,13 @@ shared taint machinery apply it everywhere at once.
 
 The tier sits between `trusted_internal` and `known_contact` in the ordering, so the max rule is
 unchanged: a turn that combines it with fresh `unknown_external` content is `unknown_external`.
-Review upgrades the stored artifact, not the conversation that authored it.
+Review upgrades the stored artifact, not the conversation that authored it. Inserting a member
+renumbers the tiers above it, and tier parsing today accepts a bare integer as well as a name, so a
+`matrix_overrides`, `operator_minimum` or `high_taint_tier` value written as `2` would silently move
+from `known_contact` to the new tier. Stored envelopes are unaffected — they serialize tier names —
+but configuration is not migrated: **integer tier values are rejected at startup**, with a message
+naming the key and the name to write instead, so a pre-upgrade numeric configuration fails loudly
+rather than shifting.
 
 **Review changes what the content may be used for, not where it came from.** The security module
 answers two different questions about a tier, and `machine_reviewed` answers them differently:
@@ -478,11 +484,12 @@ state.
    parsing and policy defaults, between `trusted_internal` and `known_contact`; the authorship
    boundary moved so it reads as external; the reuse predicate added and used by ambient
    eligibility. Verified by unit tests on both predicates, the max rule, round-tripping through
-   metadata, and the policy lookup: the shipped cells, a custom `matrix_overrides` entry and an
-   `operator_minimum` set for the trusted pole all resolve identically for `trusted_internal` and
-   `machine_reviewed`; and by memory-review and invariant tests that a `machine_reviewed` chunk is
-   curated and a `machine_reviewed` memory write is accepted while an `unknown_external` one is
-   still refused.
+   metadata, config rejection of an integer tier value (a pre-upgrade `operator_minimum: 2` fails at
+   startup naming the key, `known_contact` parses as before), and the policy lookup: the shipped
+   cells, a custom `matrix_overrides` entry and an `operator_minimum` set for the trusted pole all
+   resolve identically for `trusted_internal` and `machine_reviewed`; and by memory-review and
+   invariant tests that a `machine_reviewed` chunk is curated and a `machine_reviewed` memory write
+   is accepted while an `unknown_external` one is still refused.
 2. **Derived eligibility on the ambient reads.** Prompt-included bodies and the skill catalog filter
    on the reuse predicate in the repository. The taint-audit endpoint reports the count of
    prompt-intended notes and skills the derived rule excludes, so the operational rollout audit has

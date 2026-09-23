@@ -597,9 +597,12 @@ actual approval, with full-payload rendering required; `deny` never cures); reso
 `human_confirmed` and `judge_allowed`; review-status vocabulary in the reviewer rendering; echo
 eligibility rules. The taint-cell path depends on the risk document's executable-persistence sink
 split; the static `review` and confirmation paths work wherever those gates exist today. *Verify:* a
-human-confirmed tainted creation fires clean and renders marked attested; a judge-allowed creation
-cures with `taint_policy.mode` still `observe`, through the taint layer and the static layer alike;
-an observe-mode `allow` attaches asynchronously after review completion, bound to the originating
+human-confirmed tainted creation ~~fires clean~~ fires at `machine_reviewed` (superseded by
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): both a newly
+stamped and a prior-version disposition-cured definition contribute a `machine_reviewed` source and
+render as the intent to judge against) and renders marked attested; a judge-allowed creation cures
+with `taint_policy.mode` still `observe`, through the taint layer and the static layer alike; an
+observe-mode `allow` attaches asynchronously after review completion, bound to the originating
 write's generation — a firing before completion enters uncured, the next firing of a durable-table
 definition enters cured (a one-shot follow-up chain re-enqueued inside the window keeps the pending
 record, per the one-shot section), a mutation racing the completion leaves the new content uncured,
