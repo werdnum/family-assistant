@@ -329,7 +329,11 @@ its own trust:
 - **Memory apply** writes only from transcript chunks the review admits under the reuse predicate —
   unreviewed external taint is still rejected — and stamps the reviewing turn's tier, floored at
   `trusted_internal` like any other machine-composed write, so a memory note built from reviewed
-  material carries `machine_reviewed`.
+  material carries `machine_reviewed`. It rewrites each touched topic note whole, untouched entries
+  included, so it is a partial write under the retained-provenance rule above: the stamp is the
+  maximum of the reviewing turn's tier and the stored tier of the note it rewrites, and a later
+  clean review that edits one entry of a `machine_reviewed` topic leaves the note `machine_reviewed`
+  rather than relabelling the retained reviewed entries as internally authored.
 - **Core-memory bootstrap and index refresh** (`ensure_core_note`, `refresh_core_memory_index`)
   today write directly against the table; they move into repository helpers and stamp
   `trusted_internal`, since the core note is deployment-authored structure.
@@ -462,14 +466,15 @@ state.
    check rejecting a raw write, by a registry test that a Gmail download stored in a turn the
    message raised to `unknown_external` carries that envelope, by a repository test that a
    clean-turn tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
-   fresh-database memory bootstrap, by a test of the batch script that restamps a null row
-   `trusted_internal`, stamps a null call-transcript row and an operator-excluded row
-   `unknown_external`, leaves stamped rows untouched, writes into each restamped row's audit record
-   the batch and the rule that classified it, and enqueues indexing for every row it restamps so
-   that a document search over a restamped note restores the new tier, and by a test that a null row
-   surviving the batch is excluded from ambient reads and logged at ERROR, and by a tool test that
-   reading a reviewed note with an email-derived attachment raises the turn to the attachment's
-   tier.
+   memory-apply test that a clean review editing one entry of a `machine_reviewed` topic note leaves
+   the note at `machine_reviewed`, by a fresh-database memory bootstrap, by a test of the batch
+   script that restamps a null row `trusted_internal`, stamps a null call-transcript row and an
+   operator-excluded row `unknown_external`, leaves stamped rows untouched, writes into each
+   restamped row's audit record the batch and the rule that classified it, and enqueues indexing for
+   every row it restamps so that a document search over a restamped note restores the new tier, and
+   by a test that a null row surviving the batch is excluded from ambient reads and logged at ERROR,
+   and by a tool test that reading a reviewed note with an email-derived attachment raises the turn
+   to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
