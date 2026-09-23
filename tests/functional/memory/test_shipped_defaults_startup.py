@@ -24,6 +24,7 @@ from family_assistant.memory.sweep import (
     MEMORY_REVIEW_SWEEP_TASK_ID,
     MEMORY_REVIEW_SWEEP_TASK_TYPE,
 )
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
@@ -49,6 +50,7 @@ async def _seed_core_memory_note(engine: AsyncEngine) -> None:
         visibility_labels=[MEMORY_LABEL],
         # ast-grep-ignore: no-unconstrained-note-write-policy - test seeding the note the curator would have written, with no profile in play
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
 

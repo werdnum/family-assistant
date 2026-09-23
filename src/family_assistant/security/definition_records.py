@@ -37,6 +37,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     TurnTaintTracker,
     coerce_taint_metadata,
+    is_admissible_for_reuse,
     is_externally_authored,
     machine_authored_taint_metadata,
 )
@@ -488,6 +489,20 @@ def stamp_definition(
             pending_write_id = gate_outcome.pending.write_id
     if disposition is None and not externally_authored:
         disposition = CreationDisposition.CLEAN
+    if (
+        externally_authored
+        and pending_write_id is None
+        and disposition is not None
+        and disposition in _ADMITTING_DISPOSITIONS
+        and cure_eligible
+    ):
+        # An admission at the creation gate is expressed as the tier, exactly as
+        # an admitted note's is. The authoring turn's provenance is what the
+        # gate's own audit event records; the stamp now says what the content
+        # may be reused as. An operator amnesty is not an admission -- no gate
+        # examined the content -- so its stamp stays the honest unknown one and
+        # its disposition cures it at resolution.
+        metadata = reviewed_definition_taint_metadata(disposition)
     return DefinitionRecord(
         taint_metadata=metadata,
         content_hash=definition_content_hash(content),
@@ -495,6 +510,33 @@ def stamp_definition(
         gate=gate,
         pending_write_id=pending_write_id,
         cure_eligible=cure_eligible,
+    )
+
+
+REVIEWED_DEFINITION_LABEL = "reviewed_definition"
+_ADMITTING_DISPOSITIONS = frozenset({
+    CreationDisposition.JUDGE_ALLOWED,
+    CreationDisposition.HUMAN_CONFIRMED,
+})
+
+
+def reviewed_definition_taint_metadata(
+    disposition: CreationDisposition,
+) -> TaintMetadata:
+    """The stamp of a definition a gate admitted: one ``machine_reviewed`` source."""
+    return (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.AUTOMATION_TRIGGER,
+                source_id=None,
+                tier=SourceTrustTier.MACHINE_REVIEWED,
+                labels=frozenset({REVIEWED_DEFINITION_LABEL}),
+                reason=f"Definition admitted at creation ({disposition.value}).",
+            )
+        )
+        .to_metadata()
     )
 
 
@@ -723,12 +765,11 @@ class DefinitionResolution:
     a stub and seeds the turn as an unattended external trigger, exactly as
     before this design.
 
-    ``taint_metadata`` is what a resolved definition renders *as*: for a
-    trusted-pole stamp it is the stamp itself; for a cured one it is the clean
-    machine-authored baseline the definition would have had if authored
-    untainted, since the cure restores that baseline and nothing more. Either
-    way it is never ``trusted_user`` unless a human typed the definition, so
-    the reviewer's human-words consumers stay honest.
+    ``taint_metadata`` is what a resolved definition renders *as*: for a stamp
+    admissible for reuse it is the stamp itself; for a prior-version record
+    cured by its disposition it is the ``machine_reviewed`` stamp an admission
+    writes today. Either way it is never ``trusted_user`` unless a human typed
+    the definition, so the reviewer's human-words consumers stay honest.
     """
 
     taint_metadata: TaintMetadata | None
@@ -807,10 +848,11 @@ def resolve_definition_record(
 ) -> DefinitionResolution:
     """Resolve a stored record against the content it is supposed to describe.
 
-    Two things resolve a definition as trusted intent: a stamp at the trusted
-    pole, meaning the authoring turn held nothing externally authored; or a
-    curing disposition, meaning a gate made a real decision about this exact
-    content. Everything else -- a tainted stamp no gate cured, an escalation
+    Two things resolve a definition as intent: a stamp admissible for reuse --
+    the trusted pole, or ``machine_reviewed`` -- or a curing disposition on a
+    record written before admissions stamped the tier, meaning a gate made a
+    real decision about this exact content. Both admitted forms resolve to
+    ``machine_reviewed``. Everything else -- a tainted stamp no gate cured, an escalation
     nobody approved, a denial, a legacy row, content that changed under the
     record -- is unresolved and fails closed.
     """
@@ -818,14 +860,19 @@ def resolve_definition_record(
     if record is None or not record.matches(content):
         return UNRESOLVED_DEFINITION
     stamp_tier = TurnTaintState.from_metadata(record.taint_metadata).max_tier
-    if not is_externally_authored(stamp_tier):
+    if is_admissible_for_reuse(stamp_tier):
+        # The trusted pole, or ``machine_reviewed``: admitted at creation, or
+        # composed from reviewed material alone.
         return DefinitionResolution(
             taint_metadata=record.taint_metadata,
             disposition=record.disposition,
         )
-    if record.cures:
+    if record.cures and record.disposition is not None:
+        # A record written before admissions stamped the tier, cured by its
+        # disposition. It resolves exactly as one stamped with the tier does,
+        # so an existing automation keeps its cured baseline unrewritten.
         return DefinitionResolution(
-            taint_metadata=machine_authored_taint_metadata(TurnTaintState.empty()),
+            taint_metadata=reviewed_definition_taint_metadata(record.disposition),
             disposition=record.disposition,
         )
     return UNRESOLVED_DEFINITION

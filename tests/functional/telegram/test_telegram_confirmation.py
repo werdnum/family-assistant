@@ -763,9 +763,8 @@ async def test_confirmation_accepted(
     )
     rule_request_tool: Rule = (request_delete_matcher, request_tool_output)
     # Define expected tool success message based on mock return value
-    # The actual tool returns "has been updated successfully" not "added/updated successfully"
     expected_tool_success_result = (
-        f"Note '{test_note_title}' has been updated successfully."
+        f"Note '{test_note_title}' has been created successfully."
     )
 
     # 2. Tool result received -> LLM gives final success message

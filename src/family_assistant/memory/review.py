@@ -48,7 +48,7 @@ from family_assistant.observability.metrics import (
 from family_assistant.processing.service import ProcessingService
 from family_assistant.security.taint import (
     TurnTaintState,
-    is_externally_authored,
+    is_admissible_for_reuse,
     merge_history_taint,
 )
 from family_assistant.security.taint_audit import taint_audit_sources
@@ -192,7 +192,7 @@ async def run_memory_review(
     )
     taint = _merged_chunk_taint(chunk.rows)
 
-    if is_externally_authored(taint.max_tier):
+    if not is_admissible_for_reuse(taint.max_tier):
         # Before any model call: the design's whole-stretch exclusion, and the
         # loss it causes is measured from day one rather than estimated later.
         await _record_taint_audit(
@@ -208,7 +208,7 @@ async def run_memory_review(
             chunk=chunk,
             outcome="skipped",
             reason=(
-                "The stretch carries content authored outside the household "
+                "The stretch carries unreviewed content authored outside the household "
                 f"(taint tier {taint.max_tier.config_value}); memory holds "
                 "nothing that originates outside it."
             ),

@@ -17,6 +17,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
@@ -526,6 +527,7 @@ async def test_script_can_retrieve_notes(
         content="This is a test note for retrieval",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     # Step 2: Create event listener with script that reads notes

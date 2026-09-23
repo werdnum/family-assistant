@@ -1742,6 +1742,7 @@ trusted-pole-distant:
 | -------------------- | --------------------------------------------------------------------------------------------------------- |
 | `trusted_user`       | Content a human typed through an authenticated channel                                                    |
 | `trusted_internal`   | Content composed inside the trust boundary without a human hand — ordinary model output, system templates |
+| `machine_reviewed`   | Externally authored content a reviewer admitted for reuse — an admitted ambient note, skill or automation |
 | `known_contact`      | A vetted external sender                                                                                  |
 | `recognized_machine` | A recognized automated sender                                                                             |
 | `unknown_external`   | Anything else                                                                                             |
@@ -1752,6 +1753,17 @@ words* — the originating-request slot and the destination-echo signal — can 
 instead of guessing from message structure; those two narrow to exactly `trusted_user`, while
 everything evidential (which conversation rows render, which provenance detail is shown) covers
 both.
+
+Write tiers by **name**. An integer tier (`operator_minimum: {2: ...}`) is rejected at startup with
+a message naming the key: the numbering changed when `machine_reviewed` was added, and a number
+would otherwise silently move to a different tier.
+
+`machine_reviewed` takes `trusted_internal`'s cells for every sink, egress included, and **cannot be
+configured on its own** — a `machine_reviewed` row in `matrix`, `matrix_overrides` or
+`operator_minimum` is rejected. Configure the trusted pole instead; a `confirm` floor on egress for
+`trusted_user` then applies to reviewed material too. After the ambient-note rollout most turns
+carry a reviewed note or skill and so run at `machine_reviewed`, which is why the tier has no egress
+floor of its own.
 
 **You do not need to write `trusted_internal` rows.** A `matrix`, `matrix_overrides`, or
 `operator_minimum` entry written for `trusted_user` governs `trusted_internal` evaluations too,
@@ -1897,6 +1909,65 @@ See [docs/design/taint-history-epoch-amnesty.md](../design/taint-history-epoch-a
 
 ______________________________________________________________________
 
+## Ambient Note Admission
+
+A note whose full content is loaded into every prompt (`include_in_prompt`), or a note whose
+frontmatter makes it a skill (its name and description are in every prompt's catalog), reaches a
+prompt only when its stored provenance tier is admissible for reuse: `trusted_user`,
+`trusted_internal` or `machine_reviewed`. Any other note stays listed by title and readable with
+`get_note`, and contributes nothing to a turn it is not read in. See
+[ambient-note-admission-at-write-time.md](../design/ambient-note-admission-at-write-time.md).
+
+The write that would put a note on that surface is the `ambient_prompt_write` sink:
+
+| Turn tier                                                 | `ambient_prompt_write`        |
+| --------------------------------------------------------- | ----------------------------- |
+| `trusted_user`, `trusted_internal`, `machine_reviewed`    | allow                         |
+| `known_contact`, `recognized_machine`, `unknown_external` | adjudicate (fallback confirm) |
+
+The tier the cell is evaluated at is the maximum of the turn, the stored tier of the note being
+updated, and every attachment the note would render; an attachment with no stored provenance counts
+as `unknown_external` here. The review is **awaited in observe mode as well as enforce**, because
+the persisted note must carry its verdict:
+
+- An allow from the reviewer, a sighted confirmation, or an operator override of the cell to `allow`
+  or `audit` stamps the note `machine_reviewed`, and it is loaded into prompts.
+- A denial, a declined confirmation, or no configured `tool_call_review` refuses the write in
+  `enforce` mode and saves it as reference material (not loaded) in `observe` mode. The tool result
+  tells the model which happened.
+- The `confirm` fallback — a configured reviewer that did not answer — applies in `enforce` mode
+  only, and shows the person the complete resulting note, not the call's arguments.
+
+Every decision is recorded as an `ambient_note_admission` taint audit event keyed to the note, and
+`GET /api/diagnostics/taint-audit` reports under `ambient_notes` how many prompt-intended notes and
+skills the rule currently excludes, and how many rows have no provenance at all.
+
+A note edited through the Notes UI is stamped `trusted_user`, which is the deterministic way to put
+a refused note back into every prompt.
+
+### Rollout: restamping notes written before provenance stamping
+
+Notes written before provenance stamping have none, and a note with none reads as `unknown_external`
+— it drops out of prompts, and any turn that lists it is tainted. Run the restamp once at rollout:
+
+```bash
+# What would be stamped, and how? Nothing is written.
+python scripts/restamp_note_provenance.py --database-url "$DATABASE_URL"
+
+# Stamp it, naming workspace imports you know about as external.
+python scripts/restamp_note_provenance.py --database-url "$DATABASE_URL" \
+    --exclude-title "Imported research" --exclude-title-pattern "import-*" --apply
+```
+
+Call transcripts (titles beginning `Call Transcript:`, or notes carrying every `--transcript-label`
+you pass) and the rows you exclude are stamped `unknown_external`; every other unstamped row is
+stamped `trusted_internal`, on the judgment that it is household material. Rows that already carry
+provenance are never touched, each restamp re-indexes the note so search sees the new tier, and each
+is recorded as a `note_provenance_restamp` audit event naming the batch and the rule. A note with no
+provenance after the restamp is a write-path regression and is logged at ERROR whenever it is read.
+
+______________________________________________________________________
+
 ## Legacy Definition Amnesty
 
 An automation, event listener, or stored script written before definition records shipped carries
@@ -1921,11 +1992,12 @@ definition written after that instant with no record is a write-path regression 
 artifact to bless. Restrict a run with `--kind` (`schedule_automation`, `event_listener`, `script`)
 and `--name`, both repeatable, to amnesty in batches.
 
-An amnestied definition fires with its intent rendered, and the reviewer is told which it is
-reading: the review status says the definition was amnestied by the operator and examined by no
-gate, it never counts as a human attestation, and it never feeds the destination echo. It is bound
-to a hash of the content it was granted over, so editing the definition afterwards voids the amnesty
-and returns it to the ordinary creation gate.
+An amnestied definition fires with its intent rendered, at the `machine_reviewed` tier every cured
+definition resolves to, and the reviewer is told which it is reading: the review status says the
+definition was amnestied by the operator and examined by no gate, it never counts as a human
+attestation, and it never feeds the destination echo. It is bound to a hash of the content it was
+granted over, so editing the definition afterwards voids the amnesty and returns it to the ordinary
+creation gate.
 
 Two properties bound what a run can do. It fills absence only — a definition already holding a
 record, including one voided by a hash mismatch, is never touched — and it is reversible:

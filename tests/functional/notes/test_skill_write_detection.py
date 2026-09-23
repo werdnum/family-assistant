@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
@@ -35,6 +36,7 @@ async def test_skill_detected_on_create(db_engine: AsyncEngine) -> None:
         content=SKILL_CONTENT,
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     note = await db.notes.get_by_title(
@@ -58,6 +60,7 @@ async def test_regular_note_not_detected_as_skill(db_engine: AsyncEngine) -> Non
         content="Just regular content.",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     note = await db.notes.get_by_title(
@@ -83,6 +86,7 @@ async def test_skill_detection_updated_on_content_change(
         title="Changeable",
         content=SKILL_CONTENT,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     note = await db.notes.get_by_title(
         "Changeable", read_policy=NoteReadPolicy.UNRESTRICTED
@@ -95,6 +99,7 @@ async def test_skill_detection_updated_on_content_change(
         title="Changeable",
         content="Now just regular content.",
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     note = await db.notes.get_by_title(
         "Changeable", read_policy=NoteReadPolicy.UNRESTRICTED
@@ -114,11 +119,13 @@ async def test_get_skills_returns_only_skills(db_engine: AsyncEngine) -> None:
         title="Skill Note",
         content=SKILL_CONTENT,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title="Regular Note",
         content="Plain content.",
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     skills = await db.notes.get_skills(read_policy=NoteReadPolicy.UNRESTRICTED)
@@ -140,12 +147,14 @@ async def test_get_prompt_notes_excludes_skills(db_engine: AsyncEngine) -> None:
         content="Include me.",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title="Skill Note",
         content=SKILL_CONTENT,
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     prompt_notes = await db.notes.get_prompt_notes(
@@ -170,12 +179,14 @@ async def test_get_excluded_notes_titles_excludes_skills(
         content="Hidden content.",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title="Hidden Skill",
         content=SKILL_CONTENT,
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     excluded = await db.notes.get_excluded_notes_titles(

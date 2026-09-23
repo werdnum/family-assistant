@@ -45,6 +45,23 @@ A small number of notes can be marked to be included every time. That's worth do
 evergreen context — durable preferences, household policies, persistent facts — and not for one-off
 details or long lists.
 
+### Notes built from outside material
+
+A note that goes into every conversation — one marked to be included every time, or a skill — is
+held to a higher bar when its content came from outside the household: a web page, an email, a file
+a coding agent wrote. When the assistant saves such a note, an automatic reviewer reads the whole
+note first and admits it only if it's what you asked for. "Research how to descale the kettle and
+save it as a skill" is admitted; a page telling the assistant to save a note you never asked for is
+not.
+
+If a note isn't admitted, it's either not saved (the assistant says so) or saved as an ordinary
+reference note that isn't loaded automatically — its title is still listed and the assistant can
+read it when it's relevant. Occasionally you'll be asked to confirm instead, and you'll see the
+complete note before it's saved.
+
+To put a note into every conversation yourself, edit it on the **Notes** page and switch on
+automatic inclusion. Your own edits are always trusted.
+
 ### Attachments on notes
 
 Notes can carry files and images. See [attachments.md](attachments.md).
@@ -104,3 +121,6 @@ that created it.
 - **A note isn't being used in conversation.** Titles are always visible to the assistant, but full
   content is loaded on demand. Mentioning the note by title ("check my Wi-Fi Password note") makes
   it load reliably.
+- **A note marked to be included every time, or a skill, isn't loaded.** Its content came from
+  outside the household and wasn't admitted by review (see "Notes built from outside material"
+  above). Edit it on the Notes page to include it yourself.

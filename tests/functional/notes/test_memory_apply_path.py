@@ -26,6 +26,7 @@ from family_assistant.memory.index import INDEX_START_MARKER, strip_topic_index
 from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.memory.limits import MemoryLimits
 from family_assistant.memory.review_context import MemoryReviewContext
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -126,8 +127,7 @@ async def _apply(
     evidence_scope: EvidenceScope | None = None,
     read_policy: NoteReadPolicy | None = None,
     write_policy: NoteWritePolicy | None = None,
-    # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
-    provenance_metadata: dict[str, object] | None = None,
+    provenance: NoteProvenanceStamp | None = None,
     after_apply: Callable[[DatabaseTransaction], Awaitable[None]] | None = None,
 ) -> ApplyOutcome:
     revision = (
@@ -143,7 +143,7 @@ async def _apply(
         evidence_scope=evidence_scope or _scope(),
         expected_revision=revision,
         actor=_actor(),
-        provenance_metadata=provenance_metadata,
+        provenance=provenance or NoteProvenanceStamp.internal(),
         now=NOW,
         after_apply=after_apply,
     )
@@ -623,6 +623,7 @@ async def test_a_target_note_that_is_not_memory_is_refused(
         False,
         # Admin surface equivalent: this suite is about the memory invariants.
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     outcome = await _apply(
@@ -749,7 +750,7 @@ async def test_a_write_from_an_externally_authored_turn_is_refused(
                 message_ids=[ids[0]],
             )
         ],
-        provenance_metadata={"taint_metadata": tainted.to_metadata()},
+        provenance=NoteProvenanceStamp.machine(tainted),
     )
 
     assert outcome.applied is False
@@ -867,6 +868,7 @@ async def test_a_hand_edited_index_section_is_overwritten(
         True,
         visibility_labels=[MEMORY_LABEL],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     core = await db.notes.get_by_title(
@@ -931,6 +933,7 @@ async def test_a_renamed_topic_is_renamed_in_the_index(db_engine: AsyncEngine) -
         "- Sam prefers the tram.",
         False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     core = await db.notes.get_by_title(
@@ -1342,6 +1345,7 @@ async def _seed_hidden_memory_note(db: Database) -> None:
         visibility_labels=[MEMORY_LABEL, "private"],
         # Admin surface equivalent: the note is seeded, not written by a profile.
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
 
@@ -1503,6 +1507,7 @@ async def _seed_crowded_core(db: Database) -> None:
         visibility_labels=[MEMORY_LABEL],
         # Admin surface equivalent: the note is seeded, not written by a profile.
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
 
@@ -1552,3 +1557,100 @@ async def test_a_batch_is_judged_on_its_final_state_whatever_its_order(
     assert core is not None
     assert "- Trips (changed" in core.content
     assert len(core.content) <= CROWDED.core_note_max_chars
+
+
+# ---------------------------------------------------------------------------
+# Retained provenance (docs/design/ambient-note-admission-at-write-time.md)
+# ---------------------------------------------------------------------------
+
+
+async def _stored_tier(db: Database, title: str) -> SourceTrustTier:
+    note = await db.notes.get_by_title(title, read_policy=NoteReadPolicy.UNRESTRICTED)
+    assert note is not None
+    assert note.provenance_metadata is not None
+    return TurnTaintState.from_metadata(
+        note.provenance_metadata.get("taint_metadata")
+    ).max_tier
+
+
+async def _seed_reviewed_topic(db: Database) -> None:
+    """A topic note admitted from a reviewed turn."""
+    await db.notes.add_or_update(
+        "Sam",
+        "- Sam prefers the tram (Alice, 2026-09-16).",
+        False,
+        visibility_labels=[MEMORY_LABEL],
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.machine(
+            TurnTaintState.empty().add_source(
+                TaintSource(
+                    source_type=TaintSourceType.NOTE,
+                    source_id="Travel procedure",
+                    tier=SourceTrustTier.MACHINE_REVIEWED,
+                    labels=frozenset(),
+                    reason="prompt carried a reviewed note",
+                )
+            )
+        ),
+    )
+
+
+def _add_to_sam(message_id: int) -> list[MemoryEdit]:
+    return [
+        MemoryEdit(
+            op=MemoryEditOp.ADD,
+            note_title="Sam",
+            entry="Sam likes window seats (Alice, 2026-09-17).",
+            message_ids=[message_id],
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_clean_edit_of_a_reviewed_topic_keeps_it_reviewed(
+    db_engine: AsyncEngine,
+) -> None:
+    """The apply rewrites the whole note, retaining its reviewed entries."""
+    db = _db(db_engine)
+    await _seed_reviewed_topic(db)
+    ids = await _seed_turn(db)
+
+    await _apply(db, _add_to_sam(ids[0]))
+
+    assert await _stored_tier(db, "Sam") is SourceTrustTier.MACHINE_REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_the_index_refresh_raises_an_internal_core_note_to_reviewed(
+    db_engine: AsyncEngine,
+) -> None:
+    """The regenerated index copies a reviewed topic's title into the core note."""
+    db = _db(db_engine)
+    await _seed_reviewed_topic(db)
+
+    assert await _stored_tier(db, CORE_TITLE) is SourceTrustTier.MACHINE_REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_the_index_refresh_after_a_clean_edit_keeps_a_reviewed_core_reviewed(
+    db_engine: AsyncEngine,
+) -> None:
+    db = _db(db_engine)
+    await _seed_reviewed_topic(db)
+    ids = await _seed_turn(db)
+
+    await _apply(db, _add_to_sam(ids[0]))
+
+    assert await _stored_tier(db, CORE_TITLE) is SourceTrustTier.MACHINE_REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_bootstrap_stamps_the_core_note_internal(
+    db_engine: AsyncEngine,
+) -> None:
+    db = _db(db_engine)
+    ids = await _seed_turn(db)
+
+    await _apply(db, _add_to_sam(ids[0]))
+
+    assert await _stored_tier(db, CORE_TITLE) is SourceTrustTier.TRUSTED_INTERNAL

@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
@@ -65,6 +66,7 @@ async def test_get_note_returns_db_note(db_engine: AsyncEngine) -> None:
         content="DB content.",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     exec_context = make_exec_context(db)
@@ -121,6 +123,7 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
         content="DB version of research assistant.",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     exec_context = make_exec_context(db, note_registry=registry)

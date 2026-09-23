@@ -15,6 +15,7 @@ from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.attachments import read_text_attachment_tool
@@ -198,6 +199,7 @@ async def test_read_text_attachment_tool(
         tool_name="test",
         description="test",
         conversation_id="conv_1",
+        taint_state=TurnTaintState.empty(),
     )
     text_att_id = reg_metadata.attachment_id
 
@@ -253,6 +255,7 @@ async def test_script_attachment_read(db_engine: AsyncEngine, tmp_path: Path) ->
         tool_name="test",
         description="test",
         conversation_id="conv_script",
+        taint_state=TurnTaintState.empty(),
     )
     att_id = reg_metadata.attachment_id
 
@@ -318,6 +321,7 @@ async def test_script_attachment_read_same_transaction(
         description="test",
         conversation_id="conv_same_txn",
         db_context=db,  # KEY: Use same transaction
+        taint_state=TurnTaintState.empty(),
     )
     att_id = reg_metadata.attachment_id
 

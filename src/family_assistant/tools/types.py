@@ -280,6 +280,7 @@ if TYPE_CHECKING:
     )
     from family_assistant.security.taint import (
         TaintMetadata,
+        TaintSource,
         TurnTaintState,
         TurnTaintTracker,
     )
@@ -611,6 +612,14 @@ class ToolExecutionContext:
     taint_tracker: TurnTaintTracker | None = None
     taint_policy_snapshot: TurnTaintState | None = None
     tool_result_taint_metadata: dict[str, TaintMetadata] = field(default_factory=dict)
+    in_flight_result_taint: TaintSource | None = None
+    """The executing call's declared output provenance, while it runs.
+
+    The dispatcher merges a result's declared taint into the turn only after the
+    call returns, but a tool can store an attachment before then -- a Gmail
+    download that is the turn's first external read, say. Registration merges
+    this so the attachment carries the tier its own result will raise the turn to.
+    """
     tool_call_review_state: ToolCallReviewTurnState = field(
         default_factory=ToolCallReviewTurnState
     )

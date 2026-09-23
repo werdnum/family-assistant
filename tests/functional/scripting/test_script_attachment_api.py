@@ -16,6 +16,13 @@ from family_assistant.scripting.apis.attachments import (
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -1073,3 +1080,75 @@ result == None
         )
 
         assert result is True
+
+
+def _external_tracker() -> InMemoryTurnTaintTracker:
+    return InMemoryTurnTaintTracker(
+        TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="web",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="read the web",
+            )
+        )
+    )
+
+
+async def test_a_script_created_attachment_carries_the_turns_taint(
+    db_engine: AsyncEngine,
+    attachment_registry: AttachmentRegistry,
+) -> None:
+    api = AttachmentAPI(
+        attachment_registry=attachment_registry,
+        conversation_id="test_conversation",
+        db_engine=db_engine,
+        taint_tracker=_external_tracker(),
+    )
+
+    created = await api._create_async(
+        content="derived from the web",
+        filename="derived.txt",
+        description="derived",
+        mime_type="text/plain",
+    )
+
+    stored = await attachment_registry.get_attachment(
+        Database(engine=db_engine), created.attachment_id, acting_user_id=None
+    )
+    assert stored is not None
+    assert (
+        TurnTaintState.from_metadata(stored.metadata.get("taint_metadata")).max_tier
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+async def test_a_script_reading_an_external_attachment_raises_its_turn(
+    db_engine: AsyncEngine,
+    attachment_registry: AttachmentRegistry,
+) -> None:
+    """A clean script cannot launder external content through an attachment."""
+    writer = AttachmentAPI(
+        attachment_registry=attachment_registry,
+        conversation_id="test_conversation",
+        db_engine=db_engine,
+        taint_tracker=_external_tracker(),
+    )
+    created = await writer._create_async(
+        content="derived from the web",
+        filename="derived.txt",
+        description="derived",
+        mime_type="text/plain",
+    )
+    reader_tracker = InMemoryTurnTaintTracker()
+    reader = AttachmentAPI(
+        attachment_registry=attachment_registry,
+        conversation_id="test_conversation",
+        db_engine=db_engine,
+        taint_tracker=reader_tracker,
+    )
+
+    await reader._read_async(created.attachment_id)
+
+    assert reader_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL

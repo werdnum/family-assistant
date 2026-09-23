@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.telegram.interface import TelegramChatInterface
 
@@ -48,6 +49,7 @@ async def test_multiple_images_sent_as_media_group(
         content_type="image/png",
         tool_name="test",
         description="Test image 1",
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_2 = await attachment_registry.store_and_register_tool_attachment(
@@ -56,6 +58,7 @@ async def test_multiple_images_sent_as_media_group(
         content_type="image/png",
         tool_name="test",
         description="Test image 2",
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_3 = await attachment_registry.store_and_register_tool_attachment(
@@ -64,6 +67,7 @@ async def test_multiple_images_sent_as_media_group(
         content_type="image/png",
         tool_name="test",
         description="Test image 3",
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_ids = [
@@ -126,6 +130,7 @@ async def test_single_image_sent_individually(
         content_type="image/png",
         tool_name="test",
         description="single_image.png",  # Use filename as description for caption
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_ids = [attachment.attachment_id]
@@ -192,6 +197,7 @@ async def test_mixed_attachments_grouped_correctly(
         content_type="image/png",
         tool_name="test",
         description="Test image 1",
+        taint_state=TurnTaintState.empty(),
     )
     attachment_2 = await attachment_registry.store_and_register_tool_attachment(
         file_content=test_image_2,
@@ -199,6 +205,7 @@ async def test_mixed_attachments_grouped_correctly(
         content_type="image/png",
         tool_name="test",
         description="Test image 2",
+        taint_state=TurnTaintState.empty(),
     )
     attachment_3 = await attachment_registry.store_and_register_tool_attachment(
         file_content=test_doc,
@@ -206,6 +213,7 @@ async def test_mixed_attachments_grouped_correctly(
         content_type="application/pdf",
         tool_name="test",
         description="document.pdf",  # Used as filename
+        taint_state=TurnTaintState.empty(),
     )
     attachment_4 = await attachment_registry.store_and_register_tool_attachment(
         file_content=test_image_3,
@@ -213,6 +221,7 @@ async def test_mixed_attachments_grouped_correctly(
         content_type="image/png",
         tool_name="test",
         description="image3.png",  # Used as caption
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_ids = [
@@ -283,6 +292,7 @@ async def test_media_group_with_reply_to(
         content_type="image/png",
         tool_name="test",
         description="Test image 1",
+        taint_state=TurnTaintState.empty(),
     )
     attachment_2 = await attachment_registry.store_and_register_tool_attachment(
         file_content=test_image_2,
@@ -290,6 +300,7 @@ async def test_media_group_with_reply_to(
         content_type="image/png",
         tool_name="test",
         description="Test image 2",
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_ids = [attachment_1.attachment_id, attachment_2.attachment_id]

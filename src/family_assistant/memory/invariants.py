@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
-from family_assistant.security.taint import TurnTaintState, is_externally_authored
+from family_assistant.security.taint import TurnTaintState, is_admissible_for_reuse
 from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.notes import notes_table
 
@@ -208,30 +208,7 @@ async def ensure_core_note(
         await txn.memory_store.set_core_note_id(existing["id"])
         return CoreNote(id=int(existing["id"]), bootstrapped=True)
 
-    result = await txn.execute(
-        sa.insert(notes_table).values(
-            title=limits.core_note_title,
-            content="",
-            include_in_prompt=True,
-            attachment_ids="[]",
-            visibility_labels=json.dumps([MEMORY_LABEL]),
-            is_skill=False,
-            skill_name=None,
-            skill_description=None,
-            provenance_metadata_json=None,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    new_id = (
-        result.inserted_primary_key[0]
-        if result.inserted_primary_key
-        else result.lastrowid
-    )
-    if new_id is None:
-        raise MemoryWriteError(
-            "Could not create the core memory note; the memory write was refused."
-        )
+    new_id = await txn.notes.create_core_note(title=limits.core_note_title, now=now)
     await txn.memory_store.set_core_note_id(int(new_id))
     return CoreNote(id=int(new_id), bootstrapped=True)
 
@@ -266,7 +243,7 @@ def _check_provenance(
     if provenance_metadata is None:
         return
     state = TurnTaintState.from_metadata(provenance_metadata.get("taint_metadata"))
-    if is_externally_authored(state.max_tier):
+    if not is_admissible_for_reuse(state.max_tier):
         raise MemoryWriteError(
             f"Cannot write memory note '{title}': this turn has read content "
             "from outside the household, and memory holds nothing that "

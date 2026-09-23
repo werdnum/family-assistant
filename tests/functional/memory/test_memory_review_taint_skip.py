@@ -199,3 +199,51 @@ async def test_the_volume_the_skip_costs_is_counted(db_engine: AsyncEngine) -> N
     assert after[0] - before[0] == 1
     assert after[1] - before[1] == 2
     assert after[2] - before[2] == len(SAID)
+
+
+def _machine_reviewed() -> TurnTaintState:
+    """What an assistant row carries when its prompt held a reviewed note."""
+    return TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="Packing procedure",
+            tier=SourceTrustTier.MACHINE_REVIEWED,
+            labels=frozenset(),
+            reason="Prompt-included note was admitted by review.",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stretch_carrying_only_reviewed_material_is_curated(
+    db_engine: AsyncEngine,
+) -> None:
+    """Memory follows the reuse predicate, not authorship.
+
+    A reviewed ambient note raises every turn it is included in to
+    ``machine_reviewed``; skipping those would skip nearly every conversation.
+    """
+    limits = review_limits()
+    db = memory_db(db_engine, limits)
+    llm = curator_llm(CuratorScript())
+    service = curator_service(db_engine, llm)
+    await enable_contribution(db)
+    await seed_turn(
+        db,
+        turn_id="turn-1",
+        said=SAID,
+        replied="Noted.",
+        assistant_taint=_machine_reviewed().to_metadata(),
+    )
+
+    result = await run_memory_review(
+        _context(db, service),
+        interface_type=WEB,
+        conversation_id=CONVERSATION,
+        settings=SETTINGS,
+        configured_contributors={CONTRIBUTOR},
+        limits=limits,
+    )
+
+    assert result is MemoryReviewResult.APPLIED
+    assert llm.get_calls(), "a reviewed stretch must reach the curator"

@@ -944,7 +944,8 @@ async def test_persisted_definition_uses_its_own_allow_to_cure(
     assert child is not None
     record = definition_record_from_row(child.definition_record)
     assert record is not None
-    assert record.taint_metadata.get("max_tier") == "unknown_external"
+    # The script's own allow admitted it, which the stamp now records as the tier.
+    assert record.taint_metadata.get("max_tier") == "machine_reviewed"
     assert record.disposition is CreationDisposition.JUDGE_ALLOWED
     assert [call.review_input.descriptor.name for call in reviewer.calls] == [
         "execute_script",

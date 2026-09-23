@@ -1,5 +1,6 @@
 """Repository for notes storage operations."""
 
+import hashlib
 import json
 import uuid
 from collections.abc import Iterable, Mapping
@@ -22,6 +23,15 @@ from family_assistant.memory.invariants import (
     enforce_memory_invariants,
     is_memory_write,
 )
+from family_assistant.security.note_provenance import (
+    NoteProvenanceStamp,
+    NoteWriter,
+    is_ambient_eligible,
+    note_provenance_metadata,
+    resolve_note_stamp,
+    stored_note_state,
+)
+from family_assistant.security.taint import TurnTaintState, merge_taint_states
 from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.notes import notes_table
@@ -65,6 +75,15 @@ class MemoryTopicNote(BaseModel):
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class UnstampedNote:
+    """A note row with no provenance envelope, as the rollout restamp sees it."""
+
+    id: int
+    title: str
+    visibility_labels: list[str]
+
+
 def _parse_json_list(value: str | list[str] | None) -> list[str]:
     """Parse a JSON string to list of strings."""
     if not value:
@@ -106,8 +125,36 @@ def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
     )
 
 
+def note_revision(note: NoteModel | None) -> str:
+    """A fingerprint of everything a write can change on a note row.
+
+    A write that was decided against one state of a note -- an ambient
+    admission review, above all -- persists only if the row still has this
+    revision, so a concurrent edit is never silently overwritten by a
+    candidate the reviewer did not see.
+    """
+    if note is None:
+        return "absent"
+    payload = json.dumps(
+        {
+            "content": note.content,
+            "include_in_prompt": note.include_in_prompt,
+            "attachment_ids": note.attachment_ids,
+            "visibility_labels": note.visibility_labels,
+            "provenance": note.provenance_metadata,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 class NoteNotFoundError(Exception):
     """Raised when a note cannot be found."""
+
+
+class NoteChangedError(Exception):
+    """Raised when a note changed after the write that targets it was decided."""
 
 
 class DuplicateNoteError(Exception):
@@ -359,7 +406,7 @@ _NOTE_COLUMNS = [
 ]
 
 
-def _detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
+def detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
     """Parse frontmatter to detect if content represents a skill.
 
     Returns (is_skill, skill_name, skill_description).
@@ -368,6 +415,10 @@ def _detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
     if fm and "name" in fm and "description" in fm:
         return True, str(fm["name"]), str(fm["description"])
     return False, None, None
+
+
+def _is_eligible(note: NoteModel) -> bool:
+    return is_ambient_eligible(note.provenance_metadata, title=note.title)
 
 
 class NotesRepository(BaseRepository):
@@ -490,7 +541,12 @@ class NotesRepository(BaseRepository):
         *,
         read_policy: NoteReadPolicy,
     ) -> list[NoteModel]:
-        """Retrieves only regular notes that should be included in prompts (excludes skills)."""
+        """Regular notes whose full content is included in prompts (excludes skills).
+
+        Only notes whose stored tier is admissible for unasked reuse: a note
+        marked ``include_in_prompt`` that carries unreviewed external
+        provenance stays reachable by title but never reaches a prompt whole.
+        """
         try:
             stmt = (
                 select(*_NOTE_COLUMNS)
@@ -500,17 +556,23 @@ class NotesRepository(BaseRepository):
             )
             stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
-            return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in get_prompt_notes: {e}")
             raise
+        notes = [_row_to_note_model(row) for row in rows]
+        return [note for note in notes if _is_eligible(note)]
 
     async def get_excluded_notes_titles(
         self,
         *,
         read_policy: NoteReadPolicy,
     ) -> list[str]:
-        """Titles of prompt-excluded notes, for the "Other available notes" line.
+        """Titles for the "Other available notes" line.
+
+        Every note whose full content is not in the prompt: those not marked
+        for inclusion, and prompt-intended notes and skills whose stored tier
+        keeps them out of it. Titles are discovery metadata and are listed
+        whatever the note's provenance.
 
         Memory topic notes are left out for every reader. Their pointers live
         inside the capped core note's derived index, so the memory contribution
@@ -520,26 +582,42 @@ class NotesRepository(BaseRepository):
         ``get_note``, by search, and in the ``list_notes`` tool's output.
         """
         try:
+            # Only what the eligibility decision reads: this runs on every turn,
+            # and note bodies can be large.
             stmt = (
-                select(notes_table.c.title)
-                .where(notes_table.c.include_in_prompt.is_(False))
-                .where(notes_table.c.is_skill.is_(False))
+                select(
+                    notes_table.c.title,
+                    notes_table.c.include_in_prompt,
+                    notes_table.c.is_skill,
+                    notes_table.c.provenance_metadata_json,
+                )
                 .where(~self._labels_superset_condition([MEMORY_LABEL]))
                 .order_by(notes_table.c.title)
             )
             stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
-            return [row["title"] for row in rows]
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in get_excluded_notes_titles: {e}")
             raise
+        titles: list[str] = []
+        for row in rows:
+            ambient_intended = row["include_in_prompt"] or row.get("is_skill", False)
+            if not ambient_intended or not is_ambient_eligible(
+                row["provenance_metadata_json"], title=row["title"]
+            ):
+                titles.append(row["title"])
+        return titles
 
     async def get_skills(
         self,
         *,
         read_policy: NoteReadPolicy,
     ) -> list[NoteModel]:
-        """Retrieves notes that are skills, for building the skill catalog."""
+        """Skills whose catalog entry may appear in every prompt.
+
+        Filtered by the same rule as prompt-included notes: a skill's name and
+        description reach every turn exactly as an included body does.
+        """
         try:
             stmt = (
                 select(*_NOTE_COLUMNS)
@@ -548,10 +626,40 @@ class NotesRepository(BaseRepository):
             )
             stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
-            return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in get_skills: {e}")
             raise
+        notes = [_row_to_note_model(row) for row in rows]
+        return [note for note in notes if _is_eligible(note)]
+
+    async def count_excluded_ambient_notes(self) -> dict[str, int]:
+        """How many prompt-intended notes and skills the derived rule keeps out.
+
+        The rollout measurement: after the eligibility rule ships, these are the
+        notes that stopped reaching prompts because their stored tier is not
+        admissible for reuse. ``missing_provenance`` counts the subset with no
+        envelope at all, which the rollout restamp should bring to zero.
+        """
+        stmt = select(*_NOTE_COLUMNS).where(
+            sa.or_(
+                notes_table.c.include_in_prompt.is_(True),
+                notes_table.c.is_skill.is_(True),
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+        counts = {"prompt_notes": 0, "skills": 0, "missing_provenance": 0}
+        for row in rows:
+            note = _row_to_note_model(row)
+            missing = (
+                note.provenance_metadata is None
+                or note.provenance_metadata.get("taint_metadata") is None
+            )
+            if missing:
+                counts["missing_provenance"] += 1
+            elif _is_eligible(note):
+                continue
+            counts["skills" if note.is_skill else "prompt_notes"] += 1
+        return counts
 
     async def get_by_id(
         self,
@@ -658,14 +766,21 @@ class NotesRepository(BaseRepository):
         visibility_labels: list[str] | None = None,
         *,
         write_policy: NoteWritePolicy,
+        provenance: NoteProvenanceStamp,
         additional_visibility_labels: list[str] | None = None,
-        # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
-        provenance_metadata: Mapping[str, object] | None = None,
         refresh_core_index: bool = True,
+        expected_revision: str | None = None,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert).
 
         Args:
+            provenance: Required. Who is writing and from what trust; resolved
+                here against whatever the write retains from the stored row
+                (see :func:`resolve_note_stamp`). There is no default: a writer
+                that does not know its provenance must not persist a silent one.
+            expected_revision: When set, the write persists only if the stored
+                note still has this :func:`note_revision`, and raises
+                :class:`NoteChangedError` otherwise.
             visibility_labels: Labels for visibility control.
                 None = preserve existing on update, use default for new notes.
                 Empty list = explicitly unrestricted (visible to all profiles).
@@ -697,10 +812,17 @@ class NotesRepository(BaseRepository):
             now = datetime.now(UTC)
             note_content = content
 
+            if expected_revision is not None:
+                # Hold the row until commit, so the revision checked below is
+                # the revision the write replaces.
+                await txn.fetch_one(
+                    select(notes_table.c.id)
+                    .where(notes_table.c.title == title)
+                    .with_for_update()
+                )
             existing_note = await txn.notes.get_by_title(
                 title, read_policy=NoteReadPolicy.UNRESTRICTED
             )
-
             # See-before-overwrite: a restricted profile may not overwrite a note it
             # cannot see. Skipped when the policy carries no grants (admin bypass).
             if existing_note is not None and write_policy.visibility_grants is not None:
@@ -711,6 +833,13 @@ class NotesRepository(BaseRepository):
                     raise NoteWritePolicyError(
                         f"Cannot modify note '{title}' - insufficient visibility permissions."
                     )
+            if (
+                expected_revision is not None
+                and note_revision(existing_note) != expected_revision
+            ):
+                raise NoteChangedError(
+                    f"Note '{title}' changed after this write was decided."
+                )
 
             if append and existing_note:
                 note_content = existing_note.content + "\n" + content
@@ -741,17 +870,26 @@ class NotesRepository(BaseRepository):
                     else [],
                 )
 
-            if provenance_metadata is None and existing_note:
-                provenance_metadata_to_use = existing_note.provenance_metadata
-            else:
-                provenance_metadata_to_use = provenance_metadata
+            provenance_metadata_to_use = note_provenance_metadata(
+                resolve_note_stamp(
+                    provenance,
+                    retained=(
+                        stored_note_state(
+                            existing_note.provenance_metadata, title=title
+                        )
+                        if existing_note is not None
+                        and provenance.writer is NoteWriter.MACHINE
+                        else None
+                    ),
+                )
+            )
 
             # Serialize to JSON strings
             attachment_ids_json = json.dumps(attachment_ids_to_use)
             visibility_labels_json = json.dumps(visibility_labels_to_use)
 
             # Detect skill metadata from frontmatter at write time
-            is_skill, skill_name, skill_description = _detect_skill_metadata(
+            is_skill, skill_name, skill_description = detect_skill_metadata(
                 note_content
             )
 
@@ -804,6 +942,12 @@ class NotesRepository(BaseRepository):
                         "updated_at": stmt.excluded.updated_at,
                     }
                     writable = self._writable_under_policy_condition(write_policy)
+                    if expected_revision is not None and existing_note is None:
+                        # The write was decided against no note at all; a row
+                        # another writer inserted meanwhile is not overwritten.
+                        return stmt.on_conflict_do_nothing(
+                            index_elements=["title"]
+                        ), sa.false()
                     return (
                         stmt.on_conflict_do_update(
                             index_elements=["title"],
@@ -816,6 +960,14 @@ class NotesRepository(BaseRepository):
                 def _ensure_write_allowed(
                     writable: sa.ColumnElement[bool] | None, rowcount: int
                 ) -> None:
+                    if (
+                        expected_revision is not None
+                        and existing_note is None
+                        and rowcount == 0
+                    ):
+                        raise NoteChangedError(
+                            f"Note '{title}' was created after this write was decided."
+                        )
                     if writable is not None and rowcount == 0:
                         raise NoteWritePolicyError(
                             f"Cannot modify note '{title}' - a concurrently written "
@@ -872,6 +1024,11 @@ class NotesRepository(BaseRepository):
                 except SQLAlchemyError as e:
                     # Check specifically for unique constraint violation
                     if isinstance(e, IntegrityError):
+                        if expected_revision is not None and existing_note is None:
+                            raise NoteChangedError(
+                                f"Note '{title}' was created after this write was "
+                                "decided."
+                            ) from e
                         self._logger.info(
                             f"Note '{title}' already exists (SQLite fallback), attempting update."
                         )
@@ -1004,16 +1161,22 @@ class NotesRepository(BaseRepository):
             return False
 
         core_row = await txn.fetch_one(
-            select(notes_table.c.title, notes_table.c.content).where(
-                notes_table.c.id == core_note_id
-            )
+            select(
+                notes_table.c.title,
+                notes_table.c.content,
+                notes_table.c.provenance_metadata_json,
+            ).where(notes_table.c.id == core_note_id)
         )
         if core_row is None:
             return False
         core_content: str = core_row["content"]
 
         topic_rows = await txn.fetch_all(
-            select(notes_table.c.title, notes_table.c.updated_at)
+            select(
+                notes_table.c.title,
+                notes_table.c.updated_at,
+                notes_table.c.provenance_metadata_json,
+            )
             .where(notes_table.c.id != core_note_id)
             .where(self._labels_superset_condition([MEMORY_LABEL]))
         )
@@ -1034,13 +1197,126 @@ class NotesRepository(BaseRepository):
                 "entries, or move detail into a memory topic note."
             )
 
+        # The refresh retains the author's part of the core note and copies
+        # every topic's title into it, so the stamp is the most external of
+        # those: an index built from reviewed topics is reviewed material.
+        stamp = merge_taint_states(
+            TurnTaintState.empty().with_authorship_floor(),
+            stored_note_state(
+                core_row["provenance_metadata_json"], title=core_row["title"]
+            ),
+            *(
+                stored_note_state(row["provenance_metadata_json"], title=row["title"])
+                for row in topic_rows
+            ),
+        )
         await txn.execute(
             update(notes_table)
             .where(notes_table.c.id == core_note_id)
-            .values(content=regenerated, updated_at=now)
+            .values(
+                content=regenerated,
+                provenance_metadata_json=note_provenance_metadata(stamp),
+                updated_at=now,
+            )
         )
         await self._enqueue_indexing_task(txn, core_row["title"])
         return True
+
+    async def create_core_note(self, *, title: str, now: datetime) -> int:
+        """Insert the empty, always-loaded core memory note and return its id.
+
+        Deployment-authored structure, so it is stamped ``trusted_internal``.
+        Called only from the memory bootstrap, inside its transaction.
+        """
+        result = await self._db.execute(
+            insert(notes_table).values(
+                title=title,
+                content="",
+                include_in_prompt=True,
+                attachment_ids="[]",
+                visibility_labels=json.dumps([MEMORY_LABEL]),
+                is_skill=False,
+                skill_name=None,
+                skill_description=None,
+                provenance_metadata_json=note_provenance_metadata(
+                    resolve_note_stamp(NoteProvenanceStamp.internal(), retained=None)
+                ),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        new_id = (
+            result.inserted_primary_key[0]
+            if result.inserted_primary_key
+            else result.lastrowid
+        )
+        if new_id is None:
+            raise MemoryWriteError(
+                "Could not create the core memory note; the memory write was refused."
+            )
+        return int(new_id)
+
+    async def list_missing_provenance(self) -> list[UnstampedNote]:
+        """Every note row with no provenance envelope, for the rollout restamp."""
+        rows = await self._db.fetch_all(
+            select(
+                notes_table.c.id,
+                notes_table.c.title,
+                notes_table.c.visibility_labels,
+                notes_table.c.provenance_metadata_json,
+            ).order_by(notes_table.c.id)
+        )
+        return [
+            UnstampedNote(
+                id=int(row["id"]),
+                title=row["title"],
+                visibility_labels=_parse_json_list(row["visibility_labels"]),
+            )
+            for row in rows
+            if row["provenance_metadata_json"] is None
+        ]
+
+    async def restamp_provenance(
+        self,
+        note_id: int,
+        *,
+        state: TurnTaintState,
+        expected_title: str,
+    ) -> bool:
+        """Stamp a row that has no provenance envelope, for the rollout restamp.
+
+        Refuses to touch a row that has gained an envelope in the meantime, and
+        enqueues the row's indexing task so the indexed copy's provenance
+        snapshot follows the row. Called on a transaction, it joins it, so the
+        caller can commit the stamp with its own audit record.
+        """
+
+        async def _restamp(txn: DatabaseTransaction) -> bool:
+            # Locked so a note write cannot land between the absence check and
+            # the update: the check and the write it guards are one decision.
+            row = await txn.fetch_one(
+                select(notes_table.c.title, notes_table.c.provenance_metadata_json)
+                .where(notes_table.c.id == note_id)
+                .with_for_update()
+            )
+            if (
+                row is None
+                or row["title"] != expected_title
+                or row["provenance_metadata_json"] is not None
+            ):
+                return False
+            result = await txn.execute(
+                update(notes_table)
+                .where(notes_table.c.id == note_id)
+                .where(notes_table.c.title == expected_title)
+                .values(provenance_metadata_json=note_provenance_metadata(state))
+            )
+            if result.rowcount == 0:
+                return False
+            await self._enqueue_indexing_task(txn, expected_title)
+            return True
+
+        return await self._db.atomic(_restamp)
 
     async def delete(self, title: str) -> bool:
         """Deletes a note by title.
@@ -1099,8 +1375,7 @@ class NotesRepository(BaseRepository):
         visibility_labels: list[str] | None = None,
         *,
         write_policy: NoteWritePolicy,
-        # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
-        provenance_metadata: Mapping[str, object] | None = None,
+        provenance: NoteProvenanceStamp,
     ) -> str:
         """Renames a note and updates its content, preserving the primary key.
 
@@ -1114,6 +1389,7 @@ class NotesRepository(BaseRepository):
             write_policy: Required. The active profile's write confinement (see
                 ``add_or_update``). Pass ``NoteWritePolicy.UNCONSTRAINED`` from
                 trusted admin surfaces.
+            provenance: Required. See ``add_or_update``.
 
         Returns:
             Status message
@@ -1134,7 +1410,7 @@ class NotesRepository(BaseRepository):
                 attachment_ids,
                 visibility_labels,
                 write_policy,
-                provenance_metadata,
+                provenance,
             )
         except (NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError):
             raise
@@ -1153,7 +1429,7 @@ class NotesRepository(BaseRepository):
         attachment_ids: list[str] | None,
         visibility_labels: list[str] | None,
         write_policy: NoteWritePolicy,
-        provenance_metadata: Mapping[str, object] | None,
+        provenance: NoteProvenanceStamp,
     ) -> str:
         existing_note = await self.get_by_title(
             original_title, read_policy=NoteReadPolicy.UNRESTRICTED
@@ -1191,14 +1467,21 @@ class NotesRepository(BaseRepository):
             requested_labels=visibility_labels,
             existing_labels=existing_note.visibility_labels,
         )
-        provenance_metadata_to_use = (
-            existing_note.provenance_metadata
-            if provenance_metadata is None
-            else provenance_metadata
+        provenance_metadata_to_use = note_provenance_metadata(
+            resolve_note_stamp(
+                provenance,
+                retained=(
+                    stored_note_state(
+                        existing_note.provenance_metadata, title=original_title
+                    )
+                    if provenance.writer is NoteWriter.MACHINE
+                    else None
+                ),
+            )
         )
         attachment_ids_json = json.dumps(attachment_ids_to_use)
         visibility_labels_json = json.dumps(visibility_labels_to_use)
-        is_skill, skill_name, skill_description = _detect_skill_metadata(content)
+        is_skill, skill_name, skill_description = detect_skill_metadata(content)
 
         memory_write = is_memory_write(
             visibility_labels_to_use, existing_note.visibility_labels

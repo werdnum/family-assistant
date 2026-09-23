@@ -21,8 +21,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
     SinkClass,
     SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
     derive_tool_result_taint_source,
     resolve_tool_sink_class,
 )
@@ -1142,6 +1146,7 @@ async def test_gmail_create_draft_uses_only_drafts_create_and_owned_attachment(
         tool_name="test",
         owner_user_id="user-a",
         db_context=db,
+        taint_state=TurnTaintState.empty(),
     )
     context = _make_context(
         db,
@@ -1225,6 +1230,7 @@ async def test_gmail_create_draft_rejects_another_users_attachment(
         tool_name="test",
         owner_user_id="user-b",
         db_context=db,
+        taint_state=TurnTaintState.empty(),
     )
     context = _make_context(
         db,
@@ -1261,6 +1267,7 @@ async def test_gmail_create_draft_rejects_attachment_filename_with_newline(
         tool_name="test",
         owner_user_id="user-a",
         db_context=db,
+        taint_state=TurnTaintState.empty(),
     )
     context = _make_context(
         db,
@@ -1393,6 +1400,7 @@ async def test_drive_write_uploads_owned_attachment_and_preserves_filename(
         tool_name="test",
         owner_user_id="user-a",
         db_context=db,
+        taint_state=TurnTaintState.empty(),
     )
     context = _make_context(
         db,
@@ -1568,3 +1576,97 @@ def test_required_scopes_map_matches_tools() -> None:
     assert GOOGLE_TOOL_REQUIRED_SCOPES["drive_write_file"] == frozenset({
         GoogleScope.DRIVE_FILE.value
     })
+
+
+# --------------------------------------------------------------------------- #
+# Attachment provenance (docs/design/ambient-note-admission-at-write-time.md)
+# --------------------------------------------------------------------------- #
+
+
+async def _download_with_turn_at(
+    db_engine: AsyncEngine, tier: SourceTrustTier | None
+) -> SourceTrustTier:
+    """Download one Gmail attachment as dispatch runs it, returning its stamp."""
+    content = b"PDF-BYTES-HERE"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "form.pdf",
+                    "body": {"attachmentId": "att-1", "size": len(content)},
+                }
+            ],
+        },
+    }
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-1"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=FakeCredentialResolver(tokens={"user-a": "token-a"}),
+        backend=backend,
+        attachment_registry=registry,
+    )
+    tracker = InMemoryTurnTaintTracker()
+    if tier is not None:
+        tracker.add_source(
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-1",
+                tier=tier,
+                labels=frozenset(),
+                reason="the message was read first",
+            )
+        )
+    context.taint_tracker = tracker
+    # What the dispatcher deposits for the call while it runs.
+    context.in_flight_result_taint = derive_tool_result_taint_source(
+        descriptor=_descriptor("gmail_get_attachment"), call_id="call-1"
+    )
+
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-1", filename="form.pdf"
+    )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert stored is not None
+    return TurnTaintState.from_metadata(stored.metadata.get("taint_metadata")).max_tier
+
+
+@pytest.mark.asyncio
+async def test_a_download_that_is_the_turns_first_external_read_is_stamped_external(
+    db_engine: AsyncEngine,
+) -> None:
+    """The attachment is registered before the result's taint reaches the turn."""
+    assert (
+        await _download_with_turn_at(db_engine, None)
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_download_after_the_message_raised_the_turn_is_stamped_external(
+    db_engine: AsyncEngine,
+) -> None:
+    assert (
+        await _download_with_turn_at(db_engine, SourceTrustTier.UNKNOWN_EXTERNAL)
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )

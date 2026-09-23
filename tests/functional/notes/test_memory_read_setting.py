@@ -20,6 +20,7 @@ import pytest
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.memory.limits import MemoryLimits
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools.memory import propose_memory_edits_tool
@@ -55,6 +56,7 @@ async def _seed(engine: AsyncEngine) -> Database:
         include_in_prompt=True,
         visibility_labels=["default"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title=TOPIC_TITLE,
@@ -62,6 +64,7 @@ async def _seed(engine: AsyncEngine) -> Database:
         include_in_prompt=False,
         visibility_labels=[MEMORY_LABEL],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title=CORE_TITLE,
@@ -69,6 +72,7 @@ async def _seed(engine: AsyncEngine) -> Database:
         include_in_prompt=True,
         visibility_labels=[MEMORY_LABEL],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     return db
 

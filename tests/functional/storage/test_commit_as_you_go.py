@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import (
     AmbientTransactionError,
@@ -46,6 +47,7 @@ async def test_handle_write_is_visible_to_a_separate_connection(
         title="visible-across-connections",
         content="written through the handle",
         write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     reader = Database(engine=db_engine)
@@ -63,6 +65,7 @@ async def test_handle_write_is_visible_to_a_separate_engine(
         title="visible-across-engines",
         content="written through the handle",
         write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     other_engine = create_engine_with_sqlite_optimizations(
@@ -90,6 +93,7 @@ async def test_concurrent_writers_on_one_handle_do_not_race(
             title=f"parallel-{index}",
             content=f"written by tool {index}",
             write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+            provenance=NoteProvenanceStamp.internal(),
         )
 
     await asyncio.gather(*(write(index) for index in range(8)))
@@ -111,6 +115,7 @@ async def test_transaction_rolls_back_every_write_in_the_block(
                 title="rolled-back",
                 content="never committed",
                 write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+                provenance=NoteProvenanceStamp.internal(),
             )
             raise RuntimeError("deliberate")
 
@@ -160,6 +165,7 @@ async def test_detached_work_opts_out_of_the_ambient_transaction(
             title="detached",
             content="not part of the caller's transaction",
             write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+            provenance=NoteProvenanceStamp.internal(),
         )
 
     async with db.transaction() as txn:
@@ -168,6 +174,7 @@ async def test_detached_work_opts_out_of_the_ambient_transaction(
             title="enclosing",
             content="part of the caller's transaction",
             write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+            provenance=NoteProvenanceStamp.internal(),
         )
     # Awaited after the block: on SQLite the detached write queues on the
     # engine lock the block holds, so awaiting it inside would deadlock.
@@ -234,6 +241,7 @@ async def test_on_commit_runs_only_once_the_write_is_visible(
             title="visible-to-the-callback",
             content="written in the transaction the callback is waiting on",
             write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+            provenance=NoteProvenanceStamp.internal(),
         )
 
     assert seen and "visible-to-the-callback" in seen[0]
@@ -253,6 +261,7 @@ async def test_atomic_closure_joins_an_enclosing_transaction(
             title="joined",
             content="ran against the caller's transaction",
             write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+            provenance=NoteProvenanceStamp.internal(),
         )
 
     with pytest.raises(RuntimeError, match="deliberate"):

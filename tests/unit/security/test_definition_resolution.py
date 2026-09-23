@@ -7,6 +7,7 @@ several artifacts combines.
 """
 
 import json
+from typing import cast
 
 from family_assistant.security.definition_records import (
     UNRESOLVED_DEFINITION,
@@ -26,6 +27,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    machine_authored_taint_metadata,
 )
 
 CONTENT = {"instruction": "Summarize my day", "recurrence_rule": "FREQ=DAILY"}
@@ -97,7 +99,23 @@ def test_an_escalation_verdict_resolves_exactly_as_an_absent_record() -> None:
         ).resolved
 
 
-def test_a_curing_disposition_restores_the_clean_baseline() -> None:
+def test_an_admission_stamps_the_reviewed_tier() -> None:
+    for disposition in (
+        CreationDisposition.HUMAN_CONFIRMED,
+        CreationDisposition.JUDGE_ALLOWED,
+    ):
+        record = definition_record_from_row(
+            _record_dict(state=_tainted_state(), disposition=disposition)
+        )
+
+        assert record is not None
+        assert TurnTaintState.from_metadata(record.taint_metadata).max_tier is (
+            SourceTrustTier.MACHINE_REVIEWED
+        )
+        assert record.disposition is disposition
+
+
+def test_an_admitted_definition_resolves_as_reviewed_material() -> None:
     for disposition in (
         CreationDisposition.HUMAN_CONFIRMED,
         CreationDisposition.JUDGE_ALLOWED,
@@ -107,9 +125,26 @@ def test_a_curing_disposition_restores_the_clean_baseline() -> None:
         )
 
         assert resolution.resolved
-        # The cure restores the baseline a clean authoring would have had, and
-        # nothing more: never the human-direct tier the human never typed.
-        assert resolution.tier is SourceTrustTier.TRUSTED_INTERNAL
+        # Externally authored, reusable: never the human-direct tier the human
+        # never typed, and never the internal tier the model did not compose.
+        assert resolution.tier is SourceTrustTier.MACHINE_REVIEWED
+
+
+def test_a_prior_version_record_cured_by_its_disposition_resolves_the_same() -> None:
+    """Records written before admissions stamped the tier are not rewritten."""
+    for disposition in (
+        CreationDisposition.HUMAN_CONFIRMED,
+        CreationDisposition.JUDGE_ALLOWED,
+    ):
+        prior = cast("dict[str, object]", _record_dict(state=_tainted_state()))
+        prior["taint_metadata"] = machine_authored_taint_metadata(_tainted_state())
+        prior["disposition"] = disposition.value
+
+        resolution = resolve_definition_record(prior, CONTENT)
+
+        assert resolution.resolved
+        assert resolution.tier is SourceTrustTier.MACHINE_REVIEWED
+        assert resolution.disposition is disposition
 
 
 def test_content_that_changed_under_the_record_voids_it() -> None:
@@ -233,9 +268,9 @@ def test_an_operator_amnesty_cures_a_definition_that_predates_records() -> None:
     resolution = resolve_definition_record(_amnesty_record(), CONTENT)
 
     assert resolution.resolved
-    # The same baseline every cure restores, and no more: the operator did not
-    # type the definition, so it never reads back as the human's own words.
-    assert resolution.tier is SourceTrustTier.TRUSTED_INTERNAL
+    # The tier every cure resolves to, and no more: the operator did not type
+    # the definition, so it never reads back as the human's own words.
+    assert resolution.tier is SourceTrustTier.MACHINE_REVIEWED
     assert resolution.disposition is CreationDisposition.LEGACY_AMNESTIED
 
 

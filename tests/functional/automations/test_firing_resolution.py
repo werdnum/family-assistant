@@ -37,6 +37,9 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.services.tool_call_review import (
+    _render_trigger as render_trigger_for_review,  # noqa: PLC2701 - reviewer rendering boundary
+)
 from family_assistant.storage.database import Database
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import tasks_table
@@ -700,9 +703,9 @@ async def test_a_judge_allowed_creation_fires_cured(
 
     assert resolution.resolved
     assert resolution.disposition is CreationDisposition.JUDGE_ALLOWED
-    # The cure restores the baseline a clean authoring would have had, never the
-    # human-direct tier: the definition is still model-composed.
-    assert resolution.tier is SourceTrustTier.TRUSTED_INTERNAL
+    # Admitted external material: reusable, never the human-direct tier, and
+    # still externally authored.
+    assert resolution.tier is SourceTrustTier.MACHINE_REVIEWED
 
 
 @pytest.mark.asyncio
@@ -854,10 +857,15 @@ async def test_a_patch_that_retains_uncured_content_records_without_curing(
 
 
 @pytest.mark.asyncio
-async def test_a_judge_allowed_reminder_delivers_without_an_external_source(
+async def test_a_judge_allowed_reminder_enters_as_reviewed_material(
     db_engine: AsyncEngine,
 ) -> None:
-    """A one-shot's record rides its payload, and cures there like any other."""
+    """A one-shot's record rides its payload, and cures there like any other.
+
+    The callback contributes its definition's resolved tier -- neither
+    untainted nor unknown_external -- and renders as the intent to judge
+    against.
+    """
     message = "Take the bins out"
     payload: LlmCallbackPayload = {
         "interface_type": "web",
@@ -884,4 +892,43 @@ async def test_a_judge_allowed_reminder_delivers_without_an_external_source(
 
     assert resolution.resolved
     assert trigger.definition_taint_metadata is not None
-    assert _llm_callback_trigger_taint_sources(payload, trigger) == ()
+    sources = _llm_callback_trigger_taint_sources(payload, trigger)
+    assert [source.tier for source in sources] == [SourceTrustTier.MACHINE_REVIEWED]
+    assert "trusted_trigger_definition" in render_trigger_for_review(trigger)
+
+
+@pytest.mark.asyncio
+async def test_a_prior_version_cured_reminder_enters_as_reviewed_material(
+    db_engine: AsyncEngine,
+) -> None:
+    """A record cured by its disposition, never rewritten, fires the same way."""
+    message = "Take the bins out"
+    record = cast(
+        "dict[str, object]",
+        stamp_callback_definition(message, tracker=_tainted_tracker()),
+    )
+    record["disposition"] = CreationDisposition.JUDGE_ALLOWED.value
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": message,
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "tool_call_review_trigger_type": "reminder",
+        "tool_call_review_trigger_definition": message,
+        "tool_call_review_trigger_payload_present": False,
+        # ast-grep-ignore: no-unstamped-executable-definition-write - builds the prior-version record shape
+        "tool_call_review_definition_record": record,  # type: ignore[typeddict-item]
+    }
+
+    resolution = await _resolve(db_engine, payload)
+    trigger = _llm_callback_review_trigger(
+        payload,
+        payload["callback_context"],
+        is_reminder=True,
+        definition_resolution=resolution,
+    )
+
+    assert resolution.tier is SourceTrustTier.MACHINE_REVIEWED
+    sources = _llm_callback_trigger_taint_sources(payload, trigger)
+    assert [source.tier for source in sources] == [SourceTrustTier.MACHINE_REVIEWED]
+    assert "trusted_trigger_definition" in render_trigger_for_review(trigger)

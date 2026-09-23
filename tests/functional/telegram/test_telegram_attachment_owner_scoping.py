@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.telegram.interface import TelegramChatInterface
@@ -35,6 +36,7 @@ async def _register_owned(registry: AttachmentRegistry, db_engine: AsyncEngine) 
         description="Personal report",
         owner_user_id=OWNER,
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     return attachment.attachment_id
 

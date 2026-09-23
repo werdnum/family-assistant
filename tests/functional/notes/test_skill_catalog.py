@@ -7,6 +7,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.context_providers import NotesContextProvider
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
@@ -48,12 +49,14 @@ async def test_db_skill_appears_in_catalog_not_notes(
         content="Just a normal note.",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title="Email Skill",
         content=SKILL_FRONTMATTER_CONTENT,
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     def get_db_context_func() -> Database:
@@ -98,12 +101,14 @@ async def test_db_skill_excluded_from_other_notes_list(
         content="Regular hidden content.",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title="Hidden Skill",
         content=SKILL_FRONTMATTER_CONTENT,
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     def get_db_context_func() -> Database:
@@ -181,6 +186,7 @@ async def test_mixed_db_and_file_skills_in_catalog(
         content=SKILL_FRONTMATTER_CONTENT,
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     file_skills = [
@@ -286,6 +292,7 @@ async def test_no_catalog_when_no_skills(
         content="Just content, no frontmatter.",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     def get_db_context_func() -> Database:

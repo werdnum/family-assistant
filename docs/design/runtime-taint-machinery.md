@@ -81,12 +81,25 @@ egress and post-taint corpus broadening.
 `SourceTrustTier` is a monotonic classification of content source trust. Higher values are less
 trusted and dominate lower values when they appear in the same turn.
 
-| Tier | Name                 | Meaning                                                                                                   | Examples                                                                                   |
-| ---- | -------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| 0    | `trusted_user`       | Direct input from an authenticated user, or system-authored control text.                                 | Web chat input, Telegram user message, profile preamble, fixed-template scheduler trigger. |
-| 1    | `known_contact`      | Human or household source known to the deployment, but not authenticated as the active user.              | Family email sender, known school contact, known forwarded message source.                 |
-| 2    | `recognized_machine` | Machine-generated content from a recognized sender or authenticated integration.                          | Receipts, newsletters, delivery notifications, Home Assistant event payloads.              |
-| 3    | `unknown_external`   | Unknown humans, arbitrary web content, unauthenticated inbound content, and generic external tool output. | Web pages, search results, unknown email, MCP output without stronger provenance.          |
+| Tier | Name                 | Meaning                                                                                                   | Examples                                                                          |
+| ---- | -------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 0    | `trusted_user`       | Direct input from an authenticated user.                                                                  | Web chat input, Telegram user message, a Notes UI edit.                           |
+| 1    | `trusted_internal`   | Composed inside the trust boundary, but not typed by a human.                                             | Model output in a clean turn, profile preamble, fixed-template scheduler trigger. |
+| 2    | `machine_reviewed`   | Externally authored content a reviewer admitted for unasked reuse.                                        | An admitted ambient note or skill, an admitted automation definition.             |
+| 3    | `known_contact`      | Human or household source known to the deployment, but not authenticated as the active user.              | Family email sender, known school contact, known forwarded message source.        |
+| 4    | `recognized_machine` | Machine-generated content from a recognized sender or authenticated integration.                          | Receipts, newsletters, delivery notifications, Home Assistant event payloads.     |
+| 5    | `unknown_external`   | Unknown humans, arbitrary web content, unauthenticated inbound content, and generic external tool output. | Web pages, search results, unknown email, MCP output without stronger provenance. |
+
+Tiers are configured and serialized by name only; an integer tier in configuration is rejected at
+startup, because inserting a tier renumbers the ones above it.
+
+`machine_reviewed` answers the two questions the security module asks of a tier differently. It is
+**externally authored** (`is_externally_authored`): it never counts as the human's own words, and
+the audit log withholds its free text. It is **reusable** (`is_admissible_for_reuse`, true from
+`trusted_user` through `machine_reviewed`): it may reach a prompt unasked, and memory may curate it.
+For sink policy it resolves to `trusted_internal`'s cells, at the shared lookup, so every operator
+override and minimum written for the trusted pole applies to it; it cannot be configured on its own.
+See [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md).
 
 The turn's taint level is the maximum tier present in context. The max rule is deliberately simple:
 it is explainable, monotonic, and cheap to enforce at every chokepoint.
@@ -123,6 +136,7 @@ A `TaintSource` explains why taint changed:
 | `attacker_addressable_egress` | High-bandwidth outbound data to attacker-selectable destinations.                                   | URL fetch, browser navigation, browser form submit, arbitrary webhook call.                                                     |
 | `sandbox_network`             | Code or CLI with network access.                                                                    | Worker agent network, Monty extension command, future skills-plus-CLI egress.                                                   |
 | `sensitive_read_broadening`   | New access to private corpus after high-tier taint entered context.                                 | Semantic document search, note search, message-history search, full document fetch.                                             |
+| `ambient_prompt_write`        | A write that places material into every future prompt, unasked.                                     | A note written with `include_in_prompt`, a note whose frontmatter makes it a skill, a workspace import that asks for either.    |
 
 Sink class is not identical to tool tag. A single tool may map to different sink classes by
 arguments or runtime state. For example, browser navigation to a configured origin and browser
@@ -508,12 +522,20 @@ egress policy.
 
 Suggested default enforcement after observe mode:
 
-| Max tier in context  | User/local | Home/local | Artifact write | Low-bandwidth external | Known-user message | Arbitrary external message | Attacker-addressable egress | Sandbox network | Sensitive read broadening |
-| -------------------- | ---------- | ---------- | -------------- | ---------------------- | ------------------ | -------------------------- | --------------------------- | --------------- | ------------------------- |
-| `TRUSTED_USER`       | allow      | allow      | allow          | allow                  | policy             | policy                     | policy                      | policy          | allow                     |
-| `KNOWN_CONTACT`      | allow      | allow      | audit          | allow                  | audit              | confirm                    | confirm                     | confirm         | allow                     |
-| `RECOGNIZED_MACHINE` | allow      | allow      | audit          | allow                  | audit              | confirm                    | confirm                     | confirm         | allow                     |
-| `UNKNOWN_EXTERNAL`   | allow      | allow      | audit          | audit                  | confirm            | confirm                    | confirm                     | deny            | confirm                   |
+| Max tier in context  | User/local | Home/local | Artifact write | Ambient prompt write          | Low-bandwidth external | Known-user message | Arbitrary external message | Attacker-addressable egress | Sandbox network | Sensitive read broadening |
+| -------------------- | ---------- | ---------- | -------------- | ----------------------------- | ---------------------- | ------------------ | -------------------------- | --------------------------- | --------------- | ------------------------- |
+| `TRUSTED_USER`       | allow      | allow      | allow          | allow                         | allow                  | policy             | policy                     | policy                      | policy          | allow                     |
+| `TRUSTED_INTERNAL`   | allow      | allow      | allow          | allow                         | allow                  | policy             | policy                     | policy                      | policy          | allow                     |
+| `MACHINE_REVIEWED`   | allow      | allow      | allow          | allow                         | allow                  | policy             | policy                     | policy                      | policy          | allow                     |
+| `KNOWN_CONTACT`      | allow      | allow      | audit          | adjudicate (fallback confirm) | allow                  | audit              | confirm                    | confirm                     | confirm         | allow                     |
+| `RECOGNIZED_MACHINE` | allow      | allow      | audit          | adjudicate (fallback confirm) | allow                  | audit              | confirm                    | confirm                     | confirm         | allow                     |
+| `UNKNOWN_EXTERNAL`   | allow      | allow      | audit          | adjudicate (fallback confirm) | audit                  | confirm            | confirm                    | confirm                     | deny            | confirm                   |
+
+The `TRUSTED_INTERNAL` and `MACHINE_REVIEWED` rows are not separate matrix entries: both resolve to
+the trusted pole at the policy lookup. `ambient_prompt_write` is never resolved from tool tags; the
+note tools evaluate it themselves against the resolved candidate, and its verdict is awaited in
+observe mode as well as enforce (see
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md)).
 
 `policy` means the existing static tool policy decides. Runtime taint should not make trusted turns
 more permissive than they are today.

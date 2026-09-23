@@ -50,6 +50,7 @@ from family_assistant.llm.model_selection import (
 )
 from family_assistant.observability.metrics import current_call_attribution
 from family_assistant.processing import ProcessingService
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database
 from family_assistant.task_worker import (
     DelegatedProfileRunPayload,
@@ -1146,6 +1147,7 @@ async def test_a_delegated_attachment_is_described_to_the_classifier(
         tool_name="upload",
         conversation_id=conversation_id,
         db_context=Database(engine=db_engine),
+        taint_state=TurnTaintState.empty(),
     )
 
     await delegate_to_service_tool(
@@ -1194,6 +1196,7 @@ async def test_a_synchronously_delegated_attachment_is_described_too(
         conversation_id=conversation_id,
         owner_user_id=_DELEGATION_USER_ID,
         db_context=Database(engine=db_engine),
+        taint_state=TurnTaintState.empty(),
     )
 
     await delegate_to_service_tool(

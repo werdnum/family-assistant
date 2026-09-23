@@ -92,6 +92,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     coerce_taint_metadata,
     floor_machine_authored_metadata,
+    is_admissible_for_reuse,
     is_externally_authored,
     machine_authored_taint_metadata,
 )
@@ -735,28 +736,38 @@ def _llm_callback_trigger_taint_sources(
 ) -> tuple[TaintSource, ...]:
     """Return fail-closed provenance for unattended external callback content.
 
-    Callback wrappers are not trusted user turns. Only a payload-free definition
-    whose stored record resolves at the trusted pole may enter as trusted
-    intent. Everything else must enter the live tracker as unknown external and
-    stay a tainted user message; promoting attacker-controlled callback text to
-    a system message would give it instruction priority despite its provenance.
+    Callback wrappers are not trusted user turns. A payload-free definition
+    contributes its *resolved* tier: nothing for a trusted-pole stamp,
+    ``machine_reviewed`` for an admitted one -- whichever record form admitted
+    it -- and ``unknown_external`` for anything else, which must stay a tainted
+    user message; promoting attacker-controlled callback text to a system
+    message would give it instruction priority despite its provenance.
 
     The definition and the payload are judged separately, which is what makes a
-    resolved record worth having: a trusted definition fired with event data
+    resolved record worth having: a resolved definition fired with event data
     still enters tainted -- by the payload -- while rendering its intent, so the
     reviewer finally has something to judge the payload's alignment against.
     """
-    definition_is_explicitly_trusted = (
-        trigger.definition is not None
+    definition_state = (
+        TurnTaintState.from_metadata(trigger.definition_taint_metadata)
+        if trigger.definition is not None
         and trigger.definition_taint_metadata is not None
-        and not is_externally_authored(
-            TurnTaintState.from_metadata(trigger.definition_taint_metadata).max_tier
-        )
+        else None
     )
-    if definition_is_explicitly_trusted and not trigger.payload_present:
-        return ()
+    definition_is_resolved = definition_state is not None and (
+        is_admissible_for_reuse(definition_state.max_tier)
+    )
+    definition_sources: tuple[TaintSource, ...] = (
+        definition_state.sources
+        if definition_state is not None
+        and definition_is_resolved
+        and is_externally_authored(definition_state.max_tier)
+        else ()
+    )
+    if definition_is_resolved and not trigger.payload_present:
+        return definition_sources
 
-    if definition_is_explicitly_trusted:
+    if definition_is_resolved:
         source_type = (
             TaintSourceType.EVENT
             if trigger.trigger_type == "event_listener"
@@ -764,7 +775,7 @@ def _llm_callback_trigger_taint_sources(
         )
         reason = (
             "Trigger payload is untrusted external content "
-            f"({trigger.trigger_type}); its definition resolved trusted."
+            f"({trigger.trigger_type}); its definition resolved as intent."
         )
         labels = frozenset({"unattended_callback", "trigger_payload"})
     elif trigger.trigger_type == "event_listener":
@@ -788,6 +799,7 @@ def _llm_callback_trigger_taint_sources(
 
     automation_id = payload.get("automation_id")
     return (
+        *definition_sources,
         TaintSource(
             source_type=source_type,
             source_id=(
@@ -6367,6 +6379,11 @@ async def _register_confirmation_result_attachments(
                     "auto_display": True,
                 },
                 db_context=context.db_context,
+                taint_state=(
+                    context.taint_tracker.snapshot()
+                    if context.taint_tracker is not None
+                    else TurnTaintState.empty()
+                ),
             )
         )
         attachment.attachment_id = registered_metadata.attachment_id

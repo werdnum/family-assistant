@@ -15,6 +15,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -224,6 +225,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
         tool_name="get_camera_snapshot",
         description="bird_statue.png",
         conversation_id="test_chat_789",
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_2 = await attachment_registry.store_and_register_tool_attachment(
@@ -233,6 +235,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
         tool_name="attach_to_response",
         description="document.pdf",
         conversation_id="test_chat_789",
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_id_1 = attachment_1.attachment_id

@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
@@ -21,7 +22,10 @@ async def test_database_fixture_starts_empty_and_preserves_commits(
     )
 
     await db.notes.add_or_update(
-        title=title, content=content, write_policy=NoteWritePolicy.UNCONSTRAINED
+        title=title,
+        content=content,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     # Reinitializing an existing database exercises the Alembic-managed path.
     await init_db(db_engine)

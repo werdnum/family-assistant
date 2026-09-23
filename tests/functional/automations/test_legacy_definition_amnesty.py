@@ -208,9 +208,10 @@ async def test_an_amnestied_definition_fires_as_trusted_intent(
 
     after = await _resolve(db, legacy)
     assert after.resolved
-    # The cure's baseline, and the disposition that says who granted it: the
-    # firing renders its intent and is told no gate ever examined it.
-    assert after.tier is SourceTrustTier.TRUSTED_INTERNAL
+    # The tier every cure resolves to, and the disposition that says who
+    # granted it: the firing renders its intent and is told no gate ever
+    # examined it.
+    assert after.tier is SourceTrustTier.MACHINE_REVIEWED
     assert after.disposition is CreationDisposition.LEGACY_AMNESTIED
 
 

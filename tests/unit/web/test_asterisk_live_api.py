@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
@@ -426,6 +427,7 @@ class TestCallTranscriptSaving:
             content="pre-fix transcript",
             visibility_labels=[],
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
 
         await handler._save_call_transcript()

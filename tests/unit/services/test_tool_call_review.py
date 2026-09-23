@@ -1659,3 +1659,76 @@ def test_taint_audit_sources_bounded_and_fifo_order() -> None:
     assert actual_ids == expected_ids
     assert actual_ids[0] == "src-13"
     assert actual_ids[-1] == "src-24"
+
+
+@pytest.mark.no_db
+def test_an_ambient_admission_is_judged_as_reusable_material() -> None:
+    """Procedural content is the object of admission review, not evidence against it."""
+    review_input = replace(_review_input(), sink_class=SinkClass.AMBIENT_PROMPT_WRITE)
+
+    messages = assemble_tool_call_review_messages(review_input, _constraints())
+
+    system = cast("SystemMessage", messages[0]).content
+    assert isinstance(system, str)
+    assert "reusable material" in system
+    assert "evidence against the call" not in system
+
+
+def _reviewed_state() -> TurnTaintState:
+    return TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="Packing procedure",
+            tier=SourceTrustTier.MACHINE_REVIEWED,
+            labels=frozenset(),
+            reason="Admitted for reuse.",
+        )
+    )
+
+
+@pytest.mark.no_db
+def test_a_reviewed_row_renders_as_reviewed_context_not_intent() -> None:
+    review_input = _review_input(
+        messages=[
+            UserMessage(
+                content="Send the report to friend@example.test",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            ),
+            AssistantMessage(
+                content="Following the packing procedure.",
+                taint_metadata=_reviewed_state().to_metadata(),
+            ),
+        ]
+    )
+
+    prompt = _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+    assert '<reviewed_context index="1" role="assistant">' in prompt
+    assert "Following the packing procedure." in prompt
+    assert '<trusted_conversation index="1"' not in prompt
+
+
+@pytest.mark.no_db
+def test_reviewed_sources_keep_their_details_in_the_digest() -> None:
+    review_input = replace(_review_input(), taint_state=_reviewed_state())
+
+    prompt = _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+    assert "Packing procedure" in prompt
+    assert "Admitted for reuse." in prompt
+
+
+@pytest.mark.no_db
+def test_ambient_context_renders_as_a_bounded_fenced_section() -> None:
+    review_input = replace(
+        _review_input(), ambient_context="- Packing procedure: Roll clothes."
+    )
+
+    prompt = _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+    without = _prompt(
+        assemble_tool_call_review_messages(_review_input(), _constraints())
+    )
+
+    assert "Reviewed ambient context" in prompt
+    assert "- Packing procedure: Roll clothes." in prompt
+    assert "[No ambient notes or skills were supplied.]" in without

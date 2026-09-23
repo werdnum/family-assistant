@@ -22,6 +22,7 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import ContentProcessor, IndexingPipeline
 from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
@@ -244,6 +245,7 @@ async def test_note_update_reindexing_e2e(
             title=unique_note_title,
             content=initial_content,
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
         assert result == "Success"
 
@@ -317,6 +319,7 @@ async def test_note_update_reindexing_e2e(
             title=unique_note_title,
             content=updated_content,
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
         assert result == "Success"
         logger.info("Updated note content")
@@ -496,6 +499,7 @@ async def test_notes_indexing_graceful_degradation(
             title=unique_note_title,
             content=LARGE_CONTENT,
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
         assert result == "Success"
 

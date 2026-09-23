@@ -8,11 +8,19 @@ import pytest
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.storage.database import (
     Database,
     set_engine_history_taint_epoch,
 )
 from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 
 
 def _counts_by_key(items: list[dict[str, object]]) -> dict[str | None, int]:
@@ -342,3 +350,37 @@ async def test_taint_diagnostics_reports_truncation(
     assert audit["matched_event_count"] == 2
     assert audit["included_event_count"] == 1
     assert audit["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_taint_diagnostics_report_notes_the_ambient_rule_excludes(
+    api_client: httpx.AsyncClient,
+    api_db_context: Database,
+) -> None:
+    """The rollout audit's measurement of what stopped reaching prompts."""
+    external = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="web",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="read the web",
+        )
+    )
+    await api_db_context.notes.add_or_update(
+        "Web digest",
+        "copied from a page",
+        True,
+        # ast-grep-ignore: no-unconstrained-note-write-policy - test seeding, no profile in play
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.machine(external),
+    )
+
+    response = await api_client.get("/api/diagnostics/taint-audit?days=1")
+
+    assert response.status_code == 200
+    assert response.json()["ambient_notes"] == {
+        "excluded_prompt_notes": 1,
+        "excluded_skills": 0,
+        "missing_provenance": 0,
+    }

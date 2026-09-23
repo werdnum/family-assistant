@@ -31,7 +31,12 @@ from family_assistant.memory.sweep import (
     run_memory_review_sweep,
 )
 from family_assistant.memory.transcript import UNFINISHED_TURN_MARKER
-from family_assistant.security.taint import TurnTaintState, is_externally_authored
+from family_assistant.security.note_provenance import NoteProvenanceStamp
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TurnTaintState,
+    is_externally_authored,
+)
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import TaskPriority
@@ -254,6 +259,7 @@ async def test_a_memory_note_beyond_the_curators_grants_is_not_in_its_request(
         include_in_prompt=False,
         visibility_labels=[MEMORY_LABEL],
         write_policy=PERSON_WRITE_POLICY,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title="Private",
@@ -261,6 +267,7 @@ async def test_a_memory_note_beyond_the_curators_grants_is_not_in_its_request(
         include_in_prompt=False,
         visibility_labels=[MEMORY_LABEL, "private"],
         write_policy=PERSON_WRITE_POLICY,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await seed_turn(db, turn_id="turn-1", said="we always take the tram")
 
@@ -586,6 +593,7 @@ async def test_a_persons_edit_during_a_review_makes_it_re_run(
         include_in_prompt=False,
         visibility_labels=[MEMORY_LABEL],
         write_policy=PERSON_WRITE_POLICY,
+        provenance=NoteProvenanceStamp.internal(),
     )
     gate.set()
     result = await review
@@ -698,8 +706,8 @@ async def test_a_trusted_stretch_leaves_the_curators_turn_in_the_trusted_pole(
 
     A trusted stretch therefore produces a turn inside the trusted pole, which
     is what the notes repository requires of every memory write. The written
-    note carries no provenance stamp precisely because of that: a stamp records
-    a tier *above* the trusted pole, and there was none to record.
+    note is stamped ``trusted_internal``: the curator composed it, so it is
+    never the human's own words.
     """
     limits = review_limits()
     db = memory_db(db_engine, limits)
@@ -716,7 +724,13 @@ async def test_a_trusted_stretch_leaves_the_curators_turn_in_the_trusted_pole(
     )
     written = await db.notes.get_by_title("Sam", read_policy=CURATOR_READ_POLICY)
     assert written is not None
-    assert written.provenance_metadata is None
+    assert written.provenance_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(
+            written.provenance_metadata.get("taint_metadata")
+        ).max_tier
+        is SourceTrustTier.TRUSTED_INTERNAL
+    )
 
 
 @pytest.mark.asyncio

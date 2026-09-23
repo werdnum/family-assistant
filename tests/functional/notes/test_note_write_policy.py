@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import (
@@ -153,6 +154,7 @@ async def test_repository_applies_required_labels(db_engine: AsyncEngine) -> Non
         title="Diag Report",
         content="findings",
         write_policy=_confined_policy(),
+        provenance=NoteProvenanceStamp.internal(),
     )
     note = await db.notes.get_by_title(
         "Diag Report", read_policy=NoteReadPolicy.UNRESTRICTED
@@ -172,6 +174,7 @@ async def test_repository_required_labels_win_over_empty_request(
         content="findings",
         visibility_labels=[],
         write_policy=_confined_policy(),
+        provenance=NoteProvenanceStamp.internal(),
     )
     note = await db.notes.get_by_title(
         "Diag Report", read_policy=NoteReadPolicy.UNRESTRICTED
@@ -190,6 +193,7 @@ async def test_repository_ceiling_rejects_write(db_engine: AsyncEngine) -> None:
             content="findings",
             visibility_labels=["family"],
             write_policy=_confined_policy(),
+            provenance=NoteProvenanceStamp.internal(),
         )
     # Nothing persisted.
     assert (
@@ -212,6 +216,7 @@ async def test_repository_see_before_overwrite_enforced(
         content="private family content",
         visibility_labels=["family"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     db = Database(engine=db_engine)
     with pytest.raises(NoteWritePolicyError):
@@ -219,6 +224,7 @@ async def test_repository_see_before_overwrite_enforced(
             title="Family Note",
             content="overwritten by ops",
             write_policy=_confined_policy(),
+            provenance=NoteProvenanceStamp.internal(),
         )
     db = Database(engine=db_engine)
     note = await db.notes.get_by_title(
@@ -245,6 +251,7 @@ async def test_repository_refuses_relabeling_unrestricted_note(
         content="user content",
         visibility_labels=[],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     db = Database(engine=db_engine)
     with pytest.raises(NoteWritePolicyError):
@@ -252,6 +259,7 @@ async def test_repository_refuses_relabeling_unrestricted_note(
             title="Shopping List",
             content="ops findings",
             write_policy=_confined_policy(),
+            provenance=NoteProvenanceStamp.internal(),
         )
     db = Database(engine=db_engine)
     note = await db.notes.get_by_title(
@@ -271,6 +279,7 @@ async def test_repository_rename_applies_policy(db_engine: AsyncEngine) -> None:
         content="content",
         visibility_labels=["ops_diagnostics"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     db = Database(engine=db_engine)
     with pytest.raises(NoteWritePolicyError):
@@ -281,6 +290,7 @@ async def test_repository_rename_applies_policy(db_engine: AsyncEngine) -> None:
             True,
             visibility_labels=["family"],
             write_policy=_confined_policy(),
+            provenance=NoteProvenanceStamp.internal(),
         )
 
 
@@ -375,6 +385,7 @@ async def test_confirmation_prompt_reports_hidden_note_rejection(
         content="private",
         visibility_labels=["family"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     db = Database(engine=db_engine)
     ctx = _make_tool_context(
@@ -407,6 +418,7 @@ async def test_policy_enforced_atomically_on_title_race(db_engine: AsyncEngine) 
         content="hidden family content",
         visibility_labels=["family"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     with (
         mock.patch.object(
@@ -419,6 +431,7 @@ async def test_policy_enforced_atomically_on_title_race(db_engine: AsyncEngine) 
             title="Raced Note",
             content="ops findings",
             write_policy=_confined_policy(),
+            provenance=NoteProvenanceStamp.internal(),
         )
     db = Database(engine=db_engine)
     note = await db.notes.get_by_title(
@@ -442,6 +455,7 @@ async def test_atomic_policy_allows_racing_in_confinement_note(
         content="previous findings",
         visibility_labels=["ops_diagnostics"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     with mock.patch.object(
         NotesRepository, "get_by_title", new=mock.AsyncMock(return_value=None)
@@ -451,6 +465,7 @@ async def test_atomic_policy_allows_racing_in_confinement_note(
             title="Raced Ops Note",
             content="new findings",
             write_policy=_confined_policy(),
+            provenance=NoteProvenanceStamp.internal(),
         )
     db = Database(engine=db_engine)
     note = await db.notes.get_by_title(

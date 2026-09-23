@@ -6,6 +6,7 @@ Tests the ability to mark notes as excluded from system prompts while keeping th
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 
@@ -23,6 +24,7 @@ async def test_add_note_with_include_in_prompt_true(
         content="This note should appear in prompts",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     assert result == "Success"
 
@@ -59,6 +61,7 @@ async def test_add_note_with_include_in_prompt_false(
         content="This note should NOT appear in prompts",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     assert result == "Success"
 
@@ -96,6 +99,7 @@ async def test_add_note_default_includes_in_prompt(
         title="Test Note Default",
         content="This note uses default behavior",
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     assert result == "Success"
 
@@ -126,6 +130,7 @@ async def test_update_note_include_in_prompt_flag(
         content="Original content",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     # Verify initial state
@@ -140,6 +145,7 @@ async def test_update_note_include_in_prompt_flag(
         content="Updated content",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     # Verify updated state
@@ -162,6 +168,7 @@ async def test_update_note_include_in_prompt_flag(
         content="Final content",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     # Verify final state
@@ -193,6 +200,7 @@ async def test_get_prompt_notes_filters_correctly(
             content=content,
             include_in_prompt=include,
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
 
     # Get prompt notes
