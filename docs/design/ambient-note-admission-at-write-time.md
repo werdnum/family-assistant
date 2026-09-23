@@ -477,9 +477,12 @@ state.
    `audit` admits the write and stamps `machine_reviewed`; a trusted cell strengthened to
    `adjudicate` runs the review and an admitting verdict leaves the `trusted_user` stamp in place;
    an ambient write in a turn whose only external source is a reviewed note in the prompt is allowed
-   without a review and persists `machine_reviewed`; an append is reviewed and persisted as the
-   resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is absent from the
-   catalog.
+   without a review and persists `machine_reviewed`; on every path that changes a stamp — reviewer
+   admission, human confirmation, operator override and observe-mode denial — the note's audit
+   record holds the original sources, the authoring turn's tier and the verdict, confirmation or
+   override that decided it, and the record is reachable from the note; an append is reviewed and
+   persisted as the resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is
+   absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section; an admitted definition's stamp becomes `machine_reviewed` and renders as the

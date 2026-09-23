@@ -371,7 +371,9 @@ The next audit should add privacy-preserving fields or rollups for:
 - a stable hashed destination/origin/recipient fingerprint where the sink resolver has such a value;
 - the resolved descriptor tags and resolution source (exact config, wildcard config, MCP
   annotations, or fallback);
-- prompt-admission status counts, especially `blocked_by_taint`;
+- the count of prompt-intended notes and skills the derived eligibility rule excludes, as the
+  replacement design's taint-audit endpoint reports it (superseding the `blocked_by_taint` status
+  count this bullet originally asked for);
 - high-tier artifact writes and transitions into or out of prompt eligibility;
 - confirmation reason layers, so duplicate static-policy and taint prompts can be detected;
 - count of no-channel tools advertised and subsequently denied; and
