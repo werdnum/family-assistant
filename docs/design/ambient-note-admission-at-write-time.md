@@ -459,6 +459,19 @@ state.
   in its prompt, which after rollout is most of them, and memory would be useless. The residual is
   that paraphrased reviewed web material can reach household memory; the memory curator's own review
   still sees it, and the `machine_reviewed` stamp on the chunk says what it is.
+- **Reviewed material keeps no egress floor.** `risk-adjudicated-taint-enforcement.md` holds that
+  every externally authored tier keeps a `confirm` floor on the egress and high-impact actuation
+  sinks, so that a classifier false-negative can never authorise disclosure alone.
+  `machine_reviewed` is externally authored for authorship and takes `trusted_internal`'s cells for
+  every sink, egress included, and that document's invariant is amended accordingly. The reason is
+  where the tier appears: after rollout every prompt carries the reviewed ambient notes, so every
+  turn is at `machine_reviewed`, and a floor there would confirm every outbound message the
+  household sends — the friction this design exists to remove, not a gentler middle tier that never
+  fires. The residual is a reviewer false-allow whose text later steers an outbound message; the
+  mitigations are that the reviewer saw the whole candidate as reusable material, that any fresh
+  external content in the turn raises it past this tier and restores the floors, and that an
+  operator who wants the floor back sets `operator_minimum` for the trusted pole, which applies to
+  this tier.
 - **One admission vouches for what is composed from it alone.** A turn whose only external influence
   is reviewed material writes new ambient notes and skills at `machine_reviewed` without a second
   review. Transforming reviewed material is what curing it is for, and any other external content in
@@ -570,6 +583,8 @@ state.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
    operational-findings document's Issue 3 section marked as superseded by this one;
+   `conversation-memory.md`'s provenance invariant, eligibility rule and work-plan verification
+   amended from the authorship boundary to the reuse predicate, already marked in that document;
    `runtime-taint-machinery.md`'s tier enumeration, sink table and policy matrix extended with
    `machine_reviewed` and `ambient_prompt_write`, since that document is the contract implementers
    read for the tier ordering and the sink surface and it must not disagree with this one; and the

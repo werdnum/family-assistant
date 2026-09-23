@@ -281,7 +281,10 @@ shipped defaults:
 | middle tiers, non-egress gated cells             | audit/confirm           | adjudicate                            |
 
 Every externally authored tier keeps a `confirm` floor on the egress sinks
-(`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`): a DMARC-passing
+(`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`) *(amended by
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md):
+`machine_reviewed`, externally authored but admitted by review, takes `trusted_internal`'s cells at
+every sink, egress included; the rationale and residual are recorded there)*: a DMARC-passing
 allowlisted sender is still an external author — a compromised family mailbox or a hostile
 newsletter supplies attacker-controlled input at a friendlier tier — so a classifier false-negative
 must never be able to authorize outbound disclosure on its own at *any* external tier. Floorless
