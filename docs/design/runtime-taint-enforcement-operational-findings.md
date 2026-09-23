@@ -6,6 +6,14 @@ Proposed operational correction and follow-up design.
 
 ## Summary
 
+> **Partly superseded.** The note-admission parts of this document — the read-time
+> `blocked_by_taint` status, exact authenticated-user review of prompt material, hidden titles, and
+> the non-goal that leaves `known_contact` and `recognized_machine` eligible unreviewed — are
+> replaced by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
+> which reviews at the write through machine adjudication, gates every externally authored tier, and
+> keeps unreviewed titles in the catalog as a recorded residual. The production evidence, the
+> sandbox-denial correction, and the other operational issues below stand.
+
 Runtime taint tracking is collecting useful provenance in production, but enabling the shipped
 enforcement matrix today would impose enough false-positive friction that the deployment remains in
 `observe` mode. That is not a neutral outcome: a policy too disruptive to enable provides no runtime
@@ -184,6 +192,13 @@ provenance rule because they are deployment-controlled files rather than databas
 
 ## Minimal prompt-admission design
 
+> **Superseded.** The read-time `blocked_by_taint` status and explicit-review readmission below are
+> replaced by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
+> which decides ambient eligibility at the write that produces the note. Of Issue 3, the poisoning
+> problem it describes still stands; its requirement that admission cover every database-derived
+> ambient string, titles included, is superseded — the replacement design deliberately leaves
+> unreviewed titles in the catalog as a recorded residual.
+
 ### Effective status
 
 Derive a regular note's user-visible prompt status without adding a database column:
@@ -356,7 +371,9 @@ The next audit should add privacy-preserving fields or rollups for:
 - a stable hashed destination/origin/recipient fingerprint where the sink resolver has such a value;
 - the resolved descriptor tags and resolution source (exact config, wildcard config, MCP
   annotations, or fallback);
-- prompt-admission status counts, especially `blocked_by_taint`;
+- the count of prompt-intended notes and skills the derived eligibility rule excludes, as the
+  replacement design's taint-audit endpoint reports it (superseding the `blocked_by_taint` status
+  count this bullet originally asked for);
 - high-tier artifact writes and transitions into or out of prompt eligibility;
 - confirmation reason layers, so duplicate static-policy and taint prompts can be detected;
 - count of no-channel tools advertised and subsequently denied; and
@@ -367,6 +384,10 @@ Raw URLs, recipients, arguments, note content, and source identifiers must remai
 aggregate diagnostics surface.
 
 ## Rollout sequence
+
+> Steps 1–4 are **superseded** by
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md), whose work
+> plan replaces them; they are kept for the record of what was considered. Steps 5–8 stand.
 
 1. Add one read-time ambient-admission snapshot covering included regular notes, excluded-note
    titles, database-skill catalog entries, derived status, and context taint.
@@ -386,12 +407,20 @@ aggregate diagnostics surface.
    high-tier snapshots, so resumed threads remain tainted until their configured history windows
    roll over; verify provenance sources rather than assuming the floor disappears immediately.
    Compare tool-call gates, distinct gated turns, duplicate prompts, failed no-channel calls, and
-   blocked prompt artifacts.
+   the count of prompt-intended notes and skills the derived eligibility rule excludes (the
+   replacement design's diagnostic, in place of the withdrawn `blocked_by_taint` status).
 8. Enable enforcement when the corrected data shows tolerable approval episodes, then pursue
    capability-scoped confirmation reuse and brokered-network sink refinement based on actual
    remaining friction.
 
 ## Acceptance criteria
+
+> The first seven criteria — through "Profiles cannot relax the deployment's ambient-admission
+> threshold" — are **superseded** by
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): they describe
+> the read-time design and are not the acceptance bar for the replacement, which deliberately leaves
+> unreviewed titles in the catalog and uses no hash-bound review. The remaining criteria verify
+> rollout steps 5–8 and stand.
 
 - A high-tier database artifact without a valid review contributes no title, content, attachment
   reference or metadata, skill name, skill description, or taint to initial turn context.

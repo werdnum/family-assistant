@@ -281,7 +281,10 @@ shipped defaults:
 | middle tiers, non-egress gated cells             | audit/confirm           | adjudicate                            |
 
 Every externally authored tier keeps a `confirm` floor on the egress sinks
-(`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`): a DMARC-passing
+(`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`) *(amended by
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md):
+`machine_reviewed`, externally authored but admitted by review, takes `trusted_internal`'s cells at
+every sink, egress included; the rationale and residual are recorded there)*: a DMARC-passing
 allowlisted sender is still an external author — a compromised family mailbox or a hostile
 newsletter supplies attacker-controlled input at a friendlier tier — so a classifier false-negative
 must never be able to authorize outbound disclosure on its own at *any* external tier. Floorless
@@ -764,6 +767,14 @@ Cheap detections of commodity spray attacks get deterministic hardening plus a v
 
 ### Persistent artifacts: content-derived provenance and attested healing
 
+> **Superseded.** The persistent-artifact mechanics below — per-field content-derived stamps,
+> revision-scoped healing, hash-bound human-only promotion and lossless provenance storage — are
+> superseded by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
+> which stamps at the turn level from the writer's trust, promotes through a machine verdict at one
+> admission sink (human confirmation remaining one admitting path), and keeps a bounded audit
+> summary. The store corrections named as lean core (calendar de-trusting, the
+> externally-mutable-store audit question) stand.
+
 *(Tier split: the store corrections below — calendar de-trusting, the externally-mutable-store audit
 question — are lean core; the stamping, healing, attribution, and attestation mechanics are
 contingent tier.)*
@@ -965,8 +976,9 @@ cells the data indicts:
    and a judge retrofitted with it later is a different judge than the one calibrated. Run under
    `observe`, evaluate against the shadow-phase gates, then enforce with deny-and-continue and
    escalation counters.
-7. **Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
-   extension) if artifact-restored taint is what the measurements indict.
+7. ~~**Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
+   extension) if artifact-restored taint is what the measurements indict.~~ Superseded by
+   [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md).
 8. **Post-facto capability-scoped approval reuse** (a real approval of a real instance becomes
    durable for its exact capability tuple), and the **injection probe**, escalate-only, once there
    is an enforcement layer for it to harden.
@@ -1126,20 +1138,31 @@ budget; written gate decision recorded in this document's status.
 - An adjudicator outage degrades every `adjudicate` cell to `confirm`, visibly in diagnostics —
   never to `allow`.
 - No code path allows probe output or judge output to lower a tier, remove a source, relax a floor,
-  or write provenance.
+  or write provenance. *(Amended by
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): an admitting
+  verdict at an admission chokepoint — the `ambient_prompt_write` sink, or the executable-definition
+  creation gate — replaces an external candidate's envelope with `machine_reviewed`; no verdict
+  relaxes a floor or lowers a tier anywhere else.)*
 - Judge context provably excludes untrusted-tier rendered content — in conversation rows, argument
   values, and provenance-digest fields (reasons, titles, identifiers) alike (unit-testable via the
-  same row-selection and field-filtering functions the assembler uses).
+  same row-selection and field-filtering functions the assembler uses). *(Amended by the same
+  design: the complete candidate under review at the admission sink is rendered as the payload, as
+  the auto-reviewer's input contract already excepts, and `machine_reviewed` material renders as a
+  bounded reviewed-context band; unreviewed external content stays excluded.)*
 - Adjudication in a delegated run sees the same temporal evidence (sensitive-read records,
   fresh-taint ordering) as it would in the parent turn: the serialized taint schema carries it
   across the delegation round trip.
-- An artifact written from content that verbatim-matches the current turn's trusted-tier text
+- ~~An artifact written from content that verbatim-matches the current turn's trusted-tier text
   carries trusted provenance even in a tainted turn; a model paraphrase of untrusted content fails
   the match and keeps the turn-maximum stamp — laundering by rewording is impossible by
-  construction.
-- Stored artifact provenance moves toward trusted only through deterministic content-derived
+  construction.~~ Superseded: an artifact write carries the turn's stamp under the
+  retained-provenance rule of
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md).
+- ~~Stored artifact provenance moves toward trusted only through deterministic content-derived
   stamping, deterministic revision-scoped healing, or an authenticated human attestation — never
-  through a model verdict, and attribution survives storage without truncation.
+  through a model verdict, and attribution survives storage without truncation.~~ Superseded: the
+  admission sink promotes on a machine verdict, a human confirmation or an operator override, and
+  the audit store keeps its bounded summary.
 - Every verdict, escalation, and probe detection is auditable after the fact with reasons.
 
 ## References

@@ -173,13 +173,13 @@ the tier.
 `_llm_callback_review_trigger` and the script-execution seeding path stop hard-coding
 `definition_taint_metadata=None` and instead resolve the definition record:
 
-| record state                                  | definition renders to reviewer as        | trigger taint contribution |
-| --------------------------------------------- | ---------------------------------------- | -------------------------- |
-| stamp ≤ `trusted_internal`, hash valid        | trusted definition                       | none                       |
-| tainted stamp + `human_confirmed`, hash valid | trusted definition, marked attested      | none                       |
-| tainted stamp + `judge_allowed`, hash valid   | trusted definition, marked judge-allowed | none                       |
-| tainted stamp, no curing disposition          | stub (today)                             | `unknown_external` (today) |
-| absent record or hash mismatch                | stub (today)                             | `unknown_external` (today) |
+| record state                                  | definition renders to reviewer as        | trigger taint contribution              |
+| --------------------------------------------- | ---------------------------------------- | --------------------------------------- |
+| stamp ≤ `trusted_internal`, hash valid        | trusted definition                       | none                                    |
+| tainted stamp + `human_confirmed`, hash valid | trusted definition, marked attested      | none *(superseded: `machine_reviewed`)* |
+| tainted stamp + `judge_allowed`, hash valid   | trusted definition, marked judge-allowed | none *(superseded: `machine_reviewed`)* |
+| tainted stamp, no curing disposition          | stub (today)                             | `unknown_external` (today)              |
+| absent record or hash mismatch                | stub (today)                             | `unknown_external` (today)              |
 
 "Marked" means the review-status vocabulary (`clean` / `attested` / `judge-allowed at creation`,
 plus creator identity) renders as closed-vocabulary context alongside the definition, so the
@@ -295,6 +295,14 @@ and fails closed.
 
 ### Shadow measurement measures the real system
 
+> **Superseded in one respect.** Under
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md) a cured
+> definition — one stamped `machine_reviewed`, or a prior-version row cured by its disposition —
+> fires **at `machine_reviewed`**, contributing that source and rendering as the intent to judge
+> against, rather than firing clean with no contribution as the table above and this section say.
+> The shadow-measurement argument is unchanged, since `machine_reviewed` takes `trusted_internal`'s
+> cells at every sink.
+
 Because `allow` cures in every mode, the dry run needs no correction: a definition the judge
 approves at creation fires clean under `observe` exactly as it would under `enforce`, so the shadow
 friction numbers the flip decision reads already reflect the steady state it is deciding about.
@@ -380,16 +388,26 @@ re-open unnoticed).
 
 ## The amended invariant
 
+> **Partly superseded.**
+> [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md) re-expresses
+> the cure as a stored tier: an admission (a judge's `allow`, a sighted human approval, or an
+> operator override at the admission sink) rewrites the definition's stamp to `machine_reviewed`,
+> with the authoring taint moving to the bounded audit event. The "no verdict ever rewrites the
+> authoring stamp" clause below, the matching security property and M3's verification of it are
+> superseded. The additive hash-bound disposition remains the resolution path **for prior-version
+> rows only**: a record stamped with the tier resolves from its stamp, a `definition_v1` record
+> cured by its disposition keeps resolving as it does today.
+
 The risk document's design principle — nothing probabilistic ever writes provenance, lowers a tier,
 or persists a verdict as trust — is amended for exactly one artifact class, executable definitions,
 in exactly one direction:
 
-- **What is preserved:** no verdict ever rewrites the authoring stamp. The current record's stored
-  provenance remains the deterministic statement of what authored the definition's current content;
-  `judge_allowed` is an additive record beside it, not a mutation of it. No verdict touches notes,
-  calendar events, or any other artifact class. No verdict relaxes a configured floor — a floored
-  creation cell excludes `allow`, and with it the judge's ability to cure, by the same configuration
-  that excludes it from executing.
+- **What is preserved** *(superseded, see above)*: no verdict ever rewrites the authoring stamp. The
+  current record's stored provenance remains the deterministic statement of what authored the
+  definition's current content; `judge_allowed` is an additive record beside it, not a mutation of
+  it. No verdict touches notes, calendar events, or any other artifact class. No verdict relaxes a
+  configured floor — a floored creation cell excludes `allow`, and with it the judge's ability to
+  cure, by the same configuration that excludes it from executing.
 - **What is amended:** a persisted `allow` verdict on the *creation* is consulted, by a
   deterministic resolution function, when seeding the definition's firings — a verdict persisting as
   trust, for this class, bounded by the hash and revocable by any content change.
@@ -441,10 +459,13 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   record whose stamp is at or below `trusted_internal` or whose disposition is a real gate's
   `allow`/approval resolves trusted, and every other state — legacy, mismatch, uncured — is exactly
   today's fail-closed behaviour.
-- Nothing probabilistic writes or rewrites stored provenance: the current record's stamp is written
-  only by the deterministic stamping chokepoint, a mutation replaces the whole record through that
-  same chokepoint (no versioned stamp history is kept or promised), no verdict ever touches a stamp,
-  and the cure is an additive, hash-bound, auditable record consulted deterministically.
+- *(Superseded by
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): an admission
+  stamps `machine_reviewed` at the deterministic chokepoint.)* Nothing probabilistic writes or
+  rewrites stored provenance: the current record's stamp is written only by the deterministic
+  stamping chokepoint, a mutation replaces the whole record through that same chokepoint (no
+  versioned stamp history is kept or promised), no verdict ever touches a stamp, and the cure is an
+  additive, hash-bound, auditable record consulted deterministically.
 - Escalation verdicts never cure in any mode: a `deny`, or a `confirm` without an actual sighted
   human approval, resolves as absent — only `allow` verdicts and human approvals cure, and every
   disposition records the layer, mode, and reviewer revision that produced it for audit.
@@ -576,9 +597,12 @@ actual approval, with full-payload rendering required; `deny` never cures); reso
 `human_confirmed` and `judge_allowed`; review-status vocabulary in the reviewer rendering; echo
 eligibility rules. The taint-cell path depends on the risk document's executable-persistence sink
 split; the static `review` and confirmation paths work wherever those gates exist today. *Verify:* a
-human-confirmed tainted creation fires clean and renders marked attested; a judge-allowed creation
-cures with `taint_policy.mode` still `observe`, through the taint layer and the static layer alike;
-an observe-mode `allow` attaches asynchronously after review completion, bound to the originating
+human-confirmed tainted creation ~~fires clean~~ fires at `machine_reviewed` (superseded by
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): both a newly
+stamped and a prior-version disposition-cured definition contribute a `machine_reviewed` source and
+render as the intent to judge against) and renders marked attested; a judge-allowed creation cures
+with `taint_policy.mode` still `observe`, through the taint layer and the static layer alike; an
+observe-mode `allow` attaches asynchronously after review completion, bound to the originating
 write's generation — a firing before completion enters uncured, the next firing of a durable-table
 definition enters cured (a one-shot follow-up chain re-enqueued inside the window keeps the pending
 record, per the one-shot section), a mutation racing the completion leaves the new content uncured,
@@ -587,8 +611,9 @@ recorded `confirm` verdict without an approval, and a recorded `deny`, resolve a
 cell yields only human-backed cures for writes made under it, including under `observe` when a
 static `review` rule co-gates the write (the merged review's static-layer `allow` does not cure past
 the floor); a patch-style update that retains uncured content records its verdict without curing,
-while one whose retained content resolves trusted cures normally; no path rewrites an authoring
-stamp.
+while one whose retained content resolves trusted cures normally; ~~no path rewrites an authoring
+stamp~~ (superseded: an admission rewrites the stamp to `machine_reviewed`, per
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md)).
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI, listing each definition with its stamp and disposition (which is

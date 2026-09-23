@@ -88,7 +88,10 @@ The v1 invariants, each of which is enforced by code rather than by prompt:
 - **Bounded sizes.** The always-loaded memory contribution, every memory note, and every review
   input have fixed caps enforced at the write chokepoint for every writer.
 - **Provenance.** No memory is written from a turn whose recorded provenance is outside the trusted
-  pole, whoever writes it.
+  pole, whoever writes it. *(Amended by
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): the boundary
+  is the reuse predicate, which admits `machine_reviewed` alongside the trusted pole; unreviewed
+  external taint is still refused.)*
 - **Bounded, recoverable review.** A durable per-conversation watermark, reviews over bounded
   chunks, and a sweep that recovers from any crash by re-evaluating stored state.
 - **No silent stale overwrite.** A memory write is short, atomic with its watermark advance, and
@@ -347,15 +350,19 @@ a delegation carries its request, and seeds the curator's taint tracker with the
 those rows. Rendering user rows only, or omitting tool result bodies, changes what the model sees;
 it never changes the provenance the review carries.
 
-**Memory holds nothing above the trusted pole, whoever writes it.** The trusted pole is the pair
-`TRUSTED_USER` and `TRUSTED_INTERNAL` in the existing `SourceTrustTier`, and the boundary is the one
-`is_externally_authored` already draws. The notes repository refuses any write to a memory-labelled
-note whose provenance stamp lies outside it. For the curator that means a review whose turn taint
-has risen above the ceiling cannot write and fails visibly; for the foreground assistant it means a
-"remember this" in a turn that has read an untrusted email is refused with a clear error. The
-guarantee is about origin, not truth: a household member can be wrong, a curator can misread them,
-and a true statement can still be a poor standing instruction. The evidence links and the evaluation
-are what address that.
+**Memory holds nothing above the trusted pole, whoever writes it.** *(Amended by
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): the boundary is
+the reuse predicate — `TRUSTED_USER`, `TRUSTED_INTERNAL` and `MACHINE_REVIEWED` — not
+`is_externally_authored`, so material a judge admitted may be curated into memory and a memory note
+may carry `machine_reviewed`; everything below stands with that substitution.)* The trusted pole is
+the pair `TRUSTED_USER` and `TRUSTED_INTERNAL` in the existing `SourceTrustTier`, and the boundary
+is the one `is_externally_authored` already draws. The notes repository refuses any write to a
+memory-labelled note whose provenance stamp lies outside it. For the curator that means a review
+whose turn taint has risen above the ceiling cannot write and fails visibly; for the foreground
+assistant it means a "remember this" in a turn that has read an untrusted email is refused with a
+clear error. The guarantee is about origin, not truth: a household member can be wrong, a curator
+can misread them, and a true statement can still be a poor standing instruction. The evidence links
+and the evaluation are what address that.
 
 **Tainted stretches are skipped before the model call, and the loss is measured from day one.** The
 review task checks the merged taint of the unreviewed rows up front, and when it exceeds the ceiling
