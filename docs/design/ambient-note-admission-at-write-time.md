@@ -195,9 +195,15 @@ What the verdict does:
   override no advertised effect.
 - A **denial, a timeout, or a missing verdict cannot promote trust.** In enforce mode the write is
   refused and the stored note, if any, is untouched. In observe mode the write may still succeed
-  under the ordinary write policy, but the note keeps the turn's external taint, so it is not
-  eligible for full-content ambient inclusion; the tool result says so, and the same content can be
-  kept as an ordinary reference note.
+  under the ordinary write policy, but it persists with an **unadmitted stamp**: the maximum of the
+  turn's tier, the retained material's tier and `known_contact`, the same floor the lookup applies
+  to a `machine_reviewed` turn at this sink. That floor is what makes the outcome general. Without
+  it, a reviewed-context turn whose write is denied would persist `machine_reviewed` — the turn's
+  own tier — and a denied replacement of an already reviewed note would stay in every prompt. With
+  it, a non-admitted candidate is never eligible for full-content ambient inclusion, whatever tier
+  its sources or the note it replaces were at; the tool result says so, and the same content can be
+  kept as an ordinary reference note. The original sources go to the audit record as they do on
+  admission.
 - The **fallback** when no reviewer is configured or none answers is `confirm`, as for the other
   adjudicated cells. It is reached only when the non-manual gate is absent, and there a single
   confirmation is less friction than a refusal that sends the user off to redo the write in a clean
@@ -300,9 +306,9 @@ its own trust:
 - **Note tools** (`create_note`, `update_note`) and **workspace import** stamp the maximum of the
   turn's taint, floored at `trusted_internal`, and the stored taint of whatever the candidate
   retains — body under an append, attachments the call omits — replaced by `machine_reviewed` on an
-  admitting verdict. Only a full replacement of the ambient material, or an admission, lowers a
-  stamp; a partial write in a clean turn, including a demotion, never launders retained external
-  text into `trusted_user`.
+  admitting verdict and floored at `known_contact` on a non-admitting one. Only a full replacement
+  of the ambient material, or an admission, lowers a stamp; a partial write in a clean turn,
+  including a demotion, never launders retained external text into `trusted_user`.
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
@@ -441,20 +447,22 @@ state.
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
    trusted-pole candidate keeps its trusted stamp), and otherwise with the maximum of the turn's
-   taint and the stored taint of whatever the candidate retains, so a denied or unreviewed partial
-   write never lowers a stamp; the import tool merges the file as an `unknown_external` source first
-   and defaults inclusion off. Verified by tool tests for each gated shape and each tier, in both
-   modes: an admitting verdict yields a `machine_reviewed` row, and the next turn that includes it
-   merges exactly one `machine_reviewed` source and no external one; a denial refuses in enforce
-   mode and leaves the row untouched, and in observe mode persists an unreviewed row that is not
-   included; the `confirm` fallback holds and its prompt renders the resolved candidate rather than
-   the call's arguments, for an append and for an import alike; an operator override of an external
-   cell to `allow` or `audit` admits the write and stamps `machine_reviewed`; a trusted cell
-   strengthened to `adjudicate` runs the review and an admitting verdict leaves the `trusted_user`
-   stamp in place; an ambient write in a turn whose only external source is a reviewed note in the
-   prompt is reviewed, and persists `machine_reviewed` only on its own admitting verdict; an append
-   is reviewed and persisted as the resolved whole; an import with skill frontmatter is reviewed
-   and, unreviewed, is absent from the catalog.
+   taint, the stored taint of whatever the candidate retains and `known_contact`, so a denied or
+   unreviewed partial write never lowers a stamp and never persists a reusable one; the import tool
+   merges the file as an `unknown_external` source first and defaults inclusion off. Verified by
+   tool tests for each gated shape and each tier, in both modes: an admitting verdict yields a
+   `machine_reviewed` row, and the next turn that includes it merges exactly one `machine_reviewed`
+   source and no external one; a denial refuses in enforce mode and leaves the row untouched, and in
+   observe mode persists an unreviewed row that is not included, including when the turn is at
+   `machine_reviewed` and the candidate replaces an already reviewed note, which then drops out of
+   the prompt; the `confirm` fallback holds and its prompt renders the resolved candidate rather
+   than the call's arguments, for an append and for an import alike; an operator override of an
+   external cell to `allow` or `audit` admits the write and stamps `machine_reviewed`; a trusted
+   cell strengthened to `adjudicate` runs the review and an admitting verdict leaves the
+   `trusted_user` stamp in place; an ambient write in a turn whose only external source is a
+   reviewed note in the prompt is reviewed, and persists `machine_reviewed` only on its own
+   admitting verdict; an append is reviewed and persisted as the resolved whole; an import with
+   skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section; an admitted definition's stamp becomes `machine_reviewed` and renders as the
