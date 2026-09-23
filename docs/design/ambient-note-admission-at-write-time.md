@@ -239,16 +239,25 @@ download among them, are registered through `store_and_register_tool_attachment`
 all, so a sender-controlled description would still contribute nothing. Two rules close that. At the
 gate an attachment with **no stored envelope is evaluated as `unknown_external`** — the description
 is about to reach every prompt, and an unlabelled artifact must not pass on the strength of what
-nobody recorded. And the tool-attachment registration path becomes a stamping chokepoint like the
-notes repository: it records the storing turn's taint state, so a Gmail download carries the tier
-its message raised the turn to. Explicit reads of attachments are unchanged — an unlabelled upload
-still contributes nothing when read, since defaulting there would taint every ordinary user upload —
-the default applies only where the artifact is being promoted. A clean turn that appends to an
-unreviewed note is likewise reviewed at that note's tier rather than promoting its old body to
-`trusted_user` unread. A write that replaces every part of the ambient material is evaluated at the
-turn's tier alone. Synchronous review does not remove every concurrent update race; what remains is
-ordinary database correctness — persist the candidate that was actually reviewed, under the
-transaction and locking semantics the repository already uses.
+nobody recorded. And the attachment registry's registration boundary becomes a stamping chokepoint
+like the notes repository, with the stamp coming from the writer's own trust exactly as a note's
+does: a tool-stored attachment records the storing turn's taint state under the same
+machine-authorship floor (`trusted_internal` at least, so a description the model composed is never
+the user's own words), which is how a Gmail download carries the tier its message raised the turn
+to; an authenticated user's direct upload, which enters through `register_user_attachment` rather
+than the tool helper, stamps `trusted_user`. Explicit reads of attachments are unchanged — an
+unlabelled upload still contributes nothing when read, since defaulting there would taint every
+ordinary user upload — the default applies only where the artifact is being promoted. A clean turn
+that appends to an unreviewed note is likewise reviewed at that note's tier rather than promoting
+its old body to `trusted_user` unread. The title is retained material too: `update_note` keys the
+row by title and cannot replace it, and the title is rendered in full ambient inclusion and in the
+reviewer's band, so a tool update of a stored note is always evaluated at no less than the note's
+stored tier, even when the call replaces the body and clears the attachments. A tool write therefore
+never lowers a stamp on its own; a stamp is lowered by an admission or by the user's own edit
+through the web API, which replaces the title along with everything else. Synchronous review does
+not remove every concurrent update race; what remains is ordinary database correctness — persist the
+candidate that was actually reviewed, under the transaction and locking semantics the repository
+already uses.
 
 **What the reviewer judges** is the complete proposed note or skill as *reusable material*, not
 merely whether the user asked for a save. Two cases fix the boundary:
@@ -321,9 +330,10 @@ its own trust:
 - **Note tools** (`create_note`, `update_note`) and **workspace import** stamp the maximum of the
   turn's taint, floored at `trusted_internal`, and the stored taint of whatever the candidate
   retains — body under an append, attachments the call omits — replaced by `machine_reviewed` on an
-  admitting verdict and floored at `known_contact` on a non-admitting one. Only a full replacement
-  of the ambient material, or an admission, lowers a stamp; a partial write in a clean turn,
-  including a demotion, never launders retained external text into `trusted_user`.
+  admitting verdict and floored at `known_contact` on a non-admitting one. The title is always
+  retained, so a tool write never lowers a stamp; only an admission or the user's own web API edit
+  does, and a clean-turn write, including a demotion, never launders retained external text into
+  `trusted_user`.
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
@@ -463,19 +473,20 @@ state.
    `unknown_external`; web API writes stamp `trusted_user`; call transcripts stamp
    `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
    `get_note` routes returned attachments through the shared attachment-provenance resolver;
-   tool-attachment registration stamps the storing turn's taint state. Verified by the conformance
-   check rejecting a raw write, by a registry test that a Gmail download stored in a turn the
-   message raised to `unknown_external` carries that envelope, by a repository test that a
-   clean-turn tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
-   memory-apply test that a clean review editing one entry of a `machine_reviewed` topic note leaves
-   the note at `machine_reviewed`, by a fresh-database memory bootstrap, by a test of the batch
-   script that restamps a null row `trusted_internal`, stamps a null call-transcript row and an
-   operator-excluded row `unknown_external`, leaves stamped rows untouched, writes into each
-   restamped row's audit record the batch and the rule that classified it, and enqueues indexing for
-   every row it restamps so that a document search over a restamped note restores the new tier, and
-   by a test that a null row surviving the batch is excluded from ambient reads and logged at ERROR,
-   and by a tool test that reading a reviewed note with an email-derived attachment raises the turn
-   to the attachment's tier.
+   attachment registration stamps source-correct provenance. Verified by the conformance check
+   rejecting a raw write, by registry tests that a Gmail download stored in a turn the message
+   raised to `unknown_external` carries that envelope, that a tool-stored attachment from a clean
+   turn stamps `trusted_internal`, and that a direct user upload stamps `trusted_user`, by a
+   repository test that a clean-turn tool write stamps `trusted_internal` while a web API write
+   stamps `trusted_user`, by a memory-apply test that a clean review editing one entry of a
+   `machine_reviewed` topic note leaves the note at `machine_reviewed`, by a fresh-database memory
+   bootstrap, by a test of the batch script that restamps a null row `trusted_internal`, stamps a
+   null call-transcript row and an operator-excluded row `unknown_external`, leaves stamped rows
+   untouched, writes into each restamped row's audit record the batch and the rule that classified
+   it, and enqueues indexing for every row it restamps so that a document search over a restamped
+   note restores the new tier, and by a test that a null row surviving the batch is excluded from
+   ambient reads and logged at ERROR, and by a tool test that reading a reviewed note with an
+   email-derived attachment raises the turn to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
@@ -502,8 +513,9 @@ state.
    override that decided it, and the record is reachable from the note; an append is reviewed and
    persisted as the resolved whole; a clean-turn write that associates an attachment with no stored
    envelope is reviewed rather than allowed, while an explicit read of the same attachment still
-   contributes no taint; an import with skill frontmatter is reviewed and, unreviewed, is absent
-   from the catalog.
+   contributes no taint; a clean-turn `update_note` that replaces an unreviewed note's body, clears
+   its attachments and enables inclusion is reviewed at the stored tier rather than allowed; an
+   import with skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section, produced by the prompt's own renderer; an admitted definition's stamp
