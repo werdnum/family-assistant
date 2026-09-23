@@ -20,6 +20,7 @@ from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMes
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import (
     DEFAULT_MAX_SEEN_KEYS,
     DEFAULT_MAX_SOURCES,
@@ -2432,9 +2433,14 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
 
 
 @pytest.mark.asyncio
-async def test_prompt_included_note_surfaces_stored_provenance_taint(
+async def test_unreviewed_prompt_note_is_listed_by_title_only(
     db_engine: AsyncEngine,
 ) -> None:
+    """An unreviewed external note never reaches the prompt whole.
+
+    It stays discoverable by title and contributes no taint, so it no longer
+    raises every turn to ``unknown_external``.
+    """
     write_tracker = _unknown_external_tracker()
     db_context = Database(db_engine)
     write_context = _minimal_context(db_context, write_tracker)
@@ -2458,13 +2464,12 @@ async def test_prompt_included_note_surfaces_stored_provenance_taint(
     fragments = await provider.get_context_fragments(acting_user_id=None)
     sources = await provider.get_context_taint_sources()
 
-    assert any("Prompt external digest" in fragment for fragment in fragments)
-    assert any(
-        source.source_type is TaintSourceType.NOTE
-        and source.source_id == "Prompt external digest"
-        and source.tier is SourceTrustTier.UNKNOWN_EXTERNAL
-        for source in sources
+    assert not any(
+        "External content copied into a prompt note." in fragment
+        for fragment in fragments
     )
+    assert any('"Prompt external digest"' in fragment for fragment in fragments)
+    assert sources == ()
 
 
 @pytest.mark.asyncio
@@ -2523,6 +2528,7 @@ async def test_text_attachment_read_restores_stored_provenance_taint(
             "taint_metadata": provenance_state.to_metadata(),
         },
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     read_context = _minimal_context(
         db_context,
@@ -2555,8 +2561,8 @@ async def test_list_notes_preview_restores_stored_provenance_taint(
         title="tainted listed note",
         content="attacker preview text",
         include_in_prompt=False,
-        provenance_metadata={"taint_metadata": provenance_state.to_metadata()},
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.machine(provenance_state),
     )
     read_context = _minimal_context(db_context, read_tracker)
     result = await list_notes_tool(read_context)
@@ -2593,6 +2599,7 @@ async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
         tool_name="test_tool",
         metadata={"taint_metadata": provenance_state.to_metadata()},
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     context = _minimal_context(
         db_context,
@@ -2670,6 +2677,7 @@ async def test_tainted_schema_attachment_argument_without_id_name_is_merged(
         tool_name="test_tool",
         metadata={"taint_metadata": provenance_state.to_metadata()},
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     context = _minimal_context(
         db_context,

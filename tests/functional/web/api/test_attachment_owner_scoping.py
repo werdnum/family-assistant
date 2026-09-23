@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_user
 
@@ -40,6 +41,7 @@ async def _register(
         tool_name="gmail_get_attachment",
         owner_user_id=owner_user_id,
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     return metadata.attachment_id
 
@@ -144,6 +146,7 @@ async def test_serve_refuses_to_let_the_browser_sniff_the_type(
         content_type="application/octet-stream",
         tool_name="download_media",
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
 
     response = await api_test_client.get(f"/api/attachments/{metadata.attachment_id}")

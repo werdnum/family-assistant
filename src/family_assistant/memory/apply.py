@@ -49,11 +49,12 @@ from family_assistant.storage.repositories.notes import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
     from datetime import datetime
 
     from family_assistant.memory.actor import MemoryActor
     from family_assistant.memory.edits import EvidenceScope
+    from family_assistant.security.note_provenance import NoteProvenanceStamp
     from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.storage.repositories.notes import NoteReadPolicy
 
@@ -162,7 +163,7 @@ async def apply_memory_edits(
     evidence_scope: EvidenceScope,
     expected_revision: int,
     actor: MemoryActor,
-    provenance_metadata: Mapping[str, object] | None,
+    provenance: NoteProvenanceStamp,
     now: datetime,
     batch_id: str | None = None,
 ) -> ApplyOutcome:
@@ -185,8 +186,9 @@ async def apply_memory_edits(
         evidence_scope: The message rows this writer may cite.
         expected_revision: The store revision the proposal was computed against.
         actor: Who is writing, as the change log records it.
-        provenance_metadata: The writing turn's stamp, which the repository
-            holds to the trusted pole.
+        provenance: The writing turn's stamp. The repository merges it with
+            the stored tier of each note it rewrites, since untouched entries
+            are retained, and holds the result to the reuse predicate.
         now: The apply's timestamp.
         batch_id: Groups this apply's change-log rows; generated when omitted.
 
@@ -251,7 +253,7 @@ async def apply_memory_edits(
     records = [
         await _stage_edit(workspace, index, edit) for index, edit in enumerate(edits)
     ]
-    await workspace.flush(provenance_metadata=provenance_metadata, now=now)
+    await workspace.flush(provenance=provenance, now=now)
 
     for record in records:
         await txn.memory_change_log.add_edit(
@@ -283,7 +285,7 @@ async def apply_memory_edits_atomically(
     evidence_scope: EvidenceScope,
     expected_revision: int,
     actor: MemoryActor,
-    provenance_metadata: Mapping[str, object] | None,
+    provenance: NoteProvenanceStamp,
     now: datetime,
     batch_id: str | None = None,
     after_apply: Callable[[DatabaseTransaction], Awaitable[None]] | None = None,
@@ -308,7 +310,7 @@ async def apply_memory_edits_atomically(
             evidence_scope=evidence_scope,
             expected_revision=expected_revision,
             actor=actor,
-            provenance_metadata=provenance_metadata,
+            provenance=provenance,
             now=now,
             batch_id=batch_id,
         )
@@ -600,7 +602,7 @@ class _Workspace:
     async def flush(
         self,
         *,
-        provenance_metadata: Mapping[str, object] | None,
+        provenance: NoteProvenanceStamp,
         now: datetime,
     ) -> None:
         """Write every touched note through the repository.
@@ -629,7 +631,7 @@ class _Workspace:
                     include_in_prompt=working.include_in_prompt,
                     visibility_labels=None if working.exists else [MEMORY_LABEL],
                     write_policy=self.write_policy,
-                    provenance_metadata=provenance_metadata,
+                    provenance=provenance,
                     refresh_core_index=False,
                 )
             if self.touched_titles:

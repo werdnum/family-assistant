@@ -204,3 +204,14 @@ exemptions:
       would obscure the shape the rule is matching on.
     ticket: null
 
+  - rule: no-raw-note-table-write
+    files:
+      - src/family_assistant/storage/repositories/notes.py
+      - .ast-grep/tests/conformance/no-raw-note-table-write-positive.py
+      - test_*.py
+    reason: |
+      The notes repository is the provenance chokepoint and the one module that writes the
+      table. The positive fixture exists to violate the rule. Tests build legacy row shapes
+      (a row with no provenance envelope, as written before stamping existed) that no
+      repository method may produce.
+    ticket: null

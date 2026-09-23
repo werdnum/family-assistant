@@ -6367,6 +6367,11 @@ async def _register_confirmation_result_attachments(
                     "auto_display": True,
                 },
                 db_context=context.db_context,
+                taint_state=(
+                    context.taint_tracker.snapshot()
+                    if context.taint_tracker is not None
+                    else TurnTaintState.empty()
+                ),
             )
         )
         attachment.attachment_id = registered_metadata.attachment_id

@@ -200,6 +200,14 @@ class MessageHistoryTaintDiagnostics(BaseModel):
     groups: list[MessageHistoryTaintGroup]
 
 
+class AmbientNoteDiagnostics(BaseModel):
+    """Prompt-intended notes and skills the ambient eligibility rule excludes."""
+
+    excluded_prompt_notes: int
+    excluded_skills: int
+    missing_provenance: int
+
+
 class TaintDiagnosticsResponse(BaseModel):
     """Runtime taint audit and persisted-history diagnostics."""
 
@@ -209,6 +217,7 @@ class TaintDiagnosticsResponse(BaseModel):
     history_taint_epoch: str | None
     audit: TaintAuditDiagnostics
     message_history: MessageHistoryTaintDiagnostics
+    ambient_notes: AmbientNoteDiagnostics
 
 
 def _diagnostic_counts(counter: Counter[str | None]) -> list[DiagnosticCount]:
@@ -590,6 +599,7 @@ async def get_taint_diagnostics(
     history_rows = await db_context.message_history.get_taint_diagnostics(
         history_taint_epoch=history_taint_epoch
     )
+    ambient_counts = await db_context.notes.count_excluded_ambient_notes()
 
     event_type_counts: Counter[str | None] = Counter()
     mode_counts: Counter[str | None] = Counter()
@@ -697,5 +707,10 @@ async def get_taint_diagnostics(
             by_processing_profile=_diagnostic_counts(processing_profile_counts),
             by_tool_name=_diagnostic_counts(history_tool_counts),
             groups=[MessageHistoryTaintGroup(**row) for row in history_rows],
+        ),
+        ambient_notes=AmbientNoteDiagnostics(
+            excluded_prompt_notes=ambient_counts["prompt_notes"],
+            excluded_skills=ambient_counts["skills"],
+            missing_provenance=ambient_counts["missing_provenance"],
         ),
     )

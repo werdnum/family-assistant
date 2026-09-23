@@ -24,6 +24,7 @@ import pytest
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.memory.limits import MemoryLimits
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
@@ -82,12 +83,14 @@ async def _seed(engine: AsyncEngine) -> Database:
         content="Shoes off at the door.",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title=UNLABELLED_EXCLUDED_NOTE,
         content="Milk, bread.",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title=DEFAULT_LABELLED_NOTE,
@@ -95,6 +98,7 @@ async def _seed(engine: AsyncEngine) -> Database:
         include_in_prompt=False,
         visibility_labels=["default"],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     # Writing a topic note bootstraps the core note, so the store is never in
     # the shape "topics and no core".
@@ -104,6 +108,7 @@ async def _seed(engine: AsyncEngine) -> Database:
         include_in_prompt=False,
         visibility_labels=[MEMORY_LABEL],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         title=CORE_TITLE,
@@ -111,6 +116,7 @@ async def _seed(engine: AsyncEngine) -> Database:
         include_in_prompt=True,
         visibility_labels=[MEMORY_LABEL],
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     return db
 

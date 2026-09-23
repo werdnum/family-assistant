@@ -19,6 +19,7 @@ from family_assistant.memory.invariants import (
     MemoryWriteError,
 )
 from family_assistant.memory.limits import MemoryLimits
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -75,8 +76,7 @@ async def _write_topic(
     *,
     include_in_prompt: bool = False,
     labels: list[str] | None = None,
-    # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
-    provenance_metadata: dict[str, object] | None = None,
+    provenance: NoteProvenanceStamp | None = None,
 ) -> None:
     await db.notes.add_or_update(
         title,
@@ -86,11 +86,11 @@ async def _write_topic(
         # Admin surface equivalent: this suite is about the memory invariants,
         # not about visibility confinement.
         write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance_metadata=provenance_metadata,
+        provenance=provenance or NoteProvenanceStamp.internal(),
     )
 
 
-def _external_provenance() -> dict[str, object]:
+def _external_provenance() -> NoteProvenanceStamp:
     state = TurnTaintState.empty().add_source(
         TaintSource(
             source_type=TaintSourceType.TOOL_OUTPUT,
@@ -100,7 +100,7 @@ def _external_provenance() -> dict[str, object]:
             reason="turn read an untrusted web page",
         )
     )
-    return {"taint_metadata": state.to_metadata()}
+    return NoteProvenanceStamp.machine(state)
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +140,7 @@ async def test_existing_non_memory_note_with_core_title_blocks_bootstrap(
         "my own note",
         False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     with pytest.raises(MemoryWriteError, match="Rename it"):
@@ -191,6 +192,7 @@ async def test_renaming_the_core_note_keeps_it_the_core(
         "- small",
         True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     assert await db.memory_store.get_core_note_id() == core_id
@@ -225,6 +227,7 @@ async def test_a_note_taking_the_renamed_core_title_is_a_topic_note(
         "- small",
         True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     with pytest.raises(MemoryWriteError, match="Only the core memory note"):
@@ -253,6 +256,7 @@ async def test_exactly_one_memory_note_is_always_loaded_after_a_rename(
         "- small",
         True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await _write_topic(db, CORE_TITLE, "- mine")
 
@@ -302,6 +306,7 @@ async def test_append_that_crosses_the_cap_is_refused(db_engine: AsyncEngine) ->
             False,
             append=True,
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
 
 
@@ -329,9 +334,7 @@ async def test_externally_authored_turn_cannot_write_memory(
     db = _db(db_engine)
 
     with pytest.raises(MemoryWriteError, match="outside the household"):
-        await _write_topic(
-            db, "Trip", "- hotel", provenance_metadata=_external_provenance()
-        )
+        await _write_topic(db, "Trip", "- hotel", provenance=_external_provenance())
 
 
 @pytest.mark.asyncio
@@ -353,7 +356,7 @@ async def test_reviewed_material_may_be_written_to_memory(
         db,
         "Trip",
         "- hotel",
-        provenance_metadata={"taint_metadata": reviewed.to_metadata()},
+        provenance=NoteProvenanceStamp.machine(reviewed),
     )
 
     stored = await db.notes.get_by_title(
@@ -363,11 +366,11 @@ async def test_reviewed_material_may_be_written_to_memory(
 
 
 @pytest.mark.asyncio
-async def test_unstamped_write_satisfies_the_provenance_rule(
+async def test_internal_write_satisfies_the_provenance_rule(
     db_engine: AsyncEngine,
 ) -> None:
     db = _db(db_engine)
-    await _write_topic(db, "Trip", "- hotel", provenance_metadata=None)
+    await _write_topic(db, "Trip", "- hotel")
 
     stored = await db.notes.get_by_title(
         "Trip", read_policy=NoteReadPolicy.UNRESTRICTED
@@ -435,6 +438,7 @@ async def test_every_memory_write_bumps_the_revision(db_engine: AsyncEngine) -> 
         "- likes trams",
         False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     assert await db.memory_store.get_revision() == after_update + 1
 
@@ -487,12 +491,14 @@ async def test_a_plain_note_is_untouched_by_the_memory_invariants(
         "x" * 500,
         True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db.notes.add_or_update(
         "Another",
         "y" * 500,
         True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     assert await db.notes.delete("Another") is True
 

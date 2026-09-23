@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 
@@ -106,6 +107,7 @@ async def test_a_generated_attachment_is_not_held_to_the_media_limit(
         content_type="video/mp4",
         tool_name="generate_video",
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
 
     assert metadata.size == len(_BETWEEN_THE_LIMITS)
@@ -122,4 +124,5 @@ async def test_a_generated_attachment_still_obeys_the_file_limit(
             content_type="video/mp4",
             tool_name="generate_video",
             db_context=db_context,
+            taint_state=TurnTaintState.empty(),
         )

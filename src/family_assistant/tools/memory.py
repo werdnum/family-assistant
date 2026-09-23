@@ -24,7 +24,7 @@ from family_assistant.memory.edits import (
     MemoryEdit,
     MemoryEditList,
 )
-from family_assistant.tools.notes import note_provenance_from_taint
+from family_assistant.tools.notes import note_stamp_from_context
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -232,7 +232,7 @@ async def propose_memory_edits_tool(
         evidence_scope=scope,
         expected_revision=expected_revision,
         actor=_resolve_actor(exec_context),
-        provenance_metadata=note_provenance_from_taint(exec_context),
+        provenance=note_stamp_from_context(exec_context),
         now=now,
         batch_id=batch_id,
         after_apply=after_apply,

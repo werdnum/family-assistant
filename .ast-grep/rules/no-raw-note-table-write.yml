@@ -1,0 +1,29 @@
+id: no-raw-note-table-write
+language: python
+severity: error
+message: "Raw INSERT/UPDATE on notes_table bypasses the notes repository's provenance chokepoint"
+note: |
+  Every note row carries a provenance envelope, and that envelope decides whether the note may
+  reach a prompt unasked (docs/design/ambient-note-admission-at-write-time.md). The notes
+  repository is the one place that stamps it: its writes require a NoteProvenanceStamp with no
+  default, and resolve it against whatever the write retains from the stored row. A raw
+  statement sidesteps that required parameter and leaves stale provenance under new content.
+
+  ❌ INCORRECT - new content under the old row's provenance, or none at all:
+    await txn.execute(update(notes_table).where(...).values(content=new_content))
+    await txn.execute(sa.insert(notes_table).values(title=..., content=...))
+
+  ✅ CORRECT - write through the repository, saying who is writing:
+    await db.notes.add_or_update(..., provenance=NoteProvenanceStamp.machine(state))
+
+  The repository module is exempt (see .ast-grep/exemptions.yml). A new kind of write belongs
+  there as a repository method that stamps provenance, as the core-memory bootstrap does.
+rule:
+  any:
+    - pattern: insert(notes_table)
+    - pattern: update(notes_table)
+    - pattern: $MOD.insert(notes_table)
+    - pattern: $MOD.update(notes_table)
+    - pattern: pg_insert(notes_table)
+    - pattern: notes_table.insert()
+    - pattern: notes_table.update()

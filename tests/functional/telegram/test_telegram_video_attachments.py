@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.telegram.interface import TelegramChatInterface
 
@@ -42,6 +43,7 @@ async def test_video_attachment_sent_as_video(
         content_type="video/mp4",
         tool_name="test",
         description="Generated video: Test prompt",  # Description is NOT a filename
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_ids = [attachment.attachment_id]
@@ -97,6 +99,7 @@ async def test_document_attachment_uses_original_filename(
         content_type="application/pdf",
         tool_name="test",
         description="Generated report",  # Description is NOT a filename
+        taint_state=TurnTaintState.empty(),
     )
 
     attachment_ids = [attachment.attachment_id]

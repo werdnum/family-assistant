@@ -23,6 +23,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 
+from family_assistant.security.taint import TurnTaintState, merge_taint_states
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import (
     Database,
@@ -638,7 +639,12 @@ class AttachmentRegistry:
             storage_path=attachment_data.storage_path,
             conversation_id=conversation_id,
             message_id=message_id,
-            metadata={"original_filename": filename, "upload_method": "api"},
+            metadata={
+                "original_filename": filename,
+                "upload_method": "api",
+                # An authenticated user's own upload.
+                "taint_metadata": TurnTaintState.empty().to_metadata(),
+            },
         )
 
     async def register_tool_attachment(
@@ -1317,11 +1323,21 @@ class AttachmentRegistry:
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
         db_context: DatabaseExecutor | None = None,
+        *,
+        taint_state: TurnTaintState,
     ) -> AttachmentMetadata:
         """
         Store file content and register as a tool attachment in one operation.
 
         This is a public method that encapsulates the full workflow for tool-generated attachments.
+
+        The registration is a provenance chokepoint: ``taint_state`` is required
+        and is stamped on the attachment, merged with any ``taint_metadata`` the
+        caller already carries and floored at ``trusted_internal`` -- a
+        description the system composed is never the user's own words. A tool
+        registering an attachment while it is still executing passes
+        :func:`~family_assistant.tools.taint_helpers.tool_attachment_taint_state`,
+        which includes the call's own declared output provenance.
 
         Args:
             file_content: Raw file content bytes
@@ -1351,6 +1367,14 @@ class AttachmentRegistry:
         final_metadata = file_metadata.metadata.copy() if file_metadata.metadata else {}
         if metadata:
             final_metadata.update(metadata)
+        final_metadata["taint_metadata"] = (
+            merge_taint_states(
+                taint_state,
+                TurnTaintState.from_metadata(final_metadata.get("taint_metadata")),
+            )
+            .with_authorship_floor()
+            .to_metadata()
+        )
 
         # Then register it in the database
         if db_context:

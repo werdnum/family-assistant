@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
@@ -155,6 +156,7 @@ async def test_execute_script_return_attachment_from_tool(
             tool_name="create_test_chart",
             description="Test chart",
             conversation_id="test-conv",
+            taint_state=TurnTaintState.empty(),
         )
 
         return ToolResult(
@@ -245,6 +247,7 @@ async def test_execute_script_functional_composition(
             tool_name="process_data",
             description="Processed data",
             conversation_id="test-conv",
+            taint_state=TurnTaintState.empty(),
         )
 
         return ToolResult(
@@ -272,6 +275,7 @@ async def test_execute_script_functional_composition(
             tool_name="create_visualization",
             description="Visualization",
             conversation_id="test-conv",
+            taint_state=TurnTaintState.empty(),
         )
 
         return ToolResult(
@@ -386,6 +390,7 @@ async def test_execute_script_mixed_attachment_sources(
             tool_name="generate_report",
             description=title,
             conversation_id="test-conv",
+            taint_state=TurnTaintState.empty(),
         )
 
         return ToolResult(

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 import pydantic_monty
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.tools.attachment_utils import (
     fetch_attachment_object,
     process_attachment_arguments,
@@ -651,6 +652,11 @@ class MontyEngine:
                                     "source": "script_tool_call",
                                     "auto_display": True,
                                 },
+                                taint_state=(
+                                    execution_context.taint_tracker.snapshot()
+                                    if execution_context.taint_tracker is not None
+                                    else TurnTaintState.empty()
+                                ),
                             )
                             attachment.attachment_id = registered_metadata.attachment_id
                             attachment_ids.append(registered_metadata.attachment_id)

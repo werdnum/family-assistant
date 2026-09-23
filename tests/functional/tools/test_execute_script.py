@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.data_visualization import create_vega_chart_tool
@@ -460,6 +461,7 @@ async def test_script_attachment_composition_dict_format(
             tool_name="get_test_data",
             description="Test data",
             conversation_id="test-conv",
+            taint_state=TurnTaintState.empty(),
         )
 
         # Return ToolResult with attachment (like download_state_history does)

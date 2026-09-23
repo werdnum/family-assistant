@@ -19,7 +19,11 @@ import filetype  # type: ignore[import-untyped]
 from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
-from family_assistant.security.taint import TaintSourceType
+from family_assistant.security.note_provenance import note_read_taint
+from family_assistant.security.taint import (
+    TaintSourceType,
+    merge_taint_state_into_tracker,
+)
 from family_assistant.storage.email import (
     parse_attachment_infos,
     received_emails_table,
@@ -59,6 +63,29 @@ class EmailAttachmentSummary(TypedDict):
 logger = logging.getLogger(__name__)
 
 _SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES = ["message_history"]
+
+
+def _merge_indexed_note_taint(
+    exec_context: ToolExecutionContext,
+    metadata: dict[str, object] | None,
+    *,
+    title: str,
+    reason: str,
+) -> None:
+    """Merge an indexed note's provenance snapshot, reading absence as external.
+
+    The indexed copy carries its own snapshot of the note's envelope; after the
+    rollout restamp a note with none is a write-path regression, not a trusted
+    row.
+    """
+    tracker = exec_context.taint_tracker
+    if tracker is None:
+        return
+    read_taint = note_read_taint(
+        metadata, title=title, labels=frozenset(), reason=reason
+    )
+    if read_taint is not None:
+        merge_taint_state_into_tracker(tracker, read_taint)
 
 
 def _coerce_doc_metadata(value: object) -> dict[str, object]:
@@ -377,8 +404,15 @@ async def search_documents_tool(
     )
     for res in results:
         metadata = _coerce_doc_metadata(res.get("doc_metadata"))
-        if metadata:
-            doc_id = res.get("document_id")
+        doc_id = res.get("document_id")
+        if res.get("source_type") == "note":
+            _merge_indexed_note_taint(
+                exec_context,
+                metadata,
+                title=str(res.get("title") or doc_id),
+                reason="Indexed note search result provenance.",
+            )
+        elif metadata:
             merge_artifact_taint_into_context(
                 exec_context,
                 provenance_metadata=metadata,
@@ -483,6 +517,13 @@ async def get_full_document_content_tool(
         title = doc_result.get("title")
         source_type = doc_result.get("source_type")
         source_id = doc_result.get("source_id")
+        if source_type == "note":
+            _merge_indexed_note_taint(
+                exec_context,
+                doc_metadata if isinstance(doc_metadata, dict) else None,
+                title=str(title or document_id),
+                reason="Full indexed note read provenance.",
+            )
         if isinstance(doc_metadata, dict):
             record_sensitive_read(
                 exec_context,
@@ -490,13 +531,14 @@ async def get_full_document_content_tool(
                 qualifier=f"full:{document_id}",
                 surfaced_ids=[str(document_id)],
             )
-            merge_artifact_taint_into_context(
-                exec_context,
-                provenance_metadata=doc_metadata,
-                fallback_source_type=TaintSourceType.DOCUMENT,
-                fallback_source_id=str(document_id),
-                fallback_reason="Full indexed document read provenance.",
-            )
+            if source_type != "note":
+                merge_artifact_taint_into_context(
+                    exec_context,
+                    provenance_metadata=doc_metadata,
+                    fallback_source_type=TaintSourceType.DOCUMENT,
+                    fallback_source_id=str(document_id),
+                    fallback_reason="Full indexed document read provenance.",
+                )
 
         email_attachments_summary: list[EmailAttachmentSummary] | None = None
         if source_type == "email" and source_id:

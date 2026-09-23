@@ -13,11 +13,9 @@ from family_assistant.google_calendar import (
     google_event_to_calendar_event,
     is_user_vetted_event,
 )
+from family_assistant.security.note_provenance import note_read_taint
 from family_assistant.security.taint import (
     TaintSource,
-    TaintSourceType,
-    TurnTaintState,
-    is_externally_authored,
 )
 from family_assistant.services.api_backend import ApiBackendError
 from family_assistant.services.google_api import GoogleApiError
@@ -296,34 +294,33 @@ class NotesContextProvider(ContextProvider):
             return []
 
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
-        """Return provenance taint for notes auto-included in the per-turn context."""
+        """Return provenance taint for the notes and skills the prompt carries.
+
+        Both the included bodies and the catalogued database skills: a skill's
+        name and description are in every prompt exactly as a body is. Only
+        eligible rows reach the prompt, so what this contributes is at most
+        ``machine_reviewed`` -- the turn's tier then says the model processed
+        reviewed external text.
+        """
         sources: list[TaintSource] = []
         db_context = self._get_db_context_func()
         prompt_notes = await db_context.notes.get_prompt_notes(
             read_policy=self._read_policy
         )
-        for note in prompt_notes:
-            provenance_metadata = note.provenance_metadata
-            if not isinstance(provenance_metadata, dict):
-                continue
-            state = TurnTaintState.from_metadata(
-                provenance_metadata.get("taint_metadata")
+        db_skills = await db_context.notes.get_skills(read_policy=self._read_policy)
+        for note in (*prompt_notes, *db_skills):
+            kind = "skill" if note.is_skill else "note"
+            state = note_read_taint(
+                note.provenance_metadata,
+                title=note.title,
+                labels=frozenset(note.visibility_labels),
+                reason=(
+                    f"Prompt-included {kind} '{note.title}' carries stored "
+                    "provenance taint."
+                ),
             )
-            if not is_externally_authored(state.max_tier):
-                continue
-            sources.extend(state.sources)
-            sources.append(
-                TaintSource(
-                    source_type=TaintSourceType.NOTE,
-                    source_id=note.title,
-                    tier=state.max_tier,
-                    labels=frozenset(note.visibility_labels),
-                    reason=(
-                        f"Prompt-included note '{note.title}' carries "
-                        "stored provenance taint."
-                    ),
-                )
-            )
+            if state is not None:
+                sources.extend(state.sources)
         return tuple(sources)
 
 

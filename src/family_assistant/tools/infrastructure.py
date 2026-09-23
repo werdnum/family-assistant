@@ -2661,9 +2661,17 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
         previous_confirmation_authorization = context.tool_confirmation_authorization
         previous_definition_gate = context.definition_gate_outcome
+        previous_in_flight_result_taint = context.in_flight_result_taint
         if inline_confirmation_authorization is not None:
             context.tool_confirmation_authorization = inline_confirmation_authorization
         context.definition_gate_outcome = definition_gate
+        context.in_flight_result_taint = derive_tool_result_taint_source(
+            descriptor=descriptor,
+            call_id=call_id,
+            default_unspecified_tool_output_tier=(
+                self._taint_policy_config.default_unspecified_tool_output_tier
+            ),
+        )
         _approve_confirmed_script(context, name, arguments, call_id)
         try:
             result = await execute_authorized()
@@ -2678,6 +2686,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             raise
         finally:
             context.definition_gate_outcome = previous_definition_gate
+            context.in_flight_result_taint = previous_in_flight_result_taint
             if inline_confirmation_authorization is not None:
                 context.tool_confirmation_authorization = (
                     previous_confirmation_authorization

@@ -4,6 +4,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.web.app_creator import app as actual_app
@@ -21,12 +22,14 @@ async def test_notes_ui_endpoints_accessible(db_engine: AsyncEngine) -> None:
         content="Test content",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
     await db_context.notes.add_or_update(
         title="Excluded Note",
         content="Excluded content",
         include_in_prompt=False,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     # Create test client

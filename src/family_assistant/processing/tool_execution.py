@@ -695,8 +695,6 @@ class ToolExecutor:
                     "tool_call_id": call_id,
                     "auto_display": True,
                 }
-                if taint_metadata is not None:
-                    metadata["taint_metadata"] = taint_metadata
 
                 registered_metadata = (
                     await self.attachment_registry.store_and_register_tool_attachment(
@@ -709,6 +707,7 @@ class ToolExecutor:
                         conversation_id=conversation_id,
                         owner_user_id=owner_user_id,
                         metadata=metadata,
+                        taint_state=TurnTaintState.from_metadata(taint_metadata),
                     )
                 )
 

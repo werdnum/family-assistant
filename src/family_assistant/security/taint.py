@@ -815,6 +815,37 @@ def merge_taint_state_into_tracker(
     return merged
 
 
+def raise_taint_state_to(
+    state: TurnTaintState, tier: SourceTrustTier, *, reason: str
+) -> TurnTaintState:
+    """Return ``state`` raised to at least ``tier`` with an explaining source."""
+    if state.max_tier >= tier:
+        return state
+    return state.add_source(
+        TaintSource(
+            source_type=TaintSourceType.MANUAL,
+            source_id=None,
+            tier=tier,
+            labels=frozenset(),
+            reason=reason,
+        )
+    )
+
+
+def merge_taint_states(*states: TurnTaintState) -> TurnTaintState:
+    """The union of several states' sources, keeping the highest max tier."""
+    merged = TurnTaintState.empty()
+    for state in states:
+        for source in state.sources:
+            merged = merged.add_source(source)
+        merged = raise_taint_state_to(
+            merged,
+            state.max_tier,
+            reason="Merged provenance max_tier exceeded retained sources.",
+        )
+    return merged
+
+
 def _parse_config_tier(value: object, *, key: str) -> SourceTrustTier:
     """Parse one configured tier, naming the key when it is rejected."""
     if isinstance(value, SourceTrustTier):

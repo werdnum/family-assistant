@@ -652,8 +652,6 @@ Call attach_to_response with your selected attachment IDs."""
             "auto_display": False,
             "large_result_auto_convert": True,
         }
-        if taint_metadata is not None:
-            attachment_metadata["taint_metadata"] = taint_metadata
 
         registered_metadata = (
             await self.attachment_registry.store_and_register_tool_attachment(
@@ -666,6 +664,7 @@ Call attach_to_response with your selected attachment IDs."""
                 owner_user_id=owner_user_id,
                 metadata=attachment_metadata,
                 db_context=db_context,
+                taint_state=TurnTaintState.from_metadata(taint_metadata),
             )
         )
 

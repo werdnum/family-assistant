@@ -21,6 +21,7 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import ContentProcessor, IndexingPipeline
 from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
@@ -229,6 +230,7 @@ async def test_notes_indexing_e2e(
             title=unique_note_title,
             content=TEST_NOTE_CONTENT,
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
         assert result == "Success", f"Failed to create note: {result}"
         logger.info(f"Created note with title: {unique_note_title}")

@@ -135,6 +135,21 @@ The approved bypasses (the `NoteWritePolicy` definition itself, the web notes ad
 call-transcript writer) are listed in `.ast-grep/exemptions.yml`; a new admin surface that genuinely
 needs the bypass belongs there with a justification.
 
+### `no-raw-note-table-write`
+
+**Pattern**: `insert(notes_table)`, `update(notes_table)` (bare, module-qualified or `pg_insert`),
+and `notes_table.insert()` / `notes_table.update()`.
+
+**Why**: the notes repository is the provenance chokepoint. Its writes require a
+`NoteProvenanceStamp` with no default and resolve it against what the write retains, and the stored
+tier decides whether a note may reach a prompt unasked. A raw statement leaves stale provenance
+under new content.
+
+**Instead**: write through `db.notes`, adding a repository method for a new kind of write.
+
+**Exempt**: the repository module, the rule's positive fixture, and tests building legacy row
+shapes.
+
 ### `no-unrestricted-note-read-policy`
 
 **Pattern**: any mention of `NoteReadPolicy.UNRESTRICTED`.

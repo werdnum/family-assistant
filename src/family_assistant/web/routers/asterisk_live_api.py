@@ -54,6 +54,7 @@ from family_assistant.processing.turn_context import (
     render_turn_context_block,
     turn_context_guidance,
 )
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import InMemoryTurnTaintTracker
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
@@ -1477,6 +1478,11 @@ class AsteriskLiveHandler:
                 include_in_prompt=False,
                 visibility_labels=transcript_labels,
                 write_policy=write_policy,
+                # Authored by whoever was on the call; reference material only.
+                provenance=NoteProvenanceStamp.external(
+                    source_id=title,
+                    reason="Call transcript authored by the call's participants.",
+                ),
             )
 
             logger.info(

@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select, update
 
+from family_assistant.security.note_provenance import NoteProvenanceStamp
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import Database
@@ -190,6 +192,7 @@ class TestReapUnreferencedAttachments:
             content="scanned receipt",
             attachment_ids=[attached_to_note],
             write_policy=NoteWritePolicy.UNCONSTRAINED,
+            provenance=NoteProvenanceStamp.internal(),
         )
 
         reaped = await registry.reap_unreferenced_attachments(
@@ -241,6 +244,7 @@ class TestReapUnreferencedAttachments:
             content_type="image/png",
             tool_name="make_chart",
             db_context=db_context,
+            taint_state=TurnTaintState.empty(),
         )
         await _backdate(registry, db_context, metadata.attachment_id, timedelta(days=9))
 

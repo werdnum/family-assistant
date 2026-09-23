@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 
@@ -42,6 +43,7 @@ async def _register_owned(
         conversation_id=conversation_id,
         owner_user_id=owner_user_id,
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     return metadata.attachment_id
 

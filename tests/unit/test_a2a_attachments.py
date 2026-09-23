@@ -44,6 +44,7 @@ from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
+    TurnTaintState,
     artifact_taint_sources,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -87,6 +88,7 @@ async def _store(
         tool_name="test_tool",
         owner_user_id=owner_user_id,
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     return metadata.attachment_id
 

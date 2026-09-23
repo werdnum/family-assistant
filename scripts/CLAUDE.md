@@ -115,6 +115,21 @@ Operator guidance lives in
 [CONFIGURATION_REFERENCE.md](../docs/operations/CONFIGURATION_REFERENCE.md); the rationale is in
 [docs/design/legacy-definition-amnesty.md](../docs/design/legacy-definition-amnesty.md).
 
+### `restamp_note_provenance.py`
+
+Operator command for the one-time rollout restamp of note rows written before provenance stamping
+existed. Without `--apply` it lists each unstamped row with the tier and rule it would get. Call
+transcripts, and rows named by `--exclude-title` / `--exclude-title-pattern`, are stamped
+`unknown_external`; every other unstamped row is stamped `trusted_internal`. It fills absence only,
+writes through the notes repository (so each row's indexing task is re-enqueued), and records a
+taint audit event per row naming the batch and the rule. The classification lives in
+`family_assistant/security/note_restamp.py`; a new write path that stamps external provenance adds
+its identifiable cohort there.
+
+Operator guidance lives in
+[CONFIGURATION_REFERENCE.md](../docs/operations/CONFIGURATION_REFERENCE.md); the rationale is in
+[docs/design/ambient-note-admission-at-write-time.md](../docs/design/ambient-note-admission-at-write-time.md).
+
 ### Review-eval public corpus scripts
 
 `fetch_review_eval_corpora.sh` fetches pinned Deepset Prompt Injections and InjecAgent source files

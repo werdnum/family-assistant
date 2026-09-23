@@ -15,6 +15,7 @@ from pydantic import SecretStr
 from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
@@ -174,6 +175,7 @@ async def test_script_testing_simulates_actions_and_keeps_reads_real(
         content="Passport and tickets",
         include_in_prompt=True,
         write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
     )
 
     tools_provider = _build_tools_provider(

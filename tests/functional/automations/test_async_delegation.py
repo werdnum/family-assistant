@@ -278,6 +278,7 @@ class FakeDelegatableService:
                     description="Delegated output",
                     conversation_id=kwargs["conversation_id"],
                     db_context=kwargs["db_context"],
+                    taint_state=TurnTaintState.empty(),
                 )
             )
             attachment_ids = [attachment.attachment_id]
@@ -2120,6 +2121,7 @@ async def test_inline_result_delivers_attachments_when_text_empty(
         description="Generated chart",
         conversation_id=TEST_CONVERSATION_ID,
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
     await _create_run(db_context, delegation_id="delegation_attach_no_text")
     await db_context.delegation_runs.mark_completed(

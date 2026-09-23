@@ -43,6 +43,23 @@ def record_sensitive_read(
     )
 
 
+def tool_attachment_taint_state(exec_context: ToolExecutionContext) -> TurnTaintState:
+    """The provenance a tool-stored attachment carries.
+
+    The storing turn's taint merged with the executing call's own declared
+    output provenance, so an attachment registered mid-call carries the tier its
+    result will raise the turn to whether or not anything external came first.
+    """
+    state = (
+        exec_context.taint_tracker.snapshot()
+        if exec_context.taint_tracker is not None
+        else TurnTaintState.empty()
+    )
+    if exec_context.in_flight_result_taint is not None:
+        state = state.add_source(exec_context.in_flight_result_taint)
+    return state
+
+
 def merge_artifact_taint_into_context(
     exec_context: ToolExecutionContext,
     *,

@@ -335,6 +335,7 @@ class TestA2AClientIntegration:
             content_type="application/pdf",
             tool_name="test_tool",
             db_context=api_db_context,
+            taint_state=TurnTaintState.empty(),
         )
 
         task = await a2a_client_wrapper.send_message(

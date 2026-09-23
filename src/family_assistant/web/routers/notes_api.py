@@ -8,6 +8,7 @@ from family_assistant.memory.invariants import (
     MemoryStoreRevisionConflict,
     MemoryWriteError,
 )
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
@@ -75,6 +76,8 @@ async def create_or_update_note(
                 visibility_labels=note.visibility_labels,
                 # Admin management surface: bypasses visibility confinement by design.
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
+                # The user's own edit replaces everything, so it stamps their tier.
+                provenance=NoteProvenanceStamp.user_edit(),
             )
         except MemoryStoreRevisionConflict as err:
             raise HTTPException(status.HTTP_409_CONFLICT, err.message) from err
@@ -103,6 +106,8 @@ async def create_or_update_note(
                 visibility_labels=note.visibility_labels,
                 # Admin management surface: bypasses visibility confinement by design.
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
+                # The user's own edit replaces everything, so it stamps their tier.
+                provenance=NoteProvenanceStamp.user_edit(),
             )
         except MemoryStoreRevisionConflict as err:
             raise HTTPException(status.HTTP_409_CONFLICT, err.message) from err

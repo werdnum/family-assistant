@@ -435,6 +435,8 @@ class A2AAttachmentTransfer:
             owner_user_id=owner_user_id,
             metadata=provenance,
             db_context=self._db,
+            # The peer's provenance travels in ``provenance`` and is merged in.
+            taint_state=TurnTaintState.empty(),
         )
         logger.info(
             "Registered A2A file '%s' (%s, %d bytes) as attachment %s",

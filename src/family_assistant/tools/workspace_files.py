@@ -16,6 +16,12 @@ import aiofiles
 import aiofiles.os
 import yaml
 
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
+from family_assistant.tools.notes import note_stamp_from_context
 from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
@@ -599,7 +605,7 @@ NOTES_INTEGRATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Optional. Whether to auto-load this note into your "
                             "context on every turn. Takes precedence over file "
-                            "frontmatter; defaults to true if neither specified."
+                            "frontmatter; defaults to false if neither specified."
                         ),
                     },
                 },
@@ -729,8 +735,8 @@ async def workspace_import_note_tool(
         path: Relative path to the file within workspace
         title: Optional title for the note (defaults to filename)
         include_in_prompt: Whether to auto-load the note into the assistant's
-            per-turn context (default True, but frontmatter value takes precedence
-            if not explicitly specified)
+            per-turn context (default False, but frontmatter value takes
+            precedence if not explicitly specified)
 
     Returns:
         ToolResult with import details
@@ -761,6 +767,19 @@ async def workspace_import_note_tool(
         logger.exception(f"Failed to import note from {path}: {e}")
         return ToolResult(data={"error": f"Failed to import note: {e}"})
 
+    # Workspace files are written by sandboxed workers that may have read the
+    # web, so reading one is reading external content, as fetching a page is.
+    if exec_context.taint_tracker is not None:
+        exec_context.taint_tracker.add_source(
+            TaintSource(
+                source_type=TaintSourceType.DOCUMENT,
+                source_id=f"workspace:{path}",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset({"workspace_file"}),
+                reason="Shared workspace files may carry content from outside.",
+            )
+        )
+
     # Parse YAML frontmatter if present
     note_title = title
     note_include_in_prompt = include_in_prompt  # May be None
@@ -787,9 +806,10 @@ async def workspace_import_note_tool(
                     if "include_in_prompt" in frontmatter and include_in_prompt is None:
                         note_include_in_prompt = bool(frontmatter["include_in_prompt"])
 
-    # Default to True if not specified anywhere
+    # Pulling a file in for reference involves no review; inclusion in every
+    # prompt is something the call or the file's frontmatter must ask for.
     if note_include_in_prompt is None:
-        note_include_in_prompt = True
+        note_include_in_prompt = False
 
     # Use filename as title if not specified
     if not note_title:
@@ -803,6 +823,7 @@ async def workspace_import_note_tool(
             content=content,
             include_in_prompt=note_include_in_prompt,
             write_policy=exec_context.note_write_policy(),
+            provenance=note_stamp_from_context(exec_context),
         )
     except Exception as e:
         logger.exception(f"Failed to import note from {path}: {e}")

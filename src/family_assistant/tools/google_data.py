@@ -35,6 +35,7 @@ from family_assistant.services.oauth_credentials import (
     OAuthNoActingUserError,
     OAuthScopeNotGrantedError,
 )
+from family_assistant.tools.taint_helpers import tool_attachment_taint_state
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
@@ -1081,6 +1082,7 @@ async def _register_attachment(
             conversation_id=exec_context.conversation_id,
             owner_user_id=exec_context.user_id,
             db_context=exec_context.db_context,
+            taint_state=tool_attachment_taint_state(exec_context),
         )
     except ValueError as exc:
         # The registry rejects disallowed mime types / oversized files.

@@ -208,30 +208,7 @@ async def ensure_core_note(
         await txn.memory_store.set_core_note_id(existing["id"])
         return CoreNote(id=int(existing["id"]), bootstrapped=True)
 
-    result = await txn.execute(
-        sa.insert(notes_table).values(
-            title=limits.core_note_title,
-            content="",
-            include_in_prompt=True,
-            attachment_ids="[]",
-            visibility_labels=json.dumps([MEMORY_LABEL]),
-            is_skill=False,
-            skill_name=None,
-            skill_description=None,
-            provenance_metadata_json=None,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    new_id = (
-        result.inserted_primary_key[0]
-        if result.inserted_primary_key
-        else result.lastrowid
-    )
-    if new_id is None:
-        raise MemoryWriteError(
-            "Could not create the core memory note; the memory write was refused."
-        )
+    new_id = await txn.notes.create_core_note(title=limits.core_note_title, now=now)
     await txn.memory_store.set_core_note_id(int(new_id))
     return CoreNote(id=int(new_id), bootstrapped=True)
 

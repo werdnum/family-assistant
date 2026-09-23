@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
     AttachmentTooLargeError,
@@ -72,6 +73,7 @@ async def test_a_tool_can_store_any_type(
         content_type="application/octet-stream",
         tool_name="download_media",
         db_context=db_context,
+        taint_state=TurnTaintState.empty(),
     )
 
     assert metadata.mime_type == "application/octet-stream"

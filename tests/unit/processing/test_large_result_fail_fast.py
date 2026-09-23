@@ -14,6 +14,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
 from family_assistant.processing.types import ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult
@@ -207,7 +208,10 @@ async def test_handle_large_result_persists_taint_metadata() -> None:
 
     assert attachment_id == "att_taint_1"
     call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
-    assert call_kwargs["metadata"]["taint_metadata"] == taint_metadata
+    passed_state = call_kwargs["taint_state"]
+    expected_state = TurnTaintState.from_metadata(taint_metadata)
+    assert passed_state.max_tier is expected_state.max_tier
+    assert passed_state.sources == expected_state.sources
 
 
 @pytest.mark.asyncio
@@ -285,7 +289,10 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         ]
     }
     call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
-    assert call_kwargs["metadata"]["taint_metadata"] == taint_metadata
+    passed_state = call_kwargs["taint_state"]
+    expected_state = TurnTaintState.from_metadata(taint_metadata)
+    assert passed_state.max_tier is expected_state.max_tier
+    assert passed_state.sources == expected_state.sources
 
 
 @pytest.mark.asyncio
@@ -328,6 +335,7 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
         tool_name="gmail_get_attachment",
         owner_user_id="user-a",
         db_context=db,
+        taint_state=TurnTaintState.empty(),
     )
 
     (
