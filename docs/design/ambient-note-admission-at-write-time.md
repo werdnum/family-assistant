@@ -192,13 +192,17 @@ What the verdict does:
   override no advertised effect.
 - A **denial, a timeout, or a missing verdict cannot promote trust.** In enforce mode the write is
   refused and the stored note, if any, is untouched. In observe mode the write may still succeed
-  under the ordinary write policy, but it persists with an **unadmitted stamp**: the maximum of the
-  turn's tier, the retained material's tier and `known_contact`. The floor makes the outcome
-  general: a non-admitted candidate is never eligible for full-content ambient inclusion, whatever
-  tier the note it replaces was at, so a denied replacement of an already reviewed note drops out of
-  the prompt rather than riding on the old admission; the tool result says so, and the same content
-  can be kept as an ordinary reference note. The original sources go to the audit record as they do
-  on admission.
+  under the ordinary write policy, but an externally authored candidate persists with an
+  **unadmitted stamp**: the maximum of the turn's tier, the retained material's tier and
+  `known_contact`. The floor makes the outcome general: a non-admitted external candidate is never
+  eligible for full-content ambient inclusion, whatever tier the note it replaces was at, so a
+  denied replacement of an already reviewed note drops out of the prompt rather than riding on the
+  old admission; the tool result says so, and the same content can be kept as an ordinary reference
+  note. A trusted-pole candidate — reached only through an operator-strengthened trusted cell —
+  keeps its trusted stamp on an observe-mode denial, because no stamp can record non-admission of
+  the user's own words without falsifying their authorship; the denial is logged as observe mode
+  logs every other disallowed operation, and takes effect in enforce mode. The original sources go
+  to the audit record as they do on admission.
 - A **configured reviewer is a precondition of admission.** A deployment with no tool-call reviewer
   has no path from an external candidate to `machine_reviewed` short of an operator override: in
   enforce mode the adjudicated cells refuse the write, in observe mode they persist it non-admitted,
@@ -464,16 +468,18 @@ state.
    `machine_reviewed` row, and the next turn that includes it merges exactly one `machine_reviewed`
    source and no external one; a denial refuses in enforce mode and leaves the row untouched, and in
    observe mode persists an unreviewed row that is not included, including when the candidate
-   replaces an already reviewed note, which then drops out of the prompt; the `confirm` fallback
-   holds when a configured reviewer fails and its prompt renders the resolved candidate rather than
-   the call's arguments, for an append and for an import alike; with no reviewer configured the
-   write is refused in enforce mode and persisted non-admitted in observe mode, with a tool result
-   that says why; an operator override of an external cell to `allow` or `audit` admits the write
-   and stamps `machine_reviewed`; a trusted cell strengthened to `adjudicate` runs the review and an
-   admitting verdict leaves the `trusted_user` stamp in place; an ambient write in a turn whose only
-   external source is a reviewed note in the prompt is allowed without a review and persists
-   `machine_reviewed`; an append is reviewed and persisted as the resolved whole; an import with
-   skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
+   replaces an already reviewed note, which then drops out of the prompt, while a denied
+   trusted-pole candidate under a strengthened cell keeps its `trusted_user` stamp and the denial is
+   logged; the `confirm` fallback holds when a configured reviewer fails and its prompt renders the
+   resolved candidate rather than the call's arguments, for an append and for an import alike; with
+   no reviewer configured the write is refused in enforce mode and persisted non-admitted in observe
+   mode, with a tool result that says why; an operator override of an external cell to `allow` or
+   `audit` admits the write and stamps `machine_reviewed`; a trusted cell strengthened to
+   `adjudicate` runs the review and an admitting verdict leaves the `trusted_user` stamp in place;
+   an ambient write in a turn whose only external source is a reviewed note in the prompt is allowed
+   without a review and persists `machine_reviewed`; an append is reviewed and persisted as the
+   resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is absent from the
+   catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section; an admitted definition's stamp becomes `machine_reviewed` and renders as the
