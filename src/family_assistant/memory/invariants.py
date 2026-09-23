@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
-from family_assistant.security.taint import TurnTaintState, is_externally_authored
+from family_assistant.security.taint import TurnTaintState, is_admissible_for_reuse
 from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.notes import notes_table
 
@@ -266,7 +266,7 @@ def _check_provenance(
     if provenance_metadata is None:
         return
     state = TurnTaintState.from_metadata(provenance_metadata.get("taint_metadata"))
-    if is_externally_authored(state.max_tier):
+    if not is_admissible_for_reuse(state.max_tier):
         raise MemoryWriteError(
             f"Cannot write memory note '{title}': this turn has read content "
             "from outside the household, and memory holds nothing that "

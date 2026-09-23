@@ -335,6 +335,34 @@ async def test_externally_authored_turn_cannot_write_memory(
 
 
 @pytest.mark.asyncio
+async def test_reviewed_material_may_be_written_to_memory(
+    db_engine: AsyncEngine,
+) -> None:
+    """The provenance rule is the reuse predicate, not authorship."""
+    db = _db(db_engine)
+    reviewed = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="Packing procedure",
+            tier=SourceTrustTier.MACHINE_REVIEWED,
+            labels=frozenset(),
+            reason="prompt carried a reviewed note",
+        )
+    )
+    await _write_topic(
+        db,
+        "Trip",
+        "- hotel",
+        provenance_metadata={"taint_metadata": reviewed.to_metadata()},
+    )
+
+    stored = await db.notes.get_by_title(
+        "Trip", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
+    assert stored is not None
+
+
+@pytest.mark.asyncio
 async def test_unstamped_write_satisfies_the_provenance_rule(
     db_engine: AsyncEngine,
 ) -> None:

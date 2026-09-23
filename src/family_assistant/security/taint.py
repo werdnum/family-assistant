@@ -9,7 +9,14 @@ from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -80,21 +87,37 @@ class SourceTrustTier(IntEnum):
     the destination echo — can ask for them by tier instead of reconstructing
     authorship structurally. See :func:`is_externally_authored` for the
     boundary every "is this external?" comparison should go through.
+
+    ``MACHINE_REVIEWED`` is externally authored content a reviewer admitted for
+    unasked reuse (an ambient note, an automation definition). It answers the
+    two questions differently: it *is* externally authored, and it *is*
+    reusable -- see :func:`is_admissible_for_reuse` -- and for sink policy it
+    resolves to ``TRUSTED_INTERNAL``'s cells.
+
+    Tiers are parsed by name only. Inserting a member renumbers the ones above
+    it, so an integer tier in configuration would silently change meaning.
     """
 
     TRUSTED_USER = 0
     TRUSTED_INTERNAL = 1
-    KNOWN_CONTACT = 2
-    RECOGNIZED_MACHINE = 3
-    UNKNOWN_EXTERNAL = 4
+    MACHINE_REVIEWED = 2
+    KNOWN_CONTACT = 3
+    RECOGNIZED_MACHINE = 4
+    UNKNOWN_EXTERNAL = 5
 
     @classmethod
     def from_value(cls, value: object) -> SourceTrustTier:
-        """Parse a source trust tier from enum, name, or config value."""
+        """Parse a source trust tier from an enum member or its name."""
         if isinstance(value, SourceTrustTier):
             return value
         if isinstance(value, int):
-            return cls(value)
+            msg = (
+                f"Integer source trust tier {value!r} is not accepted; write the "
+                "tier name instead (one of: "
+                + ", ".join(tier.config_value for tier in cls)
+                + ")"
+            )
+            raise ValueError(msg)
         if isinstance(value, str):
             normalized = value.strip().lower()
             for tier in cls:
@@ -108,8 +131,11 @@ class SourceTrustTier(IntEnum):
         return self.name.lower()
 
 
-EXTERNALLY_AUTHORED_MIN_TIER = SourceTrustTier.KNOWN_CONTACT
+EXTERNALLY_AUTHORED_MIN_TIER = SourceTrustTier.MACHINE_REVIEWED
 """First tier whose content was authored outside the trust boundary."""
+
+REUSABLE_MAX_TIER = SourceTrustTier.MACHINE_REVIEWED
+"""Last tier whose content may be reused without being asked for."""
 
 
 def is_externally_authored(tier: SourceTrustTier | None) -> bool:
@@ -124,6 +150,30 @@ def is_externally_authored(tier: SourceTrustTier | None) -> bool:
     if tier is None:
         return True
     return tier >= EXTERNALLY_AUTHORED_MIN_TIER
+
+
+def is_admissible_for_reuse(tier: SourceTrustTier | None) -> bool:
+    """Whether content at this tier may reach a turn nobody asked it into.
+
+    The reuse question, distinct from authorship: reviewed external material
+    is externally authored *and* reusable. Ambient inclusion of stored content
+    and memory curation are decided here. Absent provenance is never reusable.
+    """
+    if tier is None:
+        return False
+    return tier <= REUSABLE_MAX_TIER
+
+
+def policy_tier(tier: SourceTrustTier) -> SourceTrustTier:
+    """The tier whose policy cells govern ``tier``.
+
+    Reviewed material takes ``TRUSTED_INTERNAL``'s cells for every sink. The
+    equivalence is expressed once, here, so shipped cells, operator overrides
+    and operator minimums written for the trusted pole all apply to it.
+    """
+    if tier is SourceTrustTier.MACHINE_REVIEWED:
+        return SourceTrustTier.TRUSTED_INTERNAL
+    return tier
 
 
 def is_human_direct_metadata(metadata: object) -> bool:
@@ -765,6 +815,25 @@ def merge_taint_state_into_tracker(
     return merged
 
 
+def _parse_config_tier(value: object, *, key: str) -> SourceTrustTier:
+    """Parse one configured tier, naming the key when it is rejected."""
+    if isinstance(value, SourceTrustTier):
+        return value
+    if isinstance(value, int) or (isinstance(value, str) and value.strip().isdigit()):
+        msg = (
+            f"{key}: integer tier value {value!r} is no longer accepted because "
+            "tier numbering changed when machine_reviewed was added; write the "
+            "tier name instead (one of: "
+            + ", ".join(tier.config_value for tier in SourceTrustTier)
+            + ")"
+        )
+        raise ValueError(msg)
+    try:
+        return SourceTrustTier.from_value(value)
+    except ValueError as exc:
+        raise ValueError(f"{key}: {exc}") from exc
+
+
 class TaintAdjudicateCell(BaseModel):
     """Structured runtime-taint matrix cell delegated to the reviewer."""
 
@@ -842,8 +911,8 @@ class TaintPolicyConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _parse_tier_value(cls, value: object) -> object:
-        return SourceTrustTier.from_value(value)
+    def _parse_tier_value(cls, value: object, info: ValidationInfo) -> object:
+        return _parse_config_tier(value, key=f"taint_policy.{info.field_name}")
 
     @field_validator(
         "operator_minimum",
@@ -852,22 +921,35 @@ class TaintPolicyConfig(BaseModel):
         mode="before",
     )
     @classmethod
-    def _parse_tier_keyed_matrix(cls, value: object) -> object:
+    def _parse_tier_keyed_matrix(cls, value: object, info: ValidationInfo) -> object:
         if not isinstance(value, dict):
             return value
         parsed: dict[SourceTrustTier, object] = {}
         for raw_key, raw_value in value.items():
-            parsed[SourceTrustTier.from_value(raw_key)] = raw_value
+            key = f"taint_policy.{info.field_name}.{raw_key}"
+            tier = _parse_config_tier(raw_key, key=key)
+            if tier is SourceTrustTier.MACHINE_REVIEWED:
+                msg = (
+                    f"{key}: machine_reviewed takes trusted_internal's policy "
+                    "cells and cannot be configured separately; configure "
+                    "trusted_internal (or trusted_user) instead"
+                )
+                raise ValueError(msg)
+            parsed[tier] = raw_value
         return parsed
 
     @field_validator("artifact_labels", mode="before")
     @classmethod
-    def _parse_tier_keyed_labels(cls, value: object) -> object:
+    def _parse_tier_keyed_labels(cls, value: object, info: ValidationInfo) -> object:
         if not isinstance(value, dict):
             return value
         parsed: dict[SourceTrustTier, object] = {}
         for raw_key, raw_value in value.items():
-            parsed[SourceTrustTier.from_value(raw_key)] = raw_value
+            parsed[
+                _parse_config_tier(
+                    raw_key, key=f"taint_policy.{info.field_name}.{raw_key}"
+                )
+            ] = raw_value
         return parsed
 
     @model_validator(mode="after")
@@ -1386,7 +1468,11 @@ def _trusted_pole_lookup[T](
     output after it reclassifies -- a per-tier ``dict.get`` would walk straight
     past that entry and silently relax the policy. An explicit
     ``trusted_internal`` entry wins where one is written.
+
+    ``MACHINE_REVIEWED`` resolves as ``TRUSTED_INTERNAL`` (see
+    :func:`policy_tier`), inheriting the same chain.
     """
+    tier = policy_tier(tier)
     entry = mapping.get(tier, {}).get(sink_class)
     if entry is None and tier is SourceTrustTier.TRUSTED_INTERNAL:
         return mapping.get(SourceTrustTier.TRUSTED_USER, {}).get(sink_class)
@@ -1421,7 +1507,7 @@ def _resolved_adjudicate_fallback(
 ) -> TaintPolicyOutcome | None:
     if isinstance(cell, TaintAdjudicateCell) and cell.fallback is not None:
         return cell.fallback
-    legacy = _legacy_taint_matrix().get(tier, {}).get(sink_class)
+    legacy = _trusted_pole_lookup(_legacy_taint_matrix(), tier, sink_class)
     if legacy in {TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY}:
         return legacy
     return None
