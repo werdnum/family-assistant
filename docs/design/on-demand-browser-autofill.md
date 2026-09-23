@@ -3,7 +3,8 @@
 ## Decision
 
 A browser agent may navigate to a URL, encounter a login wall, and request a Keychute secret by
-name. The user can supply that name in the task or answer when the agent asks. Neither an
+name. The user can supply that name in the task, the agent can synthesize a plausible secret name
+based on the target site or service, or the agent can ask the user if needed. Neither an
 `authenticated_sites` entry nor a standing grant is a prerequisite. Keychute decides each release; a
 standing grant can later make the same workflow unattended and restrict the credential to
 appropriate origins.
@@ -57,8 +58,9 @@ again. Configured site runs retain their existing parked-run handling.
   could echo it; masking known credential controls does not claim to make a hostile approved site
   safe.
 - No vault enumeration, automatic secret-name discovery, new MFA system, or automatic session
-  persistence is required. Ask for a name when it is unknown; use human handoff for challenges the
-  agent cannot complete.
+  persistence is required. The agent synthesizes a plausible secret name based on the target site or
+  service (or asks when needed); the user can route the request to the correct secret during
+  approval. Use human handoff for challenges the agent cannot complete.
 - Existing bad-password and per-session fill limits remain bounded failure handling. Reporting a
   rejected password discards the on-demand credential browser session; a later user-requested task
   can open a fresh session in the same conversation after the stored secret is corrected.

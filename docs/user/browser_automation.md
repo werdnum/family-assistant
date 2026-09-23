@@ -118,12 +118,11 @@ stored in Keychute:
 ```
 
 You can also start with ordinary `/browse`; if the assistant encounters a login wall, it can
-automatically switch to `credential_browser_profile` to handle the login.
+automatically switch to credential browsing to handle the login.
 
 ### How `/browse_authenticated` uses Keychute
 
-The credential browser integrates with Keychute for secure, on-demand credential autofill using
-`browser_autofill`:
+The credential browser integrates with Keychute to autofill stored credentials on demand:
 
 - **No site configuration required**: You do not need preconfigured sites or standing grants ahead
   of time. The assistant can navigate to any URL and request autofill on demand.
@@ -133,31 +132,31 @@ The credential browser integrates with Keychute for secure, on-demand credential
   name based on the target site or service (e.g. `octoprint`, `3dprinter`, or the domain/app name).
   You can route the request to the correct secret directly in the Keychute UI during approval.
 - **Direct credential delivery**: Keychute delivers credentials directly to the browser backend.
-  Passwords and secret values are never returned in tool responses, never enter LLM prompt context,
-  and cannot be read back by the assistant.
+  Passwords and secret values are not returned in tool responses, and accessibility snapshots mask
+  password controls. Note that read-back protection against an approved site is best effort: once an
+  approved site receives a password, a hostile or compromised page could potentially echo it into
+  visible page content.
 - **Password-only secrets and username entry**: If a released secret contains only a password
-  without a username, the assistant can enter the known username manually (using `browser_fill`) and
-  then request password-only autofill with `kind="password"`. For multi-page or username-first login
-  flows, the assistant requests `kind="username"` on the first page and `kind="password"` on the
-  next.
+  without a username, the assistant can enter the known username manually and autofill only the
+  password. For multi-page or username-first login flows, the assistant fills the username on the
+  first page and the password on the next.
 
 ### How approval works
 
-- **Origin-scoped verification**: When the assistant calls `browser_autofill`, Keychute evaluates
-  the request against the actual HTTPS origin of the page currently loaded in the browser.
-- **Interactive approval link**: If Keychute requires user approval, the assistant pauses with
-  status `approval_pending` and shares the Keychute web UI approval link, which lives under
-  `/ui/requests/<request_id>`.
+- **Origin-scoped verification**: Keychute evaluates each credential request against the actual
+  HTTPS origin of the page currently loaded in the browser.
+- **Interactive approval link**: If Keychute requires user approval, the assistant pauses and shares
+  the Keychute web UI approval link, which lives under `/ui/requests/<id>`.
 - **Review and resume**: Open the link, review the target domain and requested secret, route the
   request to the correct stored secret if needed, and approve release. Then return to your chat and
   tell the assistant to continue. The assistant retries the fill without reloading the page or
   navigating away.
 - **Standing grants**: To streamline future tasks on trusted sites, you can configure a standing
   grant in Keychute that automatically approves releases for specific website origins.
-- **Bad password handling**: If the site rejects the credentials, the assistant calls
-  `browser_report_login_outcome(outcome="bad_password")` and immediately stops, discarding the
-  failed browser session to prevent account lockouts. Correct the secret in Keychute, then ask the
-  assistant to try again in the same conversation.
+- **Bad password handling**: If the site rejects the credentials, the assistant records the
+  rejection and immediately stops, discarding the failed browser session to prevent account
+  lockouts. Correct the secret in Keychute, then ask the assistant to try again in the same
+  conversation.
 - **MFA and CAPTCHAs**: For multi-factor authentication codes or CAPTCHA challenges, the assistant
   can generate a browser handoff link so you can complete the step manually in your browser before
   handing control back.
@@ -169,14 +168,14 @@ The credential browser integrates with Keychute for secure, on-demand credential
   progress, and DOM element refs from an ordinary `/browse` session *do not transfer* into the
   credential session.
 - **Strict tool isolation**:
-  - Anonymous `/browse` provides access to `browser_exec` (arbitrary in-page JavaScript) and
-    `browser_extract` (raw DOM extraction), but *cannot* access Keychute autofill.
-  - Credential browsing (`credential_browser_profile`) can request Keychute autofill, but
-    deliberately disables `browser_exec` and `browser_extract`. This prevents prompt injection or
-    malicious third-party scripts on visited pages from reading back credentials or session tokens.
-- **Visual delegation companion**: Just as `/browse` delegates to `/browse_visual`,
-  `credential_browser_profile` can delegate visual steps to `credential_browser_visual_profile`.
-  Both share the same protected browser tab and credentials.
+  - Anonymous `/browse` provides access to in-page JavaScript execution and raw page extraction, but
+    cannot access Keychute autofill.
+  - Credential browsing can request Keychute autofill, but deliberately disables in-page JavaScript
+    execution and raw page extraction. This prevents prompt injection or malicious third-party
+    scripts on visited pages from reading back credentials or session tokens.
+- **Visual delegation companion**: Just as `/browse` delegates to `/browse_visual`, credential
+  browsing can delegate visual steps to a visual companion when needed, sharing the same protected
+  browser tab and credentials.
 - **Ad-hoc URLs vs. Preconfigured Presets**: Unlike preconfigured authenticated sites (which are
   locked to operator-defined domains and saved cookie jars), `/browse_authenticated` allows general
   browsing across arbitrary URLs, relying on Keychute's dynamic release approvals to safeguard
@@ -199,11 +198,11 @@ The credential browser integrates with Keychute for secure, on-demand credential
 same live browser tab (same conversation, same cookies, same page), so state is preserved across
 profiles.
 
-If ordinary browsing encounters a login wall requiring stored credentials, the assistant can
-delegate to `credential_browser_profile`. Because this starts a separate protected session to keep
-credentials safe, cookies and page progress do not transfer. Within credential browsing,
-`credential_browser_profile` can also delegate visual tasks to `credential_browser_visual_profile`,
-preserving the protected session and tab.
+If ordinary browsing encounters a login wall requiring stored credentials, the assistant can switch
+to credential browsing automatically. Because this starts a separate protected session to keep
+credentials safe, cookies and page progress do not transfer. Within credential browsing, the
+assistant can also delegate visual tasks to its visual companion, preserving the protected session
+and tab.
 
 In practice you usually don't need to think about this — start with `/browse` and the assistant will
 delegate when needed. You can also invoke `/browse_authenticated` or `/browse_visual` directly if
@@ -264,8 +263,9 @@ yourself instead.
 The browser profiles share these boundaries:
 
 - **Credential protection**: `/browse` runs anonymously without access to passwords.
-  `/browse_authenticated` can autofill credentials via Keychute, but credentials never leave
-  Keychute or the browser backend, and tool results do not contain password values.
+  `/browse_authenticated` can autofill credentials via Keychute: tool responses do not return secret
+  values and accessibility snapshots mask password controls. Read-back protection against an
+  approved site is best effort, as an approved page receives the password and could echo it.
 - **No downloads to your device** — files downloaded go to the assistant's environment.
 - **Cannot bypass CAPTCHAs or paywalls automatically** — the assistant can offer a human browser
   handoff link for interactive challenges, but cannot solve them autonomously.
