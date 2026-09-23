@@ -232,12 +232,22 @@ existing body under an append, the existing attachments when the call omits them
 provenance of **every attachment whose metadata the candidate renders**, kept or newly associated.
 Today the note tool only validates an attachment id, so a clean turn associating an email-derived
 attachment would take the `trusted_user` allow cell and put its description in every prompt
-unreviewed; merging the attachment's provenance into the gate state closes that. A clean turn that
-appends to an unreviewed note is likewise reviewed at that note's tier rather than promoting its old
-body to `trusted_user` unread. A write that replaces every part of the ambient material is evaluated
-at the turn's tier alone. Synchronous review does not remove every concurrent update race; what
-remains is ordinary database correctness — persist the candidate that was actually reviewed, under
-the transaction and locking semantics the repository already uses.
+unreviewed; merging the attachment's provenance into the gate state closes that. Merging alone is
+not enough, because not every attachment has provenance to merge: tool-stored attachments, a Gmail
+download among them, are registered through `store_and_register_tool_attachment` with no envelope at
+all, so a sender-controlled description would still contribute nothing. Two rules close that. At the
+gate an attachment with **no stored envelope is evaluated as `unknown_external`** — the description
+is about to reach every prompt, and an unlabelled artifact must not pass on the strength of what
+nobody recorded. And the tool-attachment registration path becomes a stamping chokepoint like the
+notes repository: it records the storing turn's taint state, so a Gmail download carries the tier
+its message raised the turn to. Explicit reads of attachments are unchanged — an unlabelled upload
+still contributes nothing when read, since defaulting there would taint every ordinary user upload —
+the default applies only where the artifact is being promoted. A clean turn that appends to an
+unreviewed note is likewise reviewed at that note's tier rather than promoting its old body to
+`trusted_user` unread. A write that replaces every part of the ambient material is evaluated at the
+turn's tier alone. Synchronous review does not remove every concurrent update race; what remains is
+ordinary database correctness — persist the candidate that was actually reviewed, under the
+transaction and locking semantics the repository already uses.
 
 **What the reviewer judges** is the complete proposed note or skill as *reusable material*, not
 merely whether the user asked for a save. Two cases fix the boundary:
@@ -328,19 +338,20 @@ its own trust:
 
 Readers change in one way only. `get_note`, `list_notes`, `search_documents` and the full-document
 tool restore stored provenance as they do today — a reviewed note propagates `machine_reviewed` and
-an unreviewed one propagates its external taint — except that the shared resolver they restore it
-through treats an **absent envelope as `unknown_external`** rather than skipping it. Today both the
-note tool and the shared artifact helper return early on missing metadata. After the rollout batch
-restamp no row should be null, so this is a tripwire for write-path regressions rather than a source
-of friction. The notes context provider does the same for everything it places in the prompt, the
-included note bodies and the catalogued database skills alike: a reviewed note or skill in the
-prompt merges a `machine_reviewed` source into the turn, so the turn's tier says that the model
-processed reviewed external text. Today the provider's taint sources come from the prompt notes
-only, which exclude skills; the eligible skills join them, since a skill's name and description are
-in every prompt exactly as an included body is. That costs no friction — the tier's sink cells are
-`trusted_internal`'s — and it keeps authorship honest: the assistant rows stamped from that turn
-carry `machine_reviewed`, not a trusted-pole tier, so what memory keeps from such a turn is stamped
-for what it is.
+an unreviewed one propagates its external taint — except that a **note row's absent envelope is
+treated as `unknown_external`** rather than skipped. Today the note tool and the shared artifact
+helper both return early on missing metadata; the change is to the note path only, since every note
+row is restamped below, while attachments keep their read behaviour and are defaulted only at the
+admission gate, above. After the rollout batch restamp no row should be null, so this is a tripwire
+for write-path regressions rather than a source of friction. The notes context provider does the
+same for everything it places in the prompt, the included note bodies and the catalogued database
+skills alike: a reviewed note or skill in the prompt merges a `machine_reviewed` source into the
+turn, so the turn's tier says that the model processed reviewed external text. Today the provider's
+taint sources come from the prompt notes only, which exclude skills; the eligible skills join them,
+since a skill's name and description are in every prompt exactly as an included body is. That costs
+no friction — the tier's sink cells are `trusted_internal`'s — and it keeps authorship honest: the
+assistant rows stamped from that turn carry `machine_reviewed`, not a trusted-pole tier, so what
+memory keeps from such a turn is stamped for what it is.
 
 ### Titles stay in the catalog
 
@@ -446,9 +457,11 @@ state.
    the identifiable external cohorts (call transcripts) and an operator exclusion list stamped
    `unknown_external`; web API writes stamp `trusted_user`; call transcripts stamp
    `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
-   `get_note` routes returned attachments through the shared attachment-provenance resolver.
-   Verified by the conformance check rejecting a raw write, by a repository test that a clean-turn
-   tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
+   `get_note` routes returned attachments through the shared attachment-provenance resolver;
+   tool-attachment registration stamps the storing turn's taint state. Verified by the conformance
+   check rejecting a raw write, by a registry test that a Gmail download stored in a turn the
+   message raised to `unknown_external` carries that envelope, by a repository test that a
+   clean-turn tool write stamps `trusted_internal` while a web API write stamps `trusted_user`, by a
    fresh-database memory bootstrap, by a test of the batch script that restamps a null row
    `trusted_internal`, stamps a null call-transcript row and an operator-excluded row
    `unknown_external`, leaves stamped rows untouched, writes into each restamped row's audit record
@@ -481,8 +494,10 @@ state.
    admission, human confirmation, operator override and observe-mode denial — the note's audit
    record holds the original sources, the authoring turn's tier and the verdict, confirmation or
    override that decided it, and the record is reachable from the note; an append is reviewed and
-   persisted as the resolved whole; an import with skill frontmatter is reviewed and, unreviewed, is
-   absent from the catalog.
+   persisted as the resolved whole; a clean-turn write that associates an attachment with no stored
+   envelope is reviewed rather than allowed, while an explicit read of the same attachment still
+   contributes no taint; an import with skill frontmatter is reviewed and, unreviewed, is absent
+   from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section; an admitted definition's stamp becomes `machine_reviewed` and renders as the
