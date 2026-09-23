@@ -418,14 +418,9 @@ external again through search. It is a deliberate operator judgment that the ind
 remainder of the pre-rollout corpus is household material, of the same kind as the history epoch
 amnesty, and it is recorded below as an accepted residual.
 
-The same script restamps **attachments** with no envelope, and there the stored data distinguishes
-every cohort, because the registry records each attachment's `source_type` and `source_id`: a `user`
-upload is stamped `trusted_user`; an `email` attachment `unknown_external`; a `tool` or `script`
-output at the tier its producing tool's declared output provenance names today, which is what the
-registration chokepoint would have stamped, and `trusted_internal` where the tool declares none.
-Without this, every Gmail download made before the chokepoint would stay envelope-less for good, and
-an explicit read that skips a missing envelope would return sender-controlled bytes without raising
-the turn.
+Attachments are **not** backfilled. Those stored before the registration chokepoint stay
+envelope-less; the admission gate treats them as external, and an explicit read of one contributes
+nothing, as today. Recorded below as an accepted residual.
 
 After the batch, a null envelope is a write-path regression, not a legacy condition: the eligibility
 resolver and the shared explicit-read resolver still treat absence as external, and they log it at
@@ -456,6 +451,11 @@ state.
   the turn raises the tier and brings the review back. The residual is a reviewer miss that survives
   into a derived note; the derived note carries the same tier and the same reference-only fallback
   as its source.
+- **Pre-rollout attachments keep no envelope.** An attachment stored before the registration
+  chokepoint, a Gmail download included, is not backfilled. The admission gate evaluates it as
+  external, so it cannot be promoted unreviewed, but an explicit read of it contributes no taint, as
+  it does today. The owner's decision: the exposure is the pre-existing one, an explicit read of an
+  old artifact, not a new ambient one, and a backfill over the attachment store is not worth it.
 - **Attachment contents are not upgraded by review.** The reviewer sees the rendered description and
   MIME type, which is what the prompt renders; the contents keep their own taint.
 - **Workspace file content is classified as external at the read**, not tracked per file.
@@ -495,9 +495,7 @@ state.
    rejecting a raw write, by registry tests that a Gmail download carries an `unknown_external`
    envelope when it is the turn's first external call as well as when the message already raised the
    turn, that a tool-stored attachment from a clean turn with no declared output provenance stamps
-   `trusted_internal`, and that a direct user upload stamps `trusted_user`, by a test of the batch
-   script that a null-envelope `email` attachment and a legacy Gmail download are restamped
-   `unknown_external` while a legacy `user` upload is restamped `trusted_user`, by a repository test
+   `trusted_internal`, and that a direct user upload stamps `trusted_user`, by a repository test
    that a clean-turn tool write stamps `trusted_internal` while a web API write stamps
    `trusted_user`, by a memory-apply test that a clean review editing one entry of a
    `machine_reviewed` topic note leaves the note at `machine_reviewed`, and that the index refresh
