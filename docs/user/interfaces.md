@@ -178,6 +178,12 @@ under the profile currently picked in Chat, and when it ends the transcript is s
 conversation in that profile — so opening it in Chat picks the conversation up where the call left
 off. Calls placed by Siri work the same way.
 
+If you need something on your phone while talking, ask voice to **send it to my Chat**. It saves the
+text in that call's conversation and sends a notification to your registered devices. For an HTTPS
+link, such as directions, tapping the notification opens the link directly; the link also remains in
+Chat for later. Other handoffs open the conversation when tapped. Notifications require the device
+permissions described below and may be delayed or unavailable when push delivery is off.
+
 If voice cannot connect on your iPhone or Apple Watch, tell the assistant approximately when you
 tried and which device you used. The app sends connection-stage diagnostics automatically so the
 failure can be investigated without connecting your device to a computer. These diagnostics exclude
@@ -200,7 +206,8 @@ revoke the watch's credentials in API token settings.
 
 Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
 the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
-app ends the session. Watch voice conversations are not saved to your chat history.
+app ends the session. The transcript is saved to Chat when the session ends, and any handoff you
+requested remains in that conversation.
 
 To start from your watch face, edit the face, choose a complication slot, and select **Family
 Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed

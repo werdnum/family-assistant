@@ -8,6 +8,7 @@ protocol VoiceToolExecuting {
         name: String,
         arguments: JSONValue,
         profileID: String?,
+        voiceConversationID: String?,
         taintMetadata: JSONValue
     ) async throws -> JSONValue
 }
@@ -35,11 +36,13 @@ final class VoiceToolRunner {
     /// same profile whose prompt the session was given. Only ever written before
     /// the session is connected, and so before any tool call can arrive.
     var profileID: String?
+    let conversationID: String
     private var taintMetadata = VoiceToolRunner.initialTaintMetadata
 
-    init(executor: VoiceToolExecuting, profileID: String? = nil) {
+    init(executor: VoiceToolExecuting, profileID: String? = nil, conversationID: String = "web_conv_\(UUID().uuidString)") {
         self.executor = executor
         self.profileID = profileID
+        self.conversationID = conversationID
     }
 
     /// Execute every call in order and collect the responses.
@@ -57,6 +60,7 @@ final class VoiceToolRunner {
                 name: call.name,
                 arguments: call.args,
                 profileID: profileID,
+                voiceConversationID: conversationID,
                 taintMetadata: taintMetadata
             )
             if let returnedTaint = result["taint_metadata"] {

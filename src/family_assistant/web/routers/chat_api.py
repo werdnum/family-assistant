@@ -3190,6 +3190,29 @@ async def api_chat_save_voice_session(
             detail="A voice session must contain at least one turn.",
         )
 
+    supplied_timestamps = [
+        turn.timestamp for turn in payload.turns if turn.timestamp is not None
+    ]
+    if payload.client_saved_at is not None:
+        supplied_timestamps.append(payload.client_saved_at)
+    if any(timestamp.utcoffset() is None for timestamp in supplied_timestamps):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Voice transcript timestamps must include a timezone.",
+        )
+    base_time = datetime.now(UTC)
+    clock_offset = (
+        base_time - payload.client_saved_at
+        if payload.client_saved_at is not None
+        else timedelta()
+    )
+    timestamps = [
+        turn.timestamp + clock_offset
+        if turn.timestamp is not None
+        else base_time + timedelta(milliseconds=index)
+        for index, turn in enumerate(payload.turns)
+    ]
+
     profile_id = _resolve_voice_session_profile_id(
         request, payload.profile_id, default_processing_service
     )
@@ -3205,7 +3228,6 @@ async def api_chat_save_voice_session(
         conversation_id = payload.conversation_id
     else:
         conversation_id = f"web_conv_{uuid.uuid4().hex}"
-    base_time = datetime.now(UTC)
 
     # One turn id per logical exchange: a user line opens a new turn that the
     # assistant lines following it belong to, mirroring how text chat groups a
@@ -3240,14 +3262,11 @@ async def api_chat_save_voice_session(
                 )
                 .to_metadata(),
             )
-        # Strictly increasing timestamps keep the transcript ordered when the
-        # conversation is read back (history is ordered by timestamp).
-        timestamp = base_time + timedelta(milliseconds=index)
         await db_context.message_history.add_message(
             message,
             interface_type="web",
             conversation_id=conversation_id,
-            timestamp=timestamp,
+            timestamp=timestamps[index],
             turn_id=turn_id,
             user_id=raw_user_id,
             processing_profile_id=profile_id,

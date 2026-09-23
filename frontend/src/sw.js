@@ -54,6 +54,19 @@ self.addEventListener('notificationclick', (event) => {
   const data = event.notification.data || {};
   const conversationId = data.conversationId;
   const urlToOpen = conversationId ? `/chat?conversation_id=${conversationId}` : '/chat';
+  if (data.actionKind === 'open_url' && typeof data.actionUrl === 'string') {
+    try {
+      const actionUrl = new URL(data.actionUrl);
+      if (actionUrl.protocol === 'https:' && !actionUrl.username && !actionUrl.password) {
+        event.waitUntil(
+          clients.openWindow(actionUrl.href).catch(() => clients.openWindow(urlToOpen))
+        );
+        return;
+      }
+    } catch {
+      // An invalid action falls back to its saved conversation.
+    }
+  }
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

@@ -27,6 +27,8 @@ class NotificationMetadata(BaseModel):
     conversation_id: str | None = None
     path: str | None = None
     url: str | None = None
+    action_kind: str | None = None
+    action_url: str | None = None
 
     def web_push_data(self) -> dict[str, str]:
         """Return the set fields keyed for the Web Push service worker (camelCase).
@@ -40,6 +42,8 @@ class NotificationMetadata(BaseModel):
             "requestId": self.request_id,
             "path": self.path,
             "url": self.url,
+            "actionKind": self.action_kind,
+            "actionUrl": self.action_url,
         }
         return {key: value for key, value in mapping.items() if value is not None}
 

@@ -102,7 +102,10 @@ async def test_send_notification_serializes_metadata_for_service_worker(
         "Body",
         db_context,
         metadata=NotificationMetadata(
-            category="FAMILY_ASSISTANT_MESSAGE", conversation_id="conv-1"
+            category="FAMILY_ASSISTANT_MESSAGE",
+            conversation_id="conv-1",
+            action_kind="open_url",
+            action_url="https://maps.example.test/route",
         ),
     )
 
@@ -110,6 +113,8 @@ async def test_send_notification_serializes_metadata_for_service_worker(
     # The PWA service worker reads data.conversationId.
     assert sent_payload["data"]["conversationId"] == "conv-1"
     assert sent_payload["data"]["category"] == "FAMILY_ASSISTANT_MESSAGE"
+    assert sent_payload["data"]["actionKind"] == "open_url"
+    assert sent_payload["data"]["actionUrl"] == "https://maps.example.test/route"
     assert "conversation_id" not in sent_payload["data"]
 
 

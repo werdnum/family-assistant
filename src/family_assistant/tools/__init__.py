@@ -69,6 +69,7 @@ from family_assistant.tools.communication import (
     get_attachment_info_tool,
     get_message_history_tool,
     send_message_to_user_tool,
+    send_to_my_chat_tool,
 )
 from family_assistant.tools.computer_use import (
     COMPUTER_USE_TOOLS_DEFINITION,
@@ -518,6 +519,7 @@ __all__ = [
     "search_documents_tool",
     "search_source_code",
     "send_message_to_user_tool",
+    "send_to_my_chat_tool",
     "spawn_worker_tool",
     "storage",
     "test_event_listener_tool",
@@ -620,6 +622,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "ingest_document_from_url": ingest_document_from_url_tool,
     "reindex_email": reindex_email_tool,
     "send_message_to_user": send_message_to_user_tool,
+    "send_to_my_chat": send_to_my_chat_tool,
     # Calendar tools
     "list_calendars": list_calendars_tool,
     "add_calendar_event": add_calendar_event_tool,
@@ -1114,6 +1117,14 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         # reviewer confirmation may safely execute it later as a durable outbox
         # item. Other tools fail closed unless they opt in just as explicitly.
         deferred_confirmation_eligible=True,
+    ),
+    "send_to_my_chat": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.KNOWN_USER_COMM,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "get_attachment_info": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,

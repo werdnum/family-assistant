@@ -2,6 +2,7 @@ import contextlib
 import json
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
@@ -9,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from family_assistant.llm.messages import UserMessage
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     TaintMetadata,
@@ -38,6 +40,7 @@ class ToolExecutionRequest(BaseModel):
     arguments: dict[str, Any]
     taint_metadata: TaintMetadata | None = None
     profile_id: str | None = None
+    voice_conversation_id: str | None = None
 
 
 def _serialize_tool_result(result: object) -> object:
@@ -79,9 +82,7 @@ async def execute_tool_api(
     ],  # Inject DB context if tools need it
 ) -> JSONResponse:
     """Executes a specified tool with the given arguments."""
-    logger.info(
-        f"Received execution request for tool: {tool_name} with args: {payload.arguments}"
-    )
+    logger.info("Received execution request for tool: %s", tool_name)
 
     # --- Retrieve necessary config and services from app state ---
     app_config = getattr(request.app.state, "config", None)
@@ -148,6 +149,44 @@ async def execute_tool_api(
         TurnTaintState.from_metadata(payload.taint_metadata or {})
     )
 
+    conversation_id = str(uuid.uuid4())
+    interface_type = "api"
+    if payload.voice_conversation_id is not None:
+        voice_conversation_id = payload.voice_conversation_id
+        try:
+            if not voice_conversation_id.startswith("web_conv_"):
+                raise ValueError
+            uuid.UUID(voice_conversation_id.removeprefix("web_conv_"))
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400, detail="Invalid voice conversation ID."
+            ) from None
+        owner_ids = await db_context.message_history.get_conversation_owner_ids(
+            voice_conversation_id
+        )
+        existing_interface = (
+            await db_context.message_history.get_interface_type_for_conversation(
+                voice_conversation_id
+            )
+        )
+        if (
+            (owner_ids and owner_ids != {current_user["user_identifier"]})
+            or (existing_interface is not None and existing_interface != "web")
+            or (existing_interface is not None and not owner_ids)
+        ):
+            raise HTTPException(status_code=404, detail="Voice conversation not found.")
+        if not owner_ids:
+            await db_context.message_history.add_message(
+                UserMessage(content=""),
+                interface_type="web",
+                conversation_id=voice_conversation_id,
+                timestamp=datetime.now(UTC),
+                user_id=current_user["user_identifier"],
+                is_internal=True,
+            )
+        conversation_id = voice_conversation_id
+        interface_type = "voice"
+
     async def error_response(*, status_code: int, detail: str) -> JSONResponse:
         return JSONResponse(
             content={
@@ -158,8 +197,8 @@ async def execute_tool_api(
         )
 
     execution_context = ToolExecutionContext(
-        interface_type="api",  # Identify interface
-        conversation_id=str(uuid.uuid4()),
+        interface_type=interface_type,
+        conversation_id=conversation_id,
         user_name=current_user.get("user_label") or current_user["user_identifier"],
         user_id=current_user["user_identifier"],
         turn_id=str(uuid.uuid4()),
@@ -177,7 +216,8 @@ async def execute_tool_api(
         attachment_registry=attachment_registry,
         camera_backend=camera_backend,
         # Optional fields (with defaults)
-        chat_interface=None,  # No direct chat interface for API calls
+        chat_interface=None,
+        chat_interfaces=getattr(request.app.state, "chat_interfaces", None),
         timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
         tools_provider=selected_tools_provider,

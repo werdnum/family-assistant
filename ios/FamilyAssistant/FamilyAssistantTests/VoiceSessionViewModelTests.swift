@@ -168,13 +168,16 @@ private final class FakeTokenProvider: VoiceTokenProviding {
 private final class FakeToolExecutor: VoiceToolExecuting {
     var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
     private(set) var profileIDs: [String?] = []
+    private(set) var conversationIDs: [String?] = []
     func executeTool(
         name: String,
         arguments: JSONValue,
         profileID: String?,
+        voiceConversationID: String?,
         taintMetadata: JSONValue
     ) async throws -> JSONValue {
         profileIDs.append(profileID)
+        conversationIDs.append(voiceConversationID)
         _ = taintMetadata
         return try await handler(name, arguments)
     }
@@ -185,14 +188,16 @@ private final class FakeTranscriptStore: VoiceTranscriptStoring {
     var error: Error?
     private(set) var saved: [[VoiceTranscriptEntry]] = []
     private(set) var savedProfileIDs: [String?] = []
+    private(set) var savedConversationIDs: [String?] = []
     func saveVoiceSession(
         turns: [VoiceTranscriptEntry],
-        conversationID _: String?,
+        conversationID: String?,
         profileID: String?
     ) async throws -> String {
         if let error { throw error }
         saved.append(turns)
         savedProfileIDs.append(profileID)
+        savedConversationIDs.append(conversationID)
         return "web_conv_test"
     }
 }
@@ -758,11 +763,14 @@ final class VoiceSessionViewModelTests: XCTestCase {
         session.emit(.inputTranscription("hi"))
         session.emit(.outputTranscription("hello"))
         try await waitUntil { model.transcript.entries.count == 2 }
+        session.emit(.toolCall([GeminiFunctionCall(id: "handoff", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.toolExecutor.conversationIDs.isEmpty == false }
 
         model.end()
         try await waitUntil { self.store.saved.isEmpty == false }
         XCTAssertEqual(store.saved.count, 1)
         XCTAssertEqual(store.saved.first?.map(\.text), ["hi", "hello"])
+        XCTAssertEqual(store.savedConversationIDs, toolExecutor.conversationIDs)
     }
 
     /// The saved transcript is filed under the profile the backend resolved, not

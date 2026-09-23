@@ -561,11 +561,12 @@ final class VoiceSessionViewModel {
         let diagnostics = diagnostics
         let reportError = reportError
         let profileID = resolvedProfileID
+        let conversationID = toolRunner.conversationID
         Task {
             do {
                 _ = try await transcriptStore.saveVoiceSession(
                     turns: turns,
-                    conversationID: nil,
+                    conversationID: conversationID,
                     profileID: profileID
                 )
             } catch {

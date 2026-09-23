@@ -311,6 +311,30 @@ final class NotificationManagerTests: XCTestCase {
         XCTAssertEqual(manager.pendingNavigationPath, "/chat?conversation_id=web_conv_5")
     }
 
+    func testVoiceHandoffTapOpensHTTPSActionAndInvalidActionReturnsToChat() {
+        let manager = NotificationManager()
+        let baseInfo = ["conversation_id": "web_conv_voice", "action_kind": "open_url"]
+
+        manager.handleNotificationAction(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            categoryIdentifier: "FAMILY_ASSISTANT_MESSAGE",
+            title: "Directions",
+            body: "Open directions",
+            userInfo: baseInfo.merging(["action_url": "https://maps.example.test/route?to=home"]) { _, new in new }
+        )
+        XCTAssertEqual(manager.pendingNavigationPath, "https://maps.example.test/route?to=home")
+
+        manager.clearPendingNavigationPath()
+        manager.handleNotificationAction(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            categoryIdentifier: "FAMILY_ASSISTANT_MESSAGE",
+            title: "Directions",
+            body: "Open directions",
+            userInfo: baseInfo.merging(["action_url": "javascript:alert(1)"]) { _, new in new }
+        )
+        XCTAssertEqual(manager.pendingNavigationPath, "/chat?conversation_id=web_conv_voice")
+    }
+
     func testDismissingConfirmationDoesNothing() {
         let manager = NotificationManager()
 
