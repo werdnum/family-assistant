@@ -346,8 +346,12 @@ its own trust:
   clean review that edits one entry of a `machine_reviewed` topic leaves the note `machine_reviewed`
   rather than relabelling the retained reviewed entries as internally authored.
 - **Core-memory bootstrap and index refresh** (`ensure_core_note`, `refresh_core_memory_index`)
-  today write directly against the table; they move into repository helpers and stamp
-  `trusted_internal`, since the core note is deployment-authored structure.
+  today write directly against the table; they move into repository helpers. The bootstrap creates
+  the core note and stamps `trusted_internal`, since an empty core note is deployment-authored
+  structure. The refresh regenerates only the derived index and retains the rest of the core note,
+  so it is a partial write like any other: it keeps the maximum of the core note's stored tier and
+  `trusted_internal`, and a refresh after a topic update never relabels memory admitted from a
+  `machine_reviewed` turn as internally authored.
 - **Call transcripts** (the Asterisk route) are authored by whoever was on the call and stamp
   `unknown_external`; they are reference material, never ambient.
 
@@ -480,14 +484,15 @@ state.
    turn stamps `trusted_internal`, and that a direct user upload stamps `trusted_user`, by a
    repository test that a clean-turn tool write stamps `trusted_internal` while a web API write
    stamps `trusted_user`, by a memory-apply test that a clean review editing one entry of a
-   `machine_reviewed` topic note leaves the note at `machine_reviewed`, by a fresh-database memory
-   bootstrap, by a test of the batch script that restamps a null row `trusted_internal`, stamps a
-   null call-transcript row and an operator-excluded row `unknown_external`, leaves stamped rows
-   untouched, writes into each restamped row's audit record the batch and the rule that classified
-   it, and enqueues indexing for every row it restamps so that a document search over a restamped
-   note restores the new tier, and by a test that a null row surviving the batch is excluded from
-   ambient reads and logged at ERROR, and by a tool test that reading a reviewed note with an
-   email-derived attachment raises the turn to the attachment's tier.
+   `machine_reviewed` topic note leaves the note at `machine_reviewed`, and that the index refresh
+   it triggers leaves a `machine_reviewed` core note at `machine_reviewed`, by a fresh-database
+   memory bootstrap, by a test of the batch script that restamps a null row `trusted_internal`,
+   stamps a null call-transcript row and an operator-excluded row `unknown_external`, leaves stamped
+   rows untouched, writes into each restamped row's audit record the batch and the rule that
+   classified it, and enqueues indexing for every row it restamps so that a document search over a
+   restamped note restores the new tier, and by a test that a null row surviving the batch is
+   excluded from ambient reads and logged at ERROR, and by a tool test that reading a reviewed note
+   with an email-derived attachment raises the turn to the attachment's tier.
 4. **The review.** `ambient_prompt_write` in the matrix and config surface; the note tools and the
    import tool resolve the complete candidate, await the review synchronously in both modes, and
    persist the candidate with `machine_reviewed` on an admitting verdict of an external candidate (a
