@@ -90,10 +90,12 @@ than the stub it renders today when the definition's stamp is external.
 Ambient notes need a channel of their own to reach that band. Prompt-included notes travel in the
 turn-context scaffolding message, which the reviewer's conversation rendering deliberately skips,
 because that block also carries unreviewed titles and the other context providers' output. The
-reviewer's input therefore gains one bounded section fed from the **eligible prompt notes only** —
-the same set the derived rule admits to the prompt — rendered as reviewed context. Nothing else in
-the turn-context block reaches the judge, so an ambient household procedure is evidence the judge
-can match an action against without the unreviewed catalog riding along.
+reviewer's input therefore gains one bounded section fed from the **eligible ambient material only**
+— the included note bodies and the catalogued skill entries, the same set the derived rule admits to
+the prompt — rendered as reviewed context. Nothing else in the turn-context block reaches the judge,
+so an ambient household procedure is evidence the judge can match an action against without the
+unreviewed catalog riding along, and a reviewed skill that shaped a call is in front of the judge as
+the skill's taint source already is.
 
 **Automation definitions use the same tier.** `executable-definition-taint.md` gates a definition's
 creation and marks an admitted definition as cured, so it fires with its intent intact. Under this
@@ -454,13 +456,14 @@ state.
    is reviewed and persisted as the resolved whole; an import with skill frontmatter is reviewed
    and, unreviewed, is absent from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
-   reviewed context; eligible prompt notes reach the reviewer through their own bounded section; an
-   admitted definition's stamp becomes `machine_reviewed` and renders as the intent to judge
-   against, replacing the cure flag. Verified by the existing executable-definition tests passing
-   with the cure expressed as the tier; by task-worker tests that a payload-free callback of a
-   reviewed definition enters at `machine_reviewed` with its intent rendered, neither untainted nor
-   `unknown_external`, for both record forms — a row stamped with the tier and a prior-version row
-   cured by its disposition; and by reviewer rendering tests for each band, including that an
+   reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
+   own bounded section; an admitted definition's stamp becomes `machine_reviewed` and renders as the
+   intent to judge against, replacing the cure flag. Verified by the existing executable-definition
+   tests passing with the cure expressed as the tier; by task-worker tests that a payload-free
+   callback of a reviewed definition enters at `machine_reviewed` with its intent rendered, neither
+   untainted nor `unknown_external`, for both record forms — a row stamped with the tier and a
+   prior-version row cured by its disposition; and by reviewer rendering tests for each band,
+   including that a reviewed skill's catalog entry appears in the bounded section and that an
    unreviewed title in the turn-context block does not appear in the reviewer's input.
 6. **Documentation.** `CONFIGURATION_REFERENCE.md` for the tier, the sink and its cells; the notes
    user guide for what happens when a save is refused or a note is not in context; the
