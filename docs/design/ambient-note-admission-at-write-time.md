@@ -127,9 +127,13 @@ epoch amnesty is, not a data migration and not a compatibility layer in code.
 **On an admitting verdict the row's active taint envelope is replaced**, not merely its `max_tier`:
 `TurnTaintState.from_metadata()` recomputes the tier from the stored sources, so retaining the
 original `unknown_external` sources would raise it straight back. The envelope holds one
-reviewed-artifact source at `machine_reviewed`, carrying the reviewer's verdict id; the original
-sources, the authoring turn's tier and the verdict are kept in the artifact's audit record, outside
-propagation. Turn-local state — history flags, approvals — is not carried over.
+reviewed-artifact source at `machine_reviewed`, carrying the reviewer's verdict id; the authoring
+turn's tier, the verdict and the original sources — as the existing taint audit store keeps them,
+which is a bounded summary of at most twelve sources with external identifiers, labels and reasons
+withheld and the omission counted — are written to that store as an audit event keyed to the note,
+outside propagation. That is the retention the design promises, no more: the existing facility is
+reused rather than a new artifact ledger introduced. Turn-local state — history flags, approvals —
+is not carried over.
 
 Ambient eligibility is then **derived**, not stored: a note is eligible for full-content ambient
 inclusion when it is marked `include_in_prompt` and its stored tier is admissible for reuse. The
@@ -202,8 +206,8 @@ What the verdict does:
   note. A trusted-pole candidate — reached only through an operator-strengthened trusted cell —
   keeps its trusted stamp on an observe-mode denial, because no stamp can record non-admission of
   the user's own words without falsifying their authorship; the denial is logged as observe mode
-  logs every other disallowed operation, and takes effect in enforce mode. The original sources go
-  to the audit record as they do on admission.
+  logs every other disallowed operation, and takes effect in enforce mode. The bounded source
+  summary goes to the audit event as it does on admission.
 - A **configured reviewer is a precondition of admission.** A deployment with no tool-call reviewer
   has no path from an external candidate to `machine_reviewed` short of an operator override: in
   enforce mode the adjudicated cells refuse the write, in observe mode they persist it non-admitted,
@@ -529,14 +533,15 @@ state.
    `adjudicate` runs the review and an admitting verdict leaves the `trusted_user` stamp in place;
    an ambient write in a turn whose only external source is a reviewed note in the prompt is allowed
    without a review and persists `machine_reviewed`; on every path that changes a stamp — reviewer
-   admission, human confirmation, operator override and observe-mode denial — the note's audit
-   record holds the original sources, the authoring turn's tier and the verdict, confirmation or
-   override that decided it, and the record is reachable from the note; an append is reviewed and
-   persisted as the resolved whole; a clean-turn write that associates an attachment with no stored
-   envelope is reviewed rather than allowed, while an explicit read of the same attachment still
-   contributes no taint; a clean-turn `update_note` that replaces an unreviewed note's body, clears
-   its attachments and enables inclusion is reviewed at the stored tier rather than allowed; an
-   import with skill frontmatter is reviewed and, unreviewed, is absent from the catalog.
+   admission, human confirmation, operator override and observe-mode denial — a taint audit event
+   keyed to the note holds the bounded source summary the audit store retains (with its omission
+   count), the authoring turn's tier and the verdict, confirmation or override that decided it; an
+   append is reviewed and persisted as the resolved whole; a clean-turn write that associates an
+   attachment with no stored envelope is reviewed rather than allowed, while an explicit read of the
+   same attachment still contributes no taint; a clean-turn `update_note` that replaces an
+   unreviewed note's body, clears its attachments and enables inclusion is reviewed at the stored
+   tier rather than allowed; an import with skill frontmatter is reviewed and, unreviewed, is absent
+   from the catalog.
 5. **The reviewer's bands and the definition cure.** `machine_reviewed` rows and sources render as
    reviewed context; eligible prompt notes and catalogued skills reach the reviewer through their
    own bounded section, produced by the prompt's own renderer; an admitted definition's stamp
