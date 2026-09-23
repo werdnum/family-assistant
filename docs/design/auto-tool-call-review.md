@@ -104,8 +104,9 @@ Adopted from the risk-adjudication design, with one amendment each where marked:
 1. **Provenance stays deterministic.** Nothing probabilistic ever writes provenance, lowers a tier,
    removes a source, or persists a verdict as trust. *(Amended by
    [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): an admitting
-   verdict at the `ambient_prompt_write` sink replaces an external candidate's stored envelope with
-   `machine_reviewed`, there and nowhere else.)*
+   verdict at an admission chokepoint — the `ambient_prompt_write` sink for notes and skills, the
+   executable-definition creation gate for automation and script definitions — replaces an external
+   candidate's stored envelope with `machine_reviewed`, at those two chokepoints and nowhere else.)*
 2. **Judgment never relaxes an explicit floor.** *(Amended.)* Where the operator has configured a
    floor — via `operator_minimum` or a floored `adjudicate` cell — the verdict space in that cell
    excludes `allow` and no verdict, probe result, or provenance computation adds it back. Where no
@@ -350,14 +351,19 @@ out for a log line), `adjudicate` with a `confirm` floor ranks equal to plain `c
 `operator_minimum` applies to the *verdict* after adjudication on the strictness axis only — `deny`
 verdicts always stand, and adjudication is disallowed in cells whose minimum is `redact`. In
 `observe` mode the evaluator still returns `adjudicate` and the provider still invokes the reviewer;
-only the verdict's effect downgrades to `audit`. And because the effect is `audit` whatever the
-verdict says, the observe-mode invocation runs off the critical path: the call proceeds immediately
-and the verdict is recorded asynchronously, so shadow adds no latency anywhere — including the
-browser hot path, whose every tool call resolves to an egress sink and would otherwise pay a
-blocking reviewer round-trip per action until the M3 exemption lands. That is the free shadow phase:
-real verdicts against real traffic at zero user-visible cost, starting the day the defaults change,
-while the deployment's `mode` stays `observe`. Under `enforce` the invocation necessarily blocks,
-which is why the M5 gate includes p95 reviewer latency.
+only the verdict's effect downgrades to `audit`. *(Amended by
+[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): at the admission
+chokepoints the verdict is not shadow — an observe-mode `allow` stamps the candidate
+`machine_reviewed` and changes what enters future prompts, exactly as in enforce mode, while a
+non-admitting verdict still lets the write proceed under the ordinary write policy. Observe
+describes the effect of a disallowed operation there, not whether the verdict binds.)* And because
+the effect is `audit` whatever the verdict says, the observe-mode invocation runs off the critical
+path: the call proceeds immediately and the verdict is recorded asynchronously, so shadow adds no
+latency anywhere — including the browser hot path, whose every tool call resolves to an egress sink
+and would otherwise pay a blocking reviewer round-trip per action until the M3 exemption lands. That
+is the free shadow phase: real verdicts against real traffic at zero user-visible cost, starting the
+day the defaults change, while the deployment's `mode` stays `observe`. Under `enforce` the
+invocation necessarily blocks, which is why the M5 gate includes p95 reviewer latency.
 
 The shadow property belongs to `observe` mode, not to the defaults change itself. For a deployment
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells

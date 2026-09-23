@@ -1140,8 +1140,9 @@ budget; written gate decision recorded in this document's status.
 - No code path allows probe output or judge output to lower a tier, remove a source, relax a floor,
   or write provenance. *(Amended by
   [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): an admitting
-  verdict at the `ambient_prompt_write` sink, and only there, replaces an external candidate's
-  envelope with `machine_reviewed`; no verdict relaxes a floor or lowers a tier anywhere else.)*
+  verdict at an admission chokepoint — the `ambient_prompt_write` sink, or the executable-definition
+  creation gate — replaces an external candidate's envelope with `machine_reviewed`; no verdict
+  relaxes a floor or lowers a tier anywhere else.)*
 - Judge context provably excludes untrusted-tier rendered content — in conversation rows, argument
   values, and provenance-digest fields (reasons, titles, identifiers) alike (unit-testable via the
   same row-selection and field-filtering functions the assembler uses). *(Amended by the same

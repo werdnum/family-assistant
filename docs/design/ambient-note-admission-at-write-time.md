@@ -598,13 +598,16 @@ state.
    `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance and its rule that
    untrusted content never reaches the judge, together with the matching acceptance criteria in
    `risk-adjudicated-taint-enforcement.md`, already marked amended in both documents (an admitting
-   verdict on an `ambient_prompt_write` now replaces the envelope, to `machine_reviewed` and only
-   there; the candidate renders as the payload under review and reviewed material as the
-   reviewed-context band); `risk-adjudicated-taint-enforcement.md`'s persistent-artifact approach as
-   a whole — content-derived per-field stamps, revision healing, hash-bound human-only promotion,
-   lossless provenance storage — together with its rollout item and acceptance criteria, already
-   marked superseded in that document by this one (machine adjudication now promotes, human
-   confirmation remaining one admitting path, and the audit store keeps its bounded summary);
+   verdict at an admission chokepoint — `ambient_prompt_write`, or the executable-definition
+   creation gate — now replaces the envelope with `machine_reviewed`; the candidate renders as the
+   payload under review and reviewed material as the reviewed-context band); the same document's
+   observe-mode contract that every verdict's effect downgrades to `audit`, amended so that an
+   observe-mode `allow` at an admission chokepoint still stamps the candidate;
+   `risk-adjudicated-taint-enforcement.md`'s persistent-artifact approach as a whole —
+   content-derived per-field stamps, revision healing, hash-bound human-only promotion, lossless
+   provenance storage — together with its rollout item and acceptance criteria, already marked
+   superseded in that document by this one (machine adjudication now promotes, human confirmation
+   remaining one admitting path, and the audit store keeps its bounded summary);
    `executable-definition-taint.md`'s post-admission invariant, the matching security property and
    M3's verification that no path rewrites an authoring stamp, already marked superseded in that
    document (an admission now stamps the tier, the authoring taint moving to the audit event; the
