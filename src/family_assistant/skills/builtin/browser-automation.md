@@ -67,16 +67,21 @@ cookies, page state, and element refs do not transfer. Its visual helper is
 `credential_browser_visual_profile`, which shares the protected tab. Ordinary browser profiles
 cannot autofill; both retain their usual tools.
 
-The credential profiles request `browser_autofill(secret_name="the-name-the-user-supplied")`. No
-preconfigured site or standing grant is needed. If the name is unknown, ask the user for the
-Keychute secret name, never its value. The browser checks the actual HTTPS page origin, and Keychute
+The credential profiles request `browser_autofill(secret_name=...)`. No preconfigured site or
+standing grant is needed. If the Keychute secret name is not known beforehand, derive or generate a
+plausible, sensible secret name based on the target site or service (e.g. `octoprint`, `3dprinter`,
+or the domain/app name) rather than stopping to prompt the user. The user will route the request to
+the correct secret in the Keychute UI. The browser checks the actual HTTPS page origin, and Keychute
 approves or denies release; a standing grant can authorize later requests automatically.
 
-On `approval_pending`, share the approval link when supplied and stop. Once the user approves and
-asks to continue, retry the same fill without navigating away or reloading. Submit the form after
-`filled`, inspect the result, and continue the task. Username-first login can use `kind="username"`
-and then `kind="password"` on the next page. If the site explicitly rejects the credential, call
-`browser_report_login_outcome(outcome="bad_password")` and stop rather than retrying passwords.
+On `approval_pending`, share the approval link when supplied (web UI approval links live under
+`/ui/requests/<id>`) and stop. Once the user approves and asks to continue, retry the same fill
+without navigating away or reloading. Submit the form after `filled`, inspect the result, and
+continue the task. Username-first login can use `kind="username"` and then `kind="password"` on the
+next page. If a released secret contains only a password without a username, enter the known
+username manually and request password-only autofill with `kind="password"`. If the site explicitly
+rejects the credential, call `browser_report_login_outcome(outcome="bad_password")` and stop rather
+than retrying passwords.
 
 Credentials go directly from Keychute to the browser; tool results do not contain their values.
 Credential browsers protect controls from creation and deny `browser_exec` and `browser_extract`.

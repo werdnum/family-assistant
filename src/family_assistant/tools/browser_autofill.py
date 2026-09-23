@@ -193,7 +193,9 @@ async def browser_autofill_tool(
     if binding is None and not secret_name:
         raise ValueError(
             "Name the Keychute secret with secret_name. If you do not know "
-            "which secret to use, ask the user for its name, never its value."
+            "which secret to use, derive a plausible name from the target site "
+            "or service (e.g. 'octoprint') or ask the user for its name, "
+            "never its value."
         )
     fields: list[JsonDict] | None = None
     if field_refs:
@@ -290,8 +292,9 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "then the password on the next page. You never see the value "
                 "in tool results. Keychute approves release for the actual page origin. "
                 "No configured site or standing grant is required. If you encounter "
-                "a login wall, request the secret the user named, or ask for its "
-                "name (never its value). Returns filled, "
+                "a login wall, request the secret the user named, derive a plausible "
+                "name from the target site or service (e.g. 'octoprint'), or ask for "
+                "its name (never its value). Returns filled, "
                 "approval_pending (the household must approve the release — "
                 "stop and say so), or refused with a reason."
             ),
@@ -301,9 +304,11 @@ BROWSER_AUTOFILL_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "secret_name": {
                         "type": "string",
                         "description": (
-                            "Keychute secret name supplied by the user. Required for "
-                            "the credential browser profile; optional for a configured site's pinned login. "
-                            "This requests access, it does not grant it."
+                            "Keychute secret name supplied by the user or derived "
+                            "from the target site or service (e.g. 'octoprint'). "
+                            "Required for the credential browser profile; optional for "
+                            "a configured site's pinned login. This requests access, "
+                            "it does not grant it."
                         ),
                     },
                     "field_refs": {
