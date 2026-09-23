@@ -10,6 +10,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlsplit
 
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
@@ -18,12 +19,14 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_state_into_tracker,
 )
+from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.vector_search import (
     MetadataFilter,
     VectorSearchQuery,
     query_vector_store,
 )
 from family_assistant.tools.types import ToolResult
+from family_assistant.web.web_chat_interface import WebChatInterface
 
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
@@ -38,6 +41,41 @@ logger = logging.getLogger(__name__)
 
 # Tool Definitions
 COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "send_to_my_chat",
+            "description": (
+                "During native voice, save useful text in this user's Chat conversation and "
+                "notify their devices. Use when the speaker asks for a link, address, checklist "
+                "or other information on their phone. Choose open_url for an HTTPS link whose "
+                "notification should open the link directly; otherwise choose open_conversation. "
+                "The recipient and conversation come from the authenticated voice session."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short notification title.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Text to keep in Chat.",
+                    },
+                    "action_kind": {
+                        "type": "string",
+                        "enum": ["open_url", "open_conversation"],
+                    },
+                    "action_url": {
+                        "type": "string",
+                        "description": "HTTPS URL for open_url; omit for open_conversation.",
+                    },
+                },
+                "required": ["title", "content", "action_kind"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -563,6 +601,88 @@ async def _resolve_send_message_target(
             "already messaged the assistant."
         )
     return target_interface_type
+
+
+async def send_to_my_chat_tool(
+    exec_context: ToolExecutionContext,
+    title: str,
+    content: str,
+    action_kind: Literal["open_url", "open_conversation"],
+    action_url: str | None = None,
+) -> ToolResult:
+    """Persist a voice handoff in the authenticated speaker's web conversation."""
+    if exec_context.interface_type != "voice" or exec_context.user_id is None:
+        return ToolResult(text="Error: A native voice conversation is required.")
+    if not title.strip() or not content.strip():
+        return ToolResult(text="Error: A title and content are required.")
+    if action_kind == "open_url":
+        if action_url is None:
+            return ToolResult(text="Error: open_url requires an HTTPS URL.")
+        try:
+            parsed = urlsplit(action_url)
+            hostname = parsed.hostname
+        except ValueError:
+            return ToolResult(text="Error: The action URL is malformed.")
+        if (
+            len(action_url) > 2048
+            or parsed.scheme != "https"
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or any(character.isspace() or character in "<>" for character in action_url)
+        ):
+            return ToolResult(
+                text="Error: The action URL must be an HTTPS URL with a host."
+            )
+    elif action_kind == "open_conversation":
+        if action_url is not None:
+            return ToolResult(
+                text="Error: open_conversation does not accept an action URL."
+            )
+    else:
+        return ToolResult(text="Error: Unknown handoff action.")
+
+    chat_interface = (exec_context.chat_interfaces or {}).get("web")
+    if not isinstance(chat_interface, WebChatInterface):
+        return ToolResult(text="Error: Web Chat is unavailable for this voice handoff.")
+    conversation_id = exec_context.conversation_id
+    owners = await exec_context.db_context.message_history.get_conversation_owner_ids(
+        conversation_id
+    )
+    if owners != {exec_context.user_id}:
+        return ToolResult(
+            text="Error: Voice conversation ownership could not be verified."
+        )
+
+    message = f"**{title.strip()}**\n\n{content.strip()}"
+    if action_url is not None:
+        message += f"\n\n<{action_url}>"
+    metadata = NotificationMetadata(
+        category=MESSAGE_CATEGORY,
+        conversation_id=conversation_id,
+        action_kind=action_kind,
+        action_url=action_url,
+    )
+    taint_metadata = (
+        exec_context.taint_tracker.snapshot().to_metadata()
+        if exec_context.taint_tracker is not None
+        else TurnTaintState.empty().to_metadata()
+    )
+    await chat_interface.send_message(
+        conversation_id=conversation_id,
+        text=message,
+        on_behalf_of_user_id=exec_context.user_id,
+        taint_metadata=taint_metadata,
+        notification_title=title.strip()[:100],
+        notification_metadata=metadata,
+        processing_profile_id=exec_context.processing_profile_id,
+    )
+    return ToolResult(
+        text=(
+            "Saved to your voice conversation in Chat and requested a device notification. "
+            "Notification delivery is not confirmed."
+        )
+    )
 
 
 async def send_message_to_user_tool(

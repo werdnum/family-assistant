@@ -1,6 +1,8 @@
 """Tests for POST /api/v1/chat/voice-sessions (native voice transcript save)."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -8,8 +10,32 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.llm.messages import UserMessage
+from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.storage.database import Database
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import LocalToolsProvider
 from tests.helpers import wait_for_condition
+
+if TYPE_CHECKING:
+    from family_assistant.web.web_chat_interface import WebChatInterface
+
+
+class HandoffNotifier:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, NotificationMetadata | None]] = []
+
+    async def send_notification(
+        self,
+        user_identifier: str,
+        title: str,
+        body: str,
+        db_context: Database,
+        *,
+        metadata: NotificationMetadata | None = None,
+    ) -> None:
+        self.calls.append((user_identifier, title, metadata))
 
 
 @pytest.mark.asyncio
@@ -82,6 +108,151 @@ async def test_voice_session_persists_as_listable_conversation(
     assert rows[0]["taint_metadata_json"].get("max_tier") == "trusted_user"
     assert rows[1]["taint_metadata_json"].get("max_tier") == "unknown_external"
     assert rows[2]["taint_metadata_json"].get("max_tier") == "trusted_user"
+
+
+@pytest.mark.asyncio
+async def test_voice_handoff_and_transcript_share_one_conversation(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    web_only_assistant.fastapi_app.state.processing_service.tools_provider = (
+        LocalToolsProvider(
+            registrations=[
+                registration
+                for registration in LOCAL_TOOL_REGISTRATIONS
+                if registration.name == "send_to_my_chat"
+            ]
+        )
+    )
+    notifier = HandoffNotifier()
+    web_chat = cast(
+        "WebChatInterface", web_only_assistant.fastapi_app.state.chat_interfaces["web"]
+    )
+    web_chat.notifier = notifier
+    conversation_id = f"web_conv_{uuid4()}"
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        handoff = await client.post(
+            "/api/tools/execute/send_to_my_chat",
+            json={
+                "voice_conversation_id": conversation_id,
+                "arguments": {
+                    "title": "Directions",
+                    "content": "Follow this route home.",
+                    "action_kind": "open_url",
+                    "action_url": "https://maps.example.test/route",
+                },
+            },
+        )
+        assert handoff.status_code == 200, handoff.text
+        assert handoff.json()["success"] is True
+        assert len(notifier.calls) == 1
+        assert notifier.calls[0][1] == "Directions"
+        assert notifier.calls[0][2] == NotificationMetadata(
+            category="FAMILY_ASSISTANT_MESSAGE",
+            conversation_id=conversation_id,
+            action_kind="open_url",
+            action_url="https://maps.example.test/route",
+        )
+
+        transcript = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "conversation_id": conversation_id,
+                "turns": [
+                    {
+                        "role": "user",
+                        "text": "send directions",
+                        "timestamp": "2026-01-01T12:00:00Z",
+                    },
+                    {
+                        "role": "assistant",
+                        "text": "sent",
+                        "timestamp": "2026-01-01T12:00:02Z",
+                    },
+                ],
+            },
+        )
+        assert transcript.status_code == 200, transcript.text
+        messages = await client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages"
+        )
+        assert messages.status_code == 200, messages.text
+        visible = messages.json()["messages"]
+        assert [(row["role"], row["content"]) for row in visible] == [
+            ("user", "send directions"),
+            ("assistant", "sent"),
+            (
+                "assistant",
+                "**Directions**\n\nFollow this route home.\n\n<https://maps.example.test/route>",
+            ),
+        ]
+        assert web_only_assistant.database_engine is not None
+        history = Database(web_only_assistant.database_engine)
+        rows = await history.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id
+        )
+        handoff_row = next(
+            row for row in rows if row["content"] == visible[2]["content"]
+        )
+        assert handoff_row["processing_profile_id"] == "default_assistant"
+
+
+@pytest.mark.asyncio
+async def test_voice_handoff_refuses_foreign_conversation_and_invalid_url(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    web_only_assistant.fastapi_app.state.processing_service.tools_provider = (
+        LocalToolsProvider(
+            registrations=[
+                registration
+                for registration in LOCAL_TOOL_REGISTRATIONS
+                if registration.name == "send_to_my_chat"
+            ]
+        )
+    )
+    foreign_id = f"web_conv_{uuid4()}"
+    db = Database(db_engine)
+    await db.message_history.add_message(
+        UserMessage(content="private"),
+        interface_type="web",
+        conversation_id=foreign_id,
+        timestamp=datetime.now(UTC),
+        user_id="another_user",
+    )
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        arguments = {
+            "title": "Directions",
+            "content": "Tap to open",
+            "action_kind": "open_url",
+            "action_url": "https://maps.example.test/route",
+        }
+        foreign = await client.post(
+            "/api/tools/execute/send_to_my_chat",
+            json={"voice_conversation_id": foreign_id, "arguments": arguments},
+        )
+        assert foreign.status_code == 404
+
+        own_id = f"web_conv_{uuid4()}"
+        invalid = await client.post(
+            "/api/tools/execute/send_to_my_chat",
+            json={
+                "voice_conversation_id": own_id,
+                "arguments": {**arguments, "action_url": "javascript:alert(1)"},
+            },
+        )
+        assert invalid.status_code == 200
+        assert "Error:" in invalid.json()["result"]["text"]
+        messages = await client.get(f"/api/v1/chat/conversations/{own_id}/messages")
+        assert messages.status_code == 200
+        assert messages.json()["messages"] == []
 
 
 @pytest.mark.asyncio

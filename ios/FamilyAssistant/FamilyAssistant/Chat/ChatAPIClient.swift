@@ -193,6 +193,8 @@ struct ChatAPIClient {
         conversationID: String?,
         profileID: String?
     ) async throws -> String {
+        let timestampFormatter = ISO8601DateFormatter()
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var request = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/voice-sessions"),
             method: "POST"
@@ -201,7 +203,13 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder().encode(
             VoiceSessionBody(
                 conversationID: conversationID,
-                turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) },
+                turns: turns.map {
+                    VoiceSessionTurnBody(
+                        role: $0.speaker.rawValue,
+                        text: $0.text,
+                        timestamp: timestampFormatter.string(from: $0.timestamp)
+                    )
+                },
                 profileID: profileID
             )
         )
@@ -219,6 +227,7 @@ struct ChatAPIClient {
         name: String,
         arguments: JSONValue,
         profileID: String?,
+        voiceConversationID: String?,
         taintMetadata: JSONValue
     ) async throws -> JSONValue {
         var request = try await authManager.authorizedRequest(
@@ -234,6 +243,7 @@ struct ChatAPIClient {
             ToolExecuteBody(
                 arguments: argumentsObject,
                 profileID: profileID,
+                voiceConversationID: voiceConversationID,
                 taintMetadata: taintMetadata
             )
         )
@@ -1011,11 +1021,13 @@ private struct EphemeralTokenRequestBody: Encodable {
 private struct ToolExecuteBody: Encodable {
     let arguments: JSONValue
     let profileID: String?
+    let voiceConversationID: String?
     let taintMetadata: JSONValue
 
     enum CodingKeys: String, CodingKey {
         case arguments
         case profileID = "profile_id"
+        case voiceConversationID = "voice_conversation_id"
         case taintMetadata = "taint_metadata"
     }
 }
@@ -1023,6 +1035,7 @@ private struct ToolExecuteBody: Encodable {
 private struct VoiceSessionTurnBody: Encodable {
     let role: String
     let text: String
+    let timestamp: String
 }
 
 private struct VoiceSessionBody: Encodable {

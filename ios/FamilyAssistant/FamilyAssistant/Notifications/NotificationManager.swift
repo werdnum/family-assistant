@@ -242,6 +242,8 @@ final class NotificationManager {
                     title: title,
                     body: body
                 )
+            } else if let actionURL = directActionURL(from: userInfo) {
+                pendingNavigationPath = actionURL.absoluteString
             } else if let path = navigationPath(from: userInfo) {
                 pendingNavigationPath = path
             }
@@ -475,6 +477,20 @@ final class NotificationManager {
         }
 
         return "/chat"
+    }
+
+    private func directActionURL(from userInfo: [AnyHashable: Any]) -> URL? {
+        guard stringValue(userInfo["action_kind"]) == "open_url",
+              let rawURL = stringValue(userInfo["action_url"]),
+              let url = URL(string: rawURL),
+              url.scheme == "https",
+              url.host != nil,
+              url.user == nil,
+              url.password == nil
+        else {
+            return nil
+        }
+        return url
     }
 
     private func normalizeNavigationPath(_ rawValue: String) -> String? {

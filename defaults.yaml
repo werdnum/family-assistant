@@ -844,6 +844,7 @@ default_profile_settings:
             - "delete_script"
             - "test_script_with_simulated_tools"
             - "send_message_to_user"
+            - "send_to_my_chat"
             - "attach_to_response"
             - "list_calendars"
             - "add_calendar_event"

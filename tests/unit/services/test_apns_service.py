@@ -115,6 +115,8 @@ async def test_metadata_sets_category_and_custom_fields(
         category="FAMILY_ASSISTANT_CONFIRMATION",
         request_id="confirm_abc",
         conversation_id="conv-1",
+        action_kind="open_url",
+        action_url="https://maps.example.test/route",
     )
     await _service(handler).send_notification(
         "user-1", "Hi", "There", db_context, metadata=metadata
@@ -125,6 +127,8 @@ async def test_metadata_sets_category_and_custom_fields(
     # Custom fields are top-level userInfo keys, not nested under aps.
     assert body["request_id"] == "confirm_abc"
     assert body["conversation_id"] == "conv-1"
+    assert body["action_kind"] == "open_url"
+    assert body["action_url"] == "https://maps.example.test/route"
     assert "category" not in body
 
 

@@ -7,15 +7,16 @@ import XCTest
 final class VoiceToolRunnerTests: XCTestCase {
     private final class FakeToolExecutor: VoiceToolExecuting {
         var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
-        private(set) var calls: [(name: String, arguments: JSONValue, profileID: String?, taintMetadata: JSONValue)] = []
+        private(set) var calls: [(name: String, arguments: JSONValue, profileID: String?, voiceConversationID: String?, taintMetadata: JSONValue)] = []
 
         func executeTool(
             name: String,
             arguments: JSONValue,
             profileID: String?,
+            voiceConversationID: String?,
             taintMetadata: JSONValue
         ) async throws -> JSONValue {
-            calls.append((name, arguments, profileID, taintMetadata))
+            calls.append((name, arguments, profileID, voiceConversationID, taintMetadata))
             return try await handler(name, arguments)
         }
     }
@@ -38,6 +39,7 @@ final class VoiceToolRunnerTests: XCTestCase {
         XCTAssertEqual(responses[0].name, "get_weather")
         XCTAssertEqual(responses[0].response, .object(["result": .object(["temp": .number(72)])]))
         XCTAssertEqual(executor.calls.first?.arguments, .object(["city": .string("NYC")]))
+        XCTAssertEqual(executor.calls.first?.voiceConversationID, runner.conversationID)
     }
 
     func testServerErrorWithDetailRelaysDetail() async throws {
@@ -164,11 +166,13 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
             name: "get_weather",
             arguments: .object(["city": .string("NYC")]),
             profileID: "research",
+            voiceConversationID: "web_conv_12345678-1234-1234-1234-123456789abc",
             taintMetadata: VoiceToolRunner.initialTaintMetadata
         )
 
         XCTAssertEqual((capturedBody["arguments"] as? [String: Any])?["city"] as? String, "NYC")
         XCTAssertEqual(capturedBody["profile_id"] as? String, "research")
+        XCTAssertEqual(capturedBody["voice_conversation_id"] as? String, "web_conv_12345678-1234-1234-1234-123456789abc")
         XCTAssertEqual(
             (capturedBody["taint_metadata"] as? [String: Any])?["max_tier"] as? String,
             "trusted_user"
@@ -187,6 +191,7 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
             name: "noop",
             arguments: .null,
             profileID: nil,
+            voiceConversationID: nil,
             taintMetadata: VoiceToolRunner.initialTaintMetadata
         )
 
@@ -209,6 +214,7 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
                 name: "get_weather",
                 arguments: .object(["city": .string("NYC")]),
                 profileID: nil,
+                voiceConversationID: nil,
                 taintMetadata: VoiceToolRunner.initialTaintMetadata
             )
             XCTFail("Expected an auth-wall HTML body to throw authWall")
@@ -229,6 +235,7 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
                 name: "get_weather",
                 arguments: .object(["city": .string("NYC")]),
                 profileID: nil,
+                voiceConversationID: nil,
                 taintMetadata: VoiceToolRunner.initialTaintMetadata
             )
             XCTFail("Expected a non-success auth-wall body to throw authWall")
@@ -244,6 +251,7 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
             name: "rejected_tool",
             arguments: .object([:]),
             profileID: nil,
+            voiceConversationID: nil,
             taintMetadata: VoiceToolRunner.initialTaintMetadata
         )
 

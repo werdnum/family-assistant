@@ -9,6 +9,7 @@ enum VoiceSpeaker: String, Equatable {
 /// One line of the live conversation transcript.
 struct VoiceTranscriptEntry: Identifiable, Equatable {
     let id = UUID()
+    let timestamp = Date()
     let speaker: VoiceSpeaker
     var text: String
 }

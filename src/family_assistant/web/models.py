@@ -295,6 +295,7 @@ class VoiceSessionTurn(BaseModel):
 
     role: Literal["user", "assistant"]
     text: str
+    timestamp: datetime | None = None
 
 
 class VoiceSessionRequest(BaseModel):

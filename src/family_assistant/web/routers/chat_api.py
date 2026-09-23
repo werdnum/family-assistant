@@ -3242,7 +3242,12 @@ async def api_chat_save_voice_session(
             )
         # Strictly increasing timestamps keep the transcript ordered when the
         # conversation is read back (history is ordered by timestamp).
-        timestamp = base_time + timedelta(milliseconds=index)
+        timestamp = turn.timestamp or base_time + timedelta(milliseconds=index)
+        if timestamp.tzinfo is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Voice transcript timestamps must include a timezone.",
+            )
         await db_context.message_history.add_message(
             message,
             interface_type="web",

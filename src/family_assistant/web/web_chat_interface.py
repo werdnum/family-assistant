@@ -77,6 +77,9 @@ class WebChatInterface(ChatInterface):
         text: str,
         attachment_ids: list[str] | None,
         taint_metadata: TaintMetadata | None,
+        notification_title: str,
+        notification_metadata: NotificationMetadata,
+        processing_profile_id: str | None,
     ) -> tuple[int | None, set[str]]:
         clock = SystemClock()
         db_context = Database(engine=self.database_engine)
@@ -109,6 +112,7 @@ class WebChatInterface(ChatInterface):
             conversation_id=conversation_id,
             timestamp=clock.now(),
             attachments=attachments,
+            processing_profile_id=processing_profile_id,
         )
 
         if saved_message is not None and self.notifier is not None:
@@ -118,12 +122,9 @@ class WebChatInterface(ChatInterface):
                     db_context,
                     interface_type=self.interface_type,
                     conversation_id=conversation_id,
-                    title="New message",
+                    title=notification_title,
                     body=text[:100],
-                    metadata=NotificationMetadata(
-                        category=MESSAGE_CATEGORY,
-                        conversation_id=conversation_id,
-                    ),
+                    metadata=notification_metadata,
                 )
             except Exception as exc:
                 logger.warning(
@@ -141,6 +142,9 @@ class WebChatInterface(ChatInterface):
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
+        notification_title: str = "New message",
+        notification_metadata: NotificationMetadata | None = None,
+        processing_profile_id: str | None = None,
     ) -> str:
         """
         Sends a message to the web UI by saving it to the database.
@@ -195,6 +199,13 @@ class WebChatInterface(ChatInterface):
                 text,
                 attachment_ids,
                 taint_metadata,
+                notification_title,
+                notification_metadata
+                or NotificationMetadata(
+                    category=MESSAGE_CATEGORY,
+                    conversation_id=conversation_id,
+                ),
+                processing_profile_id,
             )
         except Exception as exc:
             # The write or the notification failed. Both are conditions of the

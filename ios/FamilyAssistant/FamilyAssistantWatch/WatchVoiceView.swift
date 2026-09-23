@@ -105,7 +105,7 @@ struct WatchVoiceView: View {
     private func begin() {
         guard session == nil || session?.isTerminal == true else { return }
         let api = ChatAPIClient(authManager: auth)
-        let model = VoiceSessionViewModel(tokenProvider: api, toolExecutor: api)
+        let model = VoiceSessionViewModel(tokenProvider: api, toolExecutor: api, transcriptStore: api)
         session = model
         Task { await model.start() }
     }
