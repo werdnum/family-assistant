@@ -1,67 +1,109 @@
 # Websites the assistant can sign into
 
-**What's here:** how to ask the assistant to do something on a website your household has a saved
-login for, what it can and cannot do there, and what to do when it comes back asking for help.
+**What's here:** how to ask the assistant to interact with websites requiring credentials or saved
+logins, the difference between on-demand credential browsing and pre-configured authenticated sites,
+and what to do when the assistant needs approval or help.
 
-## Sign in while browsing
+## Two ways to browse with credentials
 
-You can give the assistant a URL and the name of a password stored in Keychute:
+Family Assistant supports two distinct ways to work with websites that require authentication:
 
-> Open https://www.amazon.com and check my delivery. If you need to sign in, request the Keychute
-> secret `amazon-password`.
+1. **On-demand credential browsing (`/browse_authenticated`)**: Ad-hoc browsing at arbitrary URLs
+   using passwords stored in Keychute. No prior assistant site setup is needed; Keychute handles
+   interactive approval and autofills credentials directly into the browser.
+2. **Pre-configured authenticated sites (`run_authenticated_site_task`)**: Operator-configured
+   presets for specific services (e.g. HelloFresh, utility portals). These restrict the browser to
+   specific web origins, maintain saved login cookie jars, and control which household members are
+   allowed to act on the account.
 
-For login tasks, the assistant uses a separate browser that can request stored credentials. You can
-also select it with `/browse_authenticated`. If a login wall appears during ordinary browsing, the
-assistant can switch to this browser; it opens a separate session, so page progress and cookies do
-not transfer. Ordinary browsing retains its JavaScript tools. The credential browser uses page
-snapshots and visual actions instead.
+| Feature                | On-Demand Credential Browsing (`/browse_authenticated`)   | Pre-Configured Authenticated Sites (`run_authenticated_site_task`) |
+| ---------------------- | --------------------------------------------------------- | ------------------------------------------------------------------ |
+| **Invocation**         | `/browse_authenticated <URL>` or delegation on login wall | Natural conversation ("Check our HelloFresh menu")                 |
+| **Configuration**      | No assistant configuration; any arbitrary URL             | Configured by operator in YAML (`authenticated_sites`)             |
+| **Navigation scope**   | General browsing; can navigate across domains             | Strictly confined to configured website origins                    |
+| **Session state**      | Ephemeral protected session (discarded after use)         | Persistent saved cookie jar (`jar_id`) across runs                 |
+| **Credentials**        | Keychute autofill requested on demand by secret name      | Pre-saved login session or pinned `credential_alias`               |
+| **Approval flow**      | Keychute web UI (`/ui/requests/<request_id>`) or grant    | Confirmation prompt before task; Keychute approval on first login  |
+| **User authorization** | Available to household users with browsing access         | Restricted to explicitly named household users                     |
 
-No site configuration or standing grant is needed. When the assistant reaches the login form, it
-requests the named credential. If approval is needed, it gives you the Keychute approval link. Check
-the account and destination, approve it, then tell the assistant to continue. You can add a standing
-grant in Keychute later to permit future requests automatically, restricted to the appropriate
-website origins.
+______________________________________________________________________
 
-If you did not specify a secret name, the assistant can ask which one to request. Give it the name,
-never the password itself. Keychute delivers the credential directly to the browser; the assistant
-submits the form and continues your task. If the password is rejected, it stops, discards the failed
-browser session, and asks you to correct the stored secret. After correcting it, ask it to try again
-in the same conversation.
+## On-demand credential browsing (`/browse_authenticated`)
 
-The browser stays open while you approve, subject to its normal expiry. If it expires or the service
-restarts, ask the assistant to start the task again. For MFA or a captcha, it can give you a browser
-handoff link.
+You can give the assistant a URL and ask it to sign in using Keychute:
 
-This is general browsing: the assistant can navigate between websites and make changes using
-accounts you approve. Granting a password fill does not constrain all later account actions. Read
-its report of what it did.
+> /browse_authenticated Open https://www.amazon.com and check my delivery. If you need to sign in,
+> use the Keychute secret `amazon-password`.
 
-## Optional saved-site presets
+For login tasks, the assistant uses a dedicated, protected browser profile
+(`credential_browser_profile`). You can invoke it explicitly with `/browse_authenticated` or start
+with `/browse`; if ordinary browsing encounters a login wall, the assistant can switch to this
+browser automatically. Because the credential browser starts in a separate protected session to keep
+credentials safe, ordinary browsing cookies, page progress, and element refs do not transfer.
+Ordinary browsing retains JavaScript execution (`browser_exec`) and raw extraction
+(`browser_extract`), while credential browsing disables those tools and relies on page snapshots and
+visual actions instead.
 
-The rest of this guide describes preconfigured sites, which can supply a saved login and restrict
-browsing to a particular account and set of web addresses. They are optional; ordinary password
-requests above do not require them.
+No site configuration or standing grant is needed beforehand. When the assistant reaches a login
+form, it requests `browser_autofill`:
+
+- **Synthesizing secret names**: If you specify a secret name in your request, the assistant uses
+  it. If you do not specify a secret name, the assistant does not pause to ask you; it derives a
+  plausible, sensible name based on the target site or service (e.g. `octoprint`, `3dprinter`, or
+  the domain/app name). You can route the request to the correct secret directly in Keychute during
+  approval.
+- **Approval in Keychute UI**: If approval is needed, the assistant pauses and gives you the
+  Keychute web UI approval link, which lives under `/ui/requests/<request_id>`. Open the link,
+  review the destination origin and requested secret, route it if necessary, and approve it. Then
+  tell the assistant to continue in your chat. You can also configure a standing grant in Keychute
+  to permit future requests on trusted origins automatically.
+- **Direct credential delivery**: Keychute injects the credential directly into the browser. The
+  assistant and model never see password values.
+- **Password-only secrets and manual username entry**: If a released secret contains only a password
+  without a username, the assistant can enter the known username manually (using `browser_fill`) and
+  request password-only autofill with `kind="password"`. For multi-step logins, it fills
+  `kind="username"` on the first page and `kind="password"` on the next.
+- **Failed passwords**: If the site rejects the credentials, the assistant calls
+  `browser_report_login_outcome(outcome="bad_password")`, immediately discards the browser session,
+  and asks you to correct the stored secret. Once corrected, ask the assistant to try again in the
+  same conversation.
+- **Handoff for MFA or CAPTCHA**: For multi-factor codes or CAPTCHAs, the assistant provides a
+  browser handoff link so you can complete the challenge in your own browser.
+
+This is general browsing: the assistant can navigate between websites and perform actions on
+accounts you approve. Granting a password fill does not restrict subsequent navigation. Read its
+report of what it did.
+
+______________________________________________________________________
+
+## Pre-configured authenticated sites (`run_authenticated_site_task`)
+
+Pre-configured sites are operator-defined account presets. They supply a saved login (or pinned
+password alias) and lock browsing strictly to an allowed set of web addresses. They are designed for
+recurring household workflows and do not require slash commands or explicit URLs.
 
 ### Asking for something
 
-Each site has to be set up for you first, with the login saved (or the password stored) and the
-people who are allowed to act on that account named. Once it is, you just ask:
+Each site has to be set up in the assistant configuration first, with the login saved (or the
+password stored) and the people who are allowed to act on that account named. Once it is, you just
+ask naturally:
 
 > Pick our HelloFresh meals for next week — something vegetarian on Tuesday.
-
+>
 > Check whether our next delivery is still scheduled for Thursday.
 
-Say what you want done, not how to do it. The assistant opens a browser that is already signed in,
-works through the site, and reports back what it actually changed. You do not have to tell it which
-login to use, hand it a password, or paste a URL — it only knows the sites that were set up, and
-only the ones you personally are allowed to use.
+Say what you want done, not how to do it. The assistant invokes `run_authenticated_site_task`, which
+opens a browser that is already signed in using the saved cookie jar, works through the site, and
+reports back what it actually changed. You do not have to tell it which login to use, hand it a
+password, or paste a URL — it only knows the sites that were set up, and only the ones you
+personally are allowed to use.
 
 You can ask which websites are available; the assistant sees only sites you are authorized to use.
 
 The assistant asks you to confirm before starting or resuming a site task. Individual browser clicks
 do not need separate confirmation.
 
-## What it can do there
+### What it can do there
 
 Inside a configured site, the assistant has the same reach you do when you are signed in. It can
 read your account, change selections, and submit forms. That is the point, and it is also the honest
@@ -81,7 +123,7 @@ When it is done, the browser is thrown away; only the saved login itself persist
 
 For anything where a mistake would be expensive or hard to undo, keep doing it yourself.
 
-## Checking and undoing
+### Checking and undoing
 
 The assistant reports what it did, so read that rather than assuming. If something is wrong, fix it
 the way you normally would on the site — the assistant's changes are ordinary account changes.
@@ -90,7 +132,7 @@ If you want to cut off its access entirely, revoke the saved login. That ends an
 using it straight away, and it also stops the stored password being offered, so the assistant cannot
 quietly sign back in. Setting it up again is a deliberate act.
 
-## When it comes back with a question
+### When it comes back with a question
 
 Some steps need you. The assistant will say which, and the task waits for you rather than guessing.
 
@@ -122,14 +164,14 @@ password and ask again.
 The assistant will not keep retrying a login that failed, and it will not ask you to type a password
 into the chat. If something ever seems to be asking for that, it is not this feature.
 
-## What the assistant reads back to you
+### What the assistant reads back to you
 
 The summary comes off the site's own pages, so treat it as a report about that site rather than as
 instructions. If a result tells you to do something surprising — install something, send money,
 visit another address — that is the site talking, not the assistant, and it is worth being
 suspicious of.
 
-## Setting a site up
+### Setting a site up
 
 That part is not something the assistant does. It needs someone with access to the configuration to
 add the site, save the login, and decide who may use it. See

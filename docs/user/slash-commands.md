@@ -18,7 +18,8 @@ Which commands exist depends on how your deployment is configured; these are the
 
 | Command                     | Use it for                                                                         |
 | --------------------------- | ---------------------------------------------------------------------------------- |
-| `/browse`                   | Web tasks needing navigation, forms, logins, or JavaScript-heavy pages             |
+| `/browse`                   | Web tasks needing navigation, forms, or JavaScript-heavy pages (anonymous)         |
+| `/browse_authenticated`     | Web tasks requiring stored credentials; fills passwords on demand via Keychute     |
 | `/browse_visual`            | Sites the DOM-based browser can't handle; drives the page visually                 |
 | `/research`                 | In-depth research on a topic — the right default for research questions            |
 | `/research_max`             | The most thorough multi-source research, when depth matters more than speed        |
@@ -42,6 +43,13 @@ first. An ordinary message is different — that gets folded into the request al
 
 ## Choosing between them
 
+- **`/browse` for anonymous browsing, `/browse_authenticated` when signing in.** Use `/browse` for
+  reading pages, searching, and unauthenticated forms. Use `/browse_authenticated` when a site needs
+  a password stored in Keychute; the assistant starts a separate protected session, requests the
+  credential with Keychute approval, and autofills it without exposing secret values. If an ordinary
+  `/browse` session hits a login wall, the assistant can delegate to authenticated browsing
+  automatically. See [browser_automation.md](browser_automation.md) and
+  [authenticated-sites.md](authenticated-sites.md).
 - **Simple page summaries don't need `/browse`.** The assistant can usually fetch a page directly;
   reach for `/browse` when that fails or the page needs interaction. See
   [research-and-browsing.md](research-and-browsing.md).
