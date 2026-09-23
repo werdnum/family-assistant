@@ -1559,6 +1559,28 @@ _REVIEW_DISCLOSURE_SINKS = frozenset({
 })
 
 
+async def _ambient_review_context(context: ToolExecutionContext) -> str | None:
+    """The eligible ambient notes and skills, as the turn's prompt renders them.
+
+    Prompt-included notes travel in the turn-context scaffolding message, which
+    the reviewer's conversation rendering skips because that block also carries
+    unreviewed titles. This is the bounded channel for the reviewed part alone,
+    produced by the prompt's own renderer.
+    """
+    # Local import: context providers import the calendar integration, which
+    # imports the tools package.
+    from family_assistant.context_providers import (  # noqa: PLC0415
+        AmbientReviewContextProvider,
+    )
+
+    providers = getattr(context.processing_service, "context_providers", None) or ()
+    fragments: list[str] = []
+    for provider in providers:
+        if isinstance(provider, AmbientReviewContextProvider):
+            fragments.extend(await provider.get_ambient_review_fragments())
+    return "\n\n".join(fragment for fragment in fragments if fragment) or None
+
+
 def _review_messages_are_current_turn_only(
     messages: Sequence[object] | None,
     *,
@@ -3132,6 +3154,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             sink_class=sink_class,
             taint_state=state,
             policy_contexts=policy_contexts,
+            ambient_context=await _ambient_review_context(context),
             deployment_guidance=self._deployment_review_guidance,
             profile_guidance=self._profile_review_guidance,
             trigger=context.tool_call_review_trigger,

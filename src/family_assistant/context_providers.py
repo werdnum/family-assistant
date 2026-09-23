@@ -104,6 +104,15 @@ class TaintedContextProvider(Protocol):
         ...
 
 
+@runtime_checkable
+class AmbientReviewContextProvider(Protocol):
+    """A context provider whose ambient material the tool-call reviewer may read."""
+
+    async def get_ambient_review_fragments(self) -> list[str]:
+        """Return the eligible ambient material as the prompt renders it."""
+        ...
+
+
 class NotesContextProvider(ContextProvider):
     """Provides context from stored notes and skills."""
 
@@ -197,7 +206,9 @@ class NotesContextProvider(ContextProvider):
 
         return "\n".join(attachment_lines)
 
-    async def _build_context_fragments(self) -> list[str]:
+    async def _build_context_fragments(
+        self, *, ambient_material_only: bool = False
+    ) -> list[str]:
         fragments: list[str] = []
         db_context = self._get_db_context_func()
         # Use targeted queries - skills are identified at write time via is_skill column
@@ -205,8 +216,12 @@ class NotesContextProvider(ContextProvider):
             read_policy=self._read_policy
         )
         db_skills = await db_context.notes.get_skills(read_policy=self._read_policy)
-        excluded_titles = await db_context.notes.get_excluded_notes_titles(
-            read_policy=self._read_policy
+        excluded_titles = (
+            []
+            if ambient_material_only
+            else await db_context.notes.get_excluded_notes_titles(
+                read_policy=self._read_policy
+            )
         )
 
         # 1. Regular notes section
@@ -239,7 +254,7 @@ class NotesContextProvider(ContextProvider):
             ).strip()
             if formatted_notes_context:
                 fragments.append(formatted_notes_context)
-        else:
+        elif not ambient_material_only:
             no_notes_message = self._prompts.get("no_notes")
             if no_notes_message:
                 fragments.append(no_notes_message)
@@ -292,6 +307,15 @@ class NotesContextProvider(ContextProvider):
         except Exception as e:
             logger.exception(f"[{self.name}] Failed to get notes context: {e}")
             return []
+
+    async def get_ambient_review_fragments(self) -> list[str]:
+        """The eligible ambient material, exactly as the prompt renders it.
+
+        Included notes with their attachment metadata, and the skill catalog --
+        nothing else from the turn-context block, so unreviewed titles never
+        reach the tool-call reviewer through this path.
+        """
+        return await self._build_context_fragments(ambient_material_only=True)
 
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
         """Return provenance taint for the notes and skills the prompt carries.
