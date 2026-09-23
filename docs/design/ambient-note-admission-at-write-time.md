@@ -563,8 +563,11 @@ state.
    three companion contracts this design changes marked at the sentence, not the document:
    `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance (an admitting
    verdict on an `ambient_prompt_write` now does, to `machine_reviewed` and only there);
-   `risk-adjudicated-taint-enforcement.md`'s reservation of note promotion for human attestation
-   (machine adjudication now promotes, human confirmation remaining one admitting path);
+   `risk-adjudicated-taint-enforcement.md`'s persistent-artifact approach as a whole —
+   content-derived per-field stamps, revision healing, hash-bound human-only promotion, lossless
+   provenance storage — together with its rollout item and acceptance criteria, already marked
+   superseded in that document by this one (machine adjudication now promotes, human confirmation
+   remaining one admitting path, and the audit store keeps its bounded summary);
    `executable-definition-taint.md`'s statement that a cure never rewrites the authoring stamp (an
    admission now stamps the tier, the authoring taint moving to the audit record); and
    `auto-tool-call-review.md`'s rule, with its verification, that observe-mode adjudication never

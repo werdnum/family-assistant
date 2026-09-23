@@ -764,6 +764,14 @@ Cheap detections of commodity spray attacks get deterministic hardening plus a v
 
 ### Persistent artifacts: content-derived provenance and attested healing
 
+> **Superseded.** The persistent-artifact mechanics below — per-field content-derived stamps,
+> revision-scoped healing, hash-bound human-only promotion and lossless provenance storage — are
+> superseded by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
+> which stamps at the turn level from the writer's trust, promotes through a machine verdict at one
+> admission sink (human confirmation remaining one admitting path), and keeps a bounded audit
+> summary. The store corrections named as lean core (calendar de-trusting, the
+> externally-mutable-store audit question) stand.
+
 *(Tier split: the store corrections below — calendar de-trusting, the externally-mutable-store audit
 question — are lean core; the stamping, healing, attribution, and attestation mechanics are
 contingent tier.)*
@@ -965,8 +973,9 @@ cells the data indicts:
    and a judge retrofitted with it later is a different judge than the one calibrated. Run under
    `observe`, evaluate against the shadow-phase gates, then enforce with deny-and-continue and
    escalation counters.
-7. **Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
-   extension) if artifact-restored taint is what the measurements indict.
+7. ~~**Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
+   extension) if artifact-restored taint is what the measurements indict.~~ Superseded by
+   [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md).
 8. **Post-facto capability-scoped approval reuse** (a real approval of a real instance becomes
    durable for its exact capability tuple), and the **injection probe**, escalate-only, once there
    is an enforcement layer for it to harden.
@@ -1133,13 +1142,17 @@ budget; written gate decision recorded in this document's status.
 - Adjudication in a delegated run sees the same temporal evidence (sensitive-read records,
   fresh-taint ordering) as it would in the parent turn: the serialized taint schema carries it
   across the delegation round trip.
-- An artifact written from content that verbatim-matches the current turn's trusted-tier text
+- ~~An artifact written from content that verbatim-matches the current turn's trusted-tier text
   carries trusted provenance even in a tainted turn; a model paraphrase of untrusted content fails
   the match and keeps the turn-maximum stamp — laundering by rewording is impossible by
-  construction.
-- Stored artifact provenance moves toward trusted only through deterministic content-derived
+  construction.~~ Superseded: an artifact write carries the turn's stamp under the
+  retained-provenance rule of
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md).
+- ~~Stored artifact provenance moves toward trusted only through deterministic content-derived
   stamping, deterministic revision-scoped healing, or an authenticated human attestation — never
-  through a model verdict, and attribution survives storage without truncation.
+  through a model verdict, and attribution survives storage without truncation.~~ Superseded: the
+  admission sink promotes on a machine verdict, a human confirmation or an operator override, and
+  the audit store keeps its bounded summary.
 - Every verdict, escalation, and probe detection is auditable after the fact with reasons.
 
 ## References
