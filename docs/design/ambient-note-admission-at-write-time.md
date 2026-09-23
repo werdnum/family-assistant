@@ -338,10 +338,10 @@ its own trust:
 - **Note tools** (`create_note`, `update_note`) and **workspace import** stamp the maximum of the
   turn's taint, floored at `trusted_internal`, and the stored taint of whatever the candidate
   retains — body under an append, attachments the call omits — replaced by `machine_reviewed` on an
-  admitting verdict and floored at `known_contact` on a non-admitting one. The title is always
-  retained, so a tool write never lowers a stamp; only an admission or the user's own web API edit
-  does, and a clean-turn write, including a demotion, never launders retained external text into
-  `trusted_user`.
+  admitting verdict and, for an external candidate, floored at `known_contact` on a non-admitting
+  one (a trusted-pole candidate keeps its trusted stamp). The title is always retained, so a tool
+  write never lowers a stamp; only an admission or the user's own web API edit does, and a
+  clean-turn write, including a demotion, never launders retained external text into `trusted_user`.
 - **Web API** writes are made by an authenticated user and stamp `trusted_user`. Today they preserve
   whatever provenance the note already had, which leaves a user's own edit carrying a stale stamp;
   that is corrected, and it is the deterministic way a user promotes a note the review refused.
@@ -568,8 +568,10 @@ state.
    provenance storage — together with its rollout item and acceptance criteria, already marked
    superseded in that document by this one (machine adjudication now promotes, human confirmation
    remaining one admitting path, and the audit store keeps its bounded summary);
-   `executable-definition-taint.md`'s statement that a cure never rewrites the authoring stamp (an
-   admission now stamps the tier, the authoring taint moving to the audit record); and
+   `executable-definition-taint.md`'s post-admission invariant, the matching security property and
+   M3's verification that no path rewrites an authoring stamp, already marked superseded in that
+   document (an admission now stamps the tier, the authoring taint moving to the audit event; the
+   disposition-only resolution is retained for prior-version rows alone); and
    `auto-tool-call-review.md`'s rule, with its verification, that observe-mode adjudication never
    runs on the critical path (`ambient_prompt_write` alone awaits its verdict in observe mode); and
    `auto-tool-call-review.md`'s input contract, which stubs every conversation row above
