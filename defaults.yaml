@@ -2211,6 +2211,7 @@ service_profiles:
               - "delete_script"
               - "test_script_with_simulated_tools"
               - "send_message_to_user"
+              - "send_to_my_chat"
               - "attach_to_response"
               - "list_calendars"
               - "add_calendar_event"
@@ -2698,4 +2699,3 @@ authenticated_sites: {}
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See
 # docs/operations/CONFIGURATION_REFERENCE.md.
-
