@@ -241,23 +241,27 @@ gate an attachment with **no stored envelope is evaluated as `unknown_external`*
 is about to reach every prompt, and an unlabelled artifact must not pass on the strength of what
 nobody recorded. And the attachment registry's registration boundary becomes a stamping chokepoint
 like the notes repository, with the stamp coming from the writer's own trust exactly as a note's
-does: a tool-stored attachment records the storing turn's taint state under the same
-machine-authorship floor (`trusted_internal` at least, so a description the model composed is never
-the user's own words), which is how a Gmail download carries the tier its message raised the turn
-to; an authenticated user's direct upload, which enters through `register_user_attachment` rather
-than the tool helper, stamps `trusted_user`. Explicit reads of attachments are unchanged — an
-unlabelled upload still contributes nothing when read, since defaulting there would taint every
-ordinary user upload — the default applies only where the artifact is being promoted. A clean turn
-that appends to an unreviewed note is likewise reviewed at that note's tier rather than promoting
-its old body to `trusted_user` unread. The title is retained material too: `update_note` keys the
-row by title and cannot replace it, and the title is rendered in full ambient inclusion and in the
-reviewer's band, so a tool update of a stored note is always evaluated at no less than the note's
-stored tier, even when the call replaces the body and clears the attachments. A tool write therefore
-never lowers a stamp on its own; a stamp is lowered by an admission or by the user's own edit
-through the web API, which replaces the title along with everything else. Synchronous review does
-not remove every concurrent update race; what remains is ordinary database correctness — persist the
-candidate that was actually reviewed, under the transaction and locking semantics the repository
-already uses.
+does: a tool-stored attachment records the storing turn's taint state **merged with the producing
+call's own result taint** — the declared output provenance the infrastructure resolves for the tool
+at dispatch, or the dynamic taint the call reports — under the same machine-authorship floor
+(`trusted_internal` at least, so a description the model composed is never the user's own words).
+The merge matters because a tool registers its attachment while it is still executing, before the
+infrastructure records the result's taint on the turn: a Gmail download that is the turn's first
+external read would otherwise be stamped from a still-clean turn. With it, the download carries the
+tier its message would raise the turn to whether or not anything external came before it. An
+authenticated user's direct upload, which enters through `register_user_attachment` rather than the
+tool helper, stamps `trusted_user`. Explicit reads of attachments are unchanged — an unlabelled
+upload still contributes nothing when read, since defaulting there would taint every ordinary user
+upload — the default applies only where the artifact is being promoted. A clean turn that appends to
+an unreviewed note is likewise reviewed at that note's tier rather than promoting its old body to
+`trusted_user` unread. The title is retained material too: `update_note` keys the row by title and
+cannot replace it, and the title is rendered in full ambient inclusion and in the reviewer's band,
+so a tool update of a stored note is always evaluated at no less than the note's stored tier, even
+when the call replaces the body and clears the attachments. A tool write therefore never lowers a
+stamp on its own; a stamp is lowered by an admission or by the user's own edit through the web API,
+which replaces the title along with everything else. Synchronous review does not remove every
+concurrent update race; what remains is ordinary database correctness — persist the candidate that
+was actually reviewed, under the transaction and locking semantics the repository already uses.
 
 **What the reviewer judges** is the complete proposed note or skill as *reusable material*, not
 merely whether the user asked for a save. Two cases fix the boundary:
@@ -414,6 +418,15 @@ external again through search. It is a deliberate operator judgment that the ind
 remainder of the pre-rollout corpus is household material, of the same kind as the history epoch
 amnesty, and it is recorded below as an accepted residual.
 
+The same script restamps **attachments** with no envelope, and there the stored data distinguishes
+every cohort, because the registry records each attachment's `source_type` and `source_id`: a `user`
+upload is stamped `trusted_user`; an `email` attachment `unknown_external`; a `tool` or `script`
+output at the tier its producing tool's declared output provenance names today, which is what the
+registration chokepoint would have stamped, and `trusted_internal` where the tool declares none.
+Without this, every Gmail download made before the chokepoint would stay envelope-less for good, and
+an explicit read that skips a missing envelope would return sender-controlled bytes without raising
+the turn.
+
 After the batch, a null envelope is a write-path regression, not a legacy condition: the eligibility
 resolver and the shared explicit-read resolver still treat absence as external, and they log it at
 ERROR the way the history reader alarms on a post-epoch row with missing metadata. Neither parses a
@@ -479,11 +492,14 @@ state.
    `unknown_external`; the ast-grep rule forbids raw note-table writes outside the repository;
    `get_note` routes returned attachments through the shared attachment-provenance resolver;
    attachment registration stamps source-correct provenance. Verified by the conformance check
-   rejecting a raw write, by registry tests that a Gmail download stored in a turn the message
-   raised to `unknown_external` carries that envelope, that a tool-stored attachment from a clean
-   turn stamps `trusted_internal`, and that a direct user upload stamps `trusted_user`, by a
-   repository test that a clean-turn tool write stamps `trusted_internal` while a web API write
-   stamps `trusted_user`, by a memory-apply test that a clean review editing one entry of a
+   rejecting a raw write, by registry tests that a Gmail download carries an `unknown_external`
+   envelope when it is the turn's first external call as well as when the message already raised the
+   turn, that a tool-stored attachment from a clean turn with no declared output provenance stamps
+   `trusted_internal`, and that a direct user upload stamps `trusted_user`, by a test of the batch
+   script that a null-envelope `email` attachment and a legacy Gmail download are restamped
+   `unknown_external` while a legacy `user` upload is restamped `trusted_user`, by a repository test
+   that a clean-turn tool write stamps `trusted_internal` while a web API write stamps
+   `trusted_user`, by a memory-apply test that a clean review editing one entry of a
    `machine_reviewed` topic note leaves the note at `machine_reviewed`, and that the index refresh
    it triggers leaves a `machine_reviewed` core note at `machine_reviewed`, by a fresh-database
    memory bootstrap, by a test of the batch script that restamps a null row `trusted_internal`,
