@@ -1138,10 +1138,16 @@ budget; written gate decision recorded in this document's status.
 - An adjudicator outage degrades every `adjudicate` cell to `confirm`, visibly in diagnostics —
   never to `allow`.
 - No code path allows probe output or judge output to lower a tier, remove a source, relax a floor,
-  or write provenance.
+  or write provenance. *(Amended by
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): an admitting
+  verdict at the `ambient_prompt_write` sink, and only there, replaces an external candidate's
+  envelope with `machine_reviewed`; no verdict relaxes a floor or lowers a tier anywhere else.)*
 - Judge context provably excludes untrusted-tier rendered content — in conversation rows, argument
   values, and provenance-digest fields (reasons, titles, identifiers) alike (unit-testable via the
-  same row-selection and field-filtering functions the assembler uses).
+  same row-selection and field-filtering functions the assembler uses). *(Amended by the same
+  design: the complete candidate under review at the admission sink is rendered as the payload, as
+  the auto-reviewer's input contract already excepts, and `machine_reviewed` material renders as a
+  bounded reviewed-context band; unreviewed external content stays excluded.)*
 - Adjudication in a delegated run sees the same temporal evidence (sensitive-read records,
   fresh-taint ordering) as it would in the parent turn: the serialized taint schema carries it
   across the delegation round trip.

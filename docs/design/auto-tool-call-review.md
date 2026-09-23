@@ -102,7 +102,10 @@ shadow data or an operator's risk appetite says the judge is not enough.
 Adopted from the risk-adjudication design, with one amendment each where marked:
 
 1. **Provenance stays deterministic.** Nothing probabilistic ever writes provenance, lowers a tier,
-   removes a source, or persists a verdict as trust.
+   removes a source, or persists a verdict as trust. *(Amended by
+   [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): an admitting
+   verdict at the `ambient_prompt_write` sink replaces an external candidate's stored envelope with
+   `machine_reviewed`, there and nowhere else.)*
 2. **Judgment never relaxes an explicit floor.** *(Amended.)* Where the operator has configured a
    floor — via `operator_minimum` or a floored `adjudicate` cell — the verdict space in that cell
    excludes `allow` and no verdict, probe result, or provenance computation adds it back. Where no
@@ -110,7 +113,10 @@ Adopted from the risk-adjudication design, with one amendment each where marked:
    built-in property of sink classes.
 3. **The attacker never addresses the judge as conversation.** Untrusted conversation content is
    never rendered to the reviewer; it appears only as provenance stubs. The one deliberate exception
-   is the payload under review itself — see the input contract below.
+   is the payload under review itself — see the input contract below. *(Amended by
+   [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md):
+   `machine_reviewed` rows, sources and definitions are not untrusted for this purpose; they render
+   as a bounded reviewed-context band and as the intent to judge against.)*
 4. **Fail closed, degrade to today or stricter.** Reviewer unavailable, timing out, or returning a
    malformed verdict resolves to the delegating cell or rule's **fallback outcome**: for an
    `adjudicate` matrix cell that defaults to the outcome the cell had before adjudication (so a

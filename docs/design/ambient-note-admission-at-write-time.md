@@ -595,13 +595,16 @@ state.
    `machine_reviewed` and `ambient_prompt_write`, since that document is the contract implementers
    read for the tier ordering and the sink surface and it must not disagree with this one; and the
    three companion contracts this design changes marked at the sentence, not the document:
-   `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance (an admitting
-   verdict on an `ambient_prompt_write` now does, to `machine_reviewed` and only there);
-   `risk-adjudicated-taint-enforcement.md`'s persistent-artifact approach as a whole —
-   content-derived per-field stamps, revision healing, hash-bound human-only promotion, lossless
-   provenance storage — together with its rollout item and acceptance criteria, already marked
-   superseded in that document by this one (machine adjudication now promotes, human confirmation
-   remaining one admitting path, and the audit store keeps its bounded summary);
+   `auto-tool-call-review.md`'s rule that reviewer output never lowers provenance and its rule that
+   untrusted content never reaches the judge, together with the matching acceptance criteria in
+   `risk-adjudicated-taint-enforcement.md`, already marked amended in both documents (an admitting
+   verdict on an `ambient_prompt_write` now replaces the envelope, to `machine_reviewed` and only
+   there; the candidate renders as the payload under review and reviewed material as the
+   reviewed-context band); `risk-adjudicated-taint-enforcement.md`'s persistent-artifact approach as
+   a whole — content-derived per-field stamps, revision healing, hash-bound human-only promotion,
+   lossless provenance storage — together with its rollout item and acceptance criteria, already
+   marked superseded in that document by this one (machine adjudication now promotes, human
+   confirmation remaining one admitting path, and the audit store keeps its bounded summary);
    `executable-definition-taint.md`'s post-admission invariant, the matching security property and
    M3's verification that no path rewrites an authoring stamp, already marked superseded in that
    document (an admission now stamps the tier, the authoring taint moving to the audit event; the
