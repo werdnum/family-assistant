@@ -406,7 +406,7 @@ _NOTE_COLUMNS = [
 ]
 
 
-def _detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
+def detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
     """Parse frontmatter to detect if content represents a skill.
 
     Returns (is_skill, skill_name, skill_description).
@@ -811,14 +811,6 @@ class NotesRepository(BaseRepository):
             existing_note = await txn.notes.get_by_title(
                 title, read_policy=NoteReadPolicy.UNRESTRICTED
             )
-            if (
-                expected_revision is not None
-                and note_revision(existing_note) != expected_revision
-            ):
-                raise NoteChangedError(
-                    f"Note '{title}' changed after this write was decided."
-                )
-
             # See-before-overwrite: a restricted profile may not overwrite a note it
             # cannot see. Skipped when the policy carries no grants (admin bypass).
             if existing_note is not None and write_policy.visibility_grants is not None:
@@ -829,6 +821,13 @@ class NotesRepository(BaseRepository):
                     raise NoteWritePolicyError(
                         f"Cannot modify note '{title}' - insufficient visibility permissions."
                     )
+            if (
+                expected_revision is not None
+                and note_revision(existing_note) != expected_revision
+            ):
+                raise NoteChangedError(
+                    f"Note '{title}' changed after this write was decided."
+                )
 
             if append and existing_note:
                 note_content = existing_note.content + "\n" + content
@@ -878,7 +877,7 @@ class NotesRepository(BaseRepository):
             visibility_labels_json = json.dumps(visibility_labels_to_use)
 
             # Detect skill metadata from frontmatter at write time
-            is_skill, skill_name, skill_description = _detect_skill_metadata(
+            is_skill, skill_name, skill_description = detect_skill_metadata(
                 note_content
             )
 
@@ -1445,7 +1444,7 @@ class NotesRepository(BaseRepository):
         )
         attachment_ids_json = json.dumps(attachment_ids_to_use)
         visibility_labels_json = json.dumps(visibility_labels_to_use)
-        is_skill, skill_name, skill_description = _detect_skill_metadata(content)
+        is_skill, skill_name, skill_description = detect_skill_metadata(content)
 
         memory_write = is_memory_write(
             visibility_labels_to_use, existing_note.visibility_labels

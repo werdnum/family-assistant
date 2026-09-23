@@ -1659,3 +1659,16 @@ def test_taint_audit_sources_bounded_and_fifo_order() -> None:
     assert actual_ids == expected_ids
     assert actual_ids[0] == "src-13"
     assert actual_ids[-1] == "src-24"
+
+
+@pytest.mark.no_db
+def test_an_ambient_admission_is_judged_as_reusable_material() -> None:
+    """Procedural content is the object of admission review, not evidence against it."""
+    review_input = replace(_review_input(), sink_class=SinkClass.AMBIENT_PROMPT_WRITE)
+
+    messages = assemble_tool_call_review_messages(review_input, _constraints())
+
+    system = cast("SystemMessage", messages[0]).content
+    assert isinstance(system, str)
+    assert "reusable material" in system
+    assert "evidence against the call" not in system

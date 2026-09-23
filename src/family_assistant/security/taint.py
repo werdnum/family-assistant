@@ -207,6 +207,15 @@ class SinkClass(StrEnum):
     ATTACKER_ADDRESSABLE_EGRESS = "attacker_addressable_egress"
     SANDBOX_NETWORK = "sandbox_network"
     SENSITIVE_READ_BROADENING = "sensitive_read_broadening"
+    AMBIENT_PROMPT_WRITE = "ambient_prompt_write"
+    """A write that places material on a full-content ambient surface.
+
+    A note that will be in every future prompt unasked, or a skill whose
+    catalog entry will be. ``artifact_write`` is ``audit`` because persisted
+    content is protected downstream by the provenance it carries; that does not
+    hold for content nobody will ask for. Never resolved from tool tags: the
+    note tools evaluate it themselves against the resolved candidate.
+    """
 
 
 class TaintPolicyOutcome(StrEnum):
@@ -1426,6 +1435,7 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.USER_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
+            SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.CONFIRM,
             SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.ALLOW,
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
@@ -1437,6 +1447,7 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.USER_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
+            SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.CONFIRM,
             SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.ALLOW,
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
@@ -1448,6 +1459,7 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.USER_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
+            SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.CONFIRM,
             SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.AUDIT,
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.CONFIRM,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
@@ -1471,11 +1483,13 @@ def _default_taint_matrix() -> dict[SourceTrustTier, dict[SinkClass, TaintPolicy
     }
     for tier in (SourceTrustTier.KNOWN_CONTACT, SourceTrustTier.RECOGNIZED_MACHINE):
         matrix[tier].update({
+            SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.ADJUDICATE,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
             SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
             SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE,
         })
     matrix[SourceTrustTier.UNKNOWN_EXTERNAL].update({
+        SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.ADJUDICATE,
         SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
         SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
         SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,

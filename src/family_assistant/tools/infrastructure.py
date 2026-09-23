@@ -40,6 +40,14 @@ from family_assistant.scripting.invocation import (
     ScriptPreparationError,
     prepare_script_invocation,
 )
+from family_assistant.security.ambient_admission import (
+    AMBIENT_ADMISSION_EVENT_TYPE,
+    AMBIENT_ADMISSION_SINK_NAME,
+    AdmissionOutcome,
+    AmbientAdmissionDecision,
+    AmbientCandidate,
+    is_external_candidate,
+)
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
@@ -119,6 +127,25 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+_AMBIENT_ADMISSION_DESCRIPTOR = ToolDescriptor(
+    name=AMBIENT_ADMISSION_SINK_NAME,
+    definition={
+        "type": "function",
+        "function": {
+            "name": AMBIENT_ADMISSION_SINK_NAME,
+            "description": (
+                "Place the candidate note or skill into every future prompt, "
+                "unasked. The arguments are the complete resolved note: its "
+                "title, full content, attachments as the prompt renders them "
+                "and, for a skill, its catalog entry."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    tags=frozenset(),
+    origin="local",
+)
 
 _NO_TAINT_GATE_MODE = "none"
 """Recorded mode for a gate no runtime taint policy participated in."""
@@ -1950,6 +1977,158 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 reason=evaluation.reason,
                 state=state,
             )
+
+    async def adjudicate_ambient_admission(
+        self,
+        *,
+        candidate: AmbientCandidate,
+        state: TurnTaintState,
+        context: ToolExecutionContext,
+        tool_name: str,
+        call_id: str | None = None,
+    ) -> AmbientAdmissionDecision:
+        """Decide whether a resolved note or skill may enter every future prompt.
+
+        One synchronous review, awaited in observe mode as well as enforce:
+        observe describes the effect of a disallowed write, not whether its
+        verdict is waited for, and the persisted stamp must carry that verdict.
+        ``state`` is the maximum of the turn, whatever the candidate retains,
+        and every attachment it renders.
+
+        A denial, a timeout or a missing verdict never admits. In enforce mode
+        they refuse the write; in observe mode the write persists as reference
+        material. The confirm fallback -- a configured reviewer that did not
+        answer -- is reached in enforce mode only, and a sighted approval of
+        the rendered candidate admits it.
+        """
+        sink_class = SinkClass.AMBIENT_PROMPT_WRITE
+        evaluation = self._taint_evaluator.evaluate(state=state, sink_class=sink_class)
+        enforce = evaluation.mode is TaintPolicyMode.ENFORCE
+        external = is_external_candidate(state.max_tier)
+        arguments = candidate.review_payload()
+        requested = evaluation.requested_outcome
+        review_result: ToolCallReviewResult | None = None
+
+        def withheld(reason: str) -> AmbientAdmissionDecision:
+            return AmbientAdmissionDecision(
+                outcome=(
+                    AdmissionOutcome.REFUSED
+                    if enforce
+                    else AdmissionOutcome.NOT_ADMITTED
+                ),
+                reason=reason,
+            )
+
+        async def confirmed(reason: str) -> AmbientAdmissionDecision:
+            if not enforce:
+                # Observe never surfaces enforcement to the user.
+                return withheld(reason)
+            try:
+                await self._request_named_sink_confirmation(
+                    name=AMBIENT_ADMISSION_SINK_NAME,
+                    sink_class=sink_class,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    reason=reason,
+                    state=state,
+                )
+            except ToolPolicyDeniedError as exc:
+                return withheld(exc.reason)
+            return AmbientAdmissionDecision(
+                outcome=AdmissionOutcome.ADMITTED,
+                reason="A person approved the complete note.",
+                decided_by="human_confirmation",
+            )
+
+        if requested in {TaintPolicyOutcome.ALLOW, TaintPolicyOutcome.AUDIT}:
+            decision = (
+                AmbientAdmissionDecision(
+                    outcome=AdmissionOutcome.ADMITTED,
+                    reason=(
+                        "The operator's policy admits unreviewed writes at "
+                        f"{state.max_tier.config_value}."
+                    ),
+                    decided_by=(
+                        f"operator_override:{state.max_tier.config_value}."
+                        f"{sink_class.value}"
+                    ),
+                )
+                if external
+                else AmbientAdmissionDecision(
+                    outcome=AdmissionOutcome.NOT_GATED, reason=evaluation.reason
+                )
+            )
+        elif requested is TaintPolicyOutcome.ADJUDICATE:
+            if self._tool_call_reviewer is None:
+                decision = withheld(
+                    "No tool-call reviewer is configured, so nothing can admit "
+                    "external material into every prompt."
+                )
+            else:
+                review_result = await self._review_tool_call(
+                    descriptor=_AMBIENT_ADMISSION_DESCRIPTOR,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    state=state,
+                    sink_class=sink_class,
+                    taint_evaluation=evaluation,
+                    static_evaluation=None,
+                    include_observe_taint_constraints=True,
+                )
+                if (
+                    review_result.verdict is ToolCallReviewVerdict.ALLOW
+                    and review_result.status is ToolCallReviewStatus.MODEL_VERDICT
+                    and not review_result.used_fallback
+                ):
+                    decision = AmbientAdmissionDecision(
+                        outcome=AdmissionOutcome.ADMITTED,
+                        reason=review_result.reason,
+                        decided_by=f"reviewer:{review_result.audit_event_id}",
+                    )
+                elif review_result.verdict is ToolCallReviewVerdict.DENY:
+                    decision = withheld(review_result.reason)
+                else:
+                    decision = await confirmed(review_result.reason)
+        elif requested is TaintPolicyOutcome.CONFIRM:
+            decision = await confirmed(evaluation.reason)
+        else:
+            decision = withheld(evaluation.reason)
+
+        if decision.outcome is not AdmissionOutcome.NOT_GATED:
+            await self._record_taint_audit_event(
+                context=context,
+                event_type=AMBIENT_ADMISSION_EVENT_TYPE,
+                tool_name=tool_name,
+                tool_call_id=call_id,
+                sink_class=sink_class.value,
+                state=state,
+                requested_outcome=requested.value,
+                effective_outcome=decision.outcome.value,
+                mode=evaluation.mode.value,
+                reason=(
+                    f"{decision.reason} Decided by "
+                    f"{decision.decided_by or 'the policy cell'}."
+                ),
+                arguments_summary=None,
+                artifact_id=f"note:{candidate.title}",
+                review_verdict=(
+                    review_result.verdict.value if review_result is not None else None
+                ),
+                review_status=(
+                    review_result.status.value if review_result is not None else None
+                ),
+            )
+        logger.info(
+            "Ambient admission: tool=%s note=%r tier=%s requested=%s outcome=%s",
+            tool_name,
+            candidate.title,
+            state.max_tier.config_value,
+            requested.value,
+            decision.outcome.value,
+        )
+        return decision
 
     async def _request_named_sink_confirmation(
         self,

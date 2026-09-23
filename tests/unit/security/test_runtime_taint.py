@@ -792,6 +792,10 @@ def test_documented_legacy_pin_reproduces_previous_matrix_cell_for_cell() -> Non
     for tier in SourceTrustTier:
         state = _tracker_at(tier).snapshot()
         for sink_class in SinkClass:
+            if sink_class is SinkClass.AMBIENT_PROMPT_WRITE:
+                # Postdates the pinned matrix: those writes were artifact_write,
+                # and the pin cannot reproduce a cell that did not exist.
+                continue
             evaluation = evaluator.evaluate(state=state, sink_class=sink_class)
             no_verdict_outcome = (
                 evaluation.fallback_outcome

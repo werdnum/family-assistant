@@ -127,11 +127,17 @@ def note_read_taint(
     """The taint an explicit read of a note contributes, or None for trusted rows.
 
     A trusted-pole note contributes nothing; any other note contributes its
-    stored sources plus one source naming the note itself.
+    stored sources plus one source naming the note itself, unless the envelope
+    already names it (an admitted note's envelope is exactly that source).
     """
     state = stored_note_state(provenance_metadata, title=title)
     if state.max_tier <= SourceTrustTier.TRUSTED_INTERNAL:
         return None
+    if any(
+        source.source_type is TaintSourceType.NOTE and source.source_id == title
+        for source in state.sources
+    ):
+        return state
     return state.add_source(
         TaintSource(
             source_type=TaintSourceType.NOTE,

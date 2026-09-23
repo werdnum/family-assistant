@@ -8,17 +8,30 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.memory.invariants import MemoryWriteError
+from family_assistant.security.ambient_admission import (
+    AdmissionOutcome,
+    AmbientAdmissionDecision,
+    AmbientCandidate,
+    CandidateAttachment,
+    is_external_candidate,
+)
 from family_assistant.security.note_provenance import (
     NoteProvenanceStamp,
     note_read_taint,
+    stored_note_state,
 )
 from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
     TaintSourceType,
     TurnTaintState,
+    artifact_taint_sources,
     merge_taint_state_into_tracker,
+    merge_taint_states,
 )
 from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
@@ -113,22 +126,8 @@ async def add_or_update_note_tool(
     Returns:
         A string indicating success or failure
     """
-    # Local import: the notes repository transitively imports the tools package
-    # (repositories/__init__ -> schedule_automations -> task_worker -> tools),
-    # so a top-level import here would be circular.
-    from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
-        NoteWritePolicyError,
-    )
-
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
-
-    # Visibility confinement (see-before-overwrite, default/required/allowed
-    # labels) is enforced in the repository via the write policy so every write
-    # path is covered, not just this tool.
-    write_policy = exec_context.note_write_policy()
-
-    provenance = note_stamp_from_context(exec_context)
 
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
@@ -154,30 +153,331 @@ async def add_or_update_note_tool(
                 )
                 valid_attachment_ids.append(attachment_id)
 
-    try:
-        result = await db_context.notes.add_or_update(
+    outcome = await write_note_through_admission(
+        exec_context,
+        tool_name="add_or_update_note",
+        title=title,
+        content=content,
+        include_in_prompt=include_in_prompt,
+        append=append,
+        attachment_ids=valid_attachment_ids,
+        visibility_labels=visibility_labels,
+    )
+    if outcome.error is not None:
+        return f"Error: {outcome.error}"
+    attachment_info = (
+        f" with {len(valid_attachment_ids)} attachment(s)"
+        if valid_attachment_ids
+        else ""
+    )
+    verb = "created" if outcome.created else "updated"
+    message = f"Note '{title}' has been {verb} successfully{attachment_info}."
+    if outcome.admission_note:
+        message += f" {outcome.admission_note}"
+    return message
+
+
+@dataclass(frozen=True)
+class NoteWriteOutcome:
+    """What a note write through the admission gate did."""
+
+    error: str | None = None
+    created: bool = False
+    admission: AdmissionOutcome | None = None
+    admission_note: str | None = None
+    """A sentence for the tool result when the write was gated."""
+
+
+@dataclass(frozen=True)
+class _ResolvedWrite:
+    candidate: AmbientCandidate
+    revision: str
+    gate_state: TurnTaintState
+    ambient: bool
+
+
+async def _resolve_candidate(
+    exec_context: ToolExecutionContext,
+    *,
+    title: str,
+    content: str,
+    include_in_prompt: bool,
+    append: bool,
+    attachment_ids: list[str] | None,
+    imported_from: str | None,
+) -> _ResolvedWrite:
+    """Resolve a write into the complete note it would persist.
+
+    The gate's tier is the maximum of the turn (floored at ``trusted_internal``),
+    everything the candidate retains from the stored note -- the title always,
+    so any update is at least the stored tier -- and every attachment whose
+    metadata the candidate renders. An attachment with no stored envelope is
+    evaluated as ``unknown_external`` here: its description is about to reach
+    every prompt, and an unlabelled artifact must not pass on the strength of
+    what nobody recorded.
+    """
+    # Local import: see add_or_update_note_tool.
+    from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+        detect_skill_metadata,
+        note_revision,
+    )
+
+    db_context = exec_context.db_context
+    existing = await db_context.notes.get_by_title(
+        title,
+        read_policy=exec_context.note_write_policy().see_before_overwrite_read_policy(),
+    )
+    states: list[TurnTaintState] = [
+        (
+            exec_context.taint_tracker.snapshot()
+            if exec_context.taint_tracker is not None
+            else TurnTaintState.empty()
+        ).with_authorship_floor()
+    ]
+    if existing is not None:
+        states.append(
+            stored_note_state(existing.provenance_metadata, title=existing.title)
+        )
+    resolved_content = (
+        f"{existing.content}\n{content}" if append and existing is not None else content
+    )
+    resolved_attachment_ids = (
+        attachment_ids
+        if attachment_ids is not None
+        else (existing.attachment_ids if existing is not None else [])
+    )
+    attachments: list[CandidateAttachment] = []
+    registry = exec_context.attachment_registry
+    for attachment_id in resolved_attachment_ids:
+        metadata = (
+            await registry.get_attachment(
+                db_context, attachment_id, acting_user_id=exec_context.user_id
+            )
+            if registry is not None
+            else None
+        )
+        attachments.append(
+            CandidateAttachment(
+                attachment_id=attachment_id,
+                description=metadata.description if metadata is not None else None,
+                mime_type=metadata.mime_type if metadata is not None else None,
+            )
+        )
+        sources = artifact_taint_sources(
+            metadata.metadata if metadata is not None else None,
+            source_id=attachment_id,
+        )
+        if not sources:
+            sources = (
+                TaintSource(
+                    source_type=TaintSourceType.ATTACHMENT,
+                    source_id=attachment_id,
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="Attachment has no stored provenance envelope.",
+                ),
+            )
+        attachment_state = TurnTaintState.empty()
+        for source in sources:
+            attachment_state = attachment_state.add_source(source)
+        states.append(attachment_state)
+    is_skill, skill_name, skill_description = detect_skill_metadata(resolved_content)
+    return _ResolvedWrite(
+        candidate=AmbientCandidate(
+            title=title,
+            content=resolved_content,
+            include_in_prompt=include_in_prompt,
+            is_skill=is_skill,
+            skill_name=skill_name,
+            skill_description=skill_description,
+            attachments=tuple(attachments),
+            imported_from=imported_from,
+        ),
+        revision=note_revision(existing),
+        gate_state=merge_taint_states(*states),
+        ambient=include_in_prompt or is_skill,
+    )
+
+
+async def _admission_decision(
+    exec_context: ToolExecutionContext,
+    resolved: _ResolvedWrite,
+    *,
+    tool_name: str,
+) -> AmbientAdmissionDecision:
+    if not resolved.ambient:
+        return AmbientAdmissionDecision(
+            outcome=AdmissionOutcome.NOT_GATED,
+            reason="The note is reference material, not ambient.",
+        )
+    # Local import: the infrastructure module imports the tools package.
+    from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+        TaintTrackingToolsProvider,
+        find_provider_by_type,
+    )
+
+    provider = exec_context.tools_provider
+    if provider is None and exec_context.processing_service is not None:
+        provider = exec_context.processing_service.tools_provider
+    gate = (
+        find_provider_by_type(provider, TaintTrackingToolsProvider)
+        if provider is not None
+        else None
+    )
+    if gate is None:
+        if is_external_candidate(resolved.gate_state.max_tier):
+            logger.warning(
+                "No runtime taint policy is reachable for ambient write of %r; "
+                "persisting it as reference material.",
+                resolved.candidate.title,
+            )
+            return AmbientAdmissionDecision(
+                outcome=AdmissionOutcome.NOT_ADMITTED,
+                reason="No admission review is available in this context.",
+            )
+        return AmbientAdmissionDecision(
+            outcome=AdmissionOutcome.NOT_GATED,
+            reason="No external material to admit.",
+        )
+    return await gate.adjudicate_ambient_admission(
+        candidate=resolved.candidate,
+        state=resolved.gate_state,
+        context=exec_context,
+        tool_name=tool_name,
+        call_id=exec_context.tool_call_id,
+    )
+
+
+def _stamp_for(
+    resolved: _ResolvedWrite,
+    decision: AmbientAdmissionDecision,
+    exec_context: ToolExecutionContext,
+) -> NoteProvenanceStamp:
+    """The stamp a gated (or ungated) write persists with.
+
+    Only an admitting decision promotes an external candidate, and it replaces
+    the envelope. A non-admitted external candidate is floored at
+    ``known_contact`` so it is never eligible, whatever the note it replaces
+    was. A trusted-pole candidate keeps its trusted stamp either way: no stamp
+    can record non-admission of the user's own words without falsifying them.
+    """
+    external = is_external_candidate(resolved.gate_state.max_tier)
+    if not resolved.ambient:
+        return note_stamp_from_context(exec_context)
+    if external and decision.outcome is AdmissionOutcome.ADMITTED:
+        return NoteProvenanceStamp.admitted(
+            title=resolved.candidate.title,
+            decided_by=decision.decided_by or "the admission gate",
+        )
+    if external:
+        return NoteProvenanceStamp.machine(
+            resolved.gate_state, floor=SourceTrustTier.KNOWN_CONTACT
+        )
+    return NoteProvenanceStamp.machine(resolved.gate_state)
+
+
+def _admission_note(
+    resolved: _ResolvedWrite, decision: AmbientAdmissionDecision
+) -> str | None:
+    if not resolved.ambient or decision.outcome is AdmissionOutcome.NOT_GATED:
+        return None
+    kind = "skill" if resolved.candidate.is_skill else "note"
+    if decision.outcome is AdmissionOutcome.ADMITTED:
+        return f"It was reviewed and the {kind} will be loaded into context."
+    return (
+        f"It was saved as reference material only: the {kind} will not be "
+        "loaded into context automatically, though its title stays listed and "
+        f"get_note can read it. Reason: {decision.reason}"
+    )
+
+
+async def write_note_through_admission(
+    exec_context: ToolExecutionContext,
+    *,
+    tool_name: str,
+    title: str,
+    content: str,
+    include_in_prompt: bool,
+    append: bool = False,
+    attachment_ids: list[str] | None = None,
+    visibility_labels: list[str] | None = None,
+    imported_from: str | None = None,
+) -> NoteWriteOutcome:
+    """Write a note a model composed, reviewing it first if it will be ambient.
+
+    Resolve the complete candidate, await the review, then persist the candidate
+    and its final stamp together, conditional on the stored note not having
+    changed in the meantime. If it did change, the write re-resolves and is
+    reviewed again, once. See docs/design/ambient-note-admission-at-write-time.md.
+    """
+    # Local import: see add_or_update_note_tool.
+    from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+        NoteChangedError,
+        NoteWritePolicyError,
+        note_revision,
+    )
+
+    for attempt in range(2):
+        resolved = await _resolve_candidate(
+            exec_context,
             title=title,
             content=content,
             include_in_prompt=include_in_prompt,
             append=append,
-            attachment_ids=valid_attachment_ids,  # None preserves existing, [] clears
-            visibility_labels=visibility_labels,
-            write_policy=write_policy,
-            provenance=provenance,
+            attachment_ids=attachment_ids,
+            imported_from=imported_from,
         )
-        attachment_info = (
-            f" with {len(valid_attachment_ids)} attachment(s)"
-            if valid_attachment_ids
-            else ""
+        decision = await _admission_decision(
+            exec_context, resolved, tool_name=tool_name
         )
-        return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully{attachment_info}."
-    except MemoryWriteError as e:
-        return f"Error: {e.message}"
-    except NoteWritePolicyError as e:
-        return f"Error: {e}"
-    except Exception as e:
-        logger.exception(f"Error adding/updating note '{title}': {e}")
-        return f"Error: Failed to add/update note '{title}'. {e}"
+        if decision.outcome is AdmissionOutcome.REFUSED:
+            kind = "skill" if resolved.candidate.is_skill else "note"
+            return NoteWriteOutcome(
+                error=(
+                    f"The {kind} '{title}' would be loaded into every future "
+                    f"prompt and was not admitted: {decision.reason} Nothing was "
+                    "saved. It can be saved as a reference note instead "
+                    "(include_in_prompt=false, no skill frontmatter)."
+                ),
+                admission=decision.outcome,
+            )
+        try:
+            await exec_context.db_context.notes.add_or_update(
+                title=title,
+                content=resolved.candidate.content,
+                include_in_prompt=include_in_prompt,
+                attachment_ids=list(
+                    attachment.attachment_id
+                    for attachment in resolved.candidate.attachments
+                ),
+                visibility_labels=visibility_labels,
+                write_policy=exec_context.note_write_policy(),
+                provenance=_stamp_for(resolved, decision, exec_context),
+                expected_revision=resolved.revision,
+            )
+        except NoteChangedError:
+            if attempt == 0:
+                logger.info("Note %r changed during its review; re-resolving.", title)
+                continue
+            return NoteWriteOutcome(
+                error=(
+                    f"Note '{title}' changed while it was being reviewed, twice; "
+                    "nothing was saved. Read it again and retry."
+                )
+            )
+        except MemoryWriteError as e:
+            return NoteWriteOutcome(error=e.message)
+        except NoteWritePolicyError as e:
+            return NoteWriteOutcome(error=str(e))
+        except Exception as e:
+            logger.exception(f"Error adding/updating note '{title}': {e}")
+            return NoteWriteOutcome(error=f"Failed to add/update note '{title}'. {e}")
+        return NoteWriteOutcome(
+            created=resolved.revision == note_revision(None),
+            admission=decision.outcome,
+            admission_note=_admission_note(resolved, decision),
+        )
+    raise AssertionError("unreachable: the write loop always returns")
 
 
 # Tool Definitions

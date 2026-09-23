@@ -21,7 +21,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
 )
-from family_assistant.tools.notes import note_stamp_from_context
+from family_assistant.tools.notes import write_note_through_admission
 from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
@@ -757,8 +757,6 @@ async def workspace_import_note_tool(
     if full_path.is_dir():
         return ToolResult(data={"error": f"Path is a directory, not a file: {path}"})
 
-    db_context = exec_context.db_context
-
     # Read file content
     try:
         async with aiofiles.open(full_path, encoding="utf-8") as f:
@@ -805,6 +803,11 @@ async def workspace_import_note_tool(
                         note_title = str(frontmatter["title"])
                     if "include_in_prompt" in frontmatter and include_in_prompt is None:
                         note_include_in_prompt = bool(frontmatter["include_in_prompt"])
+                    if "name" in frontmatter and "description" in frontmatter:
+                        # Skill frontmatter is the note's own content: keeping it
+                        # is what makes the import a skill, and a skill is an
+                        # ambient write the admission gate decides.
+                        content = file_content
 
     # Pulling a file in for reference involves no review; inclusion in every
     # prompt is something the call or the file's frontmatter must ask for.
@@ -815,28 +818,31 @@ async def workspace_import_note_tool(
     if not note_title:
         note_title = full_path.stem  # filename without extension
 
-    # Create/update the note. Honor the active profile's write policy so an
-    # imported note lands in the same confined labels as a tool-written one.
-    try:
-        await db_context.notes.add_or_update(
-            title=note_title,
-            content=content,
-            include_in_prompt=note_include_in_prompt,
-            write_policy=exec_context.note_write_policy(),
-            provenance=note_stamp_from_context(exec_context),
-        )
-    except Exception as e:
-        logger.exception(f"Failed to import note from {path}: {e}")
-        return ToolResult(data={"error": f"Failed to import note: {e}"})
+    # The note write is gated like any other: frontmatter may *request*
+    # inclusion or declare a skill, and the admission review decides. The
+    # repository honours the active profile's write policy, so an imported note
+    # lands in the same confined labels as a tool-written one.
+    outcome = await write_note_through_admission(
+        exec_context,
+        tool_name="workspace_import_note",
+        title=note_title,
+        content=content,
+        include_in_prompt=note_include_in_prompt,
+        imported_from=path,
+    )
+    if outcome.error is not None:
+        return ToolResult(data={"error": f"Failed to import note: {outcome.error}"})
 
     logger.info(f"Imported note '{note_title}' from {path}")
+    admission = f" {outcome.admission_note}" if outcome.admission_note else ""
     return ToolResult(
-        text=f"OK. Imported note '{note_title}' from {path}",
+        text=f"OK. Imported note '{note_title}' from {path}.{admission}",
         data={
             "path": path,
             "title": note_title,
             "include_in_prompt": note_include_in_prompt,
             "content_length": len(content),
+            "admission": outcome.admission.value if outcome.admission else None,
         },
     )
 
