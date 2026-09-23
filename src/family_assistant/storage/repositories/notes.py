@@ -417,11 +417,6 @@ def detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
     return False, None, None
 
 
-def _is_ambient_intended(note: NoteModel) -> bool:
-    """Whether a note asks for full-content ambient inclusion."""
-    return note.include_in_prompt or note.is_skill
-
-
 def _is_eligible(note: NoteModel) -> bool:
     return is_ambient_eligible(note.provenance_metadata, title=note.title)
 
@@ -587,8 +582,15 @@ class NotesRepository(BaseRepository):
         ``get_note``, by search, and in the ``list_notes`` tool's output.
         """
         try:
+            # Only what the eligibility decision reads: this runs on every turn,
+            # and note bodies can be large.
             stmt = (
-                select(*_NOTE_COLUMNS)
+                select(
+                    notes_table.c.title,
+                    notes_table.c.include_in_prompt,
+                    notes_table.c.is_skill,
+                    notes_table.c.provenance_metadata_json,
+                )
                 .where(~self._labels_superset_condition([MEMORY_LABEL]))
                 .order_by(notes_table.c.title)
             )
@@ -599,9 +601,11 @@ class NotesRepository(BaseRepository):
             raise
         titles: list[str] = []
         for row in rows:
-            note = _row_to_note_model(row)
-            if not _is_ambient_intended(note) or not _is_eligible(note):
-                titles.append(note.title)
+            ambient_intended = row["include_in_prompt"] or row.get("is_skill", False)
+            if not ambient_intended or not is_ambient_eligible(
+                row["provenance_metadata_json"], title=row["title"]
+            ):
+                titles.append(row["title"])
         return titles
 
     async def get_skills(

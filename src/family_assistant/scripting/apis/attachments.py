@@ -12,6 +12,7 @@ import logging
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.security.taint import TurnTaintState, artifact_taint_sources
 from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.security.taint import TurnTaintTracker
     from family_assistant.services.attachment_registry import (
         AttachmentMetadata,
         AttachmentMetadataDict,
@@ -257,6 +259,7 @@ class AttachmentAPI:
         db_engine: AsyncEngine | None = None,
         db_context: Database | None = None,
         user_id: str | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
     ) -> None:
         """
         Initialize the attachment API.
@@ -268,12 +271,32 @@ class AttachmentAPI:
             db_context: Existing database context to reuse (preferred over engine)
                        This allows reading attachments created in the same transaction.
             user_id: User ID for authorization checks
+            taint_tracker: The running turn's taint. A created attachment is
+                stamped from it, and a read merges the attachment's own
+                provenance into it, as the attachment tools do.
         """
         self.attachment_registry = attachment_registry
+        self._taint_tracker = taint_tracker
         self.conversation_id = conversation_id
         self.db_engine = db_engine
         self.db_context = db_context
         self._acting_user_id = user_id
+
+    async def _merge_read_provenance(
+        self, db_ctx: Database, attachment_id: str
+    ) -> None:
+        """Merge an attachment's stored provenance into the turn it is read in."""
+        if self._taint_tracker is None:
+            return
+        metadata = await self.attachment_registry.get_attachment(
+            db_ctx, attachment_id, acting_user_id=self._acting_user_id
+        )
+        if metadata is None:
+            return
+        for source in artifact_taint_sources(
+            metadata.metadata, source_id=attachment_id
+        ):
+            self._taint_tracker.add_source(source)
 
     def _require_db_engine(self) -> AsyncEngine:
         """Return the configured engine or raise if this API cannot create DB contexts."""
@@ -290,6 +313,8 @@ class AttachmentAPI:
             content = await self.attachment_registry.get_attachment_content(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
+            if content is not None:
+                await self._merge_read_provenance(db_ctx, attachment_id)
 
             if content is None:
                 return None
@@ -312,9 +337,12 @@ class AttachmentAPI:
         """Read attachment content as raw bytes without UTF-8 decoding."""
 
         async def _do_read(db_ctx: Database) -> bytes | None:
-            return await self.attachment_registry.get_attachment_content(
+            content = await self.attachment_registry.get_attachment_content(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
+            if content is not None:
+                await self._merge_read_provenance(db_ctx, attachment_id)
+            return content
 
         # Use existing db_context if available (allows reading uncommitted attachments)
         if self.db_context:
@@ -449,7 +477,19 @@ class AttachmentAPI:
                 storage_path=file_metadata.storage_path,
                 conversation_id=self.conversation_id,
                 message_id=None,
-                metadata={"original_filename": filename, "created_by": "script"},
+                metadata={
+                    "original_filename": filename,
+                    "created_by": "script",
+                    # Script output is machine-composed from whatever the
+                    # running turn had read.
+                    "taint_metadata": (
+                        self._taint_tracker.snapshot()
+                        if self._taint_tracker is not None
+                        else TurnTaintState.empty()
+                    )
+                    .with_authorship_floor()
+                    .to_metadata(),
+                },
             )
 
         # Use existing db_context if available (allows rollback on failure)
@@ -492,4 +532,5 @@ def create_attachment_api(
         # Pass db_context to allow reading attachments created in the same transaction
         db_context=execution_context.db_context,
         user_id=execution_context.user_id,
+        taint_tracker=execution_context.taint_tracker,
     )
