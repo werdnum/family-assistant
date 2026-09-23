@@ -496,7 +496,10 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs. "
                 "Leave `include_in_prompt` at its default `false` unless the note is short, evergreen context that must load every "
                 "turn (see the parameter description). To create a reusable skill instead of a plain note, load the 'Skill Creation' "
-                "skill via `get_note` for the frontmatter format.\n\n"
+                "skill via `get_note` for the frontmatter format. "
+                "A note that would be loaded every turn (include_in_prompt=true, or a skill) is reviewed before it is saved when "
+                "this conversation has read outside content; the result says whether it was admitted, saved as a reference note only, "
+                "or not saved.\n\n"
                 "Returns a string indicating success or an error message."
             ),
             "parameters": {

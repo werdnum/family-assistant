@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Revised after review to the model described in
+Implemented (milestones 1–6). Revised after review to the model described in
 [the owner's comment on PR #1249](https://github.com/werdnum/family-assistant/pull/1249#issuecomment-5778100635):
 one real `machine_reviewed` taint tier, one synchronous write-time review, and imports that are
 reviewed like any other ambient write. An earlier revision proposed a separate admission state with
@@ -495,6 +495,30 @@ state.
   record type; the reviewer and audit facilities are reused where useful.
 - **The web API is trusted without a gate.** It is authenticated, it is the user's own hands, and it
   is the deterministic promotion path.
+
+## Implementation notes
+
+Choices the implementation made where the design left room, recorded so they are not re-litigated:
+
+- **The trusted-pole conversation band is unchanged.** The reviewer renders `machine_reviewed` rows
+  and sources as the reviewed-context band; `trusted_internal` rows keep rendering as they did.
+  Moving them to the reviewed band too would take the intent away from unattended turns whose active
+  request is a system-authored row.
+- **An operator amnesty keeps its honest stamp.** Only a judge's allow or a sighted human
+  confirmation is an admission, so only those stamp a new definition record `machine_reviewed`. An
+  amnestied record keeps its `unknown_external` authoring stamp, as
+  [legacy-definition-amnesty.md](legacy-definition-amnesty.md) requires, and resolves to
+  `machine_reviewed` through its disposition like any prior-version cured record. An observe-mode
+  verdict that attaches to a pending definition after the write likewise leaves the stamp untouched
+  and cures through its disposition.
+- **The authoring turn's provenance for a definition is the gate's own audit event.** The review of
+  the creating call already records the bounded source summary; no second event is written.
+- **A context with no reachable taint policy never admits.** A note tool called where no
+  `TaintTrackingToolsProvider` is reachable persists an external ambient candidate as reference
+  material, as observe mode does without a reviewer.
+- **An imported skill keeps its frontmatter.** A workspace file whose frontmatter declares a skill
+  name and description is imported whole, so it is a skill and crosses the gate; other frontmatter
+  is still stripped.
 
 ## Work plan
 
