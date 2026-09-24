@@ -56,10 +56,12 @@ from urllib.parse import urlsplit
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
     SecretStr,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -1596,6 +1598,55 @@ class MCPConfig(BaseModel):
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class MCPExternalAuthorizationServer(BaseModel):
+    """An OAuth authorization server outside the application, for MCP sign-in.
+
+    With this set the adapter's own authorization server is off: MCP clients
+    sign in with ``issuer`` and present its access tokens at ``/api/mcp``, where
+    an edge gateway can verify them before the request reaches the application.
+    See docs/design/mcp-adapter.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Must be the identity provider the web login uses, so a token's ``sub`` is
+    # the same user identifier a login session carries.
+    issuer: str
+    jwks_uri: str
+    # The ``aud`` value the issuer puts on tokens meant for this endpoint.
+    audience: str
+    # Advertised as the resource's ``scopes_supported``, which is what a client
+    # asks the issuer for. Without it a client may request every scope the
+    # issuer lists, which an issuer that checks scopes per client refuses.
+    scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "email", "profile", "offline_access"]
+    )
+
+    @field_validator("issuer")
+    @classmethod
+    def _issuer_url(cls, value: str) -> str:
+        """Refuse an issuer the resource metadata could not publish verbatim.
+
+        A token's ``iss`` must equal ``issuer`` exactly, and the metadata
+        carries it as a parsed URL, which normalizes (a bare host gains a
+        slash). An issuer that changes under parsing would be advertised as a
+        different identifier from the one tokens are checked against.
+        """
+        normalized = str(_HTTP_URL.validate_python(value))
+        if normalized != value:
+            raise ValueError(f"issuer must be written as {normalized!r}")
+        return value
+
+    @field_validator("jwks_uri")
+    @classmethod
+    def _jwks_url(cls, value: str) -> str:
+        _HTTP_URL.validate_python(value)
+        return value
+
+
+_HTTP_URL: TypeAdapter[AnyHttpUrl] = TypeAdapter(AnyHttpUrl)
+
+
 class MCPAdapterConfig(BaseModel):
     """Family Assistant as an MCP server for external clients.
 
@@ -1610,6 +1661,8 @@ class MCPAdapterConfig(BaseModel):
     enabled: bool = False
     # Processing profile the tool runs under; None means the default profile.
     profile_id: str | None = None
+    # None means the adapter's own OAuth authorization server signs clients in.
+    authorization_server: MCPExternalAuthorizationServer | None = None
 
 
 def mcp_servers_for_runtime(

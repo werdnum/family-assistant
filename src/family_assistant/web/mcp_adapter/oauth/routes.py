@@ -22,7 +22,10 @@ from starlette.requests import Request
 from starlette.routing import Route, Router
 from starlette.types import Receive, Scope, Send
 
-from family_assistant.web.auth import MCP_ENDPOINT_PATH
+from family_assistant.web.auth import (
+    MCP_ENDPOINT_PATH,
+    mcp_builtin_authorization_server_enabled,
+)
 from family_assistant.web.mcp_adapter.config import adapter_config
 from family_assistant.web.mcp_adapter.oauth.provider import (
     ASSISTANT_SCOPE,
@@ -61,7 +64,6 @@ class OAuthServer:
     issuer_url: str
     provider: FamilyAssistantOAuthProvider
     router: Router
-    protected_resource: ProtectedResourceMetadataHandler
     admission_limiter: ErrorIntakeRateLimiter
 
 
@@ -102,19 +104,30 @@ def oauth_server(app: FastAPI) -> OAuthServer:
                 revocation_options=REVOCATION_OPTIONS,
             )
         ),
-        protected_resource=ProtectedResourceMetadataHandler(
-            ProtectedResourceMetadata(
-                resource=AnyHttpUrl(issuer_url + MCP_ENDPOINT_PATH),
-                authorization_servers=[issuer],
-                scopes_supported=[ASSISTANT_SCOPE],
-                resource_name="Family Assistant",
-            )
-        ),
         admission_limiter=admission_limiter,
     )
     app.state.mcp_oauth_server = server
     logger.debug("MCP OAuth authorization server built for issuer %s", issuer_url)
     return server
+
+
+def protected_resource_metadata(app: FastAPI) -> ProtectedResourceMetadata:
+    """RFC 9728 metadata naming the authorization server MCP clients sign in with."""
+    resource_url = _issuer_url(app) + MCP_ENDPOINT_PATH
+    external = adapter_config(app).authorization_server
+    if external is not None:
+        return ProtectedResourceMetadata(
+            resource=AnyHttpUrl(resource_url),
+            authorization_servers=[AnyHttpUrl(external.issuer)],
+            scopes_supported=external.scopes,
+            resource_name="Family Assistant",
+        )
+    return ProtectedResourceMetadata(
+        resource=AnyHttpUrl(resource_url),
+        authorization_servers=[AnyHttpUrl(_issuer_url(app))],
+        scopes_supported=[ASSISTANT_SCOPE],
+        resource_name="Family Assistant",
+    )
 
 
 async def _not_enabled(scope: Scope, receive: Receive, send: Send) -> None:
@@ -129,7 +142,7 @@ class _AuthServerDispatch:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         app: FastAPI = scope["app"]
-        if not adapter_config(app).enabled:
+        if not mcp_builtin_authorization_server_enabled(app):
             await _not_enabled(scope, receive, send)
             return
         server = oauth_server(app)
@@ -159,7 +172,7 @@ class _ProtectedResourceDispatch:
         if not adapter_config(app).enabled:
             await _not_enabled(scope, receive, send)
             return
-        handler = oauth_server(app).protected_resource
+        handler = ProtectedResourceMetadataHandler(protected_resource_metadata(app))
         response = await handler.handle(Request(scope, receive))
         await response(scope, receive, send)
 
