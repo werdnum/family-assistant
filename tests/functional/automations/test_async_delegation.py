@@ -46,6 +46,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     TurnTaintTracker,
+    unknown_external_taint_metadata,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.tool_call_review import (
@@ -2043,6 +2044,60 @@ async def test_inline_delivery_marks_run_notified(db_engine: AsyncEngine) -> Non
     assert marked["handed_off_at"] is None
 
 
+@pytest.mark.parametrize(
+    ("delegate_row_taint", "expected_tier"),
+    [
+        # An assistant row is machine-authored, so it is floored at
+        # trusted_internal even when nothing external was read.
+        (TurnTaintState.empty().to_metadata(), SourceTrustTier.TRUSTED_INTERNAL),
+        (
+            unknown_external_taint_metadata("delegate read an email"),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+    ],
+    ids=["trusted-delegate", "external-delegate"],
+)
+@pytest.mark.asyncio
+async def test_inline_delivery_returns_the_delegate_turns_taint(
+    db_engine: AsyncEngine,
+    delegate_row_taint: TaintMetadata,
+    expected_tier: SourceTrustTier,
+) -> None:
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    clock = SystemClock()
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_taint")
+    await db_context.message_history.add_message(
+        AssistantMessage(content="the answer", taint_metadata=delegate_row_taint),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=clock.now(),
+        turn_id="turn_delegate",
+        thread_root_id=None,
+        processing_profile_id="target_profile",
+        subconversation_id="sub_delegation_taint",
+        user_id="async-delegation-user",
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_taint",
+        result_text="the answer",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_taint")
+    assert run is not None
+    tracker = InMemoryTurnTaintTracker()
+
+    await _inline_delegation_result(
+        _tool_context(db_context, processing_service, taint_tracker=tracker),
+        target_service_id="target_profile",
+        run=run,
+    )
+
+    assert tracker.snapshot().max_tier is expected_tier
+
+
 @pytest.mark.asyncio
 async def test_cleanup_does_not_redeliver_inline_delivered_run(
     db_engine: AsyncEngine,
@@ -3174,7 +3229,7 @@ async def test_a_pollable_run_that_persists_no_history_is_tainted_conservatively
 
     An Interactions-agent run (Deep Research, `coder`) is submitted and polled;
     it never runs a local LLM loop, so it writes no assistant row into its
-    subconversation. `_delegation_result_taint_metadata` therefore finds no
+    subconversation. `delegation_run_result_taint_metadata` therefore finds no
     result taint and falls back to unknown_external -- which is the correct,
     conservative answer for text a sandbox produced after reading the web.
 

@@ -744,6 +744,24 @@ class InMemoryTurnTaintTracker:
         return self._state
 
 
+def unknown_external_taint_metadata(reason: str) -> TaintMetadata:
+    """An ``unknown_external`` stamp for content whose provenance is unknown."""
+    return (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason=reason,
+            )
+        )
+        .to_metadata()
+    )
+
+
 def machine_authored_taint_metadata(
     state: TurnTaintState,
     *,

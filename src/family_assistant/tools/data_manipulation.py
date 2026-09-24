@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import jq
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.tools.taint_helpers import inherit_attachment_taint
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -89,6 +90,12 @@ async def jq_query_tool(
             return ToolResult(
                 text=f"Error: Attachment with ID {attachment_id} not found."
             )
+
+        inherit_attachment_taint(
+            exec_context,
+            attachment_metadata=attachment.metadata,
+            attachment_id=attachment_id_str,
+        )
 
         # Get attachment content (honoring externally-managed storage_path)
         file_path = attachment_registry.get_attachment_path(
