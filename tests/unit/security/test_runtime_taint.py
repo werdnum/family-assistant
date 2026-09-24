@@ -1472,6 +1472,10 @@ def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
             (ToolTag.OUTPUT_TRUSTED, ToolTag.OUTPUT_UNTRUSTED),
             SourceTrustTier.UNKNOWN_EXTERNAL,
         ),
+        (
+            (ToolTag.OUTPUT_MACHINE_DATA, ToolTag.OUTPUT_UNSPECIFIED),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
     ],
 )
 def test_machine_data_output_is_graded_recognized_machine(
@@ -1483,6 +1487,19 @@ def test_machine_data_output_is_graded_recognized_machine(
 
     assert source is not None
     assert source.tier is expected_tier
+
+
+def test_machine_data_outranks_a_cleaner_unspecified_default() -> None:
+    source = derive_tool_result_taint_source(
+        descriptor=_tool_descriptor(
+            "plan_trip", ToolTag.OUTPUT_MACHINE_DATA, ToolTag.OUTPUT_UNSPECIFIED
+        ),
+        call_id="call-1",
+        default_unspecified_tool_output_tier=SourceTrustTier.TRUSTED_INTERNAL,
+    )
+
+    assert source is not None
+    assert source.tier is SourceTrustTier.RECOGNIZED_MACHINE
 
 
 def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:
