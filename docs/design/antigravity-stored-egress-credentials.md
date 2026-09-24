@@ -151,6 +151,39 @@ Git LFS content is the other thing the API cannot carry: it goes to GitHub's LFS
 credential. The helper refuses a push that includes an LFS pointer rather than pushing the pointer
 alone, and says to use `git push` while that still works.
 
+### Alternatives to the push helper
+
+The helper is our own code in the git path, so what else could close the gap was worked through
+before settling on it. Everything below starts from the two measured facts: the store only ever
+sends `Authorization: Bearer`, and git over HTTPS only accepts `Basic`.
+
+- **An off-the-shelf git-to-API tool.** None fits. The known ones (PlanetScale's `ghcommit` and the
+  Actions built on GraphQL `createCommitOnBranch`) write new commits authored by the App, one push
+  at a time, with no merges. That loses the history the helper keeps.
+- **A rewriting proxy inside the sandbox.** Impossible. Google's proxy attaches the credential after
+  the request leaves the sandbox, so no process inside ever sees the token or can re-encode it.
+- **A hosted `Bearer`-to-`Basic` proxy.** It works, holds no secret, and gives full git: fetch, pull
+  and LFS as well as push. The costs are a public endpoint outside Cloudflare Access (Google's
+  sandbox cannot sign in) and all git traffic running through our infrastructure.
+- **A hosted header-echo endpoint.** The stored credential is also bound to an endpoint that returns
+  the `Authorization` header it receives. A git credential helper in the sandbox calls it and hands
+  git a fresh token as `Basic`. It gives full git with less to host than the proxy, and git traffic
+  goes straight to GitHub. The cost is the same public route, plus the token entering the sandbox.
+  That is acceptable for a short-lived token from a narrowly scoped App. **This is the follow-up if
+  a late `fetch` or `pull` turns out to matter in practice.**
+- **A fine-grained personal access token.** It needs no code: a `type: "bearer"` credential with
+  `scheme: "basic"` for `github.com` and `"bearer"` for `api.github.com`. It doesn't expire mid-run,
+  so plain git works throughout. It was declined because pushes and PRs should come from the App,
+  not from a user account.
+- **The App's private key in the sandbox.** The agent mints its own tokens, and nothing needs a
+  store or hosting. It was declined because a long-lived key would travel to Google with every run,
+  where the agent could read it and use it against every installation.
+- **The App JWT in the store, so the sandbox mints tokens itself.** The token endpoint takes
+  `Bearer <JWT>`, the one form the store sends, and a JWT lasts ten minutes, well within rotation
+  range. It is ruled out by measurement: the proxy overwrites any `Authorization` header the sandbox
+  sets (see "What was verified"). Every other call to `api.github.com` would therefore carry the
+  JWT, and it authenticates nothing outside `/app`.
+
 ### Rule of Two
 
 The letters do not move. Injecting a GitHub credential still adds **[B]** to a profile that acts
