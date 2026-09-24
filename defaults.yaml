@@ -124,15 +124,15 @@ llm_parameters:
     output_config:
       effort: "high"
     max_tokens: 16000
-  # GPT-5.6 reasoning effort accepts none/low/medium/high/xhigh/max and defaults
-  # to medium. Both entries below are set explicitly so the separation between
+  # GPT-6 and GPT-5.6 reasoning effort accept none/low/medium/high/xhigh/max and
+  # default to medium. Both entries below are set explicitly so the separation between
   # the tiers they serve is a deliberate choice rather than a default.
   #
   # Sol is the `deep` tier's primary, reached for the hardest multi-step work
   # rather than sitting on the interactive path, so it can afford to think
   # longer. high is a step up from the default without max's tendency to
   # overthink; xhigh and max are the next dials if it still falls short.
-  "gpt-5.6-sol":
+  "gpt-6-sol":
     reasoning_effort: "high"
   # Terra is the `standard` tier's fallback, which answers interactively, where
   # time-to-first-token is felt directly, so this stays at medium. Raise it if
@@ -179,7 +179,7 @@ model_tiers:
     chain:
       # Sol's reasoning_effort comes from the global llm_parameters entry above.
       - provider: "openai"
-        model: "gpt-5.6-sol"
+        model: "gpt-6-sol"
       # Fable 5.1 succeeds Fable 5 in the same tier at the same price, with a
       # wide lead on long agentic tool loops. One known gap: it rejects a
       # forced tool choice (`required` or a named tool) with a 400, which
@@ -1098,7 +1098,7 @@ service_profiles:
       retry_config:
         primary:
           provider: "openai"
-          model: "gpt-5.6-luna"
+          model: "gpt-6-luna"
         fallback:
           provider: "google"
           model: "gemini-3.8-flash"
@@ -1645,7 +1645,7 @@ service_profiles:
       retry_config:
         primary:
           provider: "openai"
-          model: "gpt-5.6-luna"
+          model: "gpt-6-luna"
         fallback:
           provider: "google"
           model: "gemini-3.8-flash"
