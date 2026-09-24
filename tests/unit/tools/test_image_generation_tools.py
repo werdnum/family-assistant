@@ -483,7 +483,7 @@ class TestOpenAIImageBackend:
         assert img.format == "PNG"
 
         call_kwargs = openai_backend.client.images.generate.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-image-2"
+        assert call_kwargs["model"] == "gpt-image-2.5-sunburst"
         assert "photorealistic" in call_kwargs["prompt"]
         assert "a red square" in call_kwargs["prompt"]
         assert call_kwargs["quality"] == "high"
@@ -552,7 +552,7 @@ class TestOpenAIImageBackend:
         assert len(result) > 0
 
         call_kwargs = openai_backend.client.images.edit.call_args.kwargs
-        assert call_kwargs["model"] == "gpt-image-2"
+        assert call_kwargs["model"] == "gpt-image-2.5-sunburst"
         assert call_kwargs["prompt"] == "make it red"
         assert call_kwargs["quality"] == "high"
         assert "input_fidelity" not in call_kwargs
@@ -871,7 +871,7 @@ class TestBackendSelection:
             await generate_image_tool(context, prompt="test")
             mock_cls.assert_called_once()
             call_kwargs = mock_cls.call_args.kwargs
-            assert call_kwargs["model"] == "gpt-image-2"
+            assert call_kwargs["model"] == "gpt-image-2.5-sunburst"
             assert call_kwargs["generate_config"].quality == "high"
             assert call_kwargs["edit_config"].quality == "high"
             assert call_kwargs["edit_config"].input_fidelity == "high"
@@ -939,7 +939,7 @@ class TestBackendSelection:
             await generate_image_tool(context, prompt="test")
             mock_cls.assert_called_once()
             call_kwargs = mock_cls.call_args.kwargs
-            assert call_kwargs["model"] == "gpt-image-2"
+            assert call_kwargs["model"] == "gpt-image-2.5-sunburst"
             assert call_kwargs["generate_config"].output_format == "png"
             assert call_kwargs["edit_config"].output_format == "png"
 
