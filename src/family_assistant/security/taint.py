@@ -785,7 +785,8 @@ def merge_taint_state_into_tracker(
     from_history: bool = False,
 ) -> TurnTaintState:
     """Merge a deserialized taint state without losing persisted max_tier."""
-    merged = tracker.snapshot()
+    before = tracker.snapshot()
+    merged = before
     for source in state.sources:
         merged = merged.add_source(source, from_history=from_history)
     if state.max_tier > merged.max_tier:
@@ -807,19 +808,7 @@ def merge_taint_state_into_tracker(
         merged = replace(
             merged, approved_sinks=merged.approved_sinks | state.approved_sinks
         )
-    extra_total = max(0, state.total_source_count - len(state.sources))
-    new_distinct = max(merged.distinct_source_count, state.distinct_source_count)
-    if (
-        extra_total > 0
-        or new_distinct != merged.distinct_source_count
-        or state.has_explicit_counts
-    ):
-        merged = replace(
-            merged,
-            total_source_count=merged.total_source_count + extra_total,
-            distinct_source_count=new_distinct,
-            has_explicit_counts=True,
-        )
+    merged = _merge_snapshot_counts(before, merged, state)
     tracker.replace(merged)
     return merged
 
@@ -1872,30 +1861,56 @@ def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
         if metadata is None:
             continue
         history_state = TurnTaintState.from_metadata(metadata, from_history=True)
+        # Each row's stamp is the whole turn that wrote it, history included,
+        # so its occurrence total already counts every earlier row's. A history
+        # read therefore contributes its distinct sources only; occurrences are
+        # counted within the turn that sees them.
+        history_state = replace(
+            history_state, total_source_count=history_state.distinct_source_count
+        )
+        before = state
         for source in history_state.sources:
             state = state.add_source(source, from_history=True)
         if history_state.max_tier > state.max_tier:
             state = replace(state, max_tier=history_state.max_tier)
         if history_state.history_high_taint_present:
             state = replace(state, history_high_taint_present=True)
-        extra_total = max(
-            0, history_state.total_source_count - len(history_state.sources)
-        )
-        new_distinct = max(
-            state.distinct_source_count, history_state.distinct_source_count
-        )
-        if (
-            extra_total > 0
-            or new_distinct != state.distinct_source_count
-            or history_state.has_explicit_counts
-        ):
-            state = replace(
-                state,
-                total_source_count=state.total_source_count + extra_total,
-                distinct_source_count=new_distinct,
-                has_explicit_counts=True,
-            )
+        state = _merge_snapshot_counts(before, state, history_state)
     return state
+
+
+def _merge_snapshot_counts(
+    before: TurnTaintState,
+    after: TurnTaintState,
+    snapshot: TurnTaintState,
+) -> TurnTaintState:
+    """Settle counts once ``snapshot``'s retained sources were added to ``before``.
+
+    A snapshot's counts are an aggregate that may already include ``before``'s
+    ancestry -- a delegation result starts from the caller's state, and a
+    persisted row carries the turn that wrote it -- so they are combined by
+    maximum, never summed. Only sources the merge actually found new raise the
+    total above that, which keeps re-merging the same snapshot idempotent.
+
+    Nothing records whether a snapshot shares that ancestry, so an unrelated
+    snapshot -- a stored note's provenance, say -- contributes only its newly
+    distinct retained sources, and the total is a lower bound on occurrences.
+    Summing instead is what compounded the count without bound. The count
+    only informs reviewers and audit rows; no policy outcome depends on it.
+    """
+    newly_distinct = after.distinct_source_count - before.distinct_source_count
+    distinct = max(after.distinct_source_count, snapshot.distinct_source_count)
+    total = max(
+        before.total_source_count + newly_distinct,
+        snapshot.total_source_count,
+        distinct,
+    )
+    return replace(
+        after,
+        total_source_count=total,
+        distinct_source_count=distinct,
+        has_explicit_counts=before.has_explicit_counts or snapshot.has_explicit_counts,
+    )
 
 
 def _parse_nonnegative_int(value: object) -> int | None:
