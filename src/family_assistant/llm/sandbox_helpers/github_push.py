@@ -33,6 +33,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -48,6 +49,10 @@ _SUBMODULE_MODE = "160000"
 
 class PushError(Exception):
     """A push that cannot continue; the message says why."""
+
+
+class EmptyRepositoryError(PushError):
+    """GitHub's API cannot write to a repository that has no commits yet."""
 
 
 def git(*args: str, stdin: bytes | None = None) -> bytes:
@@ -92,6 +97,8 @@ def api(method: str, path: str, body: object | None = None) -> object | None:
         if e.code == 404 and method == "GET":
             return None
         detail = e.read().decode(errors="replace")
+        if e.code == 409 and "empty" in detail.lower():
+            raise EmptyRepositoryError(detail) from e
         hint = ""
         if e.code == 401:
             hint = (
@@ -251,6 +258,25 @@ class Pusher:
         return str(created["sha"])
 
 
+def push_with_git(remote: str, branch: str) -> int:
+    """The first push to an empty repository, which only git can make."""
+    print(
+        "the repository is empty, which GitHub's API cannot write to; "
+        "making the first push with git",
+        file=sys.stderr,
+    )
+    result = subprocess.run(
+        ["git", "push", remote, f"HEAD:refs/heads/{branch}"], check=False
+    )
+    if result.returncode != 0:
+        raise PushError(
+            "the first push to an empty repository has to go through git, whose "
+            "credential stops working about an hour into the task; once the "
+            "repository has a commit, this helper can push for the rest of it"
+        )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Push local commits to GitHub through the REST API."
@@ -265,12 +291,20 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = repository_path(args.remote)
+    try:
+        return push(repo, args.remote, args.branch, force=args.force)
+    except EmptyRepositoryError:
+        return push_with_git(args.remote, args.branch)
+
+
+def push(repo: str, remote: str, branch: str, *, force: bool) -> int:
     pusher = Pusher(repo)
     head = git_text("rev-parse", "HEAD")
-    ref = api("GET", f"{repo}/git/ref/heads/{args.branch}")
+    quoted = urllib.parse.quote(branch, safe="/")
+    ref = api("GET", f"{repo}/git/ref/heads/{quoted}")
     remote_head = str(ref["object"]["sha"]) if isinstance(ref, dict) else None
     if remote_head == head:
-        print(f"{args.branch} is already at {head[:12]}")
+        print(f"{branch} is already at {head[:12]}")
         return 0
 
     known_locally = remote_head is not None and succeeds(
@@ -279,13 +313,13 @@ def main() -> int:
     fast_forward = known_locally and succeeds(
         "merge-base", "--is-ancestor", str(remote_head), head
     )
-    if remote_head is not None and not args.force and not fast_forward:
+    if remote_head is not None and not force and not fast_forward:
         raise PushError(
-            f"remote {args.branch} is at {remote_head[:12]}, which HEAD does not "
+            f"remote {branch} is at {remote_head[:12]}, which HEAD does not "
             "contain; integrate it first or pass --force"
         )
 
-    exclude = [f"--remotes={args.remote}"]
+    exclude = [f"--remotes={remote}"]
     if known_locally and remote_head is not None:
         exclude.append(remote_head)
     commits = git_text(
@@ -305,20 +339,20 @@ def main() -> int:
         api(
             "POST",
             f"{repo}/git/refs",
-            {"ref": f"refs/heads/{args.branch}", "sha": new_head},
+            {"ref": f"refs/heads/{branch}", "sha": new_head},
         )
     else:
         api(
             "PATCH",
-            f"{repo}/git/refs/heads/{args.branch}",
-            {"sha": new_head, "force": args.force},
+            f"{repo}/git/refs/heads/{quoted}",
+            {"sha": new_head, "force": force},
         )
     if new_head == head:
-        git("update-ref", f"refs/remotes/{args.remote}/{args.branch}", head)
-        print(f"{args.branch} -> {head[:12]}")
+        git("update-ref", f"refs/remotes/{remote}/{branch}", head)
+        print(f"{branch} -> {head[:12]}")
     else:
         print(
-            f"{args.branch} -> {new_head[:12]}. GitHub's commit ids differ from the "
+            f"{branch} -> {new_head[:12]}. GitHub's commit ids differ from the "
             "local ones, so fetch the branch before building on it.",
         )
     return 0

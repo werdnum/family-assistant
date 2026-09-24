@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -82,6 +83,9 @@ class _FakeGitHub(BaseHTTPRequestHandler):
         if "Authorization" in self.headers:
             self._reply(400, {"message": "the helper must not send credentials"})
             return
+        if not _git(self.bare, "for-each-ref"):
+            self._reply(409, {"message": "Git Repository is empty."})
+            return
         path = self.path.removeprefix(_REPO_PREFIX)
         handler = {
             ("GET", "/git/ref/heads/"): self._get_ref,
@@ -93,7 +97,7 @@ class _FakeGitHub(BaseHTTPRequestHandler):
         }
         for (verb, prefix), action in handler.items():
             if verb == method and path.startswith(prefix):
-                action(path.removeprefix(prefix))
+                action(urllib.parse.unquote(path.removeprefix(prefix)))
                 return
         self._reply(404, {"message": "Not Found"})
 
@@ -186,6 +190,15 @@ class _FakeGitHub(BaseHTTPRequestHandler):
 
     def _create_ref(self, _: str) -> None:
         body = self._body()
+        exists = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", str(body["ref"])],
+            cwd=self.bare,
+            capture_output=True,
+            check=False,
+        )
+        if exists.returncode == 0:
+            self._reply(422, {"message": "Reference already exists"})
+            return
         _git(self.bare, "update-ref", str(body["ref"]), str(body["sha"]))
         self._reply(201, {"object": {"sha": body["sha"]}})
 
@@ -351,6 +364,44 @@ def test_a_follow_up_push_sends_only_the_new_commit(
     assert _git(bare, "rev-parse", "refs/heads/feature") == _git(
         work, "rev-parse", "HEAD"
     )
+
+
+def test_a_branch_name_with_url_characters_reaches_its_own_ref(
+    github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path
+) -> None:
+    bare, api_url, _ = github
+    work = _clone(tmp_path, bare)
+    _git(work, "checkout", "-b", "fix#12%3")
+    (work / "a.txt").write_text("a\n")
+    _git(work, "add", "a.txt")
+    _git(work, "commit", "-m", "Fix")
+    assert _push(work, api_url, "fix#12%3").returncode == 0
+    (work / "b.txt").write_text("b\n")
+    _git(work, "add", "b.txt")
+    _git(work, "commit", "-m", "More")
+
+    result = _push(work, api_url, "fix#12%3")
+
+    assert result.returncode == 0, result.stderr
+    assert _git(bare, "rev-parse", "refs/heads/fix#12%3") == _git(
+        work, "rev-parse", "HEAD"
+    )
+
+
+def test_an_empty_repository_gets_its_first_push_from_git(
+    github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path
+) -> None:
+    """GitHub's API cannot write to a repository with no commits, so the first
+    push goes through git, while its submit-time credential is still valid."""
+    bare, api_url, _ = github
+    work = _clone(tmp_path, bare)
+    _git(bare, "update-ref", "-d", "refs/heads/main")
+    _git(work, "remote", "set-url", "--push", "origin", str(bare))
+
+    result = _push(work, api_url, "main")
+
+    assert result.returncode == 0, result.stderr
+    assert _git(bare, "rev-parse", "refs/heads/main") == _git(work, "rev-parse", "HEAD")
 
 
 def test_a_diverged_branch_is_refused_without_force(

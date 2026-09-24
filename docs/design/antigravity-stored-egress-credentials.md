@@ -142,6 +142,11 @@ What still expires with the git token is git itself after the first hour: a late
 `git pull` fails. That is accepted. A long task pushes its own work, and it rarely needs to fetch
 someone else's.
 
+The one push the API cannot make is the first into an empty repository: GitHub refuses to write
+objects or refs to a repository with no commits. The helper falls back to `git push` for that, which
+works only while the submit-time token is valid. Creating a repository from scratch is the uncommon
+case, and it pushes its first commit early anyway.
+
 ### Rule of Two
 
 The letters do not move. Injecting a GitHub credential still adds **[B]** to a profile that acts
