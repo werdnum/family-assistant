@@ -2379,3 +2379,38 @@ async def test_bound_child_after_model_result_reviews_external_destinations(
         "execute_script",
         "send_external",
     ]
+
+
+@pytest.mark.asyncio
+async def test_caller_literal_passed_to_bound_child_sandbox_inherits(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    source = (
+        "read_external()\n"
+        'execute_script(name="child", parameters={"command": "upload out.bmp"})'
+    )
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _read_external_registration(),
+            _sandbox_registration(effects),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="child",
+        description="Static dependency child",
+        script_code='run_sandbox(command=command, cwd="/work/ink")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["/work/ink: upload out.bmp"]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script"
+    ]

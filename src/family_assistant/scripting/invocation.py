@@ -181,11 +181,13 @@ class ScriptExecutionScope:
     def program_string_literals(self) -> frozenset[str]:
         """Complete string literals written in the reviewed program's source.
 
-        Covers the program's own source and every hash-bound stored script in
-        its closure. Parts of f-strings are not complete literals, and inputs
-        are values rather than code, so neither counts.
+        Covers the whole bound program -- the outermost program this one is
+        bound into, and every hash-bound stored script in its closure -- so a
+        literal a caller passes into a bound child still counts. Parts of
+        f-strings are not complete literals, and inputs are values rather than
+        code, so neither counts.
         """
-        review = self.invocation.review
+        review = self.program_to_decide().invocation.review
         sources = (
             review.source,
             *(
