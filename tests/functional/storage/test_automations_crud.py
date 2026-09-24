@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -895,6 +895,159 @@ class TestScheduleAutomationsRepository:
         assert new_next > execution_time
 
     @pytest.mark.asyncio
+    async def test_after_task_execution_stops_at_count(
+        self, db_context: Database
+    ) -> None:
+        """A COUNT-bounded automation fires exactly COUNT times, then stops."""
+        automation_id = await db_context.schedule_automations.create(
+            name="Three Times",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=3",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=str(uuid.uuid4()),
+            timezone=ZoneInfo("UTC"),
+        )
+
+        firings: list[datetime] = []
+        for _ in range(5):
+            automation = await db_context.schedule_automations.get_by_id(automation_id)
+            assert automation is not None
+            slot = automation["next_scheduled_at"]
+            assert slot is not None
+            if firings and slot == firings[-1]:
+                break
+            firings.append(slot)
+            await db_context.schedule_automations.after_task_execution(
+                automation_id, slot + timedelta(seconds=7), timezone=ZoneInfo("UTC")
+            )
+
+        assert len(firings) == 3
+        assert [f - firings[0] for f in firings] == [
+            timedelta(days=0),
+            timedelta(days=1),
+            timedelta(days=2),
+        ]
+        rows = await db_context.fetch_all(
+            select(tasks_table.c.task_id)
+            .where(tasks_table.c.status == "pending")
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+        )
+        # One task per firing, and none after the last.
+        assert len(rows) == 3
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "recurrence_rule",
+        [
+            "FREQ=MINUTELY;COUNT=525600",
+            "FREQ=MINUTELY;COUNT=+525600",
+            "FREQ=MINUTELY;COUNT=525_600",
+        ],
+    )
+    async def test_create_rejects_count_too_large_to_evaluate(
+        self, db_context: Database, recurrence_rule: str
+    ) -> None:
+        """Each advance walks a COUNT series from its start, so COUNT is capped."""
+        with pytest.raises(ValueError, match="COUNT above"):
+            await db_context.schedule_automations.create(
+                name="Every Minute For A Year",
+                recurrence_rule=recurrence_rule,
+                action_type="wake_llm",
+                action_config={"context": "test"},
+                conversation_id=str(uuid.uuid4()),
+                timezone=ZoneInfo("UTC"),
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_recurrence_set(self, db_context: Database) -> None:
+        """A set hides its rule's COUNT, so only a single RRULE is accepted."""
+        with pytest.raises(ValueError, match="single RRULE"):
+            await db_context.schedule_automations.create(
+                name="With Extra Date",
+                recurrence_rule=(
+                    "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=3\n"
+                    "RDATE:20361225T090000"
+                ),
+                action_type="wake_llm",
+                action_config={"context": "test"},
+                conversation_id=str(uuid.uuid4()),
+                timezone=ZoneInfo("UTC"),
+            )
+
+    @pytest.mark.asyncio
+    async def test_after_task_execution_does_not_drift_with_run_time(
+        self, db_context: Database
+    ) -> None:
+        """A rule with no fixed clock time keeps its slots however long runs take."""
+        automation_id = await db_context.schedule_automations.create(
+            name="Every Two Hours",
+            recurrence_rule="FREQ=HOURLY;INTERVAL=2",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=str(uuid.uuid4()),
+            timezone=ZoneInfo("UTC"),
+        )
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        first = automation["next_scheduled_at"]
+        assert first is not None
+        assert (first.second, first.microsecond) == (0, 0)
+
+        slot = first
+        for _ in range(3):
+            await db_context.schedule_automations.after_task_execution(
+                automation_id,
+                slot + timedelta(minutes=3, seconds=11),
+                timezone=ZoneInfo("UTC"),
+            )
+            automation = await db_context.schedule_automations.get_by_id(automation_id)
+            assert automation is not None
+            next_slot = automation["next_scheduled_at"]
+            assert next_slot is not None
+            slot = next_slot
+
+        assert slot == first + timedelta(hours=6)
+
+    @pytest.mark.asyncio
+    async def test_changing_the_rule_restarts_its_count(
+        self, db_context: Database
+    ) -> None:
+        """An edited rule is a new series, so its COUNT runs from the edit."""
+        conversation_id = str(uuid.uuid4())
+        automation_id = await db_context.schedule_automations.create(
+            name="Recounted",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=2",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
+        )
+        for _ in range(2):
+            automation = await db_context.schedule_automations.get_by_id(automation_id)
+            assert automation is not None
+            slot = automation["next_scheduled_at"]
+            assert slot is not None
+            await db_context.schedule_automations.after_task_execution(
+                automation_id, slot + timedelta(seconds=7), timezone=ZoneInfo("UTC")
+            )
+
+        await db_context.schedule_automations.update(
+            automation_id,
+            conversation_id,
+            recurrence_rule="FREQ=DAILY;BYHOUR=10;BYMINUTE=0;COUNT=2",
+            timezone=ZoneInfo("UTC"),
+        )
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        restarted = automation["next_scheduled_at"]
+        assert restarted is not None
+        assert automation["recurrence_anchor"] == restarted
+        assert restarted.hour == 10
+
+    @pytest.mark.asyncio
     async def test_after_task_execution_disabled_automation(
         self, db_context: Database
     ) -> None:
@@ -1026,10 +1179,14 @@ class TestScheduleAutomationsRepository:
             timezone=sydney_tz,
         )
 
-        # Simulate execution at 2026-02-28 22:05 UTC = March 1 09:05 AEDT
-        execution_time = datetime(2026, 2, 28, 22, 5, 0, tzinfo=UTC)
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        first_at = automation["next_scheduled_at"]
+        assert first_at is not None
+
+        # The run finishes five minutes after its 09:00 Sydney slot.
         await db_context.schedule_automations.after_task_execution(
-            automation_id, execution_time, timezone=sydney_tz
+            automation_id, first_at + timedelta(minutes=5), timezone=sydney_tz
         )
 
         automation = await db_context.schedule_automations.get_by_id(automation_id)
@@ -1037,11 +1194,10 @@ class TestScheduleAutomationsRepository:
         next_at = automation["next_scheduled_at"]
         assert next_at is not None
 
-        # Next 9am Sydney after March 1 09:05 AEDT is March 2 09:00 AEDT
+        first_sydney = first_at.astimezone(sydney_tz)
         next_sydney = next_at.astimezone(sydney_tz)
-        assert next_sydney.hour == 9
-        assert next_sydney.minute == 0
-        assert next_sydney.day == 2
+        assert (next_sydney.hour, next_sydney.minute, next_sydney.second) == (9, 0, 0)
+        assert next_sydney.date() == first_sydney.date() + timedelta(days=1)
 
     @pytest.mark.asyncio
     async def test_parse_rrule_naive_after_treated_as_utc(

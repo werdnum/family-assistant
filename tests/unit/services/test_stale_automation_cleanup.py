@@ -334,13 +334,16 @@ class TestSpentScheduleAutomationCleanup:
         *,
         recurrence_rule: str,
         next_scheduled_at: datetime,
+        recurrence_anchor: datetime | None = None,
         clear_pending_tasks: bool = True,
     ) -> int:
         """Create an automation and leave it in the state a final run leaves.
 
         Creation rejects a rule with no occurrence ahead of it, so the spent
         rule is written afterwards, alongside the next_scheduled_at that the
-        last firing froze and the consumed task it enqueued.
+        last firing froze and the consumed task it enqueued. The anchor
+        defaults to that last firing, which is where the scheduler leaves it
+        for a rule without a COUNT, and where a single-occurrence series began.
         """
         automation_id = await db_context.schedule_automations.create(
             name=name,
@@ -357,6 +360,7 @@ class TestSpentScheduleAutomationCleanup:
             .values(
                 recurrence_rule=recurrence_rule,
                 next_scheduled_at=next_scheduled_at,
+                recurrence_anchor=recurrence_anchor or next_scheduled_at,
             )
         )
         if clear_pending_tasks:
@@ -420,6 +424,60 @@ class TestSpentScheduleAutomationCleanup:
                 automation_id, CONVERSATION_ID
             )
             is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_deletes_schedule_whose_count_ran_out(
+        self, exec_context: ToolExecutionContext, db_context: Database
+    ) -> None:
+        """A series is read from its anchor, so a COUNT above 1 also runs out.
+
+        Read from the last firing instead, the count restarts there and the
+        series never ends.
+        """
+        series_start = (datetime.now(UTC) - timedelta(days=5)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
+        automation_id = await self._create_spent_schedule(
+            db_context,
+            "count-ran-out-schedule",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=3",
+            next_scheduled_at=series_start + timedelta(days=2),
+            recurrence_anchor=series_start,
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})
+
+        assert (
+            await db_context.schedule_automations.get_by_id(
+                automation_id, CONVERSATION_ID
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_preserves_stranded_schedule_with_count_left(
+        self, exec_context: ToolExecutionContext, db_context: Database
+    ) -> None:
+        """A COUNT series with occurrences still ahead of now is not spent."""
+        series_start = (datetime.now(UTC) - timedelta(days=5)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
+        automation_id = await self._create_spent_schedule(
+            db_context,
+            "count-left-schedule",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=10",
+            next_scheduled_at=series_start + timedelta(days=2),
+            recurrence_anchor=series_start,
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})
+
+        assert (
+            await db_context.schedule_automations.get_by_id(
+                automation_id, CONVERSATION_ID
+            )
+            is not None
         )
 
     @pytest.mark.asyncio

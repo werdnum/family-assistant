@@ -49,6 +49,56 @@ _UNSET = object()
 # Valid action types for schedule automations
 VALID_ACTION_TYPES = {"wake_llm", "script"}
 
+# A COUNT-bounded series is evaluated from its first occurrence on every
+# advance, so the count bounds that walk; this keeps it to milliseconds.
+MAX_RECURRENCE_COUNT = 10_000
+
+
+def _keeps_fixed_anchor(recurrence_rule: str) -> bool:
+    """Whether the series must stay anchored at the occurrence it began at.
+
+    A ``COUNT`` runs from the first occurrence, so moving the anchor would
+    restart it. A recurrence set (``RDATE``, ``EXDATE`` or several rules) is
+    refused at creation; one that predates that keeps a fixed anchor too,
+    since that is always correct, only slower.
+
+    Raises ValueError or ParserError for a rule that does not parse.
+    """
+    parsed = rrule.rrulestr(recurrence_rule)
+    return not isinstance(parsed, rrule.rrule) or _count_of(parsed) is not None
+
+
+def _count_of(parsed: rrule.rrule) -> int | None:
+    """The ``COUNT`` dateutil parsed, so every spelling it accepts reads as it evaluates.
+
+    dateutil offers no public accessor for it.
+    """
+    return parsed._count  # pyright: ignore[reportAttributeAccessIssue]  # pylint: disable=protected-access
+
+
+def _validate_rule(recurrence_rule: str) -> None:
+    """Reject a rule the anchored series cannot evaluate cheaply and correctly.
+
+    A ``COUNT`` above ``MAX_RECURRENCE_COUNT`` would be walked from the series
+    start on every advance. A recurrence set hides its rules' ``COUNT`` from
+    the choice between a fixed and an advancing anchor.
+    """
+    try:
+        parsed = rrule.rrulestr(recurrence_rule)
+    except (ValueError, ParserError):
+        # Evaluating the rule reports it as invalid.
+        return
+    if not isinstance(parsed, rrule.rrule):
+        raise ValueError(
+            "Only a single RRULE is supported; RDATE, EXDATE and multiple rules are not"
+        )
+    count = _count_of(parsed)
+    if count is not None and count > MAX_RECURRENCE_COUNT:
+        raise ValueError(
+            f"COUNT above {MAX_RECURRENCE_COUNT} is not supported; "
+            "use UNTIL to end a long-running schedule"
+        )
+
 
 def _build_script_payload(
     action_config: ActionConfig,
@@ -101,6 +151,9 @@ class ScheduleAutomationsRepository(BaseRepository):
         created_at = normalize_datetime(row["created_at"])
         if created_at is None:
             raise ValueError("created_at cannot be None for automation record")
+        recurrence_anchor = normalize_datetime(row["recurrence_anchor"])
+        if recurrence_anchor is None:
+            raise ValueError("recurrence_anchor cannot be None for automation record")
 
         return ScheduleAutomationDict(
             id=row["id"],
@@ -110,6 +163,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             interface_type=row["interface_type"],
             recurrence_rule=row["recurrence_rule"],
             next_scheduled_at=normalize_datetime(row["next_scheduled_at"]),
+            recurrence_anchor=recurrence_anchor,
             action_type=row["action_type"],
             action_config=row["action_config"],
             definition_record=row.get("definition_record"),
@@ -121,52 +175,73 @@ class ScheduleAutomationsRepository(BaseRepository):
             execution_count=row["execution_count"],
         )
 
-    def _parse_rrule_and_get_next(
+    def _first_occurrence(
+        self, recurrence_rule: str, *, timezone: ZoneInfo
+    ) -> datetime | None:
+        """The first occurrence of a series starting now, which becomes its anchor.
+
+        The series starts on the whole minute: dateutil takes any unspecified
+        ``BYSECOND`` from the start, and the second the automation happened to
+        be created in is not part of what anyone asked for.
+
+        Raises ValueError for a rule ``_validate_rule`` refuses.
+        """
+        _validate_rule(recurrence_rule)
+        now = datetime.now(timezone)
+        return self._occurrence_after(
+            recurrence_rule,
+            start=now.replace(second=0, microsecond=0),
+            after=now,
+            timezone=timezone,
+        )
+
+    def _next_occurrence(
         self,
         recurrence_rule: str,
-        after: datetime | None = None,
         *,
+        anchor: datetime,
+        after: datetime,
+        timezone: ZoneInfo,
+    ) -> datetime | None:
+        """The next occurrence after ``after`` of the series anchored at ``anchor``.
+
+        Always evaluated from the stored anchor rather than from ``after``: a
+        rule restarted at each firing begins a new series every time, so its
+        ``COUNT`` never runs out, and a rule with no fixed clock time slides
+        later by however long each run took.
+        """
+        return self._occurrence_after(
+            recurrence_rule, start=anchor, after=after, timezone=timezone
+        )
+
+    def _occurrence_after(
+        self,
+        recurrence_rule: str,
+        *,
+        start: datetime,
+        after: datetime,
         timezone: ZoneInfo,
     ) -> datetime | None:
         """
-        Parse RRULE and calculate next execution time.
+        Evaluate an RRULE whose series begins at ``start``.
 
         Times in the RRULE (e.g. BYHOUR=9) are interpreted in the given
-        timezone.  The returned datetime is always UTC so it can be stored
+        timezone, so ``start`` and ``after`` are converted to it before
+        evaluation. The returned datetime is always UTC so it can be stored
         directly in the database.
 
-        Args:
-            recurrence_rule: RRULE string
-            after: Calculate next execution after this time (defaults to now)
-            timezone: Interpret RRULE times in this timezone.
-                ``after`` is converted to this timezone before being used as
-                the RRULE dtstart so that hour/minute constraints are
-                evaluated in local time.
-
         Returns:
-            Next execution datetime in UTC, or None if no more executions
+            The first occurrence after ``after`` in UTC, or None if the series
+            has no more occurrences or the rule does not parse
         """
+        if after.tzinfo is None:
+            after = after.replace(tzinfo=UTC)
         try:
-            return self._calculate_next_occurrence(recurrence_rule, after, timezone)
+            rule = rrule.rrulestr(recurrence_rule, dtstart=start.astimezone(timezone))
+            next_occurrence = rule.after(after.astimezone(timezone))
         except (ValueError, ParserError) as e:
             self._logger.error(f"Failed to parse RRULE '{recurrence_rule}': {e}")
             return None
-
-    @staticmethod
-    def _calculate_next_occurrence(
-        recurrence_rule: str,
-        after: datetime | None,
-        timezone: ZoneInfo,
-    ) -> datetime | None:
-        if after is None:
-            after = datetime.now(timezone)
-        else:
-            if after.tzinfo is None:
-                after = after.replace(tzinfo=UTC)
-            after = after.astimezone(timezone)
-
-        rule = rrule.rrulestr(recurrence_rule, dtstart=after)
-        next_occurrence = rule.after(after)
         if next_occurrence is None:
             return None
         return next_occurrence.astimezone(UTC)
@@ -384,9 +459,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             raise ValueError(
                 f"Invalid action_type '{action_type}'. Must be one of: {', '.join(sorted(VALID_ACTION_TYPES))}"
             )
-        next_scheduled_at = self._parse_rrule_and_get_next(
-            recurrence_rule, timezone=timezone
-        )
+        next_scheduled_at = self._first_occurrence(recurrence_rule, timezone=timezone)
         if next_scheduled_at is None:
             raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
@@ -417,6 +490,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     description=description,
                     recurrence_rule=recurrence_rule,
                     next_scheduled_at=next_scheduled_at,
+                    recurrence_anchor=next_scheduled_at,
                     action_type=action_type,
                     action_config=action_config,
                     conversation_id=conversation_id,
@@ -652,12 +726,12 @@ class ScheduleAutomationsRepository(BaseRepository):
         firing. Nothing re-evaluates the rule after that, so it is dead.
 
         The rule is read as the series the automation actually belongs to --
-        anchored at that last firing, since a rule restarted from now is a
-        different series and ``COUNT=1`` would yield a fresh occurrence today
-        forever -- and asked whether it has anything left *ahead of us*. An
-        occurrence between the anchor and now is already in the past and no
-        longer schedulable, so it is not evidence of life: a schedule that ran
-        late, after its own ``UNTIL``, leaves exactly that behind.
+        from its stored anchor, since a rule restarted from now is a different
+        series and its ``COUNT`` would yield fresh occurrences forever -- and
+        asked whether it has anything left *ahead of us*. An occurrence between
+        the anchor and now is already in the past and no longer schedulable, so
+        it is not evidence of life: a schedule that ran late, after its own
+        ``UNTIL``, leaves exactly that behind.
 
         An automation whose series still reaches past now is excluded. The
         scheduler meant to keep it running, so it is stranded rather than
@@ -685,14 +759,10 @@ class ScheduleAutomationsRepository(BaseRepository):
         spent: list[ScheduleAutomationDict] = []
         for row in rows:
             automation = self._normalize_automation(dict(row))
-            last_firing = automation["next_scheduled_at"]
-            if last_firing is None:
-                continue
-
             try:
                 still_to_come = self._has_occurrence_after(
                     automation["recurrence_rule"],
-                    anchor=last_firing,
+                    anchor=automation["recurrence_anchor"],
                     cutoff=now,
                     timezone=timezone,
                 )
@@ -725,21 +795,19 @@ class ScheduleAutomationsRepository(BaseRepository):
     ) -> bool:
         """Whether the series anchored at ``anchor`` reaches past ``cutoff``.
 
-        Answered in two single steps rather than by walking the series to the
-        cutoff, which for a stale anchor and a high-frequency rule means
-        millions of occurrences computed synchronously.
+        A series with a fixed anchor is walked to the cutoff from it, since that
+        is where its ``COUNT`` runs from; the count bounds the walk.
 
-        The first step asks the series, at its own anchor, for anything at all:
-        no answer means the rule is finished, whatever ``COUNT`` it carried.
-        An answer past the cutoff means it is plainly alive. Only an occurrence
-        already behind us is ambiguous -- a schedule that ran late leaves that
-        -- and the second step re-asks from the cutoff itself.
-
-        Re-anchoring restarts a ``COUNT``, so that second step can call a
-        finished series alive. It errs towards keeping an automation, which is
-        the direction to err when the alternative is deleting one; ``UNTIL`` is
-        absolute and survives the re-anchor exactly, so the case this question
-        exists for stays correct.
+        Any other series is answered in two single steps rather than by walking
+        it to the cutoff, which for a stale anchor and a high-frequency rule
+        means millions of occurrences computed synchronously. The first step
+        asks the series, at its own anchor, for anything at all: no answer means
+        the rule is finished. An answer past the cutoff means it is plainly
+        alive. Only an occurrence already behind us is ambiguous -- a schedule
+        that ran late leaves that -- and the second step re-asks from the cutoff
+        itself. Without a ``COUNT`` the anchor only fixes the series' phase, and
+        what bounds it is an ``UNTIL``, which is absolute and survives the
+        re-anchor exactly.
 
         Raises ValueError or ParserError for a rule that does not parse, so a
         broken rule is never mistaken for an exhausted one.
@@ -747,9 +815,11 @@ class ScheduleAutomationsRepository(BaseRepository):
         local_anchor = anchor.astimezone(timezone)
         local_cutoff = cutoff.astimezone(timezone)
 
-        from_anchor = rrule.rrulestr(recurrence_rule, dtstart=local_anchor).after(
-            local_anchor
-        )
+        series = rrule.rrulestr(recurrence_rule, dtstart=local_anchor)
+        if _keeps_fixed_anchor(recurrence_rule):
+            return series.after(local_cutoff) is not None
+
+        from_anchor = series.after(local_anchor)
         if from_anchor is None:
             return False
         if from_anchor > local_cutoff:
@@ -819,8 +889,11 @@ class ScheduleAutomationsRepository(BaseRepository):
                     )
                     return False
 
-                next_scheduled_at = self._parse_rrule_and_get_next(
-                    automation["recurrence_rule"], timezone=timezone
+                next_scheduled_at = self._next_occurrence(
+                    automation["recurrence_rule"],
+                    anchor=automation["recurrence_anchor"],
+                    after=datetime.now(UTC),
+                    timezone=timezone,
                 )
                 if next_scheduled_at is None:
                     self._logger.error(
@@ -1006,11 +1079,12 @@ class ScheduleAutomationsRepository(BaseRepository):
         recurrence_changing = isinstance(recurrence_rule, str)
         if recurrence_changing:
             # Validate and calculate new next_scheduled_at
-            next_at = self._parse_rrule_and_get_next(recurrence_rule, timezone=timezone)
+            next_at = self._first_occurrence(recurrence_rule, timezone=timezone)
             if next_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
             update_values["recurrence_rule"] = recurrence_rule
             update_values["next_scheduled_at"] = next_at
+            update_values["recurrence_anchor"] = next_at
 
         # Determine if task queue needs synchronization
         action_config_changing = (
@@ -1382,8 +1456,11 @@ class ScheduleAutomationsRepository(BaseRepository):
         )
         final_name = name_override if name_override is not None else automation["name"]
 
-        next_scheduled_at = next_at_override or self._parse_rrule_and_get_next(
-            final_recurrence_rule, timezone=timezone
+        next_scheduled_at = next_at_override or self._next_occurrence(
+            final_recurrence_rule,
+            anchor=automation["recurrence_anchor"],
+            after=datetime.now(UTC),
+            timezone=timezone,
         )
         if next_scheduled_at is None:
             self._logger.info(
@@ -1514,8 +1591,11 @@ class ScheduleAutomationsRepository(BaseRepository):
 
             # Calculate next execution time
             recurrence_rule = automation["recurrence_rule"]
-            next_scheduled_at = self._parse_rrule_and_get_next(
-                recurrence_rule, after=execution_time, timezone=timezone
+            next_scheduled_at = self._next_occurrence(
+                recurrence_rule,
+                anchor=automation["recurrence_anchor"],
+                after=execution_time,
+                timezone=timezone,
             )
 
             if next_scheduled_at is None:
@@ -1525,11 +1605,13 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
                 return
 
-            # Update next_scheduled_at
+            advanced: dict[str, datetime] = {"next_scheduled_at": next_scheduled_at}
+            if not _keeps_fixed_anchor(recurrence_rule):
+                advanced["recurrence_anchor"] = next_scheduled_at
             stmt = (
                 update(schedule_automations_table)
                 .where(schedule_automations_table.c.id == automation_id)
-                .values(next_scheduled_at=next_scheduled_at)
+                .values(**advanced)
             )
             await txn.execute(stmt)
 

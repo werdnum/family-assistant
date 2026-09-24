@@ -216,6 +216,10 @@ RRULE (Recurrence Rule) strings follow the RFC 5545 standard. Common patterns:
 - Only 10 times: Add `;COUNT=10`
 - Until specific date: Add `;UNTIL=20251231T235959Z`
 
+A count starts from the first run after the automation is created or its schedule is changed. Runs
+that fall while the automation is paused still count, so a paused automation can finish its count
+before it is resumed. A count can be at most 10,000; use an end date for anything longer.
+
 ## Script Automation
 
 Scripts can access various tools and data:
