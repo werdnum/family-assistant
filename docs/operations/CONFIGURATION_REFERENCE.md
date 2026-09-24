@@ -2916,22 +2916,25 @@ cannot be resolved — a missing variable, an unreadable key, a revoked installa
 rather than submitting it unauthenticated, which would otherwise surface as a 404 on a private
 repository from inside the agent.
 
-**How long GitHub access lasts depends on the scheme.** A `github_app` rule on `scheme: "bearer"`
-(the REST API) is written into the Interactions API's credential store under the id
-`fa-egress-github-app-<installation id>`, and the proxy reads that id on every request. A recurring
-system task mints a fresh installation token every 20 minutes and overwrites the stored one, so REST
-access holds for the whole of a run however long it is. The task is scheduled only when some profile
-has such a rule; nothing else needs configuring, and it uses the deployment's `GEMINI_API_KEY`, the
-same key every Google profile uses.
+**GitHub access lasts for the whole run.** A `github_app` credential is written into the
+Interactions API's credential store, and the proxy reads it on every request. A recurring system
+task mints a fresh installation token every 20 minutes and overwrites the stored copies, so a run
+keeps working however long it is. The task is scheduled only when some profile has such a rule;
+nothing else needs configuring, and it uses the deployment's `GEMINI_API_KEY`, the same key every
+Google profile uses.
 
-A `scheme: "basic"` rule (git over HTTPS) cannot go through the store, which can only send
-`Authorization: Bearer`, and GitHub's git endpoint accepts only `Basic`. That rule keeps the header
-fixed at submit, so **git itself stops authenticating when that token expires (~1 hour)**. Pushing
-doesn't depend on it. When `api.github.com` has the stored credential, each run gets a push helper
-mounted at `/workspace/.fa/github_push.py`, and the agent is told to push with it. It sends commits
-through GitHub's REST API with the rotating credential, so a push works at any point in a run. Keep
-the `github.com` rule too, so the agent can clone with git. After the first hour, a late `git fetch`
-or `git pull` still fails. Static `bearer` credentials never go to the store.
+The two schemes are stored differently:
+
+- `scheme: "bearer"` (the REST API) is stored under `fa-egress-github-app-<installation id>`, and
+  the rule names that id.
+- `scheme: "basic"` (git) is stored under `fa-egress-github-app-<installation id>-git`, trusted only
+  for the domains of your `basic` rules. Each run binds it to the sandbox variable
+  `FA_GITHUB_GIT_AUTH`, which holds only a placeholder; the proxy swaps in the real value on requests
+  to those domains. The agent is told to set git's `http.extraHeader` from that variable, after
+  which clone, fetch, pull and push are plain git.
+
+If no credential store is available, a rule falls back to a header fixed at submit, and GitHub
+access stops when that token expires (~1 hour). Static `bearer` credentials never go to the store.
 
 **The Gemini API key is now as sensitive as the GitHub App's private key.** While a stored
 credential is in use, a live installation token sits in the API project's credential store between

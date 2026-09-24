@@ -41,11 +41,10 @@ from family_assistant.llm import (
     describe_attachment_for_fallback,
 )
 from family_assistant.llm.antigravity_egress import (
-    GITHUB_PUSH_INSTRUCTION,
     AntigravityCredentialStore,
     AntigravityEgressResolver,
-    EgressNetworkResolver,
-    github_push_helper_source,
+    EgressResolver,
+    github_git_instruction,
 )
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
@@ -309,7 +308,7 @@ class GoogleGenAIClient(BaseLLMClient):
         antigravity_model: str | None = None,
         antigravity_max_total_tokens: int | None = None,
         antigravity_environment: AntigravityEnvironmentConfig | None = None,
-        antigravity_egress_resolver: EgressNetworkResolver | None = None,
+        antigravity_egress_resolver: EgressResolver | None = None,
         debug_messages: bool | None = None,
         debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
@@ -368,7 +367,7 @@ class GoogleGenAIClient(BaseLLMClient):
         # belongs to whoever passed it in.
         self._owned_antigravity_egress: AntigravityEgressResolver | None = None
         if antigravity_egress_resolver is not None:
-            self._antigravity_egress: EgressNetworkResolver | None = (
+            self._antigravity_egress: EgressResolver | None = (
                 antigravity_egress_resolver
             )
         elif antigravity_environment is not None:
@@ -1879,8 +1878,11 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         environment_sources: Sequence[Mapping[str, Any]] | None = None,
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
         """Build the ``environment`` block, or ``None`` to send none.
+
+        Also returns the domains git reaches through a stored credential, which
+        the agent must be told how to use.
 
         Merges the two things that shape a run's sandbox: files mounted into it
         (a delegation's attachments, submit path only — the interactive path
@@ -1897,15 +1899,19 @@ class GoogleGenAIClient(BaseLLMClient):
         """
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         environment: dict[str, Any] = {}
+        git_domains: tuple[str, ...] = ()
         if environment_sources:
             environment["sources"] = list(environment_sources)
         if self._antigravity_egress is not None:
-            network = await self._antigravity_egress.resolve_network()
-            if network is not None:
-                environment["network"] = network
+            egress = await self._antigravity_egress.resolve()
+            if egress.network is not None:
+                environment["network"] = egress.network
+            if egress.env:
+                environment["env"] = dict(egress.env)
+            git_domains = egress.git_domains
         if not environment and not is_antigravity_model(self._agent_name):
-            return None
-        return {"type": "remote", **environment}
+            return None, git_domains
+        return {"type": "remote", **environment}, git_domains
 
     async def _build_agent_request(
         self,
@@ -1918,24 +1924,23 @@ class GoogleGenAIClient(BaseLLMClient):
         """The full create request: input, system instruction and sandbox.
 
         One place for both the submit and the streaming path, because the
-        sandbox and the instruction are coupled: when the run's egress policy
-        stores a GitHub credential, the API-push helper is mounted and the
-        agent is told to push with it, and neither is any use without the other.
+        sandbox and the instruction are coupled: a stored git credential only
+        reaches GitHub once the agent has put its variable in git's header.
         """
         create_kwargs = self._build_agent_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
         )
-        environment = await self._build_agent_environment(environment_sources)
+        environment, git_domains = await self._build_agent_environment(
+            environment_sources
+        )
         if environment is None:
             return create_kwargs
-        helper = github_push_helper_source(environment.get("network"))
-        if helper is not None:
-            environment["sources"] = [*environment.get("sources", []), helper]
+        if git_domains:
             create_kwargs["system_instruction"] = "\n\n".join(
                 part
                 for part in (
                     create_kwargs.get("system_instruction"),
-                    GITHUB_PUSH_INSTRUCTION,
+                    github_git_instruction(git_domains),
                 )
                 if part
             )

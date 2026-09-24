@@ -15,13 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import fnmatch
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from importlib import resources
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 import httpx
 import jwt
@@ -29,7 +28,7 @@ import jwt
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Awaitable, Callable, Iterable, Mapping
 
     from family_assistant.config_models import (
         AntigravityEgressCredentialConfig,
@@ -74,21 +73,11 @@ _INSTALLATION_TOKEN_REUSE_WINDOW = timedelta(seconds=60)
 
 _GITHUB_GIT_BASIC_USERNAME = "x-access-token"
 
-# Where the API-push helper is mounted, and what the agent is told about it.
-# Git over HTTPS authenticates with the submit-time Basic header and so stops
-# working when that token expires; the helper pushes through the REST API,
-# whose Bearer credential is the stored one that rotation keeps fresh.
-GITHUB_PUSH_HELPER_TARGET = "/workspace/.fa/github_push.py"
-GITHUB_PUSH_INSTRUCTION = (
-    "To push commits to GitHub, run "
-    f"`python3 {GITHUB_PUSH_HELPER_TARGET} <branch>` from inside the "
-    "repository instead of `git push` (add `--force` only when you mean to "
-    "overwrite the branch). It pushes through the GitHub API with a credential "
-    "that stays valid for the whole task, while `git push` stops "
-    "authenticating about an hour into it. Cloning and fetching with git are "
-    "fine early on."
-)
-_GITHUB_API_DOMAIN = "api.github.com"
+# The sandbox variable bound to the stored git credential. The sandbox sees a
+# placeholder; the proxy replaces it with the current value on requests to the
+# credential's trusted domains, so git can put it in its own Basic header and
+# still authenticate after the token it started with has expired.
+GITHUB_GIT_AUTH_ENV = "FA_GITHUB_GIT_AUTH"
 
 EGRESS_CREDENTIAL_ROTATION_TASK_TYPE = "antigravity_egress_credential_rotation"
 EGRESS_CREDENTIAL_ROTATION_TASK_ID = "system_antigravity_egress_credential_rotation"
@@ -125,12 +114,48 @@ class EgressAllowlistPayload(TypedDict):
 EgressNetworkPayload = EgressAllowlistPayload | str
 
 
-class EgressNetworkResolver(Protocol):
-    """Resolves the ``environment.network`` payload for one agent run."""
+class EgressEnvVar(TypedDict, total=False):
+    """One ``environment.env`` entry: a stored credential's id, or a value."""
 
-    async def resolve_network(self) -> EgressNetworkPayload | None:
-        """Return the network block to send, or ``None`` to send none."""
+    credential: str
+    value: str
+
+
+@dataclass(frozen=True)
+class EgressResolution:
+    """What one run's egress policy adds to its sandbox."""
+
+    network: EgressNetworkPayload | None
+    env: dict[str, EgressEnvVar] = field(default_factory=dict)
+    # Domains git reaches through the stored credential in ``env``, which the
+    # agent has to be told to use: the proxy only substitutes the placeholder,
+    # it does not add the header.
+    git_domains: tuple[str, ...] = ()
+
+
+class EgressResolver(Protocol):
+    """Resolves the egress part of the sandbox environment for one agent run."""
+
+    async def resolve(self) -> EgressResolution:
+        """Return the network block and any credential-bound variables."""
         ...
+
+
+def github_git_instruction(domains: Iterable[str]) -> str:
+    """Tell the agent how to point git at the stored credential."""
+    commands = "\n".join(
+        f"git config --global --replace-all 'http.https://{domain}/.extraHeader' "
+        f'"Authorization: Basic ${GITHUB_GIT_AUTH_ENV}"'
+        for domain in domains
+    )
+    return (
+        "Git authentication for GitHub is arranged for you. Before your first "
+        f"git command, run:\n\n{commands}\n\n${GITHUB_GIT_AUTH_ENV} holds a "
+        "placeholder that the network proxy swaps for a credential that stays "
+        "valid for the whole task, so after that plain git clone, fetch, pull "
+        "and push all work. Do not put credentials in remote URLs or configure "
+        "a git credential helper for GitHub."
+    )
 
 
 def _read_github_app_private_key(env: Mapping[str, str]) -> str:
@@ -276,6 +301,10 @@ class GitHubAppInstallationTokenSource:
             )
         return f"fa-egress-github-app-{installation_id}"
 
+    def git_credential_id(self) -> str:
+        """The store id of the same token, encoded for git's Basic header."""
+        return f"{self.stored_credential_id()}-git"
+
     async def token(self) -> str:
         """Return an installation access token, minting one per run.
 
@@ -364,10 +393,11 @@ class AntigravityCredentialStore:
             "Content-Type": "application/json",
         }
 
-    async def _write(self, credential_id: str, token: str) -> httpx.Response:
+    async def _write(
+        self, credential_id: str, body: dict[str, object]
+    ) -> httpx.Response:
         """Update the credential, creating it if absent; return the last response."""
         client = self._client()
-        body = {"type": "bearer_token", "token": token}
         url = f"{self._base_url}/credentials/{credential_id}"
         response = await client.patch(url, headers=self._headers(), json=body)
         if response.status_code != httpx.codes.NOT_FOUND:
@@ -385,14 +415,37 @@ class AntigravityCredentialStore:
         return await client.patch(url, headers=self._headers(), json=body)
 
     async def ensure(self, credential_id: str, token: str) -> None:
-        """Store ``token`` under ``credential_id``, creating the id if needed.
+        """Store ``token`` as a Bearer credential, creating the id if needed.
 
         Written as update-then-create rather than create-then-update because
         the steady state is a credential that already exists: every rotation
         tick and every submit after the first takes the single-request path.
         """
+        await self._ensure(credential_id, {"type": "bearer_token", "token": token})
+
+    async def ensure_substituted(
+        self, credential_id: str, value: str, trusted_domains: Iterable[str]
+    ) -> None:
+        """Store ``value`` for placeholder substitution in request headers.
+
+        The sandbox variable bound to it holds a placeholder; the proxy swaps in
+        ``value`` only on requests to ``trusted_domains`` and refuses requests
+        elsewhere that carry it. Measured against the live API, including a
+        mid-run update reaching later requests of the same run.
+        """
+        await self._ensure(
+            credential_id,
+            {
+                "type": "environment_variable",
+                "value": value,
+                "trusted_domains": list(trusted_domains),
+                "injection_location": "header",
+            },
+        )
+
+    async def _ensure(self, credential_id: str, body: dict[str, object]) -> None:
         try:
-            response = await self._write(credential_id, token)
+            response = await self._write(credential_id, body)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise AntigravityEgressError(
@@ -425,87 +478,83 @@ class AntigravityCredentialStore:
             ) from e
 
 
-def _belongs_in_the_store(credential: AntigravityEgressCredentialConfig) -> bool:
-    """Whether the store can carry this credential, and needs to.
+def _store_route(
+    credential: AntigravityEgressCredentialConfig,
+) -> Literal["rest", "git"] | None:
+    """How the store carries this credential, or ``None`` if it should not.
 
-    Two properties, both required, neither a list of kinds:
+    The store is for values that expire, so they can change while a run is in
+    flight. Only a minted kind does; a static token gains nothing there and
+    would sit unexpiring, where removing its rule from our config would no
+    longer revoke it.
 
-    1. **The value expires**, so it must be able to change while a run is in
-       flight. Only a minted kind does; a static token gains nothing from the
-       store and would sit there unexpiring, where removing its rule from our
-       config would no longer revoke it.
-    2. **The store can express its wire form**, which is
-       ``Authorization: Bearer <token>`` and nothing else. A `basic` scheme --
-       what GitHub requires for git-over-HTTPS -- cannot be rendered there at
-       any encoding, so it stays on the transform path and keeps that path's
-       ceiling.
+    The scheme then picks the store's mechanism. A ``bearer_token`` credential
+    reaches the wire only as ``Authorization: Bearer <token>``, which is the
+    REST API's form. Git over HTTPS takes only ``Basic``, so its token is
+    stored pre-encoded as an ``environment_variable`` credential instead, and
+    git sends the placeholder in its own ``Authorization: Basic`` header for
+    the proxy to fill in.
     """
-    return (
-        credential.type == "github_app"
-        and credential.scheme == "bearer"
-        and credential.header_name.lower() == "authorization"
-    )
-
-
-def github_push_helper_source(
-    network: EgressNetworkPayload | None,
-) -> dict[str, str] | None:
-    """The helper's ``environment.sources`` entry, if this run can use it.
-
-    Decided from the resolved network block rather than from config, so the
-    helper is mounted exactly when api.github.com goes out with a stored
-    credential -- the only case in which pushing through the API outlasts git.
-    """
-    if not isinstance(network, dict):
-        return None
-    if not any(
-        "credential" in entry
-        and fnmatch.fnmatchcase(_GITHUB_API_DOMAIN, entry.get("domain", "").lower())
-        for entry in network["allowlist"]
+    if (
+        credential.type != "github_app"
+        or credential.header_name.lower() != "authorization"
     ):
         return None
-    content = (
-        resources
-        .files("family_assistant.llm.sandbox_helpers")
-        .joinpath("github_push.py")
-        .read_bytes()
-    )
-    return {
-        "type": "inline",
-        "content": base64.b64encode(content).decode("ascii"),
-        "encoding": "base64",
-        "target": GITHUB_PUSH_HELPER_TARGET,
-    }
+    return "rest" if credential.scheme == "bearer" else "git"
 
 
-def uses_stored_credential(environment: AntigravityEnvironmentConfig | None) -> bool:
-    """Whether a profile's sandbox environment resolves a rule through the store."""
-    if environment is None or environment.network != "allowlist":
-        return False
-    return any(
-        rule.credential is not None and _belongs_in_the_store(rule.credential)
-        for rule in environment.allowlist
-    )
+@dataclass(frozen=True)
+class StoredGitHubCredentials:
+    """Which forms of the App's token some profile reads from the store."""
+
+    rest: bool
+    git_domains: tuple[str, ...]
 
 
-async def store_github_app_credential(
-    source: GitHubAppInstallationTokenSource, store: AntigravityCredentialStore
-) -> str:
-    """Write a freshly minted installation token into the store; return its id."""
-    credential_id = source.stored_credential_id()
-    await store.ensure(credential_id, await source.token())
-    return credential_id
+def stored_github_credentials(
+    environments: Iterable[AntigravityEnvironmentConfig | None],
+) -> StoredGitHubCredentials | None:
+    """What the store must hold for these sandbox environments, if anything."""
+    rest = False
+    git_domains: list[str] = []
+    for environment in environments:
+        if environment is None or environment.network != "allowlist":
+            continue
+        for rule in environment.allowlist:
+            route = _store_route(rule.credential) if rule.credential else None
+            if route == "rest":
+                rest = True
+            elif route == "git" and rule.domain not in git_domains:
+                git_domains.append(rule.domain)
+    if not rest and not git_domains:
+        return None
+    return StoredGitHubCredentials(rest=rest, git_domains=tuple(git_domains))
+
+
+async def store_github_app_credentials(
+    source: GitHubAppInstallationTokenSource,
+    store: AntigravityCredentialStore,
+    needs: StoredGitHubCredentials,
+) -> None:
+    """Write one freshly minted installation token in every form ``needs``."""
+    token = await source.token()
+    if needs.rest:
+        await store.ensure(source.stored_credential_id(), token)
+    if needs.git_domains:
+        await store.ensure_substituted(
+            source.git_credential_id(), _basic_credential(token), needs.git_domains
+        )
 
 
 def make_egress_credential_rotation_handler(
     *,
-    rotation_needed: bool,
+    needs: StoredGitHubCredentials | None,
     api_key: str | None,
     # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
 ) -> Callable[[ToolExecutionContext, dict[str, Any]], Awaitable[None]]:
     """Bind the rotation tick to the configuration this process started with.
 
-    ``rotation_needed`` is re-checked on every tick rather than only at seeding,
+    ``needs`` is re-checked on every tick rather than only at seeding,
     because a recurring task seeded by an earlier configuration outlives it. A
     tick that ignored the change would keep a live GitHub credential in the
     store for a deployment that no longer uses one; returning instead lets the
@@ -518,7 +567,7 @@ def make_egress_credential_rotation_handler(
         payload: dict[str, Any],
     ) -> None:
         del payload
-        if not rotation_needed:
+        if needs is None:
             logger.info(
                 "No profile resolves an egress credential through the store; "
                 "skipping rotation."
@@ -532,7 +581,7 @@ def make_egress_credential_rotation_handler(
         source = GitHubAppInstallationTokenSource(clock=exec_context.clock)
         store = AntigravityCredentialStore(api_key=api_key)
         try:
-            await store_github_app_credential(source, store)
+            await store_github_app_credentials(source, store, needs)
         finally:
             await source.aclose()
             await store.aclose()
@@ -540,13 +589,17 @@ def make_egress_credential_rotation_handler(
     return handle_egress_credential_rotation
 
 
+def _basic_credential(token: str) -> str:
+    """The token as GitHub's git-over-HTTPS ``Basic`` credential, sans scheme."""
+    return base64.b64encode(f"{_GITHUB_GIT_BASIC_USERNAME}:{token}".encode()).decode(
+        "ascii"
+    )
+
+
 def _render_header_value(scheme: str, token: str) -> str:
     """Render a credential as an ``Authorization`` value in the given scheme."""
     if scheme == "basic":
-        encoded = base64.b64encode(
-            f"{_GITHUB_GIT_BASIC_USERNAME}:{token}".encode()
-        ).decode("ascii")
-        return f"Basic {encoded}"
+        return f"Basic {_basic_credential(token)}"
     return f"Bearer {token}"
 
 
@@ -605,46 +658,48 @@ class AntigravityEgressResolver:
             token = raw
         return {credential.header_name: _render_header_value(credential.scheme, token)}
 
-    async def _store_credential(self) -> str | None:
-        """Mint a token into the store and return its id, or ``None``.
+    async def _store_credentials(self) -> StoredGitHubCredentials | None:
+        """Mint a token into the store in every form this config reads.
 
-        ``None`` means the caller should build a header instead: a deployment
+        ``None`` means the caller should build headers instead: a deployment
         that configured no API key for the store has no way to use one. That
         degrades a rule to the submit-time ceiling rather than failing the run,
         because the ceiling is a weaker credential, never a wider one.
         """
+        needs = stored_github_credentials([self._config])
+        if needs is None:
+            return None
         if self._credential_store is None:
             logger.info(
                 "No credential store configured; the egress credential rides a "
                 "submit-time header and expires with the token it started on."
             )
             return None
-        return await store_github_app_credential(
-            self._github_source(), self._credential_store
+        await store_github_app_credentials(
+            self._github_source(), self._credential_store, needs
         )
+        return needs
 
-    async def resolve_network(self) -> EgressNetworkPayload | None:
+    async def resolve(self) -> EgressResolution:
         """Resolve the network block, minting every credential it names."""
         if self._config.network == "default":
-            return None
+            return EgressResolution(network=None)
         if self._config.network == "disabled":
-            return "disabled"
+            return EgressResolution(network="disabled")
 
+        stored = await self._store_credentials()
         entries: list[EgressAllowlistEntry] = []
         for rule in self._config.allowlist:
             entry: EgressAllowlistEntry = {"domain": rule.domain}
             transform: dict[str, str] = dict(rule.headers)
             credential = rule.credential
-            if credential is not None:
-                stored_id = (
-                    await self._store_credential()
-                    if _belongs_in_the_store(credential)
-                    else None
-                )
-                if stored_id is not None:
-                    entry["credential"] = stored_id
-                else:
-                    transform.update(await self._credential_header(credential))
+            route = _store_route(credential) if credential is not None else None
+            if stored is not None and route == "rest":
+                entry["credential"] = self._github_source().stored_credential_id()
+            elif credential is not None and (stored is None or route != "git"):
+                # A stored git credential is absent here on purpose: it reaches
+                # the wire through the variable git puts in its own header.
+                transform.update(await self._credential_header(credential))
             if transform:
                 # The API takes a list of flat single-header objects rather
                 # than one object with several keys.
@@ -652,4 +707,14 @@ class AntigravityEgressResolver:
                     {name: value} for name, value in transform.items()
                 ]
             entries.append(entry)
-        return {"allowlist": entries}
+
+        env: dict[str, EgressEnvVar] = {}
+        git_domains: tuple[str, ...] = ()
+        if stored is not None and stored.git_domains:
+            env[GITHUB_GIT_AUTH_ENV] = {
+                "credential": self._github_source().git_credential_id()
+            }
+            git_domains = stored.git_domains
+        return EgressResolution(
+            network={"allowlist": entries}, env=env, git_domains=git_domains
+        )

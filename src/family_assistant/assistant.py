@@ -71,8 +71,9 @@ from family_assistant.llm.antigravity_egress import (
     EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES,
     EGRESS_CREDENTIAL_ROTATION_TASK_ID,
     EGRESS_CREDENTIAL_ROTATION_TASK_TYPE,
+    StoredGitHubCredentials,
     make_egress_credential_rotation_handler,
-    uses_stored_credential,
+    stored_github_credentials,
 )
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_routing import (
@@ -2380,14 +2381,12 @@ class Assistant:
             # nothing else in startup depends on it.
             logger.exception("Memory review sweep task setup failed")
 
-    def _egress_credential_rotation_needed(self) -> bool:
-        """Whether any profile resolves a sandbox egress credential via the store."""
-        return any(
-            profile.processing_config.antigravity_config is not None
-            and uses_stored_credential(
-                profile.processing_config.antigravity_config.environment
-            )
+    def _stored_egress_credentials(self) -> StoredGitHubCredentials | None:
+        """What the store must hold for every profile's sandbox, if anything."""
+        return stored_github_credentials(
+            profile.processing_config.antigravity_config.environment
             for profile in self.config.service_profiles
+            if profile.processing_config.antigravity_config is not None
         )
 
     async def _seed_egress_credential_rotation(self) -> None:
@@ -2402,7 +2401,7 @@ class Assistant:
         assert self.database_engine is not None, (
             "Database engine must be initialized before seeding credential rotation"
         )
-        if not self._egress_credential_rotation_needed():
+        if self._stored_egress_credentials() is None:
             logger.info(
                 "Egress credential rotation not scheduled: no profile stores one."
             )
@@ -2755,7 +2754,7 @@ class Assistant:
         worker.register_task_handler(
             EGRESS_CREDENTIAL_ROTATION_TASK_TYPE,
             make_egress_credential_rotation_handler(
-                rotation_needed=self._egress_credential_rotation_needed(),
+                needs=self._stored_egress_credentials(),
                 api_key=(
                     self.config.gemini_api_key.get_secret_value()
                     if self.config.gemini_api_key

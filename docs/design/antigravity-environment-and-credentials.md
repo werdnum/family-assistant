@@ -79,11 +79,11 @@ credentialed profile; one that prefers long runs should expect the agent to repo
 late in a very long task. This is a genuine trade rather than a bug to fix here — refreshing would
 need the API to accept a credential callback, which it does not.
 
-> **Superseded for the REST rule.** The Agent Credentials API, released with
-> `antigravity-preview-09-2026`, resolves a stored credential per request instead of freezing a
-> header at submit. A `github_app` rule on `scheme: "bearer"` now goes through that store and is
-> rotated on a timer, so the ceiling above no longer applies to it. It still applies to the
-> `scheme: "basic"` git rule, which the store cannot express. See
+> **Superseded.** The Agent Credentials API, released with `antigravity-preview-09-2026`, resolves a
+> stored credential per request instead of freezing a header at submit. Both `github_app` schemes
+> now go through that store and are rotated on a timer: the REST rule as a stored bearer token, and
+> the git rule as a placeholder the sandbox puts in git's own header. The ceiling above no longer
+> applies to either while a store is available. See
 > [antigravity-stored-egress-credentials.md](antigravity-stored-egress-credentials.md).
 
 **`scheme` exists because git and the REST API disagree.** GitHub's REST API takes

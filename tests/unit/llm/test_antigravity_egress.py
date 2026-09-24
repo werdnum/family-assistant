@@ -26,13 +26,17 @@ from family_assistant.config_models import (
 )
 from family_assistant.llm.antigravity_egress import (
     EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES,
+    GITHUB_GIT_AUTH_ENV,
     AntigravityCredentialStore,
     AntigravityEgressError,
     AntigravityEgressResolver,
+    EgressResolution,
     GitHubAppInstallationTokenSource,
+    StoredGitHubCredentials,
+    github_git_instruction,
     make_egress_credential_rotation_handler,
-    store_github_app_credential,
-    uses_stored_credential,
+    store_github_app_credentials,
+    stored_github_credentials,
 )
 from family_assistant.utils.clock import MockClock
 
@@ -110,7 +114,7 @@ def _token_source(
 async def test_default_network_sends_no_block() -> None:
     """The shipped shape: no environment.network, so the API's own policy applies."""
     resolver = AntigravityEgressResolver(AntigravityEnvironmentConfig())
-    assert await resolver.resolve_network() is None
+    assert (await resolver.resolve()).network is None
 
 
 async def test_disabled_network_is_the_literal_string() -> None:
@@ -118,7 +122,7 @@ async def test_disabled_network_is_the_literal_string() -> None:
     resolver = AntigravityEgressResolver(
         AntigravityEnvironmentConfig(network="disabled")
     )
-    assert await resolver.resolve_network() == "disabled"
+    assert (await resolver.resolve()).network == "disabled"
 
 
 async def test_allowlist_without_credentials_omits_transform() -> None:
@@ -129,7 +133,7 @@ async def test_allowlist_without_credentials_omits_transform() -> None:
             "allowlist": [{"domain": "pypi.org"}, {"domain": "*.pythonhosted.org"}],
         })
     )
-    assert await resolver.resolve_network() == {
+    assert (await resolver.resolve()).network == {
         "allowlist": [{"domain": "pypi.org"}, {"domain": "*.pythonhosted.org"}]
     }
 
@@ -147,7 +151,7 @@ async def test_static_headers_become_flat_single_header_objects() -> None:
             ],
         })
     )
-    network = await resolver.resolve_network()
+    network = (await resolver.resolve()).network
     assert network == {
         "allowlist": [
             {
@@ -172,7 +176,7 @@ async def test_bearer_credential_reads_its_env_var() -> None:
         }),
         env={"EXAMPLE_TOKEN": "tok_abc"},
     )
-    assert await resolver.resolve_network() == {
+    assert (await resolver.resolve()).network == {
         "allowlist": [
             {
                 "domain": "api.example.com",
@@ -197,7 +201,7 @@ async def test_bearer_credential_with_unset_env_var_raises() -> None:
         env={},
     )
     with pytest.raises(AntigravityEgressError, match="EXAMPLE_TOKEN"):
-        await resolver.resolve_network()
+        await resolver.resolve()
 
 
 async def test_custom_header_name_is_honoured() -> None:
@@ -218,7 +222,7 @@ async def test_custom_header_name_is_honoured() -> None:
         }),
         env={"EXAMPLE_TOKEN": "tok_abc"},
     )
-    network = await resolver.resolve_network()
+    network = (await resolver.resolve()).network
     assert network == {
         "allowlist": [
             {
@@ -250,7 +254,7 @@ async def test_github_app_credential_injects_a_minted_token(
         github_app_tokens=_token_source(stub, env, clock),
     )
 
-    network = await resolver.resolve_network()
+    network = (await resolver.resolve()).network
 
     assert network == {
         "allowlist": [
@@ -289,7 +293,7 @@ async def test_github_app_basic_scheme_encodes_for_git_over_https(
         ),
     )
 
-    network = await resolver.resolve_network()
+    network = (await resolver.resolve()).network
 
     expected = base64.b64encode(b"x-access-token:ghs_installation_token").decode(
         "ascii"
@@ -325,7 +329,7 @@ async def test_one_submissions_rules_share_a_single_token(
         ),
     )
 
-    await resolver.resolve_network()
+    await resolver.resolve()
 
     assert len(stub.requests) == 1
 
@@ -595,7 +599,7 @@ async def _resolve_with_store(
     github: _GitHubStub,
     env: dict[str, str],
     clock: MockClock,
-) -> object:
+) -> EgressResolution:
     resolver = AntigravityEgressResolver(
         AntigravityEnvironmentConfig.model_validate({
             "network": "allowlist",
@@ -605,7 +609,7 @@ async def _resolve_with_store(
         credential_store=stub.store(),
         env=env,
     )
-    return await resolver.resolve_network()
+    return await resolver.resolve()
 
 
 async def test_a_bearer_github_rule_carries_a_stored_credential_id(
@@ -616,11 +620,11 @@ async def test_a_bearer_github_rule_carries_a_stored_credential_id(
     stub = _CredentialStoreStub()
     github = _GitHubStub()
 
-    payload = await _resolve_with_store(
+    resolution = await _resolve_with_store(
         [_github_rule("bearer", "api.github.com")], stub, github, env, MockClock(_NOW)
     )
 
-    assert payload == {
+    assert resolution.network == {
         "allowlist": [
             {
                 "domain": "api.github.com",
@@ -631,42 +635,65 @@ async def test_a_bearer_github_rule_carries_a_stored_credential_id(
     assert json.loads(stub.requests[-1].content)["token"] == "ghs_installation_token"
 
 
-async def test_a_basic_github_rule_keeps_its_header(
+async def test_a_basic_github_rule_stores_a_substituted_git_credential(
     rsa_private_key_pem: str,
 ) -> None:
-    """Git-over-HTTPS needs Basic, which the store cannot emit at any encoding.
+    """Git-over-HTTPS needs Basic, which a ``bearer_token`` cannot emit.
 
-    So the git rule stays on the transform path and keeps that path's ceiling.
+    So the pre-encoded Basic value is stored as a placeholder-substituted
+    credential that only the git domain may receive.
     """
     env = _github_env(rsa_private_key_pem)
     stub = _CredentialStoreStub()
     github = _GitHubStub()
 
-    payload = await _resolve_with_store(
+    await _resolve_with_store(
         [_github_rule("basic", "github.com")], stub, github, env, MockClock(_NOW)
     )
 
     expected = base64.b64encode(b"x-access-token:ghs_installation_token").decode()
-    assert payload == {
-        "allowlist": [
-            {
-                "domain": "github.com",
-                "transform": [{"Authorization": f"Basic {expected}"}],
-            }
-        ]
+    assert json.loads(stub.requests[-1].content) == {
+        "id": "fa-egress-github-app-97135764-git",
+        "type": "environment_variable",
+        "value": expected,
+        "trusted_domains": ["github.com"],
+        "injection_location": "header",
     }
-    assert stub.requests == []
+
+
+async def test_a_basic_github_rule_binds_the_git_variable_and_sends_no_header(
+    rsa_private_key_pem: str,
+) -> None:
+    """The proxy overwrites a sandbox-set ``Authorization`` on a domain that
+    carries a header of its own, so the git rule must carry none: git's own
+    header, holding the placeholder, is the one that reaches GitHub."""
+    env = _github_env(rsa_private_key_pem)
+
+    resolution = await _resolve_with_store(
+        [_github_rule("basic", "github.com")],
+        _CredentialStoreStub(),
+        _GitHubStub(),
+        env,
+        MockClock(_NOW),
+    )
+
+    assert resolution == EgressResolution(
+        network={"allowlist": [{"domain": "github.com"}]},
+        env={GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-97135764-git"}},
+        git_domains=("github.com",),
+    )
 
 
 async def test_both_schemes_together_split_by_mechanism(
     rsa_private_key_pem: str,
 ) -> None:
-    """The shipped shape for a credentialed deployment: REST stored, git not."""
+    """The shipped shape for a credentialed deployment: REST by stored bearer
+    id, git by the substituted variable, neither by a submit-time header."""
     env = _github_env(rsa_private_key_pem)
     stub = _CredentialStoreStub()
     github = _GitHubStub()
 
-    payload = await _resolve_with_store(
+    resolution = await _resolve_with_store(
         [
             _github_rule("bearer", "api.github.com"),
             _github_rule("basic", "github.com"),
@@ -678,13 +705,27 @@ async def test_both_schemes_together_split_by_mechanism(
         MockClock(_NOW),
     )
 
-    assert isinstance(payload, dict)
-    entries = payload["allowlist"]
-    assert "credential" in entries[0]
-    assert "transform" not in entries[0]
-    assert "transform" in entries[1]
-    assert "credential" not in entries[1]
-    assert entries[2] == {"domain": "*"}
+    assert resolution.network == {
+        "allowlist": [
+            {
+                "domain": "api.github.com",
+                "credential": "fa-egress-github-app-97135764",
+            },
+            {"domain": "github.com"},
+            {"domain": "*"},
+        ]
+    }
+    assert len(github.requests) == 1
+
+
+def test_the_git_instruction_configures_each_domain_from_the_variable() -> None:
+    instruction = github_git_instruction(["github.com", "gist.github.com"])
+
+    for domain in ("github.com", "gist.github.com"):
+        assert (
+            f"git config --global --replace-all 'http.https://{domain}/.extraHeader' "
+            f'"Authorization: Basic ${GITHUB_GIT_AUTH_ENV}"'
+        ) in instruction
 
 
 async def test_a_static_bearer_never_reaches_the_store(
@@ -696,7 +737,7 @@ async def test_a_static_bearer_never_reaches_the_store(
     stub = _CredentialStoreStub()
     github = _GitHubStub()
 
-    payload = await _resolve_with_store(
+    resolution = await _resolve_with_store(
         [
             {
                 "domain": "api.example.com",
@@ -709,7 +750,7 @@ async def test_a_static_bearer_never_reaches_the_store(
         MockClock(_NOW),
     )
 
-    assert payload == {
+    assert resolution.network == {
         "allowlist": [
             {
                 "domain": "api.example.com",
@@ -738,7 +779,7 @@ async def test_without_a_store_a_bearer_rule_falls_back_to_a_header(
         env=env,
     )
 
-    assert await resolver.resolve_network() == {
+    assert (await resolver.resolve()).network == {
         "allowlist": [
             {
                 "domain": "api.github.com",
@@ -769,13 +810,15 @@ def _environment(rules: list[dict[str, object]]) -> AntigravityEnvironmentConfig
     })
 
 
+_REST_ONLY = StoredGitHubCredentials(rest=True, git_domains=())
+
+
 @pytest.mark.parametrize(
     ("environment", "expected"),
     [
-        (None, False),
-        (AntigravityEnvironmentConfig(), False),
-        (_environment([{"domain": "pypi.org"}]), False),
-        (_environment([_github_rule("basic", "github.com")]), False),
+        (None, None),
+        (AntigravityEnvironmentConfig(), None),
+        (_environment([{"domain": "pypi.org"}]), None),
         (
             _environment([
                 {
@@ -783,14 +826,18 @@ def _environment(rules: list[dict[str, object]]) -> AntigravityEnvironmentConfig
                     "credential": {"type": "bearer", "token_env": "SOME_TOKEN"},
                 }
             ]),
-            False,
+            None,
+        ),
+        (
+            _environment([_github_rule("basic", "github.com")]),
+            StoredGitHubCredentials(rest=False, git_domains=("github.com",)),
         ),
         (
             _environment([
                 _github_rule("basic", "github.com"),
                 _github_rule("bearer", "api.github.com"),
             ]),
-            True,
+            StoredGitHubCredentials(rest=True, git_domains=("github.com",)),
         ),
         (
             _environment([
@@ -802,16 +849,42 @@ def _environment(rules: list[dict[str, object]]) -> AntigravityEnvironmentConfig
                     },
                 }
             ]),
-            True,
+            _REST_ONLY,
+        ),
+        (
+            _environment([
+                {
+                    "domain": "api.github.com",
+                    "credential": {"type": "github_app", "header_name": "X-Token"},
+                }
+            ]),
+            None,
         ),
     ],
 )
-def test_rotation_is_needed_only_where_a_rule_is_stored(
-    environment: AntigravityEnvironmentConfig | None, expected: bool
+def test_rotation_covers_exactly_the_forms_a_rule_reads(
+    environment: AntigravityEnvironmentConfig | None,
+    expected: StoredGitHubCredentials | None,
 ) -> None:
-    """The same predicate that routes a rule to the store decides whether to
-    rotate, so a deployment is never rotating a credential no rule reads."""
-    assert uses_stored_credential(environment) is expected
+    """The same routing that sends a rule to the store decides what to rotate,
+    so a deployment never rotates a credential no rule reads."""
+    assert stored_github_credentials([environment]) == expected
+
+
+def test_git_domains_are_unioned_across_profiles() -> None:
+    """One stored git credential serves every profile, so it must trust every
+    domain any of them pushes to."""
+    needs = stored_github_credentials([
+        _environment([_github_rule("basic", "github.com")]),
+        _environment([
+            _github_rule("basic", "github.com"),
+            _github_rule("basic", "ghe.example.com"),
+        ]),
+    ])
+
+    assert needs == StoredGitHubCredentials(
+        rest=False, git_domains=("github.com", "ghe.example.com")
+    )
 
 
 class _MintingGitHubStub(_GitHubStub):
@@ -837,7 +910,7 @@ async def test_each_rotation_tick_replaces_the_stored_token(
     store = stub.store()
 
     for _ in range(3):
-        await store_github_app_credential(source, store)
+        await store_github_app_credentials(source, store, _REST_ONLY)
         clock.advance(timedelta(minutes=EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES))
 
     # The first tick's PATCH finds nothing and the POST creates the id; every
@@ -851,6 +924,28 @@ async def test_each_rotation_tick_replaces_the_stored_token(
     assert stub.existing == {"fa-egress-github-app-97135764"}
 
 
+async def test_one_tick_writes_both_forms_from_a_single_token(
+    rsa_private_key_pem: str,
+) -> None:
+    """REST and git must agree on which installation token is live."""
+    github = _MintingGitHubStub()
+    source = _token_source(github, _github_env(rsa_private_key_pem), MockClock(_NOW))
+    stub = _CredentialStoreStub()
+
+    await store_github_app_credentials(
+        source,
+        stub.store(),
+        StoredGitHubCredentials(rest=True, git_domains=("github.com",)),
+    )
+
+    bodies = [json.loads(r.content) for r in stub.requests if r.method == "POST"]
+    assert [b["type"] for b in bodies] == ["bearer_token", "environment_variable"]
+    assert base64.b64decode(bodies[1]["value"]).decode() == (
+        f"x-access-token:{bodies[0]['token']}"
+    )
+    assert len(github.requests) == 1
+
+
 def test_the_interval_leaves_room_for_a_missed_tick() -> None:
     """One missed tick must not let the stored token expire before the next."""
     assert 2 * EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES < 60
@@ -860,15 +955,13 @@ async def test_rotation_does_nothing_when_no_profile_stores_a_credential() -> No
     """A seeded task outlives the configuration that seeded it; the tick must
     not keep a live GitHub token in the store for a deployment that dropped it."""
     handler = make_egress_credential_rotation_handler(
-        rotation_needed=False, api_key="test-api-key"
+        needs=None, api_key="test-api-key"
     )
     # The handler returns before touching the context, the network or GitHub.
     await handler(cast("ToolExecutionContext", object()), {})
 
 
 async def test_rotation_without_an_api_key_fails_visibly() -> None:
-    handler = make_egress_credential_rotation_handler(
-        rotation_needed=True, api_key=None
-    )
+    handler = make_egress_credential_rotation_handler(needs=_REST_ONLY, api_key=None)
     with pytest.raises(AntigravityEgressError, match="API key"):
         await handler(cast("ToolExecutionContext", object()), {})

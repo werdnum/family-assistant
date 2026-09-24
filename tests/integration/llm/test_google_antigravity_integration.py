@@ -96,7 +96,7 @@ async def test_submit_accepted_when_the_profile_configures_no_environment() -> N
 async def test_submit_accepted_with_an_egress_allowlist_and_credential() -> None:
     """A configured allowlist reaches the API in the shape it accepts.
 
-    ``resolve_network`` renders each header as its own single-key object; the
+    ``resolve`` renders each header as its own single-key object; the
     surrounding types would just as happily produce one object of several
     keys, and nothing but the API can say which it takes.
     """
