@@ -961,6 +961,22 @@ class TestScheduleAutomationsRepository:
             )
 
     @pytest.mark.asyncio
+    async def test_create_rejects_recurrence_set(self, db_context: Database) -> None:
+        """A set hides its rule's COUNT, so only a single RRULE is accepted."""
+        with pytest.raises(ValueError, match="single RRULE"):
+            await db_context.schedule_automations.create(
+                name="With Extra Date",
+                recurrence_rule=(
+                    "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=3\n"
+                    "RDATE:20361225T090000"
+                ),
+                action_type="wake_llm",
+                action_config={"context": "test"},
+                conversation_id=str(uuid.uuid4()),
+                timezone=ZoneInfo("UTC"),
+            )
+
+    @pytest.mark.asyncio
     async def test_after_task_execution_does_not_drift_with_run_time(
         self, db_context: Database
     ) -> None:

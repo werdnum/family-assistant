@@ -54,27 +54,45 @@ VALID_ACTION_TYPES = {"wake_llm", "script"}
 MAX_RECURRENCE_COUNT = 10_000
 
 
-def _rule_count(recurrence_rule: str) -> int | None:
-    """The rule's ``COUNT`` as dateutil parsed it, or None if it has none.
+def _keeps_fixed_anchor(recurrence_rule: str) -> bool:
+    """Whether the series must stay anchored at the occurrence it began at.
 
-    Read from the parsed rule so that every spelling dateutil accepts is taken
-    as the number it evaluates. dateutil offers no public accessor for it.
+    A ``COUNT`` runs from the first occurrence, so moving the anchor would
+    restart it. A recurrence set (``RDATE``, ``EXDATE`` or several rules) is
+    refused at creation; one that predates that keeps a fixed anchor too,
+    since that is always correct, only slower.
 
     Raises ValueError or ParserError for a rule that does not parse.
     """
     parsed = rrule.rrulestr(recurrence_rule)
-    if not isinstance(parsed, rrule.rrule):
-        return None
+    return not isinstance(parsed, rrule.rrule) or _count_of(parsed) is not None
+
+
+def _count_of(parsed: rrule.rrule) -> int | None:
+    """The ``COUNT`` dateutil parsed, so every spelling it accepts reads as it evaluates.
+
+    dateutil offers no public accessor for it.
+    """
     return parsed._count  # pyright: ignore[reportAttributeAccessIssue]  # pylint: disable=protected-access
 
 
-def _validate_count(recurrence_rule: str) -> None:
-    """Reject a ``COUNT`` too large to evaluate from the series start on each advance."""
+def _validate_rule(recurrence_rule: str) -> None:
+    """Reject a rule the anchored series cannot evaluate cheaply and correctly.
+
+    A ``COUNT`` above ``MAX_RECURRENCE_COUNT`` would be walked from the series
+    start on every advance. A recurrence set hides its rules' ``COUNT`` from
+    the choice between a fixed and an advancing anchor.
+    """
     try:
-        count = _rule_count(recurrence_rule)
+        parsed = rrule.rrulestr(recurrence_rule)
     except (ValueError, ParserError):
         # Evaluating the rule reports it as invalid.
         return
+    if not isinstance(parsed, rrule.rrule):
+        raise ValueError(
+            "Only a single RRULE is supported; RDATE, EXDATE and multiple rules are not"
+        )
+    count = _count_of(parsed)
     if count is not None and count > MAX_RECURRENCE_COUNT:
         raise ValueError(
             f"COUNT above {MAX_RECURRENCE_COUNT} is not supported; "
@@ -166,9 +184,9 @@ class ScheduleAutomationsRepository(BaseRepository):
         ``BYSECOND`` from the start, and the second the automation happened to
         be created in is not part of what anyone asked for.
 
-        Raises ValueError for a ``COUNT`` above ``MAX_RECURRENCE_COUNT``.
+        Raises ValueError for a rule ``_validate_rule`` refuses.
         """
-        _validate_count(recurrence_rule)
+        _validate_rule(recurrence_rule)
         now = datetime.now(timezone)
         return self._occurrence_after(
             recurrence_rule,
@@ -777,8 +795,8 @@ class ScheduleAutomationsRepository(BaseRepository):
     ) -> bool:
         """Whether the series anchored at ``anchor`` reaches past ``cutoff``.
 
-        A ``COUNT``-bounded series is walked to the cutoff from its anchor, which
-        is where the count runs from; the count bounds the walk.
+        A series with a fixed anchor is walked to the cutoff from it, since that
+        is where its ``COUNT`` runs from; the count bounds the walk.
 
         Any other series is answered in two single steps rather than by walking
         it to the cutoff, which for a stale anchor and a high-frequency rule
@@ -798,7 +816,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         local_cutoff = cutoff.astimezone(timezone)
 
         series = rrule.rrulestr(recurrence_rule, dtstart=local_anchor)
-        if _rule_count(recurrence_rule) is not None:
+        if _keeps_fixed_anchor(recurrence_rule):
             return series.after(local_cutoff) is not None
 
         from_anchor = series.after(local_anchor)
@@ -1588,7 +1606,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 return
 
             advanced: dict[str, datetime] = {"next_scheduled_at": next_scheduled_at}
-            if _rule_count(recurrence_rule) is None:
+            if not _keeps_fixed_anchor(recurrence_rule):
                 advanced["recurrence_anchor"] = next_scheduled_at
             stmt = (
                 update(schedule_automations_table)
