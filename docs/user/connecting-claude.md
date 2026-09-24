@@ -134,8 +134,10 @@ client.beta.messages.create(
   else in Family Assistant.
 - **Claude Code and the API:** revoke the token under **Settings → API Tokens**. A personal token
   gives access to everything you can do in the web app, not just asking the assistant, so keep it
-  private and revoke it when you stop using it. `claude mcp remove family-assistant` takes the
-  server out of Claude Code.
+  private and revoke it when you stop using it. If Claude Code signed in through the browser with a
+  client ID instead, there is no token here: remove it from your account's applications page on your
+  household sign-in, as for Claude on the web. `claude mcp remove family-assistant` takes the server
+  out of Claude Code.
 
 If any of these steps fail — the connector won't connect, or Claude reports it cannot reach the
 assistant — the connection has to be enabled and set up by whoever runs your Family Assistant. Ask

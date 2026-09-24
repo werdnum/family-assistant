@@ -1622,14 +1622,24 @@ class MCPExternalAuthorizationServer(BaseModel):
         default_factory=lambda: ["openid", "email", "profile", "offline_access"]
     )
 
-    @field_validator("issuer", "jwks_uri")
+    @field_validator("issuer")
     @classmethod
-    def _http_url(cls, value: str) -> str:
-        """Refuse a malformed URL at startup, keeping the string as written.
+    def _issuer_url(cls, value: str) -> str:
+        """Refuse an issuer the resource metadata could not publish verbatim.
 
-        Kept as a string because a token's ``iss`` must equal ``issuer``
-        exactly, and URL parsing normalizes (a bare host gains a slash).
+        A token's ``iss`` must equal ``issuer`` exactly, and the metadata
+        carries it as a parsed URL, which normalizes (a bare host gains a
+        slash). An issuer that changes under parsing would be advertised as a
+        different identifier from the one tokens are checked against.
         """
+        normalized = str(_HTTP_URL.validate_python(value))
+        if normalized != value:
+            raise ValueError(f"issuer must be written as {normalized!r}")
+        return value
+
+    @field_validator("jwks_uri")
+    @classmethod
+    def _jwks_url(cls, value: str) -> str:
         _HTTP_URL.validate_python(value)
         return value
 

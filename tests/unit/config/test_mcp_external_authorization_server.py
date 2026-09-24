@@ -19,11 +19,10 @@ def test_malformed_url_is_refused(field: str) -> None:
         MCPExternalAuthorizationServer.model_validate(values)
 
 
-def test_issuer_is_kept_exactly_as_written() -> None:
-    server = MCPExternalAuthorizationServer(
-        issuer="https://id.example.com",
-        jwks_uri="http://keycloak.default.svc:8080/certs",
-        audience="family-assistant-mcp",
-    )
-
-    assert server.issuer == "https://id.example.com"
+def test_issuer_that_parsing_would_change_is_refused() -> None:
+    with pytest.raises(ValidationError, match="https://id.example.com/"):
+        MCPExternalAuthorizationServer(
+            issuer="https://id.example.com",
+            jwks_uri="http://keycloak.default.svc:8080/certs",
+            audience="family-assistant-mcp",
+        )
