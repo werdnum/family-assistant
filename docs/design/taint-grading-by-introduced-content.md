@@ -47,12 +47,15 @@ tool stays cautious and only a deliberate grading makes anything cleaner.
   conversion and image highlighting produce output from what the model passed in, which the turn's
   taint already covers.
 - **Structured third-party data is `recognized_machine`.** Maps, transit, weather, flight and hotel
-  search, shopping listings, Home Assistant events and camera frames. Free-text reviews stay
-  `unknown_external`. At that tier the shipped matrix allows sensitive reads and low-bandwidth
-  egress and audits messages to known users, which are the cells where these turns meet friction
-  today.
-- **Calendar reads are graded per event.** Events on the household's own calendars are the
-  household's; subscribed feeds are machine data; events another person created are external.
+  search, shopping listings and Home Assistant events. Free-text reviews stay `unknown_external`,
+  and so does camera imagery: anyone can put text in front of a camera. At that tier the shipped
+  matrix allows sensitive reads and low-bandwidth egress and audits messages to known users, which
+  are the cells where these turns meet friction today.
+- **Calendar reads are graded per event, by where the event's content came from.** An event a
+  household member created by hand on a household calendar is the household's. An event the
+  assistant wrote carries the provenance of the turn that wrote it, and is external if that record
+  is missing or the event has changed since. Events on subscribed feeds or created by anyone else
+  stay external.
 - **Listing notes is bounded.** `list_notes` returns titles and 100-character previews, so it
   contributes at most `recognized_machine` however a listed note was stamped. Reading a note with
   `get_note` keeps the note's full stored tier.
