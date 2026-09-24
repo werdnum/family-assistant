@@ -352,6 +352,15 @@ class AntigravityEgressRuleConfig(BaseModel):
                 "credential, which is only supported on 'github.com'"
             )
             raise ValueError(msg)
+        if credential is not None and any(
+            name.lower() == credential.header_name.lower() for name in self.headers
+        ):
+            msg = (
+                f"Antigravity egress rule {self.domain!r} sets "
+                f"{credential.header_name!r} in both 'headers' and 'credential'; "
+                "only one of them can reach the wire"
+            )
+            raise ValueError(msg)
         return self
 
 

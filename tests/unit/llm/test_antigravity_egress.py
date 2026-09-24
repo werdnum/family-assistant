@@ -463,6 +463,22 @@ def test_a_git_credential_is_only_for_github_com(domain: str) -> None:
         })
 
 
+def test_a_static_header_may_not_shadow_the_credentials_header() -> None:
+    """The proxy would send only one of them, so git could be told its
+    credential is set up while a static value went out instead."""
+    with pytest.raises(ValidationError, match="only one of them"):
+        AntigravityEnvironmentConfig.model_validate({
+            "network": "allowlist",
+            "allowlist": [
+                {
+                    "domain": "github.com",
+                    "headers": {"authorization": "Basic static"},
+                    "credential": {"type": "github_app", "scheme": "basic"},
+                }
+            ],
+        })
+
+
 def test_allowlist_mode_requires_entries() -> None:
     """An empty allowlist reads as 'reach nothing', which 'disabled' says plainly."""
     with pytest.raises(ValidationError, match="empty allowlist"):
