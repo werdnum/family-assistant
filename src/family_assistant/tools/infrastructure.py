@@ -672,7 +672,7 @@ def _program_scope_awaiting_review(
     scope = context.script_execution
     if scope is None or not scope.awaiting_program_review:
         return None
-    return scope
+    return scope.program_to_decide()
 
 
 def _approve_prepared_script(

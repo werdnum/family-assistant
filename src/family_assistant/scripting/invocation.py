@@ -105,7 +105,16 @@ class ScriptExecutionScope:
 
     @property
     def approved(self) -> bool:
-        return self.active and self.invocation.approved
+        if not self.active:
+            return False
+        if self.invocation.approved:
+            return True
+        return self._bound_parent is not None and self._bound_parent.approved
+
+    @property
+    def _bound_parent(self) -> ScriptExecutionScope | None:
+        """The program this one is statically bound into, and so part of."""
+        return self.parent if self.invocation.bound_child else None
 
     def note_model_output(self) -> None:
         """Record that a model or delegated agent has handed this run a result.
@@ -127,11 +136,22 @@ class ScriptExecutionScope:
         or an ``execute_script`` call no gate asked about -- is decided by the
         first model review one of its operations needs, once.
         """
-        return (
-            self.active
-            and not self.invocation.approved
-            and self.invocation.review.decision == "unreviewed"
-        )
+        if not self.active or self.approved:
+            return False
+        if self._bound_parent is not None:
+            return self._bound_parent.awaiting_program_review
+        return self.invocation.review.decision == "unreviewed"
+
+    def program_to_decide(self) -> ScriptExecutionScope:
+        """The outermost program this one is statically bound into.
+
+        A bound child is part of the program that names it, so a review that
+        decides the child decides that whole program.
+        """
+        scope = self
+        while scope._bound_parent is not None:
+            scope = scope._bound_parent
+        return scope
 
     def approve_program(self, review_id: str | None) -> None:
         """Record a model allow of the complete program as its approval."""

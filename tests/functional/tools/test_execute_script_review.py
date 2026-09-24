@@ -2259,3 +2259,45 @@ async def test_child_script_review_also_decides_an_unreviewed_caller(
     assert child_review.descriptor.name == "execute_script"
     assert child_review.program_approval_requested
     assert child_review.enclosing_scripts[-1].source == source
+
+
+@pytest.mark.asyncio
+async def test_review_inside_bound_child_decides_its_unreviewed_parent(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def ordinary_effect(value: str) -> str:
+        effects.append(value)
+        return "done"
+
+    source = 'execute_script(name="child")\nordinary_effect(value="after")'
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "ordinary_effect",
+                cast("ToolImplementation", ordinary_effect),
+                tags=(ToolTag.STATE_CHANGING, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("ordinary_effect", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="child",
+        description="Static dependency child",
+        script_code='ordinary_effect(value="in child")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["in child", "after"]
+    assert len(reviewer.calls) == 1
+    review = reviewer.calls[0].review_input
+    assert review.program_approval_requested
+    assert review.enclosing_scripts[0].source == source
