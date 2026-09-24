@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
@@ -18,9 +18,12 @@ from family_assistant.config_models import (
     AppConfig,
     KeychuteConfig,
     ToolCallReviewConfig,
+    ToolsConfig,
 )
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import UserMessage
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.security.definition_records import (
     CreationDisposition,
     definition_content_hash,
@@ -51,6 +54,7 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.scripts import scripts_table
+from family_assistant.task_worker import handle_script_execution
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
@@ -84,7 +88,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.processing import ProcessingService
     from family_assistant.scripting.invocation import ScriptReviewContext
 
 
@@ -376,6 +379,7 @@ async def test_unreviewed_outer_enriches_first_nested_review(
     ]
     assert reviewer.calls[0].review_input.script is None
     assert len(reviewer.calls[0].review_input.enclosing_scripts) == 1
+    assert reviewer.calls[0].review_input.program_approval_requested
     _assert_program_source(reviewer.calls[0].review_input, source)
 
 
@@ -999,7 +1003,7 @@ async def test_nested_script_starts_a_new_review_boundary(
 
 
 @pytest.mark.asyncio
-async def test_model_continuation_starts_a_new_review_boundary(
+async def test_model_result_continues_under_program_approval(
     db_engine: AsyncEngine,
 ) -> None:
     effects: list[str] = []
@@ -1009,10 +1013,7 @@ async def test_model_continuation_starts_a_new_review_boundary(
         return "done"
 
     source = 'value = llm("Choose the value")\nordinary_effect(value=value)'
-    reviewer = _RecordingReviewer(
-        ToolCallReviewVerdict.ALLOW,
-        ToolCallReviewVerdict.ALLOW,
-    )
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
     provider = _provider(
         [
             _real_registration("execute_script"),
@@ -1044,11 +1045,7 @@ async def test_model_continuation_starts_a_new_review_boundary(
     assert effects == ["model-derived"]
     assert [call.review_input.descriptor.name for call in reviewer.calls] == [
         "execute_script",
-        "ordinary_effect",
     ]
-    _assert_program_source(reviewer.calls[1].review_input, source)
-    assert reviewer.calls[1].review_input.script is None
-    assert not reviewer.calls[1].review_input.enclosing_scripts[-1].approval_active
 
 
 @pytest.mark.asyncio
@@ -1564,3 +1561,365 @@ async def test_dynamic_named_child_requires_independent_review(
     ]
     assert reviewer.calls[1].review_input.script is not None
     assert reviewer.calls[1].review_input.script.source == child_source
+
+
+def _sandbox_registration(
+    effects: list[str],
+    *,
+    deterministic: bool = True,
+) -> ToolRegistration:
+    async def run_sandbox(command: str, cwd: str) -> str:
+        effects.append(f"{cwd}: {command}")
+        return "ran"
+
+    return _registration(
+        "run_sandbox",
+        cast("ToolImplementation", run_sandbox),
+        tags=(ToolTag.CODE_EXECUTION, ToolTag.WORKER, ToolTag.OUTPUT_UNTRUSTED),
+        properties={"command": {"type": "string"}, "cwd": {"type": "string"}},
+        deterministic=deterministic,
+    )
+
+
+async def _read_external() -> str:
+    return "photo.png"
+
+
+def _read_external_registration() -> ToolRegistration:
+    return _registration(
+        "read_external",
+        cast("ToolImplementation", _read_external),
+        tags=(ToolTag.READ_ONLY, ToolTag.OUTPUT_UNTRUSTED),
+    )
+
+
+@pytest.mark.asyncio
+async def test_literal_sandbox_commands_inherit_program_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    source = (
+        "read_external()\n"
+        'run_sandbox(command="convert in.png -dither out.bmp", cwd="/work/ink")\n'
+        'run_sandbox(command="upload out.bmp", cwd="/work/ink")'
+    )
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _read_external_registration(),
+            _sandbox_registration(effects),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == [
+        "/work/ink: convert in.png -dither out.bmp",
+        "/work/ink: upload out.bmp",
+    ]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script"
+    ]
+    events = await context.db_context.taint_audit_events.list_for_turn(
+        "script-review-turn"
+    )
+    program_reviews = {
+        event["event_id"]
+        for event in events
+        if event["tool_name"] == "execute_script"
+        and event["review_verdict"] == ToolCallReviewVerdict.ALLOW.value
+    }
+    inherited = [
+        event
+        for event in events
+        if event["event_type"] == "script_inherited_authorization"
+        and event["tool_name"] == "run_sandbox"
+    ]
+    assert len(inherited) == 2
+    for event in inherited:
+        review_context = event["review_context_json"]
+        assert review_context is not None
+        assert review_context.get("parent_script_review_id") in program_reviews
+
+
+@pytest.mark.asyncio
+async def test_runtime_built_sandbox_command_is_reviewed_without_revoking(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    source = (
+        "name = read_external()\n"
+        'run_sandbox(command=f"convert {name} out.bmp", cwd="/work/ink")\n'
+        'run_sandbox(command="upload out.bmp", cwd="/work/ink")'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _read_external_registration(),
+            _sandbox_registration(effects),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == [
+        "/work/ink: convert photo.png out.bmp",
+        "/work/ink: upload out.bmp",
+    ]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "run_sandbox",
+    ]
+    nested = reviewer.calls[1].review_input
+    assert nested.arguments["command"] == "convert photo.png out.bmp"
+    assert not nested.program_approval_requested
+    assert nested.enclosing_scripts[-1].approval_active
+
+
+@pytest.mark.asyncio
+async def test_sandbox_without_opt_in_is_reviewed_per_call(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    source = (
+        'run_sandbox(command="convert in.png out.bmp", cwd="/work/ink")\n'
+        'run_sandbox(command="upload out.bmp", cwd="/work/ink")'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _sandbox_registration(effects, deterministic=False),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider, state=_unknown_external_state())
+
+    await _execute_script(provider, context, script=source)
+
+    assert len(effects) == 2
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "run_sandbox",
+        "run_sandbox",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_first_nested_review_approves_an_unreviewed_program_once(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def ordinary_effect(value: str) -> str:
+        effects.append(value)
+        return "done"
+
+    source = (
+        "read_external()\n"
+        'ordinary_effect(value="first")\n'
+        'run_sandbox(command="upload out.bmp", cwd="/work/ink")\n'
+        'ordinary_effect(value="second")'
+    )
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _read_external_registration(),
+            _sandbox_registration(effects),
+            _registration(
+                "ordinary_effect",
+                cast("ToolImplementation", ordinary_effect),
+                tags=(ToolTag.STATE_CHANGING, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("ordinary_effect", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["first", "/work/ink: upload out.bmp", "second"]
+    assert len(reviewer.calls) == 1
+    first = reviewer.calls[0].review_input
+    assert first.descriptor.name == "ordinary_effect"
+    assert first.program_approval_requested
+    _assert_program_source(first, source)
+
+
+@pytest.mark.asyncio
+async def test_program_review_that_does_not_allow_is_not_repeated(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def ordinary_effect(value: str) -> str:
+        effects.append(value)
+        return "done"
+
+    source = 'ordinary_effect(value="first")\nordinary_effect(value="second")'
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.CONFIRM,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    confirmation = _ConfirmationRecorder()
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "ordinary_effect",
+                cast("ToolImplementation", ordinary_effect),
+                tags=(ToolTag.STATE_CHANGING, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("ordinary_effect", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider, confirmation=confirmation)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["first", "second"]
+    assert [call[0] for call in confirmation.calls] == ["ordinary_effect"]
+    assert [
+        call.review_input.program_approval_requested for call in reviewer.calls
+    ] == [True, False]
+    assert not reviewer.calls[1].review_input.enclosing_scripts[-1].approval_active
+
+
+@pytest.mark.asyncio
+async def test_delegation_is_its_own_boundary_and_caller_resumes(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def delegate(task: str) -> str:
+        effects.append(f"delegated: {task}")
+        return "image-attachment"
+
+    async def ordinary_effect(value: str) -> str:
+        effects.append(value)
+        return "done"
+
+    source = 'image = delegate(task="draw the weather")\nordinary_effect(value=image)'
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "delegate",
+                cast("ToolImplementation", delegate),
+                tags=(ToolTag.DELEGATION, ToolTag.OUTPUT_UNTRUSTED),
+                properties={"task": {"type": "string"}},
+            ),
+            _registration(
+                "ordinary_effect",
+                cast("ToolImplementation", ordinary_effect),
+                tags=(ToolTag.STATE_CHANGING, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[
+            _review_rule("execute_script", ToolPolicyDecision.REVIEW),
+            _review_rule("delegate", ToolPolicyDecision.REVIEW),
+            _review_rule("ordinary_effect", ToolPolicyDecision.REVIEW),
+        ],
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["delegated: draw the weather", "image-attachment"]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "delegate",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scheduled_stored_script_is_approved_by_one_program_review(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    source = (
+        "read_external()\n"
+        'run_sandbox(command="convert in.png -dither out.bmp", cwd="/work/ink")\n'
+        'run_sandbox(command="upload out.bmp", cwd="/work/ink")\n'
+        'run_sandbox(command="refresh-display", cwd="/work/ink")'
+    )
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _read_external_registration(),
+            _sandbox_registration(effects),
+        ],
+        reviewer=reviewer,
+        rules=[],
+    )
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="update_eink_display",
+        description="Render and upload the e-ink image.",
+        script_code=source,
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="unused")
+        ),
+        tools_provider=provider,
+        service_config=ProcessingServiceConfig(
+            id="script-review-profile",
+            prompts={"system_prompt": "Scheduled scripts"},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=1,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+    )
+    context = replace(context, processing_service=processing_service)
+
+    await handle_script_execution(
+        context,
+        {
+            "script_name": "update_eink_display",
+            "conversation_id": "script-review-conversation",
+            "processing_profile_id": "script-review-profile",
+        },
+    )
+
+    assert len(effects) == 3
+    assert len(reviewer.calls) == 1
+    review_input = reviewer.calls[0].review_input
+    assert review_input.descriptor.name == "run_sandbox"
+    assert review_input.program_approval_requested
+    assert review_input.trigger is not None
+    assert review_input.trigger.trigger_type == "scheduled_script"
+    _assert_program_source(review_input, source)

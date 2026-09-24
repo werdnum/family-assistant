@@ -3547,11 +3547,17 @@ boundary, so the runtime taint policy can classify their tools correctly:
 Every configured entry should also declare `output_trusted` or `output_untrusted`. An exact
 `tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to them.
 
-`script_deterministic` is an explicit opt-in for operations that do not execute new code, make a
-model decision, or create executable definitions. A reviewed script invocation may reuse its
-approval for a tagged operation, while tool availability, access control, hard policy controls,
-required confirmations, argument validation, and execution limits still apply. An untagged tool
-remains an independent review boundary.
+`script_deterministic` is an explicit opt-in for operations that do not make a model decision or
+create executable definitions. A reviewed script invocation may reuse its approval for a tagged
+operation, while tool availability, access control, hard policy controls, required confirmations,
+argument validation, and execution limits still apply. An untagged tool remains an independent
+review boundary, and a `delegation` tool always is.
+
+On a `code_execution` tool the tag means the tool runs exactly the code it is given, with no agent
+of its own choosing what to run -- true of a shell or Python runner, never of a coding agent such as
+`spawn_worker`. Such a call reuses the script's approval only when every string argument is a
+complete string literal in the reviewed script source, so code assembled at runtime is still
+reviewed call by call.
 
 ### prompts.yaml
 

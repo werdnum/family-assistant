@@ -434,7 +434,8 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Review and confirmation bind source, inputs and statically named child scripts. "
                 "Changed child definitions require fresh review. Approved "
                 "deterministic operations share program approval; hard policy and confirmations "
-                "still apply. New code, model decisions, and executable definitions retain "
+                "still apply. Sandbox commands share it only when written as complete string "
+                "literals; runtime-built code, delegations and executable definitions retain "
                 "independent gates. Enabled tools and script APIs are available as functions."
             ),
             "parameters": {

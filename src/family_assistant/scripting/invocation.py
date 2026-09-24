@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, TypedDict
@@ -100,17 +101,58 @@ class ScriptExecutionScope:
     invocation: PreparedScriptInvocation
     parent: ScriptExecutionScope | None = None
     active: bool = True
-    revoked: bool = False
 
     @property
     def approved(self) -> bool:
-        return self.active and not self.revoked and self.invocation.approved
+        return self.active and self.invocation.approved
 
-    def revoke(self) -> None:
-        """A new decision also invalidates every enclosing caller continuation."""
-        self.revoked = True
-        if self.parent is not None:
-            self.parent.revoke()
+    @property
+    def awaiting_program_review(self) -> bool:
+        """Whether no review has yet decided this running program.
+
+        A program admitted without a review of its own -- a scheduled firing,
+        or an ``execute_script`` call no gate asked about -- is decided by the
+        first model review one of its operations needs, once.
+        """
+        return (
+            self.active
+            and not self.invocation.approved
+            and self.invocation.review.decision == "unreviewed"
+        )
+
+    def approve_program(self, review_id: str | None) -> None:
+        """Record a model allow of the complete program as its approval."""
+        self.invocation.approved = True
+        self.invocation.review = replace(
+            self.invocation.review, decision="allow", review_id=review_id
+        )
+
+    def record_program_decision(self, decision: str, review_id: str | None) -> None:
+        """Record a review that decided the program without approving it."""
+        self.invocation.review = replace(
+            self.invocation.review, decision=decision, review_id=review_id
+        )
+
+    def program_string_literals(self) -> frozenset[str]:
+        """Complete string literals written in the reviewed program's source.
+
+        Covers the program's own source and every hash-bound stored script in
+        its closure. Parts of f-strings are not complete literals, and inputs
+        are values rather than code, so neither counts.
+        """
+        review = self.invocation.review
+        sources = (
+            review.source,
+            *(
+                str(binding.get("script_code", ""))
+                for binding in review.script_bindings
+            ),
+        )
+        return frozenset(
+            literal
+            for source in sources
+            for literal in _complete_string_literals(source)
+        )
 
     def review_contexts(self) -> tuple[ScriptReviewContext, ...]:
         """Keep enclosing source available even after its approval has ended."""
@@ -119,6 +161,27 @@ class ScriptExecutionScope:
             *parents,
             replace(self.invocation.review, approval_active=self.approved),
         )
+
+
+def _complete_string_literals(source: str) -> set[str]:
+    """String constants that stand alone as an expression, never f-string parts."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    fragments = {
+        id(child)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.JoinedStr)
+        for child in ast.walk(node)
+    }
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in fragments
+    }
 
 
 async def _resolve_bound_closure(

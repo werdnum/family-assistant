@@ -323,6 +323,8 @@ class ToolCallReviewInput:
     destination_echo: DestinationEchoSignal | None = None
     script: ScriptReviewContext | None = None
     enclosing_scripts: tuple[ScriptReviewContext, ...] = ()
+    program_approval_requested: bool = False
+    """The verdict also decides the innermost enclosing, not yet reviewed, program."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -706,6 +708,9 @@ def assemble_tool_call_review_messages(
                         _script_review_data(item)
                         for item in review_input.enclosing_scripts
                     ],
+                    "program_approval_requested": (
+                        review_input.program_approval_requested
+                    ),
                 },
             )
         )
@@ -750,11 +755,17 @@ def assemble_tool_call_review_messages(
             " When reviewing a script, assess the complete program, effective inputs, "
             "capabilities and policy: loops, data-dependent effects and destinations, "
             "model-produced results, and durable executable definitions. An allow "
-            "authorizes covered deterministic operations even after new untrusted reads; "
+            "authorizes covered deterministic operations even after new untrusted reads "
+            "or model and delegation results, which the program processes as data; "
             "hash-bound statically named child scripts are included in that program. It "
-            "does not bypass hard controls or approve unbound executable code or model "
-            "decisions. Enclosing programs explain intermediate steps, but are not "
-            "independent approval of this call."
+            "does not bypass hard controls, and it does not approve a delegated agent's "
+            "own actions, unbound scripts, or code-execution text the source does not "
+            "spell out as a complete string literal. Enclosing programs explain "
+            "intermediate steps, but are not independent approval of this call -- "
+            "except when program_approval_requested is true: the innermost enclosing "
+            "program has not been reviewed, so judge that complete program together "
+            "with this call, and allow only if both are aligned, because an allow "
+            "approves both."
         )
     return [
         messages_module.SystemMessage(content=system),

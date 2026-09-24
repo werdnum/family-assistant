@@ -58,16 +58,35 @@ Confirmations carry the resolved dependency content and hashes; a changed or del
 requires fresh preparation and review. Child execution checks the binding before using the loaded
 source, so approval cannot silently follow a mutable name to different code.
 
-Approval ends at executable code outside this bound closure or a new model decision. Persistence of
-executable definitions retains its own gate, with the enclosing source and parent decision as
-context, so the write can be independently reviewed without borrowing the parent verdict. A
-statically bound child shares program approval; other nested script invocations receive their own
-source-aware review; delegated agents, model-driven tools, callbacks, and future automation runs do
+Approval covers what the reviewed source spells out; it ends at executable content the source does
+not contain. Persistence of executable definitions retains its own gate, with the enclosing source
+and parent decision as context, so the write can be independently reviewed without borrowing the
+parent verdict. A statically bound child shares program approval; other nested script invocations
+receive their own source-aware review; delegated agents, callbacks, and future automation runs do
 not inherit permission for their subsequent decisions. The approved script may initiate those
-operations subject to existing policy, but their execution retains its own enforcement. A model
-decision also ends inherited approval for the calling script's continuation. Any review still needed
-within a script should receive the enclosing source and parent decision as context, so it does not
-recreate the original context-free failure.
+operations subject to existing policy, but their execution retains its own enforcement. Any review
+still needed within a script should receive the enclosing source and parent decision as context, so
+it does not recreate the original context-free failure.
+
+What those boundaries return is data, and the approved program's continuation keeps its approval. A
+delegation, an `llm()` call or a data-producing tool can be steered by what it reads, but its output
+steers the program only through the data-dependent paths the program review was asked to assess --
+the same paths any untrusted read feeds. The caller's own next step is still fixed by its source.
+
+A general-purpose sandbox is a deterministic operation like any other when the code it runs is part
+of the reviewed program. Code-execution calls therefore inherit when the operator has opted the tool
+in and every string argument is a complete string literal of the reviewed source or its bound
+closure. Text assembled at runtime -- interpolated, concatenated, taken from inputs or read from a
+result -- is new executable content and receives its own review. That review covers the call only;
+the program's approval continues to cover its other operations.
+
+A program admitted without a review of its own -- a scheduled or event firing, or an
+`execute_script` call no gate asked about -- is decided by the first blocking model review one of
+its operations needs. That review is given the program as the thing being approved alongside the
+call, and a model allow approves both. Any other outcome is recorded on the program and not asked
+again, so a stochastic verdict is not retried until it allows. Scheduled firings thereby pass
+through the same source-aware review boundary as an explicit `execute_script` call, paying for a
+review only when an operation needs one.
 
 The execution authorization is local to the invocation and ends on completion, failure, timeout, or
 cancellation. It must not leak to sibling calls or later turns. Persisted definitions retain their
@@ -105,9 +124,9 @@ known at review time. Hard controls remain runtime-enforced. It does not attempt
 inference, enumerate every possible tool argument, or prove program safety. Programs whose effects
 cannot be justified from the available context can still require confirmation or be denied.
 
-The initial change targets explicit `execute_script` invocations. Other script entry points gain
-inherited authorization only when they pass through the same source-aware review boundary; merely
-using Monty confers no approval. No change to unrelated agent-review boundaries is proposed. Static
+Other script entry points gain inherited authorization only when they pass through the same
+source-aware review boundary, which for scheduled and event firings is the first nested review they
+need; merely using Monty confers no approval. No change to unrelated agent-review boundaries is proposed. Static
 discovery recognizes literal stored-script names, rather than attempting to evaluate arbitrary
 expressions. Dynamically selected code retains its independent gate. Tool metadata explicitly
 identifies operations eligible to inherit deterministic execution approval; unclassified tools
@@ -118,3 +137,13 @@ Confirmation replay is an inline invocation of the pinned program and must satis
 for that invocation. It does not retain a permission that applies only to a live named lookup.
 Observe-mode shadow reviews remain independent, so their counts are not a forecast of the number of
 reviews an approved program would need under enforcement.
+
+The literal rule for code execution is deliberately syntactic. It does not follow data into files: a
+literal command that runs a file an earlier step wrote from runtime data is covered by the program
+review, which sees that the program writes and then runs it. The rule reads every string argument of
+the call, working directory included, because an operator-supplied tag does not say which argument
+a remote server executes. Scripts that need runtime data in a sandbox pass it through a file written
+by a separate step rather than interpolating it into the call, or accept one review per
+runtime-built call. Observe-mode shadow reviews still do not
+approve a program, so observe-mode review counts are not a forecast of enforce-mode counts.
+

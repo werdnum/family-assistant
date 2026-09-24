@@ -383,7 +383,7 @@ class MontyEngine:
         if self.config.enable_time_api:
             self._add_time_api(ext_fn_impls, inputs, execution_context)
         if self.config.enable_llm_api:
-            self._add_llm_api(ext_fn_impls, execution_context)
+            self._add_llm_api(ext_fn_impls)
 
         if execution_context and execution_context.attachment_registry:
             try:
@@ -901,22 +901,13 @@ class MontyEngine:
     def _add_llm_api(
         self,
         impls: dict[str, Callable[..., Any]],
-        execution_context: "ToolExecutionContext | None" = None,
     ) -> None:
-        """Add model calls that end the enclosing program's inherited approval."""
+        """Add model calls whose results the program processes as data."""
         from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
-
-        def revoke() -> None:
-            if (
-                execution_context is not None
-                and execution_context.script_execution is not None
-            ):
-                execution_context.script_execution.revoke()
 
         async def llm(
             prompt: str, system: str | None = None, model: str | None = None
         ) -> str:
-            revoke()
             return await llm_call_async(prompt, system=system, model=model)
 
         async def llm_json(
@@ -925,7 +916,6 @@ class MontyEngine:
             system: str | None = None,
             model: str | None = None,
         ) -> object:
-            revoke()
             return await llm_call_json_async(
                 prompt, schema=schema, system=system, model=model
             )
