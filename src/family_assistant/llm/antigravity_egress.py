@@ -346,6 +346,26 @@ class AntigravityCredentialStore:
             "Content-Type": "application/json",
         }
 
+    async def _write(self, credential_id: str, token: str) -> httpx.Response:
+        """Update the credential, creating it if absent; return the last response."""
+        client = self._client()
+        body = {"type": "bearer_token", "token": token}
+        url = f"{self._base_url}/credentials/{credential_id}"
+        response = await client.patch(url, headers=self._headers(), json=body)
+        if response.status_code != httpx.codes.NOT_FOUND:
+            return response
+        response = await client.post(
+            f"{self._base_url}/credentials",
+            headers=self._headers(),
+            json={"id": credential_id, **body},
+        )
+        if response.status_code != httpx.codes.CONFLICT:
+            return response
+        # Another writer created the id between our PATCH and POST -- the first
+        # rotation tick racing the first submit, say. It exists now, so the
+        # update path applies.
+        return await client.patch(url, headers=self._headers(), json=body)
+
     async def ensure(self, credential_id: str, token: str) -> None:
         """Store ``token`` under ``credential_id``, creating the id if needed.
 
@@ -353,20 +373,8 @@ class AntigravityCredentialStore:
         the steady state is a credential that already exists: every rotation
         tick and every submit after the first takes the single-request path.
         """
-        client = self._client()
-        body = {"type": "bearer_token", "token": token}
         try:
-            response = await client.patch(
-                f"{self._base_url}/credentials/{credential_id}",
-                headers=self._headers(),
-                json=body,
-            )
-            if response.status_code == httpx.codes.NOT_FOUND:
-                response = await client.post(
-                    f"{self._base_url}/credentials",
-                    headers=self._headers(),
-                    json={"id": credential_id, **body},
-                )
+            response = await self._write(credential_id, token)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
             raise AntigravityEgressError(
@@ -417,7 +425,7 @@ def _belongs_in_the_store(credential: AntigravityEgressCredentialConfig) -> bool
     return (
         credential.type == "github_app"
         and credential.scheme == "bearer"
-        and credential.header_name == "Authorization"
+        and credential.header_name.lower() == "authorization"
     )
 
 

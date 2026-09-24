@@ -470,6 +470,8 @@ class _CredentialStoreStub:
         self.existing = existing if existing is not None else set()
         self.requests: list[httpx.Request] = []
         self.failure: int | None = None
+        # Ids another writer creates between our PATCH and our POST.
+        self.created_concurrently: set[str] = set()
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -482,6 +484,9 @@ class _CredentialStoreStub:
             return httpx.Response(200, json={"id": credential_id, "status": "active"})
         if request.method == "POST":
             body = json.loads(request.content)
+            if body["id"] in self.created_concurrently:
+                self.existing.add(body["id"])
+                return httpx.Response(409, json={"error": {"code": "already_exists"}})
             self.existing.add(body["id"])
             return httpx.Response(200, json={"id": body["id"], "status": "active"})
         if request.method == "DELETE":
@@ -522,6 +527,17 @@ async def test_storing_an_existing_credential_takes_one_request() -> None:
         "type": "bearer_token",
         "token": "ghs_rotated",
     }
+
+
+async def test_losing_a_create_race_updates_the_winners_credential() -> None:
+    """The first rotation tick and the first submit can both find the id absent."""
+    stub = _CredentialStoreStub()
+    stub.created_concurrently.add("fa-coder-github")
+
+    await stub.store().ensure("fa-coder-github", "ghs_token")
+
+    assert [r.method for r in stub.requests] == ["PATCH", "POST", "PATCH"]
+    assert json.loads(stub.requests[-1].content)["token"] == "ghs_token"
 
 
 async def test_stored_credential_carries_no_header_name_or_prefix() -> None:
@@ -773,6 +789,18 @@ def _environment(rules: list[dict[str, object]]) -> AntigravityEnvironmentConfig
             _environment([
                 _github_rule("basic", "github.com"),
                 _github_rule("bearer", "api.github.com"),
+            ]),
+            True,
+        ),
+        (
+            _environment([
+                {
+                    "domain": "api.github.com",
+                    "credential": {
+                        "type": "github_app",
+                        "header_name": "authorization",
+                    },
+                }
             ]),
             True,
         ),
