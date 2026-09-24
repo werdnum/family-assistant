@@ -45,6 +45,7 @@ _IDENTITY_PATTERN = re.compile(
     r"^(?P<name>.*) <(?P<email>[^>]*)> (?P<seconds>-?\d+) (?P<tz>[+-]\d{4})$"
 )
 _SUBMODULE_MODE = "160000"
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/"
 
 
 class PushError(Exception):
@@ -211,7 +212,14 @@ class Pusher:
 
     def upload_blob(self, sha: str) -> str:
         if sha not in self.uploaded:
-            content = base64.b64encode(git("cat-file", "blob", sha)).decode()
+            raw = git("cat-file", "blob", sha)
+            if raw.startswith(_LFS_POINTER_PREFIX):
+                raise PushError(
+                    "this push includes a Git LFS file, whose content goes to "
+                    "GitHub's LFS server with git's credential; use git push while "
+                    "that still works (about the first hour of the task)"
+                )
+            content = base64.b64encode(raw).decode()
             created = api(
                 "POST",
                 f"{self.repo}/git/blobs",

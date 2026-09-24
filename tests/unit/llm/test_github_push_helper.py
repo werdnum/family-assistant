@@ -404,6 +404,28 @@ def test_an_empty_repository_gets_its_first_push_from_git(
     assert _git(bare, "rev-parse", "refs/heads/main") == _git(work, "rev-parse", "HEAD")
 
 
+def test_a_git_lfs_file_is_refused_rather_than_pushed_as_a_bare_pointer(
+    github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path
+) -> None:
+    """LFS content goes to GitHub's LFS server, which the API cannot reach;
+    pushing only the pointer would leave a file nobody can check out."""
+    bare, api_url, _ = github
+    work = _clone(tmp_path, bare)
+    (work / "model.bin").write_text(
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:" + "0" * 64 + "\nsize 12\n"
+    )
+    _git(work, "add", "model.bin")
+    _git(work, "commit", "-m", "Add model")
+    remote_head = _git(bare, "rev-parse", "refs/heads/main")
+
+    result = _push(work, api_url, "main")
+
+    assert result.returncode == 1
+    assert "LFS" in result.stderr
+    assert _git(bare, "rev-parse", "refs/heads/main") == remote_head
+
+
 def test_a_diverged_branch_is_refused_without_force(
     github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path
 ) -> None:

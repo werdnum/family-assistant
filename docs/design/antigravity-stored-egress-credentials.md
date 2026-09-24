@@ -147,6 +147,10 @@ objects or refs to a repository with no commits. The helper falls back to `git p
 works only while the submit-time token is valid. Creating a repository from scratch is the uncommon
 case, and it pushes its first commit early anyway.
 
+Git LFS content is the other thing the API cannot carry: it goes to GitHub's LFS server with git's
+credential. The helper refuses a push that includes an LFS pointer rather than pushing the pointer
+alone, and says to use `git push` while that still works.
+
 ### Rule of Two
 
 The letters do not move. Injecting a GitHub credential still adds **[B]** to a profile that acts
