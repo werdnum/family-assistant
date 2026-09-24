@@ -2926,10 +2926,12 @@ same key every Google profile uses.
 
 A `scheme: "basic"` rule (git over HTTPS) cannot go through the store, which can only send
 `Authorization: Bearer`, and GitHub's git endpoint accepts only `Basic`. That rule keeps the header
-fixed at submit, so **git access still ends when that token expires (~1 hour)**, possibly on a final
-push. `max_async_seconds` for the shipped `coder` profile is `7200`. Set it below an hour on a
-credentialed profile if git must hold for the whole of every run; leave it high if long runs matter
-more and late-run git failures are acceptable. Static `bearer` credentials never go to the store.
+fixed at submit, so **git itself stops authenticating when that token expires (~1 hour)**. Pushing
+doesn't depend on it. When `api.github.com` has the stored credential, each run gets a push helper
+mounted at `/workspace/.fa/github_push.py`, and the agent is told to push with it. It sends commits
+through GitHub's REST API with the rotating credential, so a push works at any point in a run. Keep
+the `github.com` rule too, so the agent can clone with git. After the first hour, a late `git fetch`
+or `git pull` still fails. Static `bearer` credentials never go to the store.
 
 **The Gemini API key is now as sensitive as the GitHub App's private key.** While a stored
 credential is in use, a live installation token sits in the API project's credential store between

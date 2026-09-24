@@ -18,6 +18,7 @@ import base64
 import logging
 import os
 from datetime import datetime, timedelta
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
@@ -71,6 +72,22 @@ _APP_JWT_BACKDATE = timedelta(seconds=60)
 _INSTALLATION_TOKEN_REUSE_WINDOW = timedelta(seconds=60)
 
 _GITHUB_GIT_BASIC_USERNAME = "x-access-token"
+
+# Where the API-push helper is mounted, and what the agent is told about it.
+# Git over HTTPS authenticates with the submit-time Basic header and so stops
+# working when that token expires; the helper pushes through the REST API,
+# whose Bearer credential is the stored one that rotation keeps fresh.
+GITHUB_PUSH_HELPER_TARGET = "/workspace/.fa/github_push.py"
+GITHUB_PUSH_INSTRUCTION = (
+    "To push commits to GitHub, run "
+    f"`python3 {GITHUB_PUSH_HELPER_TARGET} <branch>` from inside the "
+    "repository instead of `git push` (add `--force` only when you mean to "
+    "overwrite the branch). It pushes through the GitHub API with a credential "
+    "that stays valid for the whole task, while `git push` stops "
+    "authenticating about an hour into it. Cloning and fetching with git are "
+    "fine early on."
+)
+_GITHUB_API_DOMAIN = "api.github.com"
 
 EGRESS_CREDENTIAL_ROTATION_TASK_TYPE = "antigravity_egress_credential_rotation"
 EGRESS_CREDENTIAL_ROTATION_TASK_ID = "system_antigravity_egress_credential_rotation"
@@ -427,6 +444,36 @@ def _belongs_in_the_store(credential: AntigravityEgressCredentialConfig) -> bool
         and credential.scheme == "bearer"
         and credential.header_name.lower() == "authorization"
     )
+
+
+def github_push_helper_source(
+    network: EgressNetworkPayload | None,
+) -> dict[str, str] | None:
+    """The helper's ``environment.sources`` entry, if this run can use it.
+
+    Decided from the resolved network block rather than from config, so the
+    helper is mounted exactly when api.github.com goes out with a stored
+    credential -- the only case in which pushing through the API outlasts git.
+    """
+    if not isinstance(network, dict):
+        return None
+    if not any(
+        entry.get("domain") == _GITHUB_API_DOMAIN and "credential" in entry
+        for entry in network["allowlist"]
+    ):
+        return None
+    content = (
+        resources
+        .files("family_assistant.llm.sandbox_helpers")
+        .joinpath("github_push.py")
+        .read_bytes()
+    )
+    return {
+        "type": "inline",
+        "content": base64.b64encode(content).decode("ascii"),
+        "encoding": "base64",
+        "target": GITHUB_PUSH_HELPER_TARGET,
+    }
 
 
 def uses_stored_credential(environment: AntigravityEnvironmentConfig | None) -> bool:

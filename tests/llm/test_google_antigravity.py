@@ -8,7 +8,10 @@ import pytest
 from pydantic import TypeAdapter
 
 from family_assistant.llm import LLMStreamEvent
-from family_assistant.llm.antigravity_egress import EgressNetworkPayload
+from family_assistant.llm.antigravity_egress import (
+    GITHUB_PUSH_HELPER_TARGET,
+    EgressNetworkPayload,
+)
 from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     ImageUrlContentPart,
@@ -444,3 +447,63 @@ async def test_environment_with_egress_validates_against_the_sdk_request_model()
     assert body.environment.network.allowlist[0].transform == [
         {"Authorization": "Basic eC1hY2Nlc3M="}
     ]
+
+
+_STORED_GITHUB_NETWORK: EgressNetworkPayload = {
+    "allowlist": [
+        {"domain": "api.github.com", "credential": "fa-egress-github-app-1"},
+        {
+            "domain": "github.com",
+            "transform": [{"Authorization": "Basic eC1hY2Nlc3M="}],
+        },
+    ]
+}
+
+
+@pytest.mark.asyncio
+async def test_a_stored_github_credential_mounts_the_api_push_helper() -> None:
+    """Git's Basic header expires about an hour in; the REST credential does
+    not, so the agent is handed a way to push over REST and told to use it."""
+    client = _egress_client(_STORED_GITHUB_NETWORK)
+
+    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+
+    body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
+    assert body.environment.sources[-1].target == GITHUB_PUSH_HELPER_TARGET
+    assert GITHUB_PUSH_HELPER_TARGET in kwargs["system_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_the_push_helper_is_mounted_alongside_delegated_attachments() -> None:
+    client = _egress_client(_STORED_GITHUB_NETWORK)
+    attachment = {
+        "type": "inline",
+        "content": "aGk=",
+        "encoding": "base64",
+        "target": "/workspace/notes.txt",
+    }
+
+    kwargs = await client._build_agent_request(
+        [UserMessage(content="Fix the bug.")], environment_sources=[attachment]
+    )
+
+    targets = [source["target"] for source in kwargs["environment"]["sources"]]
+    assert targets == ["/workspace/notes.txt", GITHUB_PUSH_HELPER_TARGET]
+
+
+@pytest.mark.asyncio
+async def test_without_a_stored_github_credential_no_helper_is_mounted() -> None:
+    """A header-only rule gets nothing from the helper: its token expires too."""
+    client = _egress_client({
+        "allowlist": [
+            {
+                "domain": "api.github.com",
+                "transform": [{"Authorization": "Bearer ghs_x"}],
+            }
+        ]
+    })
+
+    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+
+    assert "sources" not in kwargs["environment"]
+    assert GITHUB_PUSH_HELPER_TARGET not in kwargs.get("system_instruction", "")

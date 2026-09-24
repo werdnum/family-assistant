@@ -41,9 +41,11 @@ from family_assistant.llm import (
     describe_attachment_for_fallback,
 )
 from family_assistant.llm.antigravity_egress import (
+    GITHUB_PUSH_INSTRUCTION,
     AntigravityCredentialStore,
     AntigravityEgressResolver,
     EgressNetworkResolver,
+    github_push_helper_source,
 )
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
@@ -1905,6 +1907,41 @@ class GoogleGenAIClient(BaseLLMClient):
             return None
         return {"type": "remote", **environment}
 
+    async def _build_agent_request(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        previous_interaction_id: str | None = None,
+        environment_sources: Sequence[Mapping[str, Any]] | None = None,
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+    ) -> dict[str, Any]:
+        """The full create request: input, system instruction and sandbox.
+
+        One place for both the submit and the streaming path, because the
+        sandbox and the instruction are coupled: when the run's egress policy
+        stores a GitHub credential, the API-push helper is mounted and the
+        agent is told to push with it, and neither is any use without the other.
+        """
+        create_kwargs = self._build_agent_create_kwargs(
+            messages, previous_interaction_id=previous_interaction_id
+        )
+        environment = await self._build_agent_environment(environment_sources)
+        if environment is None:
+            return create_kwargs
+        helper = github_push_helper_source(environment.get("network"))
+        if helper is not None:
+            environment["sources"] = [*environment.get("sources", []), helper]
+            create_kwargs["system_instruction"] = "\n\n".join(
+                part
+                for part in (
+                    create_kwargs.get("system_instruction"),
+                    GITHUB_PUSH_INSTRUCTION,
+                )
+                if part
+            )
+        create_kwargs["environment"] = environment
+        return create_kwargs
+
     def _classify_agent_delegation_error(self, e: Exception) -> Exception:
         """Map an Interactions API exception to the delegation error taxonomy.
 
@@ -1951,16 +1988,15 @@ class GoogleGenAIClient(BaseLLMClient):
         need none, because polling or cancelling by id is the same call
         whatever produced the id.
         """
-        create_kwargs = self._build_agent_create_kwargs(
-            messages, previous_interaction_id=previous_interaction_id
-        )
         # A fresh sandbox with the caller's files mounted into it, under this
         # profile's egress policy. Only the submit path carries sources: the
         # interactive path goes through the provider-agnostic
         # `generate_response_stream`, which has no attachments to mount.
-        environment = await self._build_agent_environment(environment_sources)
-        if environment is not None:
-            create_kwargs["environment"] = environment
+        create_kwargs = await self._build_agent_request(
+            messages,
+            previous_interaction_id=previous_interaction_id,
+            environment_sources=environment_sources,
+        )
         # Accounting starts here, not above: building the kwargs and resolving
         # the sandbox's credentials can fail without any request reaching
         # Google, and a failure that never left the process is not a provider
@@ -2065,10 +2101,7 @@ class GoogleGenAIClient(BaseLLMClient):
         # entirely in this process, and a failure there is not a provider
         # error. Counted inside, it would put a Google call that never left the
         # process into the provider error rate.
-        create_kwargs = self._build_agent_create_kwargs(messages)
-        environment = await self._build_agent_environment()
-        if environment is not None:
-            create_kwargs["environment"] = environment
+        create_kwargs = await self._build_agent_request(messages)
         create_kwargs["stream"] = True
 
         span = tracer.start_span("llm.provider.agent_interaction")

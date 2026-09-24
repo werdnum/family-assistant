@@ -118,6 +118,30 @@ The split is therefore structural, not a gap waiting to close. It could only cha
 accepting `Bearer` on git, which its own `WWW-Authenticate` advertises against; a design that
 assumed otherwise would be betting on that.
 
+### Pushing without git
+
+A push is the step that matters most and comes last, so the git ceiling would defeat the point of
+long runs on its own. The way around it is not to push over git at all. GitHub's Git Data API
+(blobs, trees, commits, refs) lives on `api.github.com` and takes `Bearer`, which is the rule the
+store keeps fresh. Anything `git push` does to a branch can be done through it.
+
+So when a run's resolved network sends `api.github.com` with a stored credential, the sandbox gets a
+small push helper mounted beside any attachments, and the agent's system instruction tells it to
+push with that instead of `git push`. The agent still clones and commits with ordinary git. Cloning
+happens at the start, well inside the first hour. The helper replays each commit the remote lacks
+through the API, with the original author, committer, dates and message. Trees are
+content-addressed, so the pushed commits keep their local ids. Where GitHub serialises one
+differently, later commits are re-parented onto GitHub's copy and the helper says so. It sends no
+credential itself: the proxy attaches the rotating one. It refuses a push that isn't a fast-forward
+unless told `--force`, as git does.
+
+The decision is made from the resolved network block, not from config, because the mount and the
+instruction are only useful together and only when the REST credential actually outlives git's.
+
+What still expires with the git token is git itself after the first hour: a late `git fetch` or
+`git pull` fails. That is accepted. A long task pushes its own work, and it rarely needs to fetch
+someone else's.
+
 ### Rule of Two
 
 The letters do not move. Injecting a GitHub credential still adds **[B]** to a profile that acts
@@ -173,6 +197,11 @@ Each milestone stands alone and is verifiable without the next.
 
 5. **Documentation.** `CONFIGURATION_REFERENCE.md` for the credential id and the API-project
    sensitivity above; a correction to the superseded paragraph in the previous design doc.
+
+6. **Push without git.** The helper and its mount, as above. Verified against a fake GitHub that
+   implements the Git Data API with git's own plumbing over a bare repository, so a push counts as
+   correct only when the branch lands on the local commit id. Still to verify live: one run against
+   a real repository through the proxy, pushing after the git token has expired.
 
 ## What was verified
 
