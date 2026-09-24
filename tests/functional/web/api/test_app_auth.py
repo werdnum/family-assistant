@@ -6,7 +6,6 @@ import time
 from base64 import b64encode, urlsafe_b64encode
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -557,7 +556,13 @@ class TestJWTTokens:
 
         auth_service = AuthService(db_engine, jwt_enabled)
         user = await auth_service.get_user_from_api_token(
-            f"Bearer {token}", MagicMock(spec=Request)
+            f"Bearer {token}",
+            Request({
+                "type": "http",
+                "method": "GET",
+                "path": "/api/me",
+                "headers": [],
+            }),
         )
 
         assert user is not None
