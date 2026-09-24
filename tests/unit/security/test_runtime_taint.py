@@ -39,6 +39,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     amnestied_history_taint_metadata,
     canonicalize_taint_sources,
+    derive_tool_result_taint_source,
     merge_history_taint,
     merge_taint_policy_config,
     merge_taint_state_into_tracker,
@@ -1452,6 +1453,53 @@ def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
         tags=frozenset(tags),
         origin="local",
     )
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected_tier"),
+    [
+        ((ToolTag.OUTPUT_MACHINE_DATA,), SourceTrustTier.RECOGNIZED_MACHINE),
+        (
+            (ToolTag.OUTPUT_MACHINE_DATA, ToolTag.OUTPUT_UNTRUSTED),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        ((ToolTag.OUTPUT_UNTRUSTED,), SourceTrustTier.UNKNOWN_EXTERNAL),
+        (
+            (ToolTag.OUTPUT_TRUSTED, ToolTag.OUTPUT_MACHINE_DATA),
+            SourceTrustTier.RECOGNIZED_MACHINE,
+        ),
+        (
+            (ToolTag.OUTPUT_TRUSTED, ToolTag.OUTPUT_UNTRUSTED),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        (
+            (ToolTag.OUTPUT_MACHINE_DATA, ToolTag.OUTPUT_UNSPECIFIED),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+    ],
+)
+def test_machine_data_output_is_graded_recognized_machine(
+    tags: tuple[ToolTag, ...], expected_tier: SourceTrustTier
+) -> None:
+    source = derive_tool_result_taint_source(
+        descriptor=_tool_descriptor("plan_trip", *tags), call_id="call-1"
+    )
+
+    assert source is not None
+    assert source.tier is expected_tier
+
+
+def test_machine_data_outranks_a_cleaner_unspecified_default() -> None:
+    source = derive_tool_result_taint_source(
+        descriptor=_tool_descriptor(
+            "plan_trip", ToolTag.OUTPUT_MACHINE_DATA, ToolTag.OUTPUT_UNSPECIFIED
+        ),
+        call_id="call-1",
+        default_unspecified_tool_output_tier=SourceTrustTier.TRUSTED_INTERNAL,
+    )
+
+    assert source is not None
+    assert source.tier is SourceTrustTier.RECOGNIZED_MACHINE
 
 
 def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:

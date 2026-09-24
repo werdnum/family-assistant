@@ -1669,24 +1669,40 @@ def derive_tool_result_taint_source(
 ) -> TaintSource | None:
     """Derive result taint from static tool output metadata."""
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
-    if "output_trusted" in tag_values:
-        return None
-    tier = SourceTrustTier.UNKNOWN_EXTERNAL
+    # Conflicting output tags resolve to the least trusted one; output_trusted
+    # only applies when no other output tag is present.
+    # Each candidate is (tier, reason, whether the tier is a fallback default).
+    candidates: list[tuple[SourceTrustTier, str, bool]] = []
     if "output_untrusted" in tag_values:
-        reason = f"Tool '{descriptor.name}' is tagged output_untrusted."
-    elif "output_unspecified" in tag_values:
-        tier = default_unspecified_tool_output_tier
-        reason = (
+        candidates.append((
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+            f"Tool '{descriptor.name}' is tagged output_untrusted.",
+            False,
+        ))
+    if "output_machine_data" in tag_values:
+        candidates.append((
+            SourceTrustTier.RECOGNIZED_MACHINE,
+            f"Tool '{descriptor.name}' is tagged output_machine_data.",
+            False,
+        ))
+    if "output_unspecified" in tag_values:
+        candidates.append((
+            default_unspecified_tool_output_tier,
             f"Tool '{descriptor.name}' has unspecified output trust; defaulting "
-            f"to {tier.config_value} for runtime taint."
-        )
-        logger.warning(reason)
-    else:
-        tier = default_unspecified_tool_output_tier
-        reason = (
+            f"to {default_unspecified_tool_output_tier.config_value} for runtime taint.",
+            True,
+        ))
+    if not candidates:
+        if "output_trusted" in tag_values:
+            return None
+        candidates.append((
+            default_unspecified_tool_output_tier,
             f"Tool '{descriptor.name}' has no output trust metadata; defaulting "
-            f"to {tier.config_value} for runtime taint."
-        )
+            f"to {default_unspecified_tool_output_tier.config_value} for runtime taint.",
+            True,
+        ))
+    tier, reason, is_default = max(candidates, key=lambda candidate: candidate[0])
+    if is_default:
         logger.warning(reason)
 
     return TaintSource(
