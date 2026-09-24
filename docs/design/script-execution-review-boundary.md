@@ -74,8 +74,12 @@ steers the program only through the data-dependent paths the program review was 
 the same paths any untrusted read feeds. The caller's own next step is still fixed by its source.
 One difference is kept: a model can turn instructions it read into a well-formed destination, which
 raw untrusted data rarely is. Once a model or delegation result has entered a run, calls to sinks
-whose destination an attacker could name -- arbitrary external messages and attacker-addressable
-egress -- are reviewed on their own for the rest of that run, with the real destination in view.
+whose destination an attacker could name -- arbitrary external messages, attacker-addressable egress
+and brokered credential requests -- are reviewed on their own for the rest of that run, with the
+real destination in view. Which tools are backed by a model is not declared anywhere, so the rule
+keys on the opt-in instead: a result from any tool not tagged `script_deterministic` counts as a
+model result. A new model-backed tool therefore narrows approval without anyone remembering to mark
+it, and the cost of an untagged plain tool is an extra review of a later send.
 
 A general-purpose sandbox is a deterministic operation like any other when the code it runs is part
 of the reviewed program. Code-execution calls therefore inherit when the operator has opted the tool
@@ -130,12 +134,12 @@ cannot be justified from the available context can still require confirmation or
 
 Other script entry points gain inherited authorization only when they pass through the same
 source-aware review boundary, which for scheduled and event firings is the first nested review they
-need; merely using Monty confers no approval. No change to unrelated agent-review boundaries is proposed. Static
-discovery recognizes literal stored-script names, rather than attempting to evaluate arbitrary
-expressions. Dynamically selected code retains its independent gate. Tool metadata explicitly
-identifies operations eligible to inherit deterministic execution approval; unclassified tools
-retain their own enriched gates. Missing metadata therefore adds review rather than silently
-widening approval.
+need; merely using Monty confers no approval. No change to unrelated agent-review boundaries is
+proposed. Static discovery recognizes literal stored-script names, rather than attempting to
+evaluate arbitrary expressions. Dynamically selected code retains its independent gate. Tool
+metadata explicitly identifies operations eligible to inherit deterministic execution approval;
+unclassified tools retain their own enriched gates. Missing metadata therefore adds review rather
+than silently widening approval.
 
 Confirmation replay is an inline invocation of the pinned program and must satisfy current policy
 for that invocation. It does not retain a permission that applies only to a live named lookup.
@@ -145,9 +149,8 @@ reviews an approved program would need under enforcement.
 The literal rule for code execution is deliberately syntactic. It does not follow data into files: a
 literal command that runs a file an earlier step wrote from runtime data is covered by the program
 review, which sees that the program writes and then runs it. The rule reads every string argument of
-the call, working directory included, because an operator-supplied tag does not say which argument
-a remote server executes. Scripts that need runtime data in a sandbox pass it through a file written
+the call, working directory included, because an operator-supplied tag does not say which argument a
+remote server executes. Scripts that need runtime data in a sandbox pass it through a file written
 by a separate step rather than interpolating it into the call, or accept one review per
-runtime-built call. Observe-mode shadow reviews still do not
-approve a program, so observe-mode review counts are not a forecast of enforce-mode counts.
-
+runtime-built call. Observe-mode shadow reviews still do not approve a program, so observe-mode
+review counts are not a forecast of enforce-mode counts.

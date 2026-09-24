@@ -3551,7 +3551,9 @@ Every configured entry should also declare `output_trusted` or `output_untrusted
 create executable definitions. A reviewed script invocation may reuse its approval for a tagged
 operation, while tool availability, access control, hard policy controls, required confirmations,
 argument validation, and execution limits still apply. An untagged tool remains an independent
-review boundary, and a `delegation` tool always is.
+review boundary, and a `delegation` tool always is. The result of an untagged tool is also treated
+like `llm()` output: after it, the script's external messages, attacker-addressable egress and
+brokered credential requests are reviewed again, since an untagged tool may be backed by a model.
 
 On a `code_execution` tool the tag means the tool runs exactly the code it is given, with no agent
 of its own choosing what to run -- true of a shell or Python runner, never of a coding agent such as

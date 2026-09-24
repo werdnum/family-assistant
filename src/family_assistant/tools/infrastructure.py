@@ -541,7 +541,7 @@ async def _prepare_script_call(
     policy_context: dict[str, object] = {
         "tool_tags": {item.name: sorted(item.tags) for item in inventory},
         "runtime_controls": "Tool availability, hard denials, confirmation floors and resource limits remain enforced.",
-        "model_boundaries": "Hash-bound static child scripts share program approval. Unbound scripts, delegations and other non-script_deterministic tools are reviewed on their own; their results, like llm/llm_json output, are data the approved program continues to process, though an external message or egress after one is reviewed again. A code-execution tool inherits only when every string argument is a complete string literal of the reviewed source.",
+        "model_boundaries": "Hash-bound static child scripts share program approval. Unbound scripts, delegations and other non-script_deterministic tools are reviewed on their own; their results, like llm/llm_json output, are data the approved program continues to process, though an external message, egress or brokered credential request after one is reviewed again. A code-execution tool inherits only when every string argument is a complete string literal of the reviewed source.",
         "resource_limits": {"max_execution_time_seconds": 600},
     }
     if policy is not None:
@@ -611,10 +611,16 @@ def _script_call_inherits(
                 context, "inherited", scope.invocation.review.review_id
             )
         return scope.approved
-    if ToolTag.DELEGATION in descriptor.tags:
+    if (
+        ToolTag.DELEGATION in descriptor.tags
+        or ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
+    ):
+        # A tool not declared deterministic may be backed by a model, so its
+        # result is treated as one: it could name a destination the program
+        # review never saw.
         scope.note_model_output()
         return False
-    if ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags or not any(
+    if not any(
         item.get("function", {}).get("name") == descriptor.name
         for item in scope.invocation.review.tools
     ):
@@ -1945,9 +1951,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             scope is not None
             and scope.approved
             and name == "keychute_http_request"
-            and not (
-                scope.model_output_received and sink_class in _MODEL_STEERABLE_SINKS
-            )
+            and not scope.model_output_received
         ):
             constraints = self._review_constraints(
                 taint_evaluation=evaluation,
