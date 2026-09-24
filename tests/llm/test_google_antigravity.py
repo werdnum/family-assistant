@@ -8,7 +8,11 @@ import pytest
 from pydantic import TypeAdapter
 
 from family_assistant.llm import LLMStreamEvent
-from family_assistant.llm.antigravity_egress import EgressNetworkPayload
+from family_assistant.llm.antigravity_egress import (
+    GITHUB_GIT_AUTH_ENV,
+    EgressNetworkPayload,
+    EgressResolution,
+)
 from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     ImageUrlContentPart,
@@ -284,12 +288,19 @@ def test_text_shaped_attachment_injection_still_reaches_the_agent() -> None:
     assert "a,b" in kwargs["input"]
 
 
-def _egress_client(network: EgressNetworkPayload) -> GoogleGenAIClient:
-    """A client whose egress resolver returns a fixed network payload."""
+def _egress_client(
+    network: EgressNetworkPayload | EgressResolution,
+) -> GoogleGenAIClient:
+    """A client whose egress resolver returns a fixed resolution."""
+    resolution = (
+        network
+        if isinstance(network, EgressResolution)
+        else EgressResolution(network=network)
+    )
 
     class _FixedResolver:
-        async def resolve_network(self) -> EgressNetworkPayload | None:
-            return network
+        async def resolve(self) -> EgressResolution:
+            return resolution
 
     return GoogleGenAIClient(
         api_key="test",
@@ -436,7 +447,7 @@ async def test_environment_with_egress_validates_against_the_sdk_request_model()
     })
 
     kwargs = client._build_agent_create_kwargs([UserMessage(content="Clone the repo.")])
-    kwargs["environment"] = await client._build_agent_environment()
+    kwargs["environment"], _ = await client._build_agent_environment()
 
     body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
     assert body.environment.type == "remote"
@@ -444,3 +455,61 @@ async def test_environment_with_egress_validates_against_the_sdk_request_model()
     assert body.environment.network.allowlist[0].transform == [
         {"Authorization": "Basic eC1hY2Nlc3M="}
     ]
+
+
+_STORED_GITHUB = EgressResolution(
+    network={
+        "allowlist": [
+            {"domain": "api.github.com", "credential": "fa-egress-github-app-1"},
+            {"domain": "github.com"},
+        ]
+    },
+    env={GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}},
+    github_git=True,
+)
+
+
+@pytest.mark.asyncio
+async def test_a_stored_git_credential_is_bound_to_the_sandbox_variable() -> None:
+    """The request the installed SDK accepts carries the credential binding."""
+    client = _egress_client(_STORED_GITHUB)
+
+    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+
+    body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
+    assert body.environment.model_dump(exclude_none=True)["env"] == {
+        GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_stored_git_credential_tells_the_agent_to_configure_git() -> None:
+    """Git sends nothing until the variable is in its header, so the binding
+    is useless unless the agent is told to put it there."""
+    client = _egress_client(_STORED_GITHUB)
+
+    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+
+    assert (
+        "'http.https://github.com/.extraHeader' "
+        f'"Authorization: Basic ${GITHUB_GIT_AUTH_ENV}"'
+    ) in kwargs["system_instruction"]
+
+
+@pytest.mark.asyncio
+async def test_without_a_stored_git_credential_git_is_not_mentioned() -> None:
+    """A header-only rule carries its own Authorization, which the proxy would
+    write over anything git sent."""
+    client = _egress_client({
+        "allowlist": [
+            {
+                "domain": "github.com",
+                "transform": [{"Authorization": "Basic eC1hY2Nlc3M="}],
+            }
+        ]
+    })
+
+    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+
+    assert "env" not in kwargs["environment"]
+    assert GITHUB_GIT_AUTH_ENV not in kwargs.get("system_instruction", "")

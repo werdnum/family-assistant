@@ -41,8 +41,10 @@ from family_assistant.llm import (
     describe_attachment_for_fallback,
 )
 from family_assistant.llm.antigravity_egress import (
+    AntigravityCredentialStore,
     AntigravityEgressResolver,
-    EgressNetworkResolver,
+    EgressResolver,
+    github_git_instruction,
 )
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
@@ -306,7 +308,7 @@ class GoogleGenAIClient(BaseLLMClient):
         antigravity_model: str | None = None,
         antigravity_max_total_tokens: int | None = None,
         antigravity_environment: AntigravityEnvironmentConfig | None = None,
-        antigravity_egress_resolver: EgressNetworkResolver | None = None,
+        antigravity_egress_resolver: EgressResolver | None = None,
         debug_messages: bool | None = None,
         debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
@@ -365,12 +367,16 @@ class GoogleGenAIClient(BaseLLMClient):
         # belongs to whoever passed it in.
         self._owned_antigravity_egress: AntigravityEgressResolver | None = None
         if antigravity_egress_resolver is not None:
-            self._antigravity_egress: EgressNetworkResolver | None = (
+            self._antigravity_egress: EgressResolver | None = (
                 antigravity_egress_resolver
             )
         elif antigravity_environment is not None:
+            # The store writes with the same API key the interaction is
+            # submitted under, because the credential it holds is only
+            # reachable from that project in the first place.
             self._owned_antigravity_egress = AntigravityEgressResolver(
-                antigravity_environment
+                antigravity_environment,
+                credential_store=AntigravityCredentialStore(api_key=api_key),
             )
             self._antigravity_egress = self._owned_antigravity_egress
         else:
@@ -1872,8 +1878,11 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         environment_sources: Sequence[Mapping[str, Any]] | None = None,
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, bool]:
         """Build the ``environment`` block, or ``None`` to send none.
+
+        Also returns whether git reaches GitHub through a stored credential,
+        which the agent must be told how to use.
 
         Merges the two things that shape a run's sandbox: files mounted into it
         (a delegation's attachments, submit path only — the interactive path
@@ -1890,15 +1899,53 @@ class GoogleGenAIClient(BaseLLMClient):
         """
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         environment: dict[str, Any] = {}
+        github_git = False
         if environment_sources:
             environment["sources"] = list(environment_sources)
         if self._antigravity_egress is not None:
-            network = await self._antigravity_egress.resolve_network()
-            if network is not None:
-                environment["network"] = network
+            egress = await self._antigravity_egress.resolve()
+            if egress.network is not None:
+                environment["network"] = egress.network
+            if egress.env:
+                environment["env"] = dict(egress.env)
+            github_git = egress.github_git
         if not environment and not is_antigravity_model(self._agent_name):
-            return None
-        return {"type": "remote", **environment}
+            return None, github_git
+        return {"type": "remote", **environment}, github_git
+
+    async def _build_agent_request(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        previous_interaction_id: str | None = None,
+        environment_sources: Sequence[Mapping[str, Any]] | None = None,
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+    ) -> dict[str, Any]:
+        """The full create request: input, system instruction and sandbox.
+
+        One place for both the submit and the streaming path, because the
+        sandbox and the instruction are coupled: a stored git credential only
+        reaches GitHub once the agent has put its variable in git's header.
+        """
+        create_kwargs = self._build_agent_create_kwargs(
+            messages, previous_interaction_id=previous_interaction_id
+        )
+        environment, github_git = await self._build_agent_environment(
+            environment_sources
+        )
+        if environment is None:
+            return create_kwargs
+        if github_git:
+            create_kwargs["system_instruction"] = "\n\n".join(
+                part
+                for part in (
+                    create_kwargs.get("system_instruction"),
+                    github_git_instruction(),
+                )
+                if part
+            )
+        create_kwargs["environment"] = environment
+        return create_kwargs
 
     def _classify_agent_delegation_error(self, e: Exception) -> Exception:
         """Map an Interactions API exception to the delegation error taxonomy.
@@ -1946,16 +1993,15 @@ class GoogleGenAIClient(BaseLLMClient):
         need none, because polling or cancelling by id is the same call
         whatever produced the id.
         """
-        create_kwargs = self._build_agent_create_kwargs(
-            messages, previous_interaction_id=previous_interaction_id
-        )
         # A fresh sandbox with the caller's files mounted into it, under this
         # profile's egress policy. Only the submit path carries sources: the
         # interactive path goes through the provider-agnostic
         # `generate_response_stream`, which has no attachments to mount.
-        environment = await self._build_agent_environment(environment_sources)
-        if environment is not None:
-            create_kwargs["environment"] = environment
+        create_kwargs = await self._build_agent_request(
+            messages,
+            previous_interaction_id=previous_interaction_id,
+            environment_sources=environment_sources,
+        )
         # Accounting starts here, not above: building the kwargs and resolving
         # the sandbox's credentials can fail without any request reaching
         # Google, and a failure that never left the process is not a provider
@@ -2060,10 +2106,7 @@ class GoogleGenAIClient(BaseLLMClient):
         # entirely in this process, and a failure there is not a provider
         # error. Counted inside, it would put a Google call that never left the
         # process into the provider error rate.
-        create_kwargs = self._build_agent_create_kwargs(messages)
-        environment = await self._build_agent_environment()
-        if environment is not None:
-            create_kwargs["environment"] = environment
+        create_kwargs = await self._build_agent_request(messages)
         create_kwargs["stream"] = True
 
         span = tracer.start_span("llm.provider.agent_interaction")

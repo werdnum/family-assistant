@@ -335,6 +335,34 @@ class AntigravityEgressRuleConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     credential: AntigravityEgressCredentialConfig | None = None
 
+    @model_validator(mode="after")
+    def validate_git_domain(self) -> AntigravityEgressRuleConfig:
+        # A GitHub App's git credential is only ever for github.com. Enterprise
+        # hosts are not supported, and a wildcard would hand the credential to
+        # every host it covers.
+        credential = self.credential
+        if (
+            credential is not None
+            and credential.type == "github_app"
+            and credential.scheme == "basic"
+            and self.domain != "github.com"
+        ):
+            msg = (
+                f"Antigravity egress rule {self.domain!r} carries a GitHub git "
+                "credential, which is only supported on 'github.com'"
+            )
+            raise ValueError(msg)
+        if credential is not None and any(
+            name.lower() == credential.header_name.lower() for name in self.headers
+        ):
+            msg = (
+                f"Antigravity egress rule {self.domain!r} sets "
+                f"{credential.header_name!r} in both 'headers' and 'credential'; "
+                "only one of them can reach the wire"
+            )
+            raise ValueError(msg)
+        return self
+
 
 class AntigravityEnvironmentConfig(BaseModel):
     """The sandbox environment one Antigravity run gets.
