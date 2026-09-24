@@ -60,9 +60,10 @@ notes, skills and automations
 authorship rule judge a specific stored artifact by where its content came from. That is where
 provenance stops persistent poisoning, and none of it depends on the turn being clean.
 
-With the high-risk cells no longer tier-dependent, `taint_policy.mode: enforce` stops being a change
-in friction. Every check that would fire under enforce already runs its adjudicator under observe;
-enforce only makes the verdict binding.
+With the high-risk cells no longer tier-dependent, observe mode produces a verdict for every call
+enforce would gate, so the audit data projects enforce's confirmations, denials and review latency
+directly. Enforce still adds that friction, since it blocks on the review and applies the verdict;
+what changes is that the projection no longer depends on how turns happened to be tainted.
 
 ## Grading fixes that still matter
 
@@ -97,6 +98,10 @@ named the largest distortions:
   the adjudicator reviews.
 - **Profiles that ask for a stricter posture keep it.** A profile or `operator_minimum` can still
   set `confirm` or `deny` on any cell; the change is to the shipped defaults.
+- **Irreversible local sinks are out of scope.** Home Assistant actions resolve to `home_local` and
+  note deletion and automation creation to `artifact_write`, which the matrix allows or audits at
+  every tier. That gap exists today under observe mode and is unchanged by this design, before or
+  after enforce; giving those actions their own floors is a separate decision.
 - **Window expiry is not built.** It moves the tainted share from 80% to 58% at best, which changes
   no decision above.
 
@@ -110,5 +115,5 @@ named the largest distortions:
    account for most of the mislabelled volume; per-calendar grading after. Verified per tool by
    result-taint tests, and in production by rerunning the reconstruction query.
 3. **Enforce in production.** The kube-config ConfigMap moves `taint_policy.mode` to `enforce` once
-   the first milestone is deployed and a week of audit data shows the adjudicator's verdicts on the
-   newly covered trusted turns.
+   the first milestone is deployed and the existing rollout gates on projected confirmations,
+   denials and review latency pass on the new cells.
