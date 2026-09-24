@@ -553,7 +553,9 @@ automation runs keep their own enforcement and policy-required review before the
 and a code-execution call inherits only when every string argument is a complete literal of the
 reviewed source. Those independent reviews receive the enclosing program and parent decision as
 context, but cannot inherit its verdict or its provenance disposition. What they return, like
-`llm()` or `llm_json()` output, is data: the approved program's continuation keeps its approval.
+`llm()` or `llm_json()` output, is data: the approved program's continuation keeps its approval,
+except that calls to arbitrary external messages and attacker-addressable egress made after a model
+result are reviewed again, because a model can turn what it read into a destination.
 
 A program with no review of its own, such as a scheduled firing, is decided by the first blocking
 review one of its operations needs. `program_approval_requested` tells the reviewer that its verdict

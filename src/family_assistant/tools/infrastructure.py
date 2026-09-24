@@ -541,7 +541,7 @@ async def _prepare_script_call(
     policy_context: dict[str, object] = {
         "tool_tags": {item.name: sorted(item.tags) for item in inventory},
         "runtime_controls": "Tool availability, hard denials, confirmation floors and resource limits remain enforced.",
-        "model_boundaries": "Hash-bound static child scripts share program approval. Unbound scripts, delegations and other non-script_deterministic tools are reviewed on their own; their results, like llm/llm_json output, are data the approved program continues to process. A code-execution tool inherits only when every string argument is a complete string literal of the reviewed source.",
+        "model_boundaries": "Hash-bound static child scripts share program approval. Unbound scripts, delegations and other non-script_deterministic tools are reviewed on their own; their results, like llm/llm_json output, are data the approved program continues to process, though an external message or egress after one is reviewed again. A code-execution tool inherits only when every string argument is a complete string literal of the reviewed source.",
         "resource_limits": {"max_execution_time_seconds": 600},
     }
     if policy is not None:
@@ -585,6 +585,13 @@ async def _prepare_script_call(
     return invocation.arguments()
 
 
+_MODEL_STEERABLE_SINKS = frozenset({
+    SinkClass.ARBITRARY_EXTERNAL_MESSAGE,
+    SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+})
+"""Sinks whose destination a model's result could name once the program has one."""
+
+
 def _script_call_inherits(
     descriptor: ToolDescriptor,
     context: ToolExecutionContext,
@@ -604,18 +611,20 @@ def _script_call_inherits(
                 context, "inherited", scope.invocation.review.review_id
             )
         return scope.approved
-    if (
-        ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
-        or ToolTag.DELEGATION in descriptor.tags
-        or not any(
-            item.get("function", {}).get("name") == descriptor.name
-            for item in scope.invocation.review.tools
-        )
+    if ToolTag.DELEGATION in descriptor.tags:
+        scope.note_model_output()
+        return False
+    if ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags or not any(
+        item.get("function", {}).get("name") == descriptor.name
+        for item in scope.invocation.review.tools
     ):
+        return False
+    sink_class = resolve_tool_sink_class(descriptor, arguments)
+    if scope.model_output_received and sink_class in _MODEL_STEERABLE_SINKS:
         return False
     if (
         ToolTag.CODE_EXECUTION in descriptor.tags
-        or resolve_tool_sink_class(descriptor, arguments) is SinkClass.SANDBOX_NETWORK
+        or sink_class is SinkClass.SANDBOX_NETWORK
     ) and not _strings_are_program_literals(arguments, scope):
         return False
     return scope.approved
@@ -1932,7 +1941,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 name,
                 f"{evaluation.reason}; redaction outcomes are not executable yet",
             )
-        if scope is not None and scope.approved and name == "keychute_http_request":
+        if (
+            scope is not None
+            and scope.approved
+            and name == "keychute_http_request"
+            and not (
+                scope.model_output_received and sink_class in _MODEL_STEERABLE_SINKS
+            )
+        ):
             constraints = self._review_constraints(
                 taint_evaluation=evaluation,
                 static_evaluation=None,

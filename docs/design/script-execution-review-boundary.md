@@ -72,6 +72,10 @@ What those boundaries return is data, and the approved program's continuation ke
 delegation, an `llm()` call or a data-producing tool can be steered by what it reads, but its output
 steers the program only through the data-dependent paths the program review was asked to assess --
 the same paths any untrusted read feeds. The caller's own next step is still fixed by its source.
+One difference is kept: a model can turn instructions it read into a well-formed destination, which
+raw untrusted data rarely is. Once a model or delegation result has entered a run, calls to sinks
+whose destination an attacker could name -- arbitrary external messages and attacker-addressable
+egress -- are reviewed on their own for the rest of that run, with the real destination in view.
 
 A general-purpose sandbox is a deterministic operation like any other when the code it runs is part
 of the reviewed program. Code-execution calls therefore inherit when the operator has opted the tool

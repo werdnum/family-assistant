@@ -101,10 +101,23 @@ class ScriptExecutionScope:
     invocation: PreparedScriptInvocation
     parent: ScriptExecutionScope | None = None
     active: bool = True
+    model_output_received: bool = False
 
     @property
     def approved(self) -> bool:
         return self.active and self.invocation.approved
+
+    def note_model_output(self) -> None:
+        """Record that a model or delegated agent has handed this run a result.
+
+        A model can turn instructions it read into a well-formed destination,
+        which raw untrusted data rarely is, so a destination chosen after this
+        point is reviewed rather than inherited. Enclosing programs receive the
+        result too, through whatever the child returns.
+        """
+        self.model_output_received = True
+        if self.parent is not None:
+            self.parent.note_model_output()
 
     @property
     def awaiting_program_review(self) -> bool:

@@ -1923,3 +1923,74 @@ async def test_scheduled_stored_script_is_approved_by_one_program_review(
     assert review_input.trigger is not None
     assert review_input.trigger.trigger_type == "scheduled_script"
     _assert_program_source(review_input, source)
+
+
+@pytest.mark.asyncio
+async def test_model_result_narrows_approval_for_external_destinations(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def send_external(to: str) -> str:
+        effects.append(f"sent to {to}")
+        return "sent"
+
+    async def ordinary_effect(value: str) -> str:
+        effects.append(value)
+        return "done"
+
+    source = (
+        'send_external(to="before@example.com")\n'
+        'value = llm("Summarise the inbox")\n'
+        "ordinary_effect(value=value)\n"
+        'send_external(to="after@example.com")'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "send_external",
+                cast("ToolImplementation", send_external),
+                tags=(ToolTag.EXTERNAL_COMM, ToolTag.OUTPUT_TRUSTED),
+                properties={"to": {"type": "string"}},
+            ),
+            _registration(
+                "ordinary_effect",
+                cast("ToolImplementation", ordinary_effect),
+                tags=(ToolTag.STATE_CHANGING, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[
+            _review_rule("execute_script", ToolPolicyDecision.REVIEW),
+            _review_rule("send_external", ToolPolicyDecision.REVIEW),
+            _review_rule("ordinary_effect", ToolPolicyDecision.REVIEW),
+        ],
+    )
+    context = _context(db_engine, provider)
+    llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=LLMOutput(content="model-derived"),
+    )
+
+    with patch(
+        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        return_value=llm_client,
+    ):
+        await _execute_script(provider, context, script=source)
+
+    assert effects == [
+        "sent to before@example.com",
+        "model-derived",
+        "sent to after@example.com",
+    ]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "send_external",
+    ]
+    assert reviewer.calls[1].review_input.arguments["to"] == "after@example.com"

@@ -283,7 +283,9 @@ Approval does not grant extra permissions: the tools a script can use and their 
 still apply. Saving or running code outside that reviewed set, choosing a child dynamically,
 creating future automation, and handing work to another assistant each follow their own approval
 rules. What they return, like the answer from `llm()`, is ordinary data the rest of the script
-keeps working with under its approval.
+keeps working with under its approval. The exception is sending something outside the household
+after such an answer, such as an email or a request to an arbitrary web address: that step is
+checked again, so the destination can be seen.
 
 Commands sent to a code sandbox such as `execute_shell` or `execute_python` are covered only when
 they are written out in full in the script, including the working directory, for example
