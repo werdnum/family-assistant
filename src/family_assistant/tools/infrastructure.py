@@ -121,6 +121,7 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.scripting.invocation import ScriptExecutionScope
     from family_assistant.storage.types import (
         TaintAuditArgumentsSummary,
         TaintAuditReviewContext,
@@ -540,7 +541,7 @@ async def _prepare_script_call(
     policy_context: dict[str, object] = {
         "tool_tags": {item.name: sorted(item.tags) for item in inventory},
         "runtime_controls": "Tool availability, hard denials, confirmation floors and resource limits remain enforced.",
-        "model_boundaries": "Hash-bound static child scripts share program approval. llm/llm_json, unbound scripts and other non-script_deterministic tools end inherited approval, including the caller continuation.",
+        "model_boundaries": "Hash-bound static child scripts share program approval. Unbound scripts, delegations and other non-script_deterministic tools are reviewed on their own; their results, like llm/llm_json output, are data the approved program continues to process, though an external message, egress or brokered credential request after one is reviewed again. A code-execution tool inherits only when every string argument is a complete string literal of the reviewed source.",
         "resource_limits": {"max_execution_time_seconds": 600},
     }
     if policy is not None:
@@ -584,6 +585,13 @@ async def _prepare_script_call(
     return invocation.arguments()
 
 
+_MODEL_STEERABLE_SINKS = frozenset({
+    SinkClass.ARBITRARY_EXTERNAL_MESSAGE,
+    SinkClass.ATTACKER_ADDRESSABLE_EGRESS,
+})
+"""Sinks whose destination a model's result could name once the program has one."""
+
+
 def _script_call_inherits(
     descriptor: ToolDescriptor,
     context: ToolExecutionContext,
@@ -599,22 +607,70 @@ def _script_call_inherits(
         and prepared.bound_child
     ):
         if scope.approved:
-            _approve_prepared_script(
-                context, "inherited", scope.invocation.review.review_id
-            )
+            _approve_prepared_script(context, "inherited", scope.approving_review_id)
         return scope.approved
     if (
-        ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
-        or descriptor.tags.intersection({ToolTag.CODE_EXECUTION, ToolTag.DELEGATION})
-        or resolve_tool_sink_class(descriptor, arguments) is SinkClass.SANDBOX_NETWORK
-        or not any(
-            item.get("function", {}).get("name") == descriptor.name
-            for item in scope.invocation.review.tools
-        )
+        ToolTag.DELEGATION in descriptor.tags
+        or ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
     ):
-        scope.revoke()
+        # A tool not declared deterministic may be backed by a model, so its
+        # result is treated as one: it could name a destination the program
+        # review never saw.
+        scope.note_model_output()
+        return False
+    if not any(
+        item.get("function", {}).get("name") == descriptor.name
+        for item in scope.invocation.review.tools
+    ):
+        return False
+    sink_class = resolve_tool_sink_class(descriptor, arguments)
+    if scope.model_output_received and sink_class in _MODEL_STEERABLE_SINKS:
+        return False
+    if (
+        ToolTag.CODE_EXECUTION in descriptor.tags
+        or sink_class is SinkClass.SANDBOX_NETWORK
+    ) and not _strings_are_program_literals(arguments, scope):
         return False
     return scope.approved
+
+
+def _strings_are_program_literals(
+    arguments: Mapping[str, object], scope: ScriptExecutionScope
+) -> bool:
+    """Whether a sandbox call's text was written into the reviewed program.
+
+    Code assembled at runtime -- interpolated, concatenated, or read from a
+    result -- is new executable content the program review never saw, so it
+    keeps its own review.
+    """
+    literals = scope.program_string_literals()
+    pending: list[object] = list(arguments.values())
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            if value not in literals:
+                return False
+        elif isinstance(value, Mapping):
+            for key, item in cast("Mapping[object, object]", value).items():
+                pending.extend((key, item))
+        elif isinstance(value, list | tuple):
+            pending.extend(cast("Sequence[object]", value))
+    return True
+
+
+def _program_scope_awaiting_review(
+    context: ToolExecutionContext,
+) -> ScriptExecutionScope | None:
+    """The running program a blocking nested review should also decide.
+
+    Only an operation of a program no review has decided yet asks for the
+    program's verdict alongside its own. A child ``execute_script`` call is
+    such an operation too: its review decides the child and the caller.
+    """
+    scope = context.script_execution
+    if scope is None or not scope.awaiting_program_review:
+        return None
+    return scope.program_to_decide()
 
 
 def _approve_prepared_script(
@@ -1831,8 +1887,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
     ) -> None:
         """Apply runtime taint policy to an egress sink outside tool dispatch."""
         scope = context.script_execution
-        if scope is not None and name != "keychute_http_request":
-            scope.revoke()
         if context.taint_tracker is None:
             return
 
@@ -1888,7 +1942,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 name,
                 f"{evaluation.reason}; redaction outcomes are not executable yet",
             )
-        if scope is not None and scope.approved and name == "keychute_http_request":
+        if (
+            scope is not None
+            and scope.approved
+            and name == "keychute_http_request"
+            and not scope.model_output_received
+        ):
             constraints = self._review_constraints(
                 taint_evaluation=evaluation,
                 static_evaluation=None,
@@ -1975,6 +2034,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 taint_evaluation=evaluation,
                 static_evaluation=None,
                 include_observe_taint_constraints=False,
+                program_scope=_program_scope_awaiting_review(context),
             )
             if result.verdict is ToolCallReviewVerdict.DENY:
                 raise ToolPolicyDeniedError(name, result.reason)
@@ -2098,6 +2158,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     taint_evaluation=evaluation,
                     static_evaluation=None,
                     include_observe_taint_constraints=True,
+                    program_scope=(
+                        _program_scope_awaiting_review(context) if enforce else None
+                    ),
                 )
                 if (
                     review_result.verdict is ToolCallReviewVerdict.ALLOW
@@ -2639,6 +2702,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 taint_evaluation=evaluation,
                 static_evaluation=static_evaluation,
                 include_observe_taint_constraints=False,
+                program_scope=_program_scope_awaiting_review(context),
             )
 
         if review_result is not None:
@@ -3115,7 +3179,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
         include_observe_taint_constraints: bool,
         count_reserved: bool = False,
         update_denial_counters: bool = True,
+        program_scope: ScriptExecutionScope | None = None,
     ) -> ToolCallReviewResult:
+        """Run one review; ``program_scope`` makes its verdict the program's too."""
         constraints = self._review_constraints(
             taint_evaluation=taint_evaluation,
             static_evaluation=static_evaluation,
@@ -3165,6 +3231,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             enclosing_scripts=context.script_execution.review_contexts()
             if context.script_execution is not None
             else (),
+            program_approval_requested=program_scope is not None,
         )
         if self._tool_call_reviewer is None:
             delegating_reason = " ".join(
@@ -3203,6 +3270,17 @@ class TaintTrackingToolsProvider(ToolsProvider):
             mode=taint_evaluation.mode if taint_evaluation is not None else None,
         )
         result = result.model_copy(update={"audit_event_id": audit_event_id})
+        if program_scope is not None:
+            if (
+                result.verdict is ToolCallReviewVerdict.ALLOW
+                and result.status is ToolCallReviewStatus.MODEL_VERDICT
+                and not result.used_fallback
+            ):
+                program_scope.approve_program(audit_event_id)
+            else:
+                program_scope.record_program_decision(
+                    f"{result.verdict.value}:{result.status.value}", audit_event_id
+                )
         if update_denial_counters:
             if _is_escalatable_review_denial(result, constraints):
                 context.tool_call_review_state.consecutive_denials += 1
@@ -3361,7 +3439,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
         if context.script_execution is not None:
             payload_context["parent_script_review_id"] = (
-                context.script_execution.invocation.review.review_id
+                context.script_execution.approving_review_id
             )
         payload_context["total_source_count"] = state.total_source_count
         payload_context["distinct_source_count"] = state.distinct_source_count

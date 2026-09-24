@@ -14,6 +14,11 @@ from typing import TYPE_CHECKING, Literal, cast
 import pytest
 
 from family_assistant.config_models import ToolCallReviewConfig
+from family_assistant.scripting.invocation import (
+    PreparedScriptInvocation,
+    ScriptExecutionScope,
+    ScriptReviewContext,
+)
 from family_assistant.security.ambient_admission import AMBIENT_ADMISSION_EVENT_TYPE
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import (
@@ -798,3 +803,49 @@ async def test_an_admitted_import_is_machine_reviewed(
 
     assert await stored_tier(db, "rules") is SourceTrustTier.MACHINE_REVIEWED
     assert "House rules." in await _prompt(db)
+
+
+def _unreviewed_program() -> ScriptExecutionScope:
+    return ScriptExecutionScope(
+        PreparedScriptInvocation(
+            review=ScriptReviewContext(
+                source='add_or_update_note(title="Packing procedure", content="...")',
+                inputs={},
+                tools=(),
+                external_functions=(),
+            ),
+            globals={},
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_enforced_admission_review_decides_an_unreviewed_program(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    reviewer = _Reviewer(ToolCallReviewVerdict.ALLOW)
+    context = _context(db, tracker_at(EXTERNAL), _gate(ENFORCE, reviewer))
+    program = _unreviewed_program()
+    context.script_execution = program
+
+    await _save(context)
+
+    assert reviewer.inputs[0].program_approval_requested
+    assert program.approved
+
+
+@pytest.mark.asyncio
+async def test_an_observed_admission_review_leaves_the_program_unreviewed(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    reviewer = _Reviewer(ToolCallReviewVerdict.ALLOW)
+    context = _context(db, tracker_at(EXTERNAL), _gate(OBSERVE, reviewer))
+    program = _unreviewed_program()
+    context.script_execution = program
+
+    await _save(context)
+
+    assert not reviewer.inputs[0].program_approval_requested
+    assert program.awaiting_program_review

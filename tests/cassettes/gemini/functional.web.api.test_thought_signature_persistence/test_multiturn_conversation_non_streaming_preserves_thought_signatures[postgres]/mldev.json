@@ -43,7 +43,7 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. New code, model decisions, and executable definitions retain independent gates. Enabled tools and script APIs are available as functions.",
+                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. Sandbox code shares it only as complete string literals; delegations and new definitions are gated separately. Enabled tools and script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
@@ -336,7 +336,7 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. New code, model decisions, and executable definitions retain independent gates. Enabled tools and script APIs are available as functions.",
+                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. Sandbox code shares it only as complete string literals; delegations and new definitions are gated separately. Enabled tools and script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
@@ -658,7 +658,7 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. New code, model decisions, and executable definitions retain independent gates. Enabled tools and script APIs are available as functions.",
+                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. Sandbox code shares it only as complete string literals; delegations and new definitions are gated separately. Enabled tools and script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
@@ -982,7 +982,7 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. New code, model decisions, and executable definitions retain independent gates. Enabled tools and script APIs are available as functions.",
+                    "description": "Execute inline Python (`script`, optional `globals`) or a stored script (`name`, optional `parameters`). Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Review and confirmation bind source, inputs and statically named child scripts. Changed child definitions require fresh review. Approved deterministic operations share program approval; hard policy and confirmations still apply. Sandbox code shares it only as complete string literals; delegations and new definitions are gated separately. Enabled tools and script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {

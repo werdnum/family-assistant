@@ -546,12 +546,22 @@ verifies its binding against the loaded row; changed or missing dependencies req
 including on durable confirmation replay. Scheduled firings use the same recursive closure when
 combining definition provenance.
 
-The boundary ends wherever unbound executable content or a new model decision begins. Saving a
-script or automation, persisting callback code, or creating another executable definition retains an
-independent definition gate. Unbound nested scripts, delegated agents, callbacks, future automation
-runs, and `llm()` or `llm_json()` decisions keep their own enforcement and policy-required review
-before their later effects. Those independent reviews receive the enclosing program and parent
-decision as context, but cannot inherit its verdict or its provenance disposition.
+The boundary ends wherever executable content the reviewed source does not spell out begins. Saving
+a script or automation, persisting callback code, or creating another executable definition retains
+an independent definition gate. Unbound nested scripts, delegated agents, callbacks and future
+automation runs keep their own enforcement and policy-required review before their later effects,
+and a code-execution call inherits only when every string argument is a complete literal of the
+reviewed source. Those independent reviews receive the enclosing program and parent decision as
+context, but cannot inherit its verdict or its provenance disposition. What they return, like
+`llm()` or `llm_json()` output, is data: the approved program's continuation keeps its approval,
+except that arbitrary external messages, attacker-addressable egress and brokered credential
+requests made after a model result are reviewed again, because a model can turn what it read into a
+destination. A result from any tool not tagged `script_deterministic` counts as a model result.
+
+A program with no review of its own, such as a scheduled firing, is decided by the first blocking
+review one of its operations needs. `program_approval_requested` tells the reviewer that its verdict
+decides the innermost enclosing program as well as the call; a model allow approves both, and any
+other outcome is recorded so the question is not asked again.
 
 This enrichment also matters when there is no outer review to inherit. A script admitted by static
 policy can read untrusted data before its first nested egress needs review. That nested review must
