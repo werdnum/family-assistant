@@ -665,16 +665,12 @@ def _program_scope_awaiting_review(
 ) -> ScriptExecutionScope | None:
     """The running program a blocking nested review should also decide.
 
-    An ``execute_script`` call under review is its own program, reviewed as
-    such; only an operation of a program no review has decided yet asks for
-    the program's verdict alongside its own.
+    Only an operation of a program no review has decided yet asks for the
+    program's verdict alongside its own. A child ``execute_script`` call is
+    such an operation too: its review decides the child and the caller.
     """
     scope = context.script_execution
-    if (
-        scope is None
-        or context.prepared_script is not None
-        or not scope.awaiting_program_review
-    ):
+    if scope is None or not scope.awaiting_program_review:
         return None
     return scope
 

@@ -2205,3 +2205,57 @@ async def test_runtime_built_mapping_key_in_sandbox_call_is_reviewed(
         "run_with_env",
     ]
     assert reviewer.calls[1].review_input.arguments["env"] == {"photo.png": "1"}
+
+
+@pytest.mark.asyncio
+async def test_child_script_review_also_decides_an_unreviewed_caller(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def ordinary_effect(value: str) -> str:
+        effects.append(value)
+        return "done"
+
+    nested_source = 'ordinary_effect(value="nested")'
+    source = (
+        "read_external()\n"
+        f"execute_script(script={nested_source!r})\n"
+        'ordinary_effect(value="after")'
+    )
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _read_external_registration(),
+            _registration(
+                "ordinary_effect",
+                cast("ToolImplementation", ordinary_effect),
+                tags=(ToolTag.STATE_CHANGING, ToolTag.OUTPUT_TRUSTED),
+                properties={"value": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("ordinary_effect", ToolPolicyDecision.REVIEW)],
+        taint_policy=TaintPolicyConfig(
+            mode=TaintPolicyMode.ENFORCE,
+            matrix_overrides={
+                SourceTrustTier.UNKNOWN_EXTERNAL: {
+                    SinkClass.SANDBOX_NETWORK: TaintAdjudicateCell(
+                        outcome=TaintPolicyOutcome.ADJUDICATE,
+                        fallback=TaintPolicyOutcome.DENY,
+                    )
+                }
+            },
+        ),
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["nested", "after"]
+    assert len(reviewer.calls) == 1
+    child_review = reviewer.calls[0].review_input
+    assert child_review.descriptor.name == "execute_script"
+    assert child_review.program_approval_requested
+    assert child_review.enclosing_scripts[-1].source == source
