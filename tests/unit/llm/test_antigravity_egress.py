@@ -46,9 +46,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 _NOW = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
-# sha256("github.com")[:12], the id suffix for a profile whose one git domain
-# is github.com.
-_GITHUB_COM_GIT_ID = "fa-egress-github-app-97135764-git-3aeb00246038"
+_GITHUB_COM_GIT_ID = "fa-egress-github-app-97135764-git"
 
 
 @pytest.fixture(scope="module")
@@ -449,11 +447,11 @@ def test_github_app_credential_rejects_a_token_env() -> None:
         })
 
 
-@pytest.mark.parametrize("domain", ["*", "*.github.com"])
-def test_a_git_credential_needs_an_exact_host(domain: str) -> None:
-    """Git's per-host extraHeader does not match a bare "*", and a wildcard
-    would send the git credential to every host it covers."""
-    with pytest.raises(ValidationError, match="needs an exact host"):
+@pytest.mark.parametrize("domain", ["*", "*.github.com", "ghe.example.com"])
+def test_a_git_credential_is_only_for_github_com(domain: str) -> None:
+    """Enterprise hosts are not supported, and a wildcard would send the git
+    credential to every host it covers."""
+    with pytest.raises(ValidationError, match="only supported on 'github.com'"):
         AntigravityEnvironmentConfig.model_validate({
             "network": "allowlist",
             "allowlist": [
@@ -699,7 +697,7 @@ async def test_a_basic_github_rule_binds_the_git_variable_and_sends_no_header(
     assert resolution == EgressResolution(
         network={"allowlist": [{"domain": "github.com"}]},
         env={GITHUB_GIT_AUTH_ENV: {"credential": _GITHUB_COM_GIT_ID}},
-        git_domains=("github.com",),
+        github_git=True,
     )
 
 
@@ -737,14 +735,11 @@ async def test_both_schemes_together_split_by_mechanism(
     assert len(github.requests) == 1
 
 
-def test_the_git_instruction_configures_each_domain_from_the_variable() -> None:
-    instruction = github_git_instruction(["github.com", "gist.github.com"])
-
-    for domain in ("github.com", "gist.github.com"):
-        assert (
-            f"git config --global --replace-all 'http.https://{domain}/.extraHeader' "
-            f'"Authorization: Basic ${GITHUB_GIT_AUTH_ENV}"'
-        ) in instruction
+def test_the_git_instruction_configures_github_from_the_variable() -> None:
+    assert (
+        "git config --global --replace-all 'http.https://github.com/.extraHeader' "
+        f'"Authorization: Basic ${GITHUB_GIT_AUTH_ENV}"'
+    ) in github_git_instruction()
 
 
 async def test_a_static_bearer_never_reaches_the_store(
@@ -829,7 +824,7 @@ def _environment(rules: list[dict[str, object]]) -> AntigravityEnvironmentConfig
     })
 
 
-_REST_ONLY = StoredGitHubCredentials(rest=True, git_domain_sets=())
+_REST_ONLY = StoredGitHubCredentials(rest=True, git=False)
 
 
 @pytest.mark.parametrize(
@@ -849,14 +844,14 @@ _REST_ONLY = StoredGitHubCredentials(rest=True, git_domain_sets=())
         ),
         (
             _environment([_github_rule("basic", "github.com")]),
-            StoredGitHubCredentials(rest=False, git_domain_sets=(("github.com",),)),
+            StoredGitHubCredentials(rest=False, git=True),
         ),
         (
             _environment([
                 _github_rule("basic", "github.com"),
                 _github_rule("bearer", "api.github.com"),
             ]),
-            StoredGitHubCredentials(rest=True, git_domain_sets=(("github.com",),)),
+            StoredGitHubCredentials(rest=True, git=True),
         ),
         (
             _environment([
@@ -888,38 +883,6 @@ def test_rotation_covers_exactly_the_forms_a_rule_reads(
     """The same routing that sends a rule to the store decides what to rotate,
     so a deployment never rotates a credential no rule reads."""
     assert stored_github_credentials([environment]) == expected
-
-
-def test_each_profiles_git_domains_get_their_own_credential() -> None:
-    """A run writes its own profile's set at submit; were the set shared, that
-    write would narrow the trust another profile's running task depends on."""
-    needs = stored_github_credentials([
-        _environment([_github_rule("basic", "github.com")]),
-        _environment([
-            _github_rule("basic", "ghe.example.com"),
-            _github_rule("basic", "github.com"),
-        ]),
-        _environment([_github_rule("basic", "github.com")]),
-    ])
-
-    assert needs == StoredGitHubCredentials(
-        rest=False,
-        git_domain_sets=(("github.com",), ("ghe.example.com", "github.com")),
-    )
-
-
-def test_distinct_git_domain_sets_are_stored_under_distinct_ids(
-    rsa_private_key_pem: str,
-) -> None:
-    source = _token_source(
-        _GitHubStub(), _github_env(rsa_private_key_pem), MockClock(_NOW)
-    )
-
-    assert source.git_credential_id(["github.com"]) == _GITHUB_COM_GIT_ID
-    assert source.git_credential_id(["github.com", "ghe.example.com"]) not in {
-        _GITHUB_COM_GIT_ID,
-        source.stored_credential_id(),
-    }
 
 
 class _MintingGitHubStub(_GitHubStub):
@@ -970,7 +933,7 @@ async def test_one_tick_writes_both_forms_from_a_single_token(
     await store_github_app_credentials(
         source,
         stub.store(),
-        StoredGitHubCredentials(rest=True, git_domain_sets=(("github.com",),)),
+        StoredGitHubCredentials(rest=True, git=True),
     )
 
     bodies = [json.loads(r.content) for r in stub.requests if r.method == "POST"]

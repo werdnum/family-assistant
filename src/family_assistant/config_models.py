@@ -337,20 +337,19 @@ class AntigravityEgressRuleConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_git_domain(self) -> AntigravityEgressRuleConfig:
-        # The agent points git at a git credential with a per-host
-        # ``http.<url>.extraHeader``, which git does not match against a bare
-        # "*"; and a wildcard would hand GitHub's git credential to every host
-        # it covers anyway.
+        # A GitHub App's git credential is only ever for github.com. Enterprise
+        # hosts are not supported, and a wildcard would hand the credential to
+        # every host it covers.
         credential = self.credential
         if (
             credential is not None
             and credential.type == "github_app"
             and credential.scheme == "basic"
-            and "*" in self.domain
+            and self.domain != "github.com"
         ):
             msg = (
                 f"Antigravity egress rule {self.domain!r} carries a GitHub git "
-                "credential, which needs an exact host such as 'github.com'"
+                "credential, which is only supported on 'github.com'"
             )
             raise ValueError(msg)
         return self

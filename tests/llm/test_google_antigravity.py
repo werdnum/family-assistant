@@ -465,7 +465,7 @@ _STORED_GITHUB = EgressResolution(
         ]
     },
     env={GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}},
-    git_domains=("github.com",),
+    github_git=True,
 )
 
 

@@ -1878,11 +1878,11 @@ class GoogleGenAIClient(BaseLLMClient):
         self,
         environment_sources: Sequence[Mapping[str, Any]] | None = None,
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
-    ) -> tuple[dict[str, Any] | None, tuple[str, ...]]:
+    ) -> tuple[dict[str, Any] | None, bool]:
         """Build the ``environment`` block, or ``None`` to send none.
 
-        Also returns the domains git reaches through a stored credential, which
-        the agent must be told how to use.
+        Also returns whether git reaches GitHub through a stored credential,
+        which the agent must be told how to use.
 
         Merges the two things that shape a run's sandbox: files mounted into it
         (a delegation's attachments, submit path only — the interactive path
@@ -1899,7 +1899,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         environment: dict[str, Any] = {}
-        git_domains: tuple[str, ...] = ()
+        github_git = False
         if environment_sources:
             environment["sources"] = list(environment_sources)
         if self._antigravity_egress is not None:
@@ -1908,10 +1908,10 @@ class GoogleGenAIClient(BaseLLMClient):
                 environment["network"] = egress.network
             if egress.env:
                 environment["env"] = dict(egress.env)
-            git_domains = egress.git_domains
+            github_git = egress.github_git
         if not environment and not is_antigravity_model(self._agent_name):
-            return None, git_domains
-        return {"type": "remote", **environment}, git_domains
+            return None, github_git
+        return {"type": "remote", **environment}, github_git
 
     async def _build_agent_request(
         self,
@@ -1930,17 +1930,17 @@ class GoogleGenAIClient(BaseLLMClient):
         create_kwargs = self._build_agent_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
         )
-        environment, git_domains = await self._build_agent_environment(
+        environment, github_git = await self._build_agent_environment(
             environment_sources
         )
         if environment is None:
             return create_kwargs
-        if git_domains:
+        if github_git:
             create_kwargs["system_instruction"] = "\n\n".join(
                 part
                 for part in (
                     create_kwargs.get("system_instruction"),
-                    github_git_instruction(git_domains),
+                    github_git_instruction(),
                 )
                 if part
             )
