@@ -237,6 +237,14 @@ interaction reads back normally. A **non-background** agent run sidesteps that e
 response carries the whole step transcript — which is how the experiment above was run and how any
 future one should be.
 
+**The proxy overwrites an `Authorization` header the sandbox sets.** Measured 2026-09-24 the same
+way: calls from the sandbox to two header-echo services bound to a stored credential arrived
+carrying the stored `Bearer` value whether or not the sandbox had sent `Authorization` itself. On a
+credentialed domain, then, the store's value is the only credential that domain ever sees. That rules
+out keeping the App JWT in the store so the sandbox can mint its own installation tokens: the token
+endpoint lives on `api.github.com`, and every other call to that domain would carry the JWT too,
+which authenticates nothing outside `/app`.
+
 ## Deliberate simplifications
 
 - **One Gemini API key per deployment.** The rotation task writes with the deployment's
