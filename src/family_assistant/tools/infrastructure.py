@@ -653,7 +653,8 @@ def _strings_are_program_literals(
             if value not in literals:
                 return False
         elif isinstance(value, Mapping):
-            pending.extend(cast("Mapping[object, object]", value).values())
+            for key, item in cast("Mapping[object, object]", value).items():
+                pending.extend((key, item))
         elif isinstance(value, list | tuple):
             pending.extend(cast("Sequence[object]", value))
     return True
@@ -2163,6 +2164,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     taint_evaluation=evaluation,
                     static_evaluation=None,
                     include_observe_taint_constraints=True,
+                    program_scope=(
+                        _program_scope_awaiting_review(context) if enforce else None
+                    ),
                 )
                 if (
                     review_result.verdict is ToolCallReviewVerdict.ALLOW

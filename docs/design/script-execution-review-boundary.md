@@ -83,18 +83,18 @@ it, and the cost of an untagged plain tool is an extra review of a later send.
 
 A general-purpose sandbox is a deterministic operation like any other when the code it runs is part
 of the reviewed program. Code-execution calls therefore inherit when the operator has opted the tool
-in and every string argument is a complete string literal of the reviewed source or its bound
-closure. Text assembled at runtime -- interpolated, concatenated, taken from inputs or read from a
-result -- is new executable content and receives its own review. That review covers the call only;
-the program's approval continues to cover its other operations.
+in and every string argument, including the keys of any mapping, is a complete string literal of the
+reviewed source or its bound closure. Text assembled at runtime -- interpolated, concatenated, taken
+from inputs or read from a result -- is new executable content and receives its own review. That
+review covers the call only; the program's approval continues to cover its other operations.
 
 A program admitted without a review of its own -- a scheduled or event firing, or an
 `execute_script` call no gate asked about -- is decided by the first blocking model review one of
-its operations needs. That review is given the program as the thing being approved alongside the
-call, and a model allow approves both. Any other outcome is recorded on the program and not asked
-again, so a stochastic verdict is not retried until it allows. Scheduled firings thereby pass
-through the same source-aware review boundary as an explicit `execute_script` call, paying for a
-review only when an operation needs one.
+its operations needs, including an enforced review of a note entering every prompt. That review is
+given the program as the thing being approved alongside the call, and a model allow approves both.
+Any other outcome is recorded on the program and not asked again, so a stochastic verdict is not
+retried until it allows. Scheduled firings thereby pass through the same source-aware review
+boundary as an explicit `execute_script` call, paying for a review only when an operation needs one.
 
 The execution authorization is local to the invocation and ends on completion, failure, timeout, or
 cancellation. It must not leak to sibling calls or later turns. Persisted definitions retain their

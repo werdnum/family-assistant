@@ -2153,3 +2153,55 @@ async def test_model_result_ends_keychute_inheritance(
         reviewer.calls[1].review_input.arguments["url"]
         == "https://attacker.test/collect"
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_built_mapping_key_in_sandbox_call_is_reviewed(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def run_with_env(command: str, env: dict[str, str]) -> str:
+        effects.append(f"{command} {sorted(env)}")
+        return "ran"
+
+    source = (
+        "name = read_external()\n"
+        'run_with_env(command="make", env={name: "1"})\n'
+        'run_with_env(command="make", env={"MODE": "1"})'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _read_external_registration(),
+            _registration(
+                "run_with_env",
+                cast("ToolImplementation", run_with_env),
+                tags=(
+                    ToolTag.CODE_EXECUTION,
+                    ToolTag.WORKER,
+                    ToolTag.OUTPUT_UNTRUSTED,
+                ),
+                properties={
+                    "command": {"type": "string"},
+                    "env": {"type": "object"},
+                },
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+
+    await _execute_script(provider, context, script=source)
+
+    assert effects == ["make ['photo.png']", "make ['MODE']"]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "run_with_env",
+    ]
+    assert reviewer.calls[1].review_input.arguments["env"] == {"photo.png": "1"}
