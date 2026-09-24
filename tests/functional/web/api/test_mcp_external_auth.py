@@ -6,6 +6,7 @@ issuer's signed access tokens. The issuer here is a key pair and a JWKS the test
 controls, standing in for Keycloak.
 """
 
+import asyncio
 import time
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager
@@ -204,7 +205,7 @@ async def test_token_signed_by_another_key_is_rejected(client: AsyncClient) -> N
 
 
 @pytest.mark.asyncio
-async def test_unknown_key_ids_do_not_refetch_the_key_set_each_time(
+async def test_a_burst_of_unknown_key_ids_does_not_refetch_the_key_set_each_time(
     client: AsyncClient, app_fixture: FastAPI, issuer_key: RSAPrivateKey
 ) -> None:
     jwks = app_fixture.state.mcp_external_token_verifier.jwks
@@ -218,10 +219,14 @@ async def test_unknown_key_ids_do_not_refetch_the_key_set_each_time(
         for index in range(5)
     ]
 
-    for token in tokens:
-        await client.post("/api/mcp", json=TOOLS_LIST, headers=_bearer(token))
+    await asyncio.gather(
+        *(
+            client.post("/api/mcp", json=TOOLS_LIST, headers=_bearer(token))
+            for token in tokens
+        )
+    )
 
-    # The first fetch fills the cache and the first miss refreshes it once.
+    # One fetch fills the cold cache and the first miss refreshes it once.
     assert jwks.fetches == 2
 
 

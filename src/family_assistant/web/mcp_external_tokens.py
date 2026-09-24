@@ -47,6 +47,7 @@ class ExternalTokenVerifier:
     server: MCPExternalAuthorizationServer
     jwks: jwt.PyJWKClient
     last_unknown_key_refresh: float = field(default=float("-inf"), init=False)
+    key_lookup: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
     @classmethod
     def for_server(
@@ -98,12 +99,16 @@ class ExternalTokenVerifier:
     async def _signing_key(self, token: str) -> jwt.PyJWK | None:
         """The issuer's key the token names, refetching the set on a miss if due.
 
-        The throttle is decided here on the event loop rather than in the
-        worker thread, so concurrent misses cannot all claim the same refresh.
+        Lookups run one at a time, so a burst of requests against a cold or
+        expired cache waits on one fetch rather than each starting its own.
         """
         kid = jwt.get_unverified_header(token).get("kid")
         if not isinstance(kid, str):
             return None
+        async with self.key_lookup:
+            return await self._signing_key_locked(kid)
+
+    async def _signing_key_locked(self, kid: str) -> jwt.PyJWK | None:
         keys = await asyncio.to_thread(self.jwks.get_signing_keys)
         key = self.jwks.match_kid(keys, kid)
         if key is not None:
