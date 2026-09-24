@@ -94,8 +94,6 @@ named the largest distortions:
 - **Structured third-party data is `recognized_machine`.** Maps, transit, weather, flight and hotel
   search, shopping listings, Home Assistant events and camera frames. Free-text reviews stay
   `unknown_external`.
-- **The app's own operational data is `trusted_internal`.** Telemetry, error logs, delegation status
-  and automation definitions.
 - **Calendar reads are graded per calendar.** The household's own calendars are trusted, subscribed
   feeds are machine data, and events other people created are external.
 
