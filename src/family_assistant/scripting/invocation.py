@@ -117,6 +117,13 @@ class ScriptExecutionScope:
         return self._bound_parent is not None and self._bound_parent.approved
 
     @property
+    def approving_review_id(self) -> str | None:
+        """The review whose allow this program's operations run under."""
+        if self.invocation.approved or self._bound_parent is None:
+            return self.invocation.review.review_id
+        return self._bound_parent.approving_review_id
+
+    @property
     def _bound_parent(self) -> ScriptExecutionScope | None:
         """The program this one is statically bound into, and so part of."""
         return self.parent if self.invocation.bound_child else None

@@ -2290,17 +2290,36 @@ async def test_review_inside_bound_child_decides_its_unreviewed_parent(
     await context.db_context.scripts.save(
         name="child",
         description="Static dependency child",
-        script_code='ordinary_effect(value="in child")',
+        script_code='ordinary_effect(value="in child")\nordinary_effect(value="again")',
         definition_taint_state=TurnTaintState.empty(),
     )
 
     await _execute_script(provider, context, script=source)
 
-    assert effects == ["in child", "after"]
+    assert effects == ["in child", "again", "after"]
     assert len(reviewer.calls) == 1
     review = reviewer.calls[0].review_input
     assert review.program_approval_requested
     assert review.enclosing_scripts[0].source == source
+    events = await context.db_context.taint_audit_events.list_for_turn(
+        "script-review-turn"
+    )
+    (approving_review,) = [
+        event["event_id"]
+        for event in events
+        if event["tool_name"] == "ordinary_effect"
+        and event["review_verdict"] == ToolCallReviewVerdict.ALLOW.value
+    ]
+    inherited = [
+        event
+        for event in events
+        if event["event_type"] == "script_inherited_authorization"
+    ]
+    assert len(inherited) == 2
+    for event in inherited:
+        review_context = event["review_context_json"]
+        assert review_context is not None
+        assert review_context.get("parent_script_review_id") == approving_review
 
 
 @pytest.mark.asyncio

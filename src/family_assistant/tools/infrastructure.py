@@ -607,9 +607,7 @@ def _script_call_inherits(
         and prepared.bound_child
     ):
         if scope.approved:
-            _approve_prepared_script(
-                context, "inherited", scope.invocation.review.review_id
-            )
+            _approve_prepared_script(context, "inherited", scope.approving_review_id)
         return scope.approved
     if (
         ToolTag.DELEGATION in descriptor.tags
@@ -3441,7 +3439,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
         if context.script_execution is not None:
             payload_context["parent_script_review_id"] = (
-                context.script_execution.invocation.review.review_id
+                context.script_execution.approving_review_id
             )
         payload_context["total_source_count"] = state.total_source_count
         payload_context["distinct_source_count"] = state.distinct_source_count
