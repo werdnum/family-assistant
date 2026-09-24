@@ -56,10 +56,12 @@ from urllib.parse import urlsplit
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
     SecretStr,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -1619,6 +1621,20 @@ class MCPExternalAuthorizationServer(BaseModel):
     scopes: list[str] = Field(
         default_factory=lambda: ["openid", "email", "profile", "offline_access"]
     )
+
+    @field_validator("issuer", "jwks_uri")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        """Refuse a malformed URL at startup, keeping the string as written.
+
+        Kept as a string because a token's ``iss`` must equal ``issuer``
+        exactly, and URL parsing normalizes (a bare host gains a slash).
+        """
+        _HTTP_URL.validate_python(value)
+        return value
+
+
+_HTTP_URL: TypeAdapter[AnyHttpUrl] = TypeAdapter(AnyHttpUrl)
 
 
 class MCPAdapterConfig(BaseModel):
