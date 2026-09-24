@@ -37,9 +37,9 @@ reuse boundary, and most of those tools really do return text the household did 
 
 ## Requirement
 
-**Memory holds what the household said, never what outside content said.** The v1 provenance
-invariant stands. What changes is the evidence it is judged on: the provenance of the rows the
-curator actually reads, rather than the turn state those rows were written under.
+**Memory holds nothing from unreviewed outside content.** The v1 provenance invariant, as amended by
+the reuse predicate, stands unchanged. What changes is the evidence it is judged on: the provenance
+of the rows the curator actually reads, rather than the turn state those rows were written under.
 
 Sink policy is unchanged. Turn taint, history carry-over and every sink gate behave exactly as
 today, so nothing here adds friction to switching `taint_policy.mode` to `enforce`.
@@ -52,6 +52,11 @@ A user row's provenance is the provenance of what its sender contributed: the tr
 (an authenticated household member, a forwarded email, a delegation's caller, an A2A peer), not the
 history or ambient context the turn was assembled from. Rows the turn writes after that (assistant
 replies, tool calls and results) keep the full turn snapshot they carry today.
+
+The stamp is set at the one place a person's message is persisted: the user-message type carries an
+authorship stamp that the message-history repository requires, rather than each interface choosing
+what to write. An interface that does not supply one fails loudly instead of quietly writing the
+turn state.
 
 Sink enforcement loses nothing. The next turn's taint is still seeded from the history window, and
 the assistant and tool rows in that window carry the state that the user row no longer repeats. The
@@ -104,10 +109,10 @@ Teija likes…" is then in a user row the curator can read.
 
 ## Work plan
 
-1. **User rows carry authorship provenance.** Every interface that persists a person's message
-   stamps it with the trigger's own sources. Verified by tests that a user row written into a
-   tainted conversation reads back at the sender's tier, and that the following turn's seeded taint
-   is unchanged.
+1. **User rows carry authorship provenance.** The persistence chokepoint requires an authorship
+   stamp on every person's message, derived from the trigger's own sources. Verified by tests that a
+   user row written into a tainted conversation reads back at the sender's tier, and that the
+   following turn's seeded taint is unchanged.
 2. **Review filters by row provenance.** The transcript excludes inadmissible rows, the curator is
    seeded from what it was shown, and the skip counters record excluded rows alongside skipped
    stretches. Verified by the hotel example: in a stretch where a person states a preference and the
