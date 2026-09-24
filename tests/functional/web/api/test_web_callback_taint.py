@@ -36,7 +36,7 @@ from family_assistant.storage.message_history import message_history_table
 from family_assistant.task_worker import (
     LlmCallbackPayload,
     _llm_callback_review_trigger,  # noqa: PLC2701 - verify legacy security boundary
-    _llm_callback_trigger_taint_sources,  # noqa: PLC2701 - verify callback trust boundary
+    _unattended_trigger_taint_sources,  # noqa: PLC2701 - verify callback trust boundary
     handle_llm_callback,
 )
 from family_assistant.tools.types import ToolExecutionContext
@@ -261,7 +261,7 @@ def test_legacy_event_callback_never_uses_combined_payload_as_definition() -> No
 def test_callback_requires_explicit_trusted_payload_free_definition() -> None:
     payload = _payload()
 
-    untrusted_sources = _llm_callback_trigger_taint_sources(
+    untrusted_sources = _unattended_trigger_taint_sources(
         payload,
         TriggerReviewInput(
             trigger_type="scheduled_callback",
@@ -274,7 +274,7 @@ def test_callback_requires_explicit_trusted_payload_free_definition() -> None:
     assert len(untrusted_sources) == 1
     assert untrusted_sources[0].tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
-    trusted_sources = _llm_callback_trigger_taint_sources(
+    trusted_sources = _unattended_trigger_taint_sources(
         payload,
         TriggerReviewInput(
             trigger_type="scheduled_callback",

@@ -56,6 +56,7 @@ from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.scripts import scripts_table
 from family_assistant.task_worker import handle_script_execution
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.automations import create_automation_tool
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
@@ -2414,3 +2415,172 @@ async def test_caller_literal_passed_to_bound_child_sandbox_inherits(
     assert [call.review_input.descriptor.name for call in reviewer.calls] == [
         "execute_script"
     ]
+
+
+def _script_firing_context(
+    context: ToolExecutionContext, provider: TaintTrackingToolsProvider
+) -> ToolExecutionContext:
+    """Return the context a task worker hands a script firing: a fresh tracker."""
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="unused")
+        ),
+        tools_provider=provider,
+        service_config=ProcessingServiceConfig(
+            id="script-review-profile",
+            prompts={"system_prompt": "Scheduled scripts"},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=1,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+    )
+    return replace(
+        context,
+        processing_service=processing_service,
+        taint_tracker=InMemoryTurnTaintTracker(),
+    )
+
+
+async def _create_script_automation(
+    context: ToolExecutionContext,
+    *,
+    automation_type: str,
+    # ast-grep-ignore: no-dict-any - trigger config shape varies by automation type
+    trigger_config: dict[str, object],
+    script_name: str,
+) -> int:
+    result = await create_automation_tool(
+        exec_context=replace(context, interface_type="web"),
+        name=f"Run {script_name}",
+        automation_type=automation_type,
+        trigger_config=trigger_config,
+        action_type="script",
+        action_config={"script_name": script_name},
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), result.get_text()
+    automation_id = data["id"]
+    assert isinstance(automation_id, int)
+    return automation_id
+
+
+@pytest.mark.asyncio
+async def test_event_script_firing_starts_tainted_by_its_payload(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider([_sandbox_registration(effects)], reviewer=reviewer, rules=[])
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="on_doorbell",
+        description="Refresh the display when the doorbell rings.",
+        script_code='run_sandbox(command="refresh-display", cwd="/work/ink")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    listener_id = await _create_script_automation(
+        context,
+        automation_type="event",
+        trigger_config={
+            "event_source": "home_assistant",
+            "event_filter": {"entity_id": "binary_sensor.doorbell"},
+        },
+        script_name="on_doorbell",
+    )
+    firing = _script_firing_context(context, provider)
+
+    await handle_script_execution(
+        firing,
+        {
+            "script_name": "on_doorbell",
+            "event_data": {"entity_id": "binary_sensor.doorbell", "state": "on"},
+            "listener_id": str(listener_id),
+            "conversation_id": "script-review-conversation",
+            "processing_profile_id": "script-review-profile",
+        },
+    )
+
+    assert firing.taint_tracker is not None
+    state = firing.taint_tracker.snapshot()
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert any(
+        source.source_type is TaintSourceType.EVENT
+        and "trigger_payload" in source.labels
+        for source in state.sources
+    )
+
+
+@pytest.mark.asyncio
+async def test_payload_free_firing_of_trusted_definition_starts_clean(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider([_sandbox_registration(effects)], reviewer=reviewer, rules=[])
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="nightly_refresh",
+        description="Refresh the display.",
+        script_code='run_sandbox(command="refresh-display", cwd="/work/ink")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    automation_id = await _create_script_automation(
+        context,
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY"},
+        script_name="nightly_refresh",
+    )
+    firing = _script_firing_context(context, provider)
+
+    await handle_script_execution(
+        firing,
+        {
+            "script_name": "nightly_refresh",
+            "automation_id": str(automation_id),
+            "automation_type": "schedule",
+            "conversation_id": "script-review-conversation",
+            "processing_profile_id": "script-review-profile",
+        },
+    )
+
+    assert effects == ["/work/ink: refresh-display"]
+    assert firing.taint_tracker is not None
+    assert all(
+        source.source_type is TaintSourceType.TOOL_OUTPUT
+        for source in firing.taint_tracker.snapshot().sources
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_script_firing_starts_tainted(db_engine: AsyncEngine) -> None:
+    """A firing whose definition has no record enters as unknown_external."""
+    effects: list[str] = []
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider([_sandbox_registration(effects)], reviewer=reviewer, rules=[])
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="nightly_refresh",
+        description="Refresh the display.",
+        script_code='run_sandbox(command="refresh-display", cwd="/work/ink")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    firing = _script_firing_context(context, provider)
+
+    await handle_script_execution(
+        firing,
+        {
+            "script_name": "nightly_refresh",
+            "conversation_id": "script-review-conversation",
+            "processing_profile_id": "script-review-profile",
+        },
+    )
+
+    assert firing.taint_tracker is not None
+    first = firing.taint_tracker.snapshot().sources[0]
+    assert first.source_type is TaintSourceType.AUTOMATION_TRIGGER
+    assert first.tier is SourceTrustTier.UNKNOWN_EXTERNAL
