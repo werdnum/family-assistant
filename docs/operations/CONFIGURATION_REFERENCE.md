@@ -3214,6 +3214,49 @@ mcp_adapter:
   profile_id: null
 ```
 
+### mcp_adapter.authorization_server
+
+An OAuth authorization server outside the application for MCP clients to sign in with, such as the
+Keycloak realm the web login uses. `null` means the adapter's own authorization server (below) signs
+clients in. When it is set:
+
+- the protected-resource metadata names this issuer, and the adapter's own OAuth endpoints and
+  consent page answer `404`;
+- `/api/mcp` accepts access tokens this issuer signs, with `aud` equal to `audience`. The token's
+  claims are mapped to a user the way a web login's are — by email or subject against `users`, and
+  checked against `ALLOWED_OIDC_EMAILS` — so `issuer` must be the identity provider the web login
+  uses. Such a token authenticates nothing but `/api/mcp`;
+- ordinary API tokens keep working on `/api/mcp`.
+
+The point of the setting is that an edge gateway can verify the issuer's tokens itself and refuse
+everything else before it reaches the application, which the adapter's own opaque tokens do not
+allow. Register the MCP clients with the issuer ahead of time — a claude.ai connector (redirect URI
+`https://claude.ai/api/mcp/auth_callback`) and Claude Code (loopback redirects
+`http://localhost/callback` and `http://127.0.0.1/callback` on any port) — as public clients that
+require PKCE, and have the issuer add `audience` to their access tokens.
+
+| Field      | Meaning                                                                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issuer`   | The issuer URL exactly as it appears in the tokens' `iss` claim.                                                                                                 |
+| `jwks_uri` | Where the application fetches the issuer's signing keys. May be an in-cluster address.                                                                           |
+| `audience` | The `aud` value tokens for this endpoint must carry.                                                                                                             |
+| `scopes`   | Advertised as the resource's `scopes_supported`, which is what a client requests. Default `openid email profile offline_access`; each must exist for the client. |
+
+```yaml
+mcp_adapter:
+  enabled: true
+  profile_id: null
+  authorization_server:
+    issuer: "https://id.example.com/realms/household"
+    jwks_uri: "http://keycloak.identity.svc.cluster.local:8080/realms/household/protocol/openid-connect/certs"
+    audience: "family-assistant-mcp"
+```
+
+Behind a gateway that verifies the tokens, an unauthenticated request is refused by the gateway, so
+the client never sees the application's `WWW-Authenticate` pointer. MCP clients then probe
+`/.well-known/oauth-protected-resource/api/mcp` on the same origin, which must therefore stay
+reachable without a login.
+
 ### SERVER_URL must be the public HTTPS origin
 
 [`SERVER_URL`](#server_url) is the OAuth issuer and the protected-resource identifier: it is what

@@ -90,22 +90,58 @@ Enabling it with no authentication mode configured (neither OIDC nor a signed-JW
 error: in that mode the application serves every request as a development user, which is tolerable
 on a LAN but not on a surface built to be reached by claude.ai.
 
+### Signing in with an external authorization server
+
+The built-in authorization server leaves a deployment's edge unable to authenticate MCP traffic: its
+access tokens are opaque rows only the application can check, so a gateway that verifies signed
+tokens has to let `/api/mcp` and the OAuth endpoints through and leave the application's own code as
+the only gate. A deployment that wants the edge to be that gate can name an external authorization
+server instead (`mcp_adapter.authorization_server`), normally the identity provider the web login
+already uses.
+
+The application then only publishes protected-resource metadata naming that issuer, and accepts the
+issuer's signed tokens at `/api/mcp` for the audience configured for it. Everything else about
+signing in — client registration, PKCE, consent, refresh — belongs to the issuer, and the built-in
+endpoints are off. A gateway in front verifies the same tokens with the issuer's published keys, so
+nothing unauthenticated reaches the application; the application verifies them again, both because
+it is also reachable without the gateway on the local network and because it has to map the token to
+a user. That mapping is the web login's: the claims are shaped like OIDC userinfo and resolved
+against `users`, so a person reaching the assistant through Claude is the same user they are in the
+web app.
+
+Clients are registered with the issuer in advance rather than dynamically: a public client per kind
+of MCP client (claude.ai and Claude Code), entered by id when connecting. Claude connectors accept a
+client id supplied at connection time, and pre-registration keeps the issuer's anonymous
+registration endpoint closed.
+
+Cloudflare Access's managed OAuth would move the whole flow to the edge, but at the time of writing
+claude.ai's connector fails against it (anthropics/claude-ai-mcp#410), so it is not the default path
+here.
+
 ## Deliberate simplifications
+
+- **An external issuer's tokens are not checked for revocation.** The application and the gateway
+  verify signature, issuer, audience and expiry; a grant revoked at the issuer stops working when
+  its current access token expires, which the issuer keeps short, rather than immediately.
 
 - **One tool, one scope.** No profile picker, no attachments, no streaming. A caller that wants a
   different profile is a configuration change (`mcp_adapter.profile_id`), not a tool argument.
+
 - **Authorization codes and pending consents live in process memory**, as the iOS app-auth codes
   already do. They are single-use and expire within minutes; a restart mid-flow means the user
   clicks "connect" again.
+
 - **Dynamic-client secrets are stored as issued.** The SDK's client authenticator compares them in
   clear, and a client secret identifies the *software* (Claude), not a person; the user's authority
   is only ever in the hashed access token. Registered clients are persisted so a restart does not
   invalidate a connector.
+
 - **No Client ID Metadata Documents, no pre-registered clients.** Dynamic registration is what
   claude.ai and Claude Code do out of the box. Because it is an unauthenticated write, it is
   admitted per address at the same rate as public error intake, and the table is capped: past the
   cap, registrations that never produced a live token are pruned oldest first, and a registration is
   refused rather than evicting a working connector.
+
 - **The consent page is server-rendered HTML.** It is one form with two buttons, reached only mid
   OAuth flow, and the OIDC callback precedent already renders server-side; a React route would add a
   frontend build dependency to a protocol handshake.

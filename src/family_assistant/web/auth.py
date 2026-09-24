@@ -12,7 +12,7 @@ from passlib.context import CryptContext
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.config import Config
-from starlette.datastructures import Headers
+from starlette.datastructures import Headers, State
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from family_assistant.services.user_identity import (
@@ -21,7 +21,7 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
-from family_assistant.web import jwt_tokens, route_auth
+from family_assistant.web import jwt_tokens, mcp_external_tokens, route_auth
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +172,57 @@ def _clear_token_session_binding(request: Request) -> None:
     request.session.pop("session_jwt_exp", None)
 
 
+def _external_mcp_token_verifier(
+    request: Request,
+) -> mcp_external_tokens.ExternalTokenVerifier | None:
+    """The external issuer's verifier, for a request to the MCP endpoint only.
+
+    Tokens from ``mcp_adapter.authorization_server`` are meant for the MCP
+    endpoint; anywhere else they fall through to the application's own token
+    checks, which reject them.
+    """
+    if not is_mcp_endpoint_path(request.scope["path"]):
+        return None
+    app_state: State = request.app.state
+    adapter_config = getattr(getattr(app_state, "config", None), "mcp_adapter", None)
+    server = getattr(adapter_config, "authorization_server", None)
+    if server is None:
+        return None
+    return mcp_external_tokens.verifier_for(app_state, server)
+
+
+async def _user_from_external_mcp_token(
+    verifier: mcp_external_tokens.ExternalTokenVerifier, token_value: str
+) -> User | None:
+    """The user an external access token speaks for, shaped like OIDC userinfo.
+
+    Shaped that way so identity resolution maps it to a configured user exactly
+    as it maps a web login from the same identity provider.
+    """
+    claims = await verifier.verify(token_value)
+    if claims is None:
+        return None
+    email = claims.get("email")
+    if ALLOWED_OIDC_EMAILS:
+        allowed_emails = [e.strip().lower() for e in ALLOWED_OIDC_EMAILS.split(",")]
+        if not isinstance(email, str) or email.lower() not in allowed_emails:
+            logger.warning(
+                "Rejected MCP access token for sub %s: email not in the allowlist.",
+                claims["sub"],
+            )
+            return None
+    user: User = {
+        key: claims[key]
+        for key in ("sub", "email", "email_verified", "name", "preferred_username")
+        if key in claims
+    }
+    user["source"] = "mcp_external_token"
+    # The client the token was issued to, which names the taint source.
+    if isinstance(claims.get("azp"), str):
+        user["token_name"] = claims["azp"]
+    return user
+
+
 class AuthService:
     """Service class for authentication operations with proper dependency injection."""
 
@@ -261,6 +312,12 @@ class AuthService:
             return None
 
         token_value = auth_header.split(" ", 1)[1]
+
+        external_verifier = _external_mcp_token_verifier(request)
+        if external_verifier is not None and external_verifier.is_from_issuer(
+            token_value
+        ):
+            return await _user_from_external_mcp_token(external_verifier, token_value)
 
         if self.jwt_tokens.enabled and jwt_tokens.looks_like_jwt(token_value):
             return await self._user_from_jwt_token(token_value)

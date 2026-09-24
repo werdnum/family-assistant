@@ -54,11 +54,14 @@ use for the web app — from whoever runs it.
    **Organization settings → Connectors**) and choose **Add custom connector**.
 2. Enter your Family Assistant address followed by `/api/mcp`, for example
    `https://assistant.example.com/api/mcp`. Leave the OAuth client ID and client secret blank —
-   Claude registers itself with Family Assistant automatically.
+   Claude registers itself with Family Assistant automatically — unless whoever runs your Family
+   Assistant gave you a client ID for Claude. In that case, open **Advanced settings**, enter the
+   client ID, and leave the secret blank.
 3. Click **Add**, then find the connector in the list and click **Connect**.
-4. Claude sends you to Family Assistant. Sign in the way you normally sign in to the web app if you
-   are not already, then approve the page asking whether to let Claude ask the assistant on your
-   behalf. You are returned to Claude, connected.
+4. Claude sends you to sign in — to Family Assistant, or to your household sign-in page if you were
+   given a client ID. Sign in the way you normally sign in to the web app if you are not already,
+   then approve the page asking whether to let Claude act on your behalf. You are returned to
+   Claude, connected.
 
 To use it in a chat, open the **+** menu, choose **Connectors**, and make sure Family Assistant is
 switched on for that conversation.
@@ -85,7 +88,16 @@ Claude Code connects with a personal API token.
 
 Claude Code can also sign in through the browser instead of using a token: add the server without
 `--header`, then run `/mcp` (or `claude mcp login family-assistant`) and follow the sign-in and
-approval steps described above for the web.
+approval steps described above for the web. If whoever runs your Family Assistant gave you a client
+ID for Claude Code, include it when adding the server:
+
+```bash
+claude mcp add --transport http --client-id THE_CLIENT_ID --callback-port 8765 \
+  family-assistant https://assistant.example.com/api/mcp
+```
+
+Some deployments accept only this browser sign-in from outside the home network, in which case the
+token method above works only at home.
 
 ## Connecting from the Claude API
 
@@ -113,7 +125,9 @@ client.beta.messages.create(
 
 ## Disconnecting
 
-- **Claude on the web:** the connection appears in Family Assistant under **Settings → API Tokens**,
+- **Claude on the web:** if you connected with a client ID, the connection lives with your household
+  sign-in instead: remove it from your account's applications page there, and remove the connector
+  in Claude. Otherwise the connection appears in Family Assistant under **Settings → API Tokens**,
   named after the connector. Revoke it there and Claude is disconnected the next time it tries to
   ask; remove the connector in Claude's **Customize → Connectors** too so it stops trying. A
   connection made this way only lets Claude ask the assistant — it cannot be used to reach anything

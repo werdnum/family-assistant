@@ -16,7 +16,9 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from family_assistant.web.dependencies import get_current_user
-from family_assistant.web.mcp_adapter.config import adapter_config
+from family_assistant.web.mcp_adapter.config import (
+    builtin_authorization_server_enabled,
+)
 from family_assistant.web.mcp_adapter.oauth.provider import (
     CONSENT_PATH,
     PendingConsent,
@@ -117,16 +119,17 @@ def _expired() -> HTMLResponse:
 
 
 async def consent_user(request: Request) -> dict:
-    """Authenticate the consent page, unless the adapter is off.
+    """Authenticate the consent page, unless the authorization server is off.
 
     Enablement is checked before authentication so a disabled adapter answers
     404 for a signed-out visitor too, rather than a 401 or a login redirect
-    from a dependency that would otherwise run first.
+    from a dependency that would otherwise run first. An external authorization
+    server replaces the page along with the rest of the built-in one.
     """
-    if not adapter_config(request.app).enabled:
+    if not builtin_authorization_server_enabled(request.app):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="MCP adapter is not enabled.",
+            detail="MCP authorization server is not enabled.",
         )
     return await get_current_user(request)
 

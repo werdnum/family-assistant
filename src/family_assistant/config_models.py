@@ -1596,6 +1596,31 @@ class MCPConfig(BaseModel):
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class MCPExternalAuthorizationServer(BaseModel):
+    """An OAuth authorization server outside the application, for MCP sign-in.
+
+    With this set the adapter's own authorization server is off: MCP clients
+    sign in with ``issuer`` and present its access tokens at ``/api/mcp``, where
+    an edge gateway can verify them before the request reaches the application.
+    See docs/design/mcp-adapter.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Must be the identity provider the web login uses, so a token's ``sub`` is
+    # the same user identifier a login session carries.
+    issuer: str
+    jwks_uri: str
+    # The ``aud`` value the issuer puts on tokens meant for this endpoint.
+    audience: str
+    # Advertised as the resource's ``scopes_supported``, which is what a client
+    # asks the issuer for. Without it a client may request every scope the
+    # issuer lists, which an issuer that checks scopes per client refuses.
+    scopes: list[str] = Field(
+        default_factory=lambda: ["openid", "email", "profile", "offline_access"]
+    )
+
+
 class MCPAdapterConfig(BaseModel):
     """Family Assistant as an MCP server for external clients.
 
@@ -1610,6 +1635,8 @@ class MCPAdapterConfig(BaseModel):
     enabled: bool = False
     # Processing profile the tool runs under; None means the default profile.
     profile_id: str | None = None
+    # None means the adapter's own OAuth authorization server signs clients in.
+    authorization_server: MCPExternalAuthorizationServer | None = None
 
 
 def mcp_servers_for_runtime(
