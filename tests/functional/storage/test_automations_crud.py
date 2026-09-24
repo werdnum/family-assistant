@@ -938,14 +938,22 @@ class TestScheduleAutomationsRepository:
         assert len(rows) == 3
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "recurrence_rule",
+        [
+            "FREQ=MINUTELY;COUNT=525600",
+            "FREQ=MINUTELY;COUNT=+525600",
+            "FREQ=MINUTELY;COUNT=525_600",
+        ],
+    )
     async def test_create_rejects_count_too_large_to_evaluate(
-        self, db_context: Database
+        self, db_context: Database, recurrence_rule: str
     ) -> None:
         """Each advance walks a COUNT series from its start, so COUNT is capped."""
         with pytest.raises(ValueError, match="COUNT above"):
             await db_context.schedule_automations.create(
                 name="Every Minute For A Year",
-                recurrence_rule="FREQ=MINUTELY;COUNT=525600",
+                recurrence_rule=recurrence_rule,
                 action_type="wake_llm",
                 action_config={"context": "test"},
                 conversation_id=str(uuid.uuid4()),

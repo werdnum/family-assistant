@@ -50,7 +50,8 @@ _UNSET = object()
 # Valid action types for schedule automations
 VALID_ACTION_TYPES = {"wake_llm", "script"}
 
-_COUNT_PART = re.compile(r"(?:^|[;:\s])COUNT=(\d*)", re.IGNORECASE)
+_COUNT_PART = re.compile(r"(?:^|[;:\s])COUNT=", re.IGNORECASE)
+_RENDERED_COUNT = re.compile(r";COUNT=(\d+)")
 
 # A COUNT-bounded series is evaluated from its first occurrence on every
 # advance, so the count bounds that walk; this keeps it to milliseconds.
@@ -63,9 +64,19 @@ def _is_count_bounded(recurrence_rule: str) -> bool:
 
 
 def _validate_count(recurrence_rule: str) -> None:
-    """Reject a ``COUNT`` too large to evaluate from the series start on each advance."""
-    match = _COUNT_PART.search(recurrence_rule)
-    if match and match.group(1) and int(match.group(1)) > MAX_RECURRENCE_COUNT:
+    """Reject a ``COUNT`` too large to evaluate from the series start on each advance.
+
+    The count is read from dateutil's rendering of the parsed rule rather than
+    the text as written, so every spelling it accepts -- a sign, digit
+    separators -- is read as the number it evaluates.
+    """
+    try:
+        rendered = str(rrule.rrulestr(recurrence_rule))
+    except (ValueError, ParserError):
+        # Evaluating the rule reports it as invalid.
+        return
+    match = _RENDERED_COUNT.search(rendered)
+    if match and int(match.group(1)) > MAX_RECURRENCE_COUNT:
         raise ValueError(
             f"COUNT above {MAX_RECURRENCE_COUNT} is not supported; "
             "use UNTIL to end a long-running schedule"
