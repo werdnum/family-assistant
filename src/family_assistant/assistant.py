@@ -67,6 +67,13 @@ from family_assistant.indexing.message_history_indexer import (
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.interfaces import ChatDeliveryError
+from family_assistant.llm.antigravity_egress import (
+    EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES,
+    EGRESS_CREDENTIAL_ROTATION_TASK_ID,
+    EGRESS_CREDENTIAL_ROTATION_TASK_TYPE,
+    make_egress_credential_rotation_handler,
+    uses_stored_credential,
+)
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_routing import (
     MODEL_ROUTING_PROMPT_KEY,
@@ -2228,6 +2235,7 @@ class Assistant:
 
         await self._record_memory_enablement()
         await self._seed_memory_review_sweep()
+        await self._seed_egress_credential_rotation()
 
     def initiate_shutdown(self, signal_name: str) -> None:
         """Sets the shutdown event to begin graceful shutdown."""
@@ -2371,6 +2379,56 @@ class Assistant:
             # a sweep that failed to seed is re-seeded on the next restart, and
             # nothing else in startup depends on it.
             logger.exception("Memory review sweep task setup failed")
+
+    def _egress_credential_rotation_needed(self) -> bool:
+        """Whether any profile resolves a sandbox egress credential via the store."""
+        return any(
+            profile.processing_config.antigravity_config is not None
+            and uses_stored_credential(
+                profile.processing_config.antigravity_config.environment
+            )
+            for profile in self.config.service_profiles
+        )
+
+    async def _seed_egress_credential_rotation(self) -> None:
+        """Schedule rotation of the stored sandbox egress credential, if one is used.
+
+        Seeded only when a profile's egress rules put a credential in the store:
+        rotating one nobody references would keep a live GitHub token at Google
+        for no run to use. Seeded from startup directly, like the memory review
+        sweep, because it depends on the task worker pool and not on the event
+        system. See docs/design/antigravity-stored-egress-credentials.md.
+        """
+        assert self.database_engine is not None, (
+            "Database engine must be initialized before seeding credential rotation"
+        )
+        if not self._egress_credential_rotation_needed():
+            logger.info(
+                "Egress credential rotation not scheduled: no profile stores one."
+            )
+            return
+        try:
+            await Database(self.database_engine).tasks.enqueue(
+                task_id=EGRESS_CREDENTIAL_ROTATION_TASK_ID,
+                task_type=EGRESS_CREDENTIAL_ROTATION_TASK_TYPE,
+                payload={},
+                scheduled_at=datetime.now(UTC),
+                recurrence_rule=(
+                    "FREQ=MINUTELY;"
+                    f"INTERVAL={EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES}"
+                ),
+                max_retries_override=5,
+                priority=TaskPriority.BACKGROUND,
+            )
+            logger.info(
+                "Egress credential rotation scheduled every "
+                f"{EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES} minute(s)."
+            )
+        except Exception:
+            # Logged rather than raised, as every other system task setup is:
+            # rotation that failed to seed is re-seeded on the next restart, and
+            # each submit still stores a freshly minted token in the meantime.
+            logger.exception("Egress credential rotation task setup failed")
 
     async def _setup_system_tasks(self) -> None:
         """Upsert system tasks on startup."""
@@ -2692,6 +2750,17 @@ class Assistant:
                 name_for_user_id=UserIdentityResolver(
                     self.config
                 ).label_for_stored_user_id,
+            ),
+        )
+        worker.register_task_handler(
+            EGRESS_CREDENTIAL_ROTATION_TASK_TYPE,
+            make_egress_credential_rotation_handler(
+                rotation_needed=self._egress_credential_rotation_needed(),
+                api_key=(
+                    self.config.gemini_api_key.get_secret_value()
+                    if self.config.gemini_api_key
+                    else None
+                ),
             ),
         )
         logger.info(f"Registered task handlers for worker {worker.worker_id}")

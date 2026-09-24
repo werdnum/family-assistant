@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 import pytest
@@ -25,15 +25,21 @@ from family_assistant.config_models import (
     AntigravityEnvironmentConfig,
 )
 from family_assistant.llm.antigravity_egress import (
+    EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES,
     AntigravityCredentialStore,
     AntigravityEgressError,
     AntigravityEgressResolver,
     GitHubAppInstallationTokenSource,
+    make_egress_credential_rotation_handler,
+    store_github_app_credential,
+    uses_stored_credential,
 )
 from family_assistant.utils.clock import MockClock
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from family_assistant.tools.types import ToolExecutionContext
 
 _NOW = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
 
@@ -738,3 +744,103 @@ async def test_the_stored_id_names_the_installation_it_authenticates_as(
 
     assert first.stored_credential_id() == "fa-egress-github-app-97135764"
     assert second.stored_credential_id() == "fa-egress-github-app-42"
+
+
+def _environment(rules: list[dict[str, object]]) -> AntigravityEnvironmentConfig:
+    return AntigravityEnvironmentConfig.model_validate({
+        "network": "allowlist",
+        "allowlist": rules,
+    })
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        (None, False),
+        (AntigravityEnvironmentConfig(), False),
+        (_environment([{"domain": "pypi.org"}]), False),
+        (_environment([_github_rule("basic", "github.com")]), False),
+        (
+            _environment([
+                {
+                    "domain": "api.example.com",
+                    "credential": {"type": "bearer", "token_env": "SOME_TOKEN"},
+                }
+            ]),
+            False,
+        ),
+        (
+            _environment([
+                _github_rule("basic", "github.com"),
+                _github_rule("bearer", "api.github.com"),
+            ]),
+            True,
+        ),
+    ],
+)
+def test_rotation_is_needed_only_where_a_rule_is_stored(
+    environment: AntigravityEnvironmentConfig | None, expected: bool
+) -> None:
+    """The same predicate that routes a rule to the store decides whether to
+    rotate, so a deployment is never rotating a credential no rule reads."""
+    assert uses_stored_credential(environment) is expected
+
+
+class _MintingGitHubStub(_GitHubStub):
+    """Hands out a different token on every mint, as GitHub does."""
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.token = f"ghs_minted_{len(self.requests) + 1}"
+        return super().handler(request)
+
+
+async def test_each_rotation_tick_replaces_the_stored_token(
+    rsa_private_key_pem: str,
+) -> None:
+    """Ticks a rotation interval apart each mint afresh and overwrite the id.
+
+    The stored value is what a running interaction's proxy reads per request,
+    so every tick is what keeps a run longer than one token's life on GitHub.
+    """
+    clock = MockClock(_NOW)
+    github = _MintingGitHubStub()
+    source = _token_source(github, _github_env(rsa_private_key_pem), clock)
+    stub = _CredentialStoreStub()
+    store = stub.store()
+
+    for _ in range(3):
+        await store_github_app_credential(source, store)
+        clock.advance(timedelta(minutes=EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES))
+
+    # The first tick's PATCH finds nothing and the POST creates the id; every
+    # later tick is a lone PATCH carrying a token no earlier tick wrote.
+    assert [(r.method, json.loads(r.content)["token"]) for r in stub.requests] == [
+        ("PATCH", "ghs_minted_1"),
+        ("POST", "ghs_minted_1"),
+        ("PATCH", "ghs_minted_2"),
+        ("PATCH", "ghs_minted_3"),
+    ]
+    assert stub.existing == {"fa-egress-github-app-97135764"}
+
+
+def test_the_interval_leaves_room_for_a_missed_tick() -> None:
+    """One missed tick must not let the stored token expire before the next."""
+    assert 2 * EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES < 60
+
+
+async def test_rotation_does_nothing_when_no_profile_stores_a_credential() -> None:
+    """A seeded task outlives the configuration that seeded it; the tick must
+    not keep a live GitHub token in the store for a deployment that dropped it."""
+    handler = make_egress_credential_rotation_handler(
+        rotation_needed=False, api_key="test-api-key"
+    )
+    # The handler returns before touching the context, the network or GitHub.
+    await handler(cast("ToolExecutionContext", object()), {})
+
+
+async def test_rotation_without_an_api_key_fails_visibly() -> None:
+    handler = make_egress_credential_rotation_handler(
+        rotation_needed=True, api_key=None
+    )
+    with pytest.raises(AntigravityEgressError, match="API key"):
+        await handler(cast("ToolExecutionContext", object()), {})

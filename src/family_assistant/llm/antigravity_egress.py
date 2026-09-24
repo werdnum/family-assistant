@@ -19,7 +19,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 import httpx
 import jwt
@@ -27,12 +27,13 @@ import jwt
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Awaitable, Callable, Mapping
 
     from family_assistant.config_models import (
         AntigravityEgressCredentialConfig,
         AntigravityEnvironmentConfig,
     )
+    from family_assistant.tools.types import ToolExecutionContext
     from family_assistant.utils.clock import Clock
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,12 @@ _APP_JWT_BACKDATE = timedelta(seconds=60)
 _INSTALLATION_TOKEN_REUSE_WINDOW = timedelta(seconds=60)
 
 _GITHUB_GIT_BASIC_USERNAME = "x-access-token"
+
+EGRESS_CREDENTIAL_ROTATION_TASK_TYPE = "antigravity_egress_credential_rotation"
+EGRESS_CREDENTIAL_ROTATION_TASK_ID = "system_antigravity_egress_credential_rotation"
+# A third of an installation token's ~1h life, so a single missed tick still
+# leaves the stored token valid until the one after it.
+EGRESS_CREDENTIAL_ROTATION_INTERVAL_MINUTES = 20
 
 
 class AntigravityEgressError(RuntimeError):
@@ -414,6 +421,68 @@ def _belongs_in_the_store(credential: AntigravityEgressCredentialConfig) -> bool
     )
 
 
+def uses_stored_credential(environment: AntigravityEnvironmentConfig | None) -> bool:
+    """Whether a profile's sandbox environment resolves a rule through the store."""
+    if environment is None or environment.network != "allowlist":
+        return False
+    return any(
+        rule.credential is not None and _belongs_in_the_store(rule.credential)
+        for rule in environment.allowlist
+    )
+
+
+async def store_github_app_credential(
+    source: GitHubAppInstallationTokenSource, store: AntigravityCredentialStore
+) -> str:
+    """Write a freshly minted installation token into the store; return its id."""
+    credential_id = source.stored_credential_id()
+    await store.ensure(credential_id, await source.token())
+    return credential_id
+
+
+def make_egress_credential_rotation_handler(
+    *,
+    rotation_needed: bool,
+    api_key: str | None,
+    # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
+) -> Callable[[ToolExecutionContext, dict[str, Any]], Awaitable[None]]:
+    """Bind the rotation tick to the configuration this process started with.
+
+    ``rotation_needed`` is re-checked on every tick rather than only at seeding,
+    because a recurring task seeded by an earlier configuration outlives it. A
+    tick that ignored the change would keep a live GitHub credential in the
+    store for a deployment that no longer uses one; returning instead lets the
+    last stored token expire on its own within the hour.
+    """
+
+    async def handle_egress_credential_rotation(
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
+        payload: dict[str, Any],
+    ) -> None:
+        del payload
+        if not rotation_needed:
+            logger.info(
+                "No profile resolves an egress credential through the store; "
+                "skipping rotation."
+            )
+            return
+        if not api_key:
+            raise AntigravityEgressError(
+                "Rotating the stored egress credential needs a Gemini API key "
+                "(gemini_api_key / GEMINI_API_KEY)."
+            )
+        source = GitHubAppInstallationTokenSource(clock=exec_context.clock)
+        store = AntigravityCredentialStore(api_key=api_key)
+        try:
+            await store_github_app_credential(source, store)
+        finally:
+            await source.aclose()
+            await store.aclose()
+
+    return handle_egress_credential_rotation
+
+
 def _render_header_value(scheme: str, token: str) -> str:
     """Render a credential as an ``Authorization`` value in the given scheme."""
     if scheme == "basic":
@@ -493,10 +562,9 @@ class AntigravityEgressResolver:
                 "submit-time header and expires with the token it started on."
             )
             return None
-        source = self._github_source()
-        credential_id = source.stored_credential_id()
-        await self._credential_store.ensure(credential_id, await source.token())
-        return credential_id
+        return await store_github_app_credential(
+            self._github_source(), self._credential_store
+        )
 
     async def resolve_network(self) -> EgressNetworkPayload | None:
         """Resolve the network block, minting every credential it names."""
