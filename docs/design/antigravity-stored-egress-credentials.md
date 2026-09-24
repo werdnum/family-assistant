@@ -153,20 +153,24 @@ was — a fact worth writing into the operator documentation rather than leaving
 Each milestone stands alone and is verifiable without the next.
 
 1. ~~**Confirm mid-run propagation.**~~ **Done** — see "What was verified". A rotation mid-run
-   reached the running interaction, so the rest of this plan stands.
+   reached the running interaction, so the rest of this plan stands. Milestones 2 to 5 have shipped.
+
 2. **Credential store client.** Create, update and delete against the store, behind the same
    `AntigravityEgressError` contract the current resolver uses: a credential that cannot be
    established raises rather than resolving to a rule without one, because a sandbox that reaches a
    private repo unauthenticated fails as a 404 deep inside the agent. Verified by unit tests over a
    faked transport, and by the credential lifecycle against the live API.
+
 3. **Route qualifying credentials to the store.** A rule whose credential expires *and* whose wire
    form is `Authorization: Bearer <token>` carries a `credential` id; every other rule keeps its
    built header, so `transform` stays for the git and static cases. Verified by the existing
    shipped-profile and egress tests, re-pointed — a profile configuring no credential must still
    send no `network` block at all, which is what keeps the shipped `coder` at [C].
+
 4. **Rotation task.** Periodic mint-and-`PATCH` at a fraction of token life. Verified by a test that
    drives it on a fake `Clock` — the existing egress tests already establish that pattern, so expiry
    is exercised without sleeping.
+
 5. **Documentation.** `CONFIGURATION_REFERENCE.md` for the credential id and the API-project
    sensitivity above; a correction to the superseded paragraph in the previous design doc.
 
@@ -197,19 +201,28 @@ future one should be.
 
 ## Deliberate simplifications
 
+- **One Gemini API key per deployment.** The rotation task writes with the deployment's
+  `gemini_api_key`, not with a key taken from the `coder` profile's own client. Every Google client
+  reads that same key today, and a deployment with a different key per profile is a configuration
+  this design does not support. If one ever appeared, rotation would write to the wrong project and
+  the stored token would age out into a visible 401. It would fail loudly, never silently.
+
 - **One credential per deployment, not per run or per user.** Unchanged from the previous design and
   for the same reason: the App installation is a property of the deployment. Per-run credentials
   would also defeat the point — a credential created at submit is frozen at submit again, just with
   more machinery around it.
+
 - **Rotation is unconditional.** It does not ask whether a run is in flight. Gating it on live runs
   would add exactly the state the design is trying not to grow, to save a token exchange that costs
   one HTTP round trip.
+
 - **Rotation writes one id, so there is no drift to reconcile.** The scheme rule leaves exactly one
   credential in the store — the bearer/REST one — so a tick is a single mint and a single `PATCH`.
   An earlier draft put one credential per scheme in the store and had to account for two `PATCH`es
   drifting apart; the capability constraint removed that case rather than requiring machinery for
   it. A failed tick is repaired by the next one, within a fraction of token life, and sustained
   failure is the "rotation stopped" case above arriving as a visible 401.
+
 - **No cleanup of orphaned ids.** A credential whose config stopped referencing it keeps being
   rotated until an operator deletes it. Reconciling the store against config is machinery for a rare
   case, and it is unnecessary *because* of the rule above: every stored value is a minted token that

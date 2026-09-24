@@ -2916,12 +2916,26 @@ cannot be resolved — a missing variable, an unreadable key, a revoked installa
 rather than submitting it unauthenticated, which would otherwise surface as a 404 on a private
 repository from inside the agent.
 
-**Runs longer than the token cannot keep GitHub access.** The proxy is given one fixed header at
-submit and there is no way to refresh it mid-run, so a token is minted fresh per run to give each
-one the longest possible window — but a run that outlasts it (~1 hour) starts failing GitHub calls,
-possibly on a final push. `max_async_seconds` for the shipped `coder` profile is `7200`. Set it
-below an hour on a credentialed profile if GitHub must hold for the whole of every run; leave it
-high if long runs matter more and late-run GitHub failures are acceptable.
+**How long GitHub access lasts depends on the scheme.** A `github_app` rule on `scheme: "bearer"`
+(the REST API) is written into the Interactions API's credential store under the id
+`fa-egress-github-app-<installation id>`, and the proxy reads that id on every request. A recurring
+system task mints a fresh installation token every 20 minutes and overwrites the stored one, so REST
+access holds for the whole of a run however long it is. The task is scheduled only when some profile
+has such a rule; nothing else needs configuring, and it uses the deployment's `GEMINI_API_KEY`, the
+same key every Google profile uses.
+
+A `scheme: "basic"` rule (git over HTTPS) cannot go through the store, which can only send
+`Authorization: Bearer`, and GitHub's git endpoint accepts only `Basic`. That rule keeps the header
+fixed at submit, so **git access still ends when that token expires (~1 hour)**, possibly on a final
+push. `max_async_seconds` for the shipped `coder` profile is `7200`. Set it below an hour on a
+credentialed profile if git must hold for the whole of every run; leave it high if long runs matter
+more and late-run git failures are acceptable. Static `bearer` credentials never go to the store.
+
+**The Gemini API key is now as sensitive as the GitHub App's private key.** While a stored
+credential is in use, a live installation token sits in the API project's credential store between
+runs as well as during them. It cannot be read back, but anyone holding the API key can submit an
+interaction that references the id and inherit the App's access. If you remove the rule, rotation
+stops and the last stored token expires on its own within the hour.
 
 **Injecting a credential widens the profile's Rule of Two class**, and how far is mostly set outside
 this file. The shipped `coder` is `[C]` only; GitHub App access adds `[B]`, and the agent already
