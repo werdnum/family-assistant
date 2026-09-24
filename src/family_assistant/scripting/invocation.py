@@ -103,6 +103,11 @@ class ScriptExecutionScope:
     active: bool = True
     model_output_received: bool = False
 
+    def __post_init__(self) -> None:
+        # A child can be handed its caller's model output as a parameter.
+        if self.parent is not None and self.parent.model_output_received:
+            self.model_output_received = True
+
     @property
     def approved(self) -> bool:
         if not self.active:

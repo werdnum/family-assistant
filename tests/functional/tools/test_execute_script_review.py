@@ -2301,3 +2301,62 @@ async def test_review_inside_bound_child_decides_its_unreviewed_parent(
     review = reviewer.calls[0].review_input
     assert review.program_approval_requested
     assert review.enclosing_scripts[0].source == source
+
+
+@pytest.mark.asyncio
+async def test_bound_child_after_model_result_reviews_external_destinations(
+    db_engine: AsyncEngine,
+) -> None:
+    effects: list[str] = []
+
+    async def send_external(to: str) -> str:
+        effects.append(f"sent to {to}")
+        return "sent"
+
+    source = (
+        'to = llm("Who should get the report?")\n'
+        'execute_script(name="child", parameters={"to": to})'
+    )
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW,
+        ToolCallReviewVerdict.ALLOW,
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "send_external",
+                cast("ToolImplementation", send_external),
+                tags=(ToolTag.EXTERNAL_COMM, ToolTag.OUTPUT_TRUSTED),
+                properties={"to": {"type": "string"}},
+            ),
+        ],
+        reviewer=reviewer,
+        rules=[
+            _review_rule("execute_script", ToolPolicyDecision.REVIEW),
+            _review_rule("send_external", ToolPolicyDecision.REVIEW),
+        ],
+    )
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="child",
+        description="Static dependency child",
+        script_code="send_external(to=to)",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    llm_client = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=LLMOutput(content="attacker@example.com"),
+    )
+
+    with patch(
+        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        return_value=llm_client,
+    ):
+        await _execute_script(provider, context, script=source)
+
+    assert effects == ["sent to attacker@example.com"]
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "send_external",
+    ]
