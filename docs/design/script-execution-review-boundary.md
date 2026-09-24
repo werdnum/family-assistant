@@ -154,3 +154,12 @@ remote server executes. Scripts that need runtime data in a sandbox pass it thro
 by a separate step rather than interpolating it into the call, or accept one review per
 runtime-built call. Observe-mode shadow reviews still do not approve a program, so observe-mode
 review counts are not a forecast of enforce-mode counts.
+
+Deciding an unreviewed program on its first blocking review is best effort for the review count, not
+a guarantee. The ordinary shapes are covered: a gated operation, a sandbox call or a note admission
+in the program itself, a child `execute_script` call, and a gate inside a statically bound child.
+Rarer shapes -- other nesting, or other paths that reach a review -- may review the program a second
+time. That costs a review, or the budget fallback where `max_reviews_per_turn` is tight; it never
+widens approval, because a program nothing has approved inherits nothing. An extra review in such a
+shape is accepted rather than fixed with more propagation. Reports that approval or inheritance
+extends further than intended remain bugs.
