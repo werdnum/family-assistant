@@ -9,9 +9,9 @@ policy this design leaves untouched.
 
 ## Problem
 
-Memory does not work in production. Nearly every review stretch is skipped for external taint, and
-a foreground "remember this" is refused in most turns. The cause is not that the household talks
-about outside content all the time; it is that memory asks the wrong provenance question.
+Memory does not work in production. Nearly every review stretch is skipped for external taint, and a
+foreground "remember this" is refused in most turns. The cause is not that the household talks about
+outside content all the time; it is that memory asks the wrong provenance question.
 
 The sink gates need to know **what could have steered this turn**, and turn taint answers that. A
 turn that has read an email must not send a message on the email's say-so, and anything the model
@@ -20,10 +20,10 @@ household's own words are the household's whatever the turn around them read.
 
 Three properties of the current machinery make turn taint an unusable answer to the memory question:
 
-- **Every row carries the whole turn's state, history included.** A user message is stamped with
-  the merged taint of the prompt history and context it arrived into, not with who wrote it. A
-  stretch with no tool calls at all is skipped because the person's first message inherited taint
-  from earlier turns.
+- **Every row carries the whole turn's state, history included.** A user message is stamped with the
+  merged taint of the prompt history and context it arrived into, not with who wrote it. A stretch
+  with no tool calls at all is skipped because the person's first message inherited taint from
+  earlier turns.
 - **A conversation never heals.** Each new row re-bakes the merged state it saw, so one web search
   in a Telegram chat, which is a single endless conversation, stamps every later row
   `unknown_external`.
@@ -81,8 +81,8 @@ In a turn above the reuse boundary where this conversation will be reviewed (con
 the profile and the interface), a memory write returns a result telling the model that memory is
 written from the household's own words at the next review, so it can tell the person their request
 will be picked up rather than report an error. Where no review will run, the refusal stays, so a
-request is never reported as deferred to a review that will not happen. The person's "remember that Teija likes…" is
-then in a user row the curator can read.
+request is never reported as deferred to a review that will not happen. The person's "remember that
+Teija likes…" is then in a user row the curator can read.
 
 ## Deliberate simplifications
 
