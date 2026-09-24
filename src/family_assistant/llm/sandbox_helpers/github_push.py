@@ -38,9 +38,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 API_URL = os.environ.get("FA_GITHUB_API_URL", "https://api.github.com").rstrip("/")
-_REMOTE_PATTERN = re.compile(
-    r"github\.com[:/](?P<owner>[^/]+)/(?P<name>[^/]+?)(?:\.git)?/?$"
-)
+_SCP_REMOTE_PATTERN = re.compile(r"^(?:[^@/]+@)?(?P<host>[^:/]+):(?P<path>.*)$")
 _IDENTITY_PATTERN = re.compile(
     r"^(?P<name>.*) <(?P<email>[^>]*)> (?P<seconds>-?\d+) (?P<tz>[+-]\d{4})$"
 )
@@ -110,11 +108,22 @@ def api(method: str, path: str, body: object | None = None) -> object | None:
 
 
 def repository_path(remote: str) -> str:
+    """The API path of the GitHub repository ``remote`` names.
+
+    The host is compared exactly: anything else would send the commits to
+    whichever real GitHub repository the path happened to spell.
+    """
     url = git_text("remote", "get-url", remote)
-    match = _REMOTE_PATTERN.search(url)
-    if not match:
+    if "://" in url:
+        parts = urllib.parse.urlsplit(url)
+        host, path = parts.hostname, parts.path
+    else:
+        scp = _SCP_REMOTE_PATTERN.match(url)
+        host, path = (scp["host"], scp["path"]) if scp else (None, "")
+    segments = path.strip("/").removesuffix(".git").split("/")
+    if (host or "").lower() != "github.com" or len(segments) != 2 or not all(segments):
         raise PushError(f"remote {remote!r} is not a GitHub repository: {url}")
-    return f"/repos/{match['owner']}/{match['name']}"
+    return f"/repos/{segments[0]}/{segments[1]}"
 
 
 def identity(line: str) -> dict[str, str]:

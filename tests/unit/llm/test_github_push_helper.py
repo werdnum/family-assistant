@@ -426,6 +426,49 @@ def test_a_git_lfs_file_is_refused_rather_than_pushed_as_a_bare_pointer(
     assert _git(bare, "rev-parse", "refs/heads/main") == remote_head
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://notgithub.com/werdnum/example.git",
+        "https://evil.example/github.com/werdnum/example.git",
+        "git@github.com.evil.example:werdnum/example.git",
+    ],
+)
+def test_a_remote_that_is_not_github_is_refused(
+    github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path, url: str
+) -> None:
+    """Only the host decides: a path that merely spells a GitHub repository
+    must not send the commits to that repository."""
+    bare, api_url, requests_seen = github
+    work = _clone(tmp_path, bare)
+    _git(work, "remote", "set-url", "origin", url)
+    (work / "a.txt").write_text("a\n")
+    _git(work, "add", "a.txt")
+    _git(work, "commit", "-m", "A")
+
+    result = _push(work, api_url, "main")
+
+    assert result.returncode == 1
+    assert "not a GitHub repository" in result.stderr
+    assert not requests_seen
+
+
+def test_an_ssh_remote_is_recognised(
+    github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path
+) -> None:
+    bare, api_url, _ = github
+    work = _clone(tmp_path, bare)
+    _git(work, "remote", "set-url", "origin", "git@GitHub.com:werdnum/example.git")
+    (work / "a.txt").write_text("a\n")
+    _git(work, "add", "a.txt")
+    _git(work, "commit", "-m", "A")
+
+    result = _push(work, api_url, "main")
+
+    assert result.returncode == 0, result.stderr
+    assert _git(bare, "rev-parse", "refs/heads/main") == _git(work, "rev-parse", "HEAD")
+
+
 def test_a_diverged_branch_is_refused_without_force(
     github: tuple[Path, str, list[tuple[str, str]]], tmp_path: Path
 ) -> None:

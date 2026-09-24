@@ -82,6 +82,7 @@ async def test_a_stored_github_rule_schedules_rotation(
         ],
     })
 
+    # The private seeding method again, for the same reason: `Assistant.run` calls it.
     await shipped_assistant._seed_egress_credential_rotation()  # pylint: disable=protected-access
 
     rotation = await _seeded_rotation(Database(db_engine))
