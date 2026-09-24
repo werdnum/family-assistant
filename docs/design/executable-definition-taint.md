@@ -28,7 +28,7 @@ system interact badly with that shape:
    only creator identity (`processing_profile_id`, `created_by_user_id`); the `scripts` table
    persists nothing at all. `_llm_callback_review_trigger` therefore hard-codes
    `definition_taint_metadata=None`, the trusted-definition escape in
-   `_llm_callback_trigger_taint_sources` is unreachable, and every unattended callback enters at
+   `_unattended_trigger_taint_sources` is unreachable, and every unattended callback enters at
    `unknown_external` with the `unattended_callback` label.
 
 2. **The firing turn has no renderable intent.** The reviewer's input contract renders a trigger
@@ -192,8 +192,10 @@ that claims to be the human's own words.
 Everything else about the firing is unchanged:
 
 - **The trigger payload stays untrusted, always.** Event data, script failure output, and wake
-  contexts contribute their own taint sources exactly as today; the cure applies to the definition
-  only. A trusted definition with a payload present enters the turn tainted *by the payload* while
+  contexts contribute their own taint sources; the cure applies to the definition only. A script
+  automation's firing is seeded the same way as a woken LLM turn — its definition's resolved tier
+  and its event payload enter the script run's tracker before the first tool call — so a script
+  is not a way to reach a sink with less provenance than the equivalent `wake_llm` turn. A trusted definition with a payload present enters the turn tainted *by the payload* while
   still rendering its intent — which is the correct split, and the one that stops `confirm` and
   `deny` collapsing: the judge finally has something to judge alignment against. (Per-source payload
   tiering — e.g. Home Assistant events at `recognized_machine` — is orthogonal and unchanged.)

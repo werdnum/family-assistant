@@ -48,8 +48,8 @@ from family_assistant.task_worker import (
     ScriptExecutionPayload,
     _llm_callback_definition_refs,  # noqa: PLC2701 - firing-time resolution boundary
     _llm_callback_review_trigger,  # noqa: PLC2701 - firing-time resolution boundary
-    _llm_callback_trigger_taint_sources,  # noqa: PLC2701 - firing-time resolution boundary
     _script_execution_definition_refs,  # noqa: PLC2701 - firing-time resolution boundary
+    _unattended_trigger_taint_sources,  # noqa: PLC2701 - firing-time resolution boundary
 )
 from family_assistant.tools.automations import (
     create_automation_tool,
@@ -231,7 +231,7 @@ async def test_a_clean_turn_reminder_fires_without_an_unknown_external_source(
     )
 
     assert trigger.definition_taint_metadata is not None
-    assert _llm_callback_trigger_taint_sources(payload, trigger) == ()
+    assert _unattended_trigger_taint_sources(payload, trigger) == ()
 
 
 @pytest.mark.asyncio
@@ -249,7 +249,7 @@ async def test_a_tainted_turn_reminder_still_enters_tainted(
     )
 
     assert trigger.definition_taint_metadata is None
-    sources = _llm_callback_trigger_taint_sources(payload, trigger)
+    sources = _unattended_trigger_taint_sources(payload, trigger)
     assert [source.tier for source in sources] == [SourceTrustTier.UNKNOWN_EXTERNAL]
 
 
@@ -269,7 +269,7 @@ async def test_a_reminder_whose_definition_changed_under_its_record_stubs(
     )
 
     assert trigger.definition_taint_metadata is None
-    assert _llm_callback_trigger_taint_sources(payload, trigger) != ()
+    assert _unattended_trigger_taint_sources(payload, trigger) != ()
 
 
 @pytest.mark.asyncio
@@ -314,7 +314,7 @@ async def test_a_clean_turn_schedule_resolves_from_its_stored_row(
     )
 
     assert resolution.tier is SourceTrustTier.TRUSTED_INTERNAL
-    assert _llm_callback_trigger_taint_sources(payload, trigger) == ()
+    assert _unattended_trigger_taint_sources(payload, trigger) == ()
 
 
 @pytest.mark.asyncio
@@ -373,7 +373,7 @@ async def test_an_event_firing_renders_intent_while_carrying_payload_taint(
 
     assert trigger.definition == "Tell me about it"
     assert trigger.definition_taint_metadata is not None
-    sources = _llm_callback_trigger_taint_sources(payload, trigger)
+    sources = _unattended_trigger_taint_sources(payload, trigger)
     assert [source.tier for source in sources] == [SourceTrustTier.UNKNOWN_EXTERNAL]
     assert "trigger_payload" in sources[0].labels
 
@@ -892,7 +892,7 @@ async def test_a_judge_allowed_reminder_enters_as_reviewed_material(
 
     assert resolution.resolved
     assert trigger.definition_taint_metadata is not None
-    sources = _llm_callback_trigger_taint_sources(payload, trigger)
+    sources = _unattended_trigger_taint_sources(payload, trigger)
     assert [source.tier for source in sources] == [SourceTrustTier.MACHINE_REVIEWED]
     assert "trusted_trigger_definition" in render_trigger_for_review(trigger)
 
@@ -929,6 +929,6 @@ async def test_a_prior_version_cured_reminder_enters_as_reviewed_material(
     )
 
     assert resolution.tier is SourceTrustTier.MACHINE_REVIEWED
-    sources = _llm_callback_trigger_taint_sources(payload, trigger)
+    sources = _unattended_trigger_taint_sources(payload, trigger)
     assert [source.tier for source in sources] == [SourceTrustTier.MACHINE_REVIEWED]
     assert "trusted_trigger_definition" in render_trigger_for_review(trigger)

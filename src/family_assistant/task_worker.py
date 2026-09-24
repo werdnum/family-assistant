@@ -730,13 +730,14 @@ def _llm_callback_review_trigger(
     )
 
 
-def _llm_callback_trigger_taint_sources(
-    payload: LlmCallbackPayload,
+def _unattended_trigger_taint_sources(
+    payload: Mapping[str, object],
     trigger: TriggerReviewInput,
 ) -> tuple[TaintSource, ...]:
-    """Return fail-closed provenance for unattended external callback content.
+    """Return fail-closed provenance for an unattended firing's content.
 
-    Callback wrappers are not trusted user turns. A payload-free definition
+    Serves both LLM callbacks and script firings: neither is a trusted user
+    turn. A payload-free definition
     contributes its *resolved* tier: nothing for a trusted-pole stamp,
     ``machine_reviewed`` for an admitted one -- whichever record form admitted
     it -- and ``unknown_external`` for anything else, which must stay a tainted
@@ -770,7 +771,7 @@ def _llm_callback_trigger_taint_sources(
     if definition_is_resolved:
         source_type = (
             TaintSourceType.EVENT
-            if trigger.trigger_type == "event_listener"
+            if trigger.trigger_type in {"event_listener", "event_script"}
             else TaintSourceType.AUTOMATION_TRIGGER
         )
         reason = (
@@ -778,7 +779,7 @@ def _llm_callback_trigger_taint_sources(
             f"({trigger.trigger_type}); its definition resolved as intent."
         )
         labels = frozenset({"unattended_callback", "trigger_payload"})
-    elif trigger.trigger_type == "event_listener":
+    elif trigger.trigger_type in {"event_listener", "event_script"}:
         source_type = TaintSourceType.EVENT
         reason = "Event-listener callback content is an untrusted external trigger."
         labels = frozenset({"unattended_callback"})
@@ -1570,7 +1571,7 @@ async def handle_llm_callback(
             is_reminder=is_reminder,
             definition_resolution=definition_resolution,
         )
-        callback_trigger_taint_sources = _llm_callback_trigger_taint_sources(
+        callback_trigger_taint_sources = _unattended_trigger_taint_sources(
             payload, review_trigger
         )
 
@@ -6196,6 +6197,17 @@ async def handle_script_execution(
         logger.warning(
             "No processing service available for script execution, tools will be unavailable"
         )
+
+    # The firing starts from its definition's provenance and its event payload,
+    # as an LLM callback does, so the policy sees what the script is fed.
+    if (
+        exec_context.taint_tracker is not None
+        and exec_context.tool_call_review_trigger is not None
+    ):
+        for source in _unattended_trigger_taint_sources(
+            payload, exec_context.tool_call_review_trigger
+        ):
+            exec_context.taint_tracker.add_source(source)
 
     # Create script engine with configuration
     engine_config = ScriptConfig(
