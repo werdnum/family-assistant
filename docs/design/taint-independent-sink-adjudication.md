@@ -29,13 +29,25 @@ The web window is 100 messages over 30 days, so on the web the window rule barel
 indefinite carry-over (91% of web turns). Most turns that do anything useful read something from
 outside the household, and that is the product working as intended rather than a mislabel to fix.
 
-The decisive number is what gating on taint saves. Across the whole period, **two** turns that were
-free of external taint under the most generous definition called any of the four high-risk sinks
-(ambient prompt write, arbitrary external message, attacker-addressable egress, sandbox network),
-and the reviewer allowed both. Skipping the check for clean turns saves about two reviews a month.
-In exchange the deployment carries a propagation machine whose output is "tainted" four times in
-five, whose false positives have kept enforcement in observe mode, and which blocked memory
-entirely.
+The decisive number is what gating on taint could save once the grading is fixed. In the same
+period, 282 turns evaluated one of the four high-risk sinks (ambient prompt write, arbitrary
+external message, attacker-addressable egress, sandbox network), about nine a day. Classified by the
+tools that introduced their taint, in the turn or its prompt window:
+
+| Sink turns, by what tainted them                                                      | Turns |
+| ------------------------------------------------------------------------------------- | ----: |
+| Genuine: web, browser, mail, drive, documents, GitHub, travel, shopping, code runs    |   211 |
+| Mislabel-only: delegation, `get_note`, `jq_query`, calendar, diagnostics and the like |    71 |
+
+Three quarters of sink turns read real outside content first: browsing and then messaging someone,
+or researching and then running code, is what those sinks are for. No grading makes those turns
+clean. The mislabel-only turns are the most that honest grading could exempt from review, and it is
+an upper bound: most of them contain only `delegate_to_service`, whose delegate may itself have
+browsed. The reviewer allowed 55 of them, asked for confirmation on 12 and denied 2.
+
+So a perfectly graded taint gate would skip at most a quarter of reviews, about two a day, and would
+make every grading error on the clean side a skipped review. Always adjudicating costs those two
+reviews a day and makes grading errors harmless to the sinks.
 
 ## Decision
 
@@ -90,9 +102,9 @@ named the largest distortions:
 ## Deliberate simplifications
 
 - **Every high-risk sink call costs a review, including a person asking to send their own message.**
-  That is two extra reviews a month on current traffic, plus the adjudicator's latency on those
-  calls. A trusted turn's review is also the easiest one the adjudicator gets, since the request and
-  the action come from the same person.
+  That is at most about two extra reviews a day on current traffic, plus the adjudicator's latency
+  on those calls. A trusted turn's review is also the easiest one the adjudicator gets, since the
+  request and the action come from the same person.
 - **An injection can steer what the model reads.** Reads are audited, not gated. The data it reads
   can reach the user in a reply, which is the user's own channel, and can leave only through a sink
   the adjudicator reviews.
