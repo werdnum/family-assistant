@@ -84,10 +84,12 @@ The notes-repository write floor keeps checking the writing turn's taint: a fore
 that has read an email is exactly the writer the floor exists to stop. What changes is the refusal.
 In a turn above the reuse boundary where this conversation will be reviewed (contribution is on for
 the profile and the interface), a memory write returns a result telling the model that memory is
-written from the household's own words at the next review, so it can tell the person their request
-will be picked up rather than report an error. Where no review will run, the refusal stays, so a
-request is never reported as deferred to a review that will not happen. The person's "remember that
-Teija likes…" is then in a user row the curator can read.
+written only from the household's own words at the next review. The result promises no storage: it
+tells the model that what the person said in their own message can be kept, and that anything which
+exists only in the assistant's side of the conversation (a search result, "the second hotel")
+cannot, so the model can ask the person to say it in their own words. Where no review will run, the
+refusal stays, so a request is never reported as deferred to a review that will not happen. The
+person's "remember that Teija likes…" is then in a user row the curator can read.
 
 ## Deliberate simplifications
 
