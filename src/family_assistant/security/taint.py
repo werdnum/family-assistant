@@ -1891,6 +1891,12 @@ def _merge_snapshot_counts(
     persisted row carries the turn that wrote it -- so they are combined by
     maximum, never summed. Only sources the merge actually found new raise the
     total above that, which keeps re-merging the same snapshot idempotent.
+
+    Nothing records whether a snapshot shares that ancestry, so an unrelated
+    snapshot -- a stored note's provenance, say -- contributes only its newly
+    distinct retained sources, and the total is a lower bound on occurrences.
+    Summing instead is what compounded the count without bound. The count
+    only informs reviewers and audit rows; no policy outcome depends on it.
     """
     newly_distinct = after.distinct_source_count - before.distinct_source_count
     distinct = max(after.distinct_source_count, snapshot.distinct_source_count)
