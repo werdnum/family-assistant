@@ -1071,9 +1071,34 @@ async def _confirm_delegation_if_required(
         return confirmation_outcome
     if confirmation_outcome.kind == "approved":
         return None
+    _merge_confirmed_delegation_taint(exec_context, confirmation_outcome)
     return _delegation_confirmation_outcome_result(
         target_service_id,
         confirmation_outcome,
+    )
+
+
+def _merge_confirmed_delegation_taint(
+    exec_context: ToolExecutionContext, outcome: ConfirmationOutcome
+) -> None:
+    """Raise this turn's taint by a delegation that ran after confirmation.
+
+    The confirmation executor records the executed run's taint on the outcome.
+    A completed or failed outcome without it carries a delegate's output of
+    unknown provenance, so it is treated as unknown_external.
+    """
+    if exec_context.taint_tracker is None:
+        return
+    metadata = outcome.taint_metadata
+    if metadata is None:
+        if outcome.kind not in {"completed", "failed"}:
+            return
+        metadata = unknown_external_taint_metadata(
+            "Confirmed delegation result taint unavailable; conservatively "
+            "treated as unknown external."
+        )
+    merge_taint_state_into_tracker(
+        exec_context.taint_tracker, TurnTaintState.from_metadata(metadata)
     )
 
 

@@ -256,6 +256,72 @@ async def test_a_long_confirm_gated_request_reaches_the_confirmation() -> None:
     assert await_args.kwargs["tool_args"]["user_request"] == long_request
 
 
+@pytest.mark.parametrize(
+    ("outcome_taint", "expected_tier"),
+    [
+        (TurnTaintState.empty().to_metadata(), SourceTrustTier.TRUSTED_USER),
+        (
+            unknown_external_taint_metadata("delegate read an email"),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        (None, SourceTrustTier.UNKNOWN_EXTERNAL),
+    ],
+    ids=["trusted-delegate", "external-delegate", "no-recorded-taint"],
+)
+@pytest.mark.asyncio
+async def test_a_confirmed_delegation_returns_the_executed_runs_taint(
+    outcome_taint: TaintMetadata | None, expected_tier: SourceTrustTier
+) -> None:
+    target_service = _Namespace(
+        service_config=_Namespace(
+            id="target_profile",
+            allowed_delegation_sources=None,
+        ),
+        handle_chat_interaction=AsyncMock(),
+    )
+    source_service = _Namespace(
+        service_config=_Namespace(
+            id="source_profile",
+            tools_config=_Namespace(confirmation_timeout_seconds=10.0),
+        ),
+        processing_services_registry={"target_profile": target_service},
+    )
+    tracker = InMemoryTurnTaintTracker()
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id=None,
+        db_context=_db_without_history(),
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        taint_tracker=tracker,
+        credential_resolvers=None,
+        api_backend=None,
+        request_confirmation_callback=AsyncMock(
+            return_value=ConfirmationOutcome(
+                kind="completed",
+                result=ToolResult(text="delegated"),
+                taint_metadata=outcome_taint,
+            )
+        ),
+    )
+
+    await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="summarize my inbox",
+        confirm_delegation=True,
+    )
+
+    assert tracker.snapshot().max_tier is expected_tier
+
+
 @pytest.mark.asyncio
 async def test_synchronous_delegate_to_service_passes_parent_taint_sources() -> None:
     target_handler = AsyncMock(
