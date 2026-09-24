@@ -3403,12 +3403,13 @@ Settings currently shipped in `defaults.yaml`:
 | Key             | Setting                                                                            | Why                                                                                                                                                                                                                                             |
 | --------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `claude-opus-5` | `thinking: {type: adaptive}`, `output_config: {effort: high}`, `max_tokens: 16000` | The recipe Opus 5 gets wherever a deployment names it; no shipped tier runs it. Thinking on for the long tool loops it suits. `max_tokens` is raised because thinking shares that budget with the response. See the comment in `defaults.yaml`. |
-| `gpt-5.6-sol`   | `reasoning_effort: high`                                                           | The `deep` tier's primary, which `complex_tasks` and `engineer` run on and the assistant reaches by request, so it can afford to think longer.                                                                                                  |
+| `gpt-6-sol`     | `reasoning_effort: high`                                                           | The `deep` tier's primary, which `complex_tasks` and `engineer` run on and the assistant reaches by request, so it can afford to think longer.                                                                                                  |
 | `gpt-5.6-terra` | `reasoning_effort: medium`                                                         | The fallback for `default_assistant` and `camera_analyst`, both of which answer interactively, where time-to-first-token is felt directly.                                                                                                      |
 
-`reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-5.6 models and
-defaults to `medium` when unset. Raising it trades latency and tokens for capability; it is the
-first dial to turn when a profile's agentic performance falls short, ahead of changing the model.
+`reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-6 and GPT-5.6
+models and defaults to `medium` when unset. Raising it trades latency and tokens for capability; it
+is the first dial to turn when a profile's agentic performance falls short, ahead of changing the
+model.
 
 ### mcp_config.json
 

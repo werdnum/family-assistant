@@ -735,7 +735,7 @@ class OpenAIImageBackend:
         api_key: str,
         generate_config: OpenAIImageRequestConfig,
         edit_config: OpenAIImageRequestConfig,
-        model: str = "gpt-image-2",
+        model: str = "gpt-image-2.5-sunburst",
     ) -> None:
         """Initialize the OpenAI backend with API key."""
         if not OPENAI_AVAILABLE:
@@ -749,7 +749,7 @@ class OpenAIImageBackend:
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
-        """Generate image using OpenAI gpt-image-2 API."""
+        """Generate image using the OpenAI GPT Image API."""
         full_prompt = self._apply_style_to_prompt(prompt, style)
 
         self.logger.debug(f"Calling OpenAI image API with prompt: {full_prompt}")

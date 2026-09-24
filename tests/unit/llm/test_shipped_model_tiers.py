@@ -91,7 +91,7 @@ def test_deep_tier_profiles_run_the_sol_fable_chain(
         "retry_config": {
             "primary": {
                 "provider": "openai",
-                "model": "gpt-5.6-sol",
+                "model": "gpt-6-sol",
                 "model_parameters": shipped_config.llm_parameters,
             },
             "fallback": {
@@ -151,7 +151,7 @@ def test_sol_reasoning_effort_still_comes_from_the_global_map(
     deep = shipped_config.model_tiers["deep"]
 
     assert all(entry.llm_parameters is None for entry in deep.chain)
-    assert shipped_config.llm_parameters["gpt-5.6-sol"]["reasoning_effort"] == "high"
+    assert shipped_config.llm_parameters["gpt-6-sol"]["reasoning_effort"] == "high"
 
 
 def test_frontier_tier_is_a_single_fable_client_at_xhigh(

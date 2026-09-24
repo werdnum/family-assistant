@@ -1990,7 +1990,7 @@ class OpenAIImageConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gpt-image-2"
+    model: str = "gpt-image-2.5-sunburst"
     default_generate: OpenAIImageRequestConfig = Field(
         default_factory=OpenAIImageRequestConfig
     )
