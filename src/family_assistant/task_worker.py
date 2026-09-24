@@ -95,6 +95,7 @@ from family_assistant.security.taint import (
     is_admissible_for_reuse,
     is_externally_authored,
     machine_authored_taint_metadata,
+    unknown_external_taint_metadata,
 )
 from family_assistant.storage.delegation_runs import (
     RECONCILABLE_FAILURE_KINDS,
@@ -102,7 +103,10 @@ from family_assistant.storage.delegation_runs import (
     DelegationLocalFailureKind,
     DelegationNotifyStage,
 )
-from family_assistant.tools.services import short_error_summary
+from family_assistant.tools.services import (
+    delegation_run_result_taint_metadata,
+    short_error_summary,
+)
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
 if TYPE_CHECKING:
@@ -265,77 +269,6 @@ def _taint_state_from_delegation_run(run: DelegationRunDict) -> TurnTaintState:
     return TurnTaintState.from_metadata(run["taint_state_json"])
 
 
-def _conservative_unknown_external_metadata(reason: str) -> TaintMetadata:
-    """Return an unknown_external taint state for a result of unknown taint."""
-    return (
-        TurnTaintState
-        .empty()
-        .add_source(
-            TaintSource(
-                source_type=TaintSourceType.MANUAL,
-                source_id=None,
-                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-                labels=frozenset(),
-                reason=reason,
-            )
-        )
-        .to_metadata()
-    )
-
-
-async def _delegation_result_taint_metadata(
-    db_context: DatabaseExecutor,
-    run: DelegationRunDict,
-) -> TaintMetadata:
-    """Taint metadata for history rows that carry a delegation run's *result*.
-
-    The delegated run may have read untrusted content even when the parent that
-    queued it was trusted, so labeling result-bearing rows with the parent taint
-    alone (``run["taint_state_json"]``) under-taints them and would let the
-    source profile egress attacker-derived content without a runtime-taint
-    confirmation. Instead, start from the delegated run's OWN accumulated taint —
-    the newest assistant row persisted in its subconversation — and fold the
-    parent taint in (max wins). When the delegated run left no assistant row/taint
-    behind, fall back CONSERVATIVELY to unknown_external rather than to the parent
-    state or a trusted-empty baseline, because the result's provenance is unknown.
-    """
-    result_metadata = (
-        await db_context.message_history.get_merged_taint_metadata_for_subconversation(
-            interface_type=run["interface_type"],
-            conversation_id=run["conversation_id"],
-            subconversation_id=run["subconversation_id"],
-        )
-    )
-    if result_metadata is None:
-        merged = TurnTaintState.from_metadata(
-            _conservative_unknown_external_metadata(
-                "Delegated result taint unavailable; conservatively treated as "
-                "unknown external."
-            )
-        )
-    else:
-        merged = TurnTaintState.from_metadata(result_metadata)
-
-    if run["taint_state_json"] is not None:
-        parent_state = TurnTaintState.from_metadata(run["taint_state_json"])
-        for source in parent_state.sources:
-            merged = merged.add_source(source)
-        if parent_state.max_tier > merged.max_tier:
-            merged = merged.add_source(
-                TaintSource(
-                    source_type=TaintSourceType.MANUAL,
-                    source_id=None,
-                    tier=parent_state.max_tier,
-                    labels=frozenset(),
-                    reason=(
-                        "Parent delegation taint max_tier exceeded retained "
-                        "source summaries."
-                    ),
-                )
-            )
-    return merged.to_metadata()
-
-
 async def _llm_callback_delivery_taint_metadata(
     db_context: Database,
     assistant_message_internal_id: int | None,
@@ -358,7 +291,7 @@ async def _llm_callback_delivery_taint_metadata(
             )
             if canonical_metadata is not None:
                 return canonical_metadata
-    return _conservative_unknown_external_metadata(
+    return unknown_external_taint_metadata(
         "LLM-callback reply taint unavailable; conservatively treated as "
         "unknown external."
     )
@@ -3095,7 +3028,7 @@ class TaskWorker:
         await exec_context.db_context.message_history.add_message(
             AssistantMessage(
                 content=self._delegation_notification_text(run),
-                taint_metadata=await _delegation_result_taint_metadata(
+                taint_metadata=await delegation_run_result_taint_metadata(
                     exec_context.db_context, run
                 ),
             ),
@@ -3615,7 +3548,7 @@ class TaskWorker:
         )
         interface_type = run["interface_type"]
 
-        notification_taint_metadata = await _delegation_result_taint_metadata(
+        notification_taint_metadata = await delegation_run_result_taint_metadata(
             exec_context.db_context, run
         )
         should_notify = interface_type in _HISTORY_NOTIFICATION_INTERFACES
@@ -3772,7 +3705,7 @@ class TaskWorker:
             )
 
         # Phase 1: Commit the wakeup message before the LLM turn.
-        wakeup_data_taint_metadata = await _delegation_result_taint_metadata(
+        wakeup_data_taint_metadata = await delegation_run_result_taint_metadata(
             exec_context.db_context, run
         )
         data_message_internal_id = (
@@ -3946,7 +3879,7 @@ class TaskWorker:
         # state persisted with the canonical assistant row when one exists;
         # otherwise fall back to the delegated result's taint (own accumulated
         # taint folded with the parent's), never the parent state alone.
-        delivery_taint_metadata = await _delegation_result_taint_metadata(
+        delivery_taint_metadata = await delegation_run_result_taint_metadata(
             db_context, run
         )
         if message_internal_id is not None:
@@ -6745,7 +6678,7 @@ def _confirmation_result_taint_metadata(
         return context.taint_tracker.snapshot().to_metadata()
     if request["taint_state_json"] is not None:
         return TurnTaintState.from_metadata(request["taint_state_json"]).to_metadata()
-    return _conservative_unknown_external_metadata(
+    return unknown_external_taint_metadata(
         "Confirmation result taint unavailable; conservatively treated as "
         "unknown external."
     )

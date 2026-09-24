@@ -101,3 +101,42 @@ def merge_artifact_taint_into_context(
             reason=fallback_reason,
         )
     )
+
+
+def inherit_attachment_taint(
+    exec_context: ToolExecutionContext,
+    *,
+    attachment_metadata: Mapping[str, object] | None,
+    attachment_id: str,
+) -> None:
+    """Raise the turn's taint by the stored provenance of an attachment read.
+
+    For tools that return an attachment's own content and are therefore graded
+    by the attachment rather than by a static output tag. An attachment stored
+    without any provenance stamp is treated as unknown_external, so an unstamped
+    registration path cannot read as trusted.
+    """
+    tracker = exec_context.taint_tracker
+    if tracker is None:
+        return
+    if attachment_metadata is None or (
+        "taint_metadata" not in attachment_metadata
+        and "source_trust_tier" not in attachment_metadata
+    ):
+        tracker.add_source(
+            TaintSource(
+                source_type=TaintSourceType.ATTACHMENT,
+                source_id=attachment_id,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Attachment has no stored provenance.",
+            )
+        )
+        return
+    merge_artifact_taint_into_context(
+        exec_context,
+        provenance_metadata=attachment_metadata,
+        fallback_source_type=TaintSourceType.ATTACHMENT,
+        fallback_source_id=attachment_id,
+        fallback_reason="Attachment read provenance.",
+    )

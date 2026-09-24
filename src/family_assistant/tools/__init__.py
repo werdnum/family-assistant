@@ -806,9 +806,11 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # OUTPUT_TRUSTED: the tool adds a delegated result's own taint to the turn
+    # itself, so the static tag must not add a blanket source on top.
     "delegate_to_service": _metadata(
         ToolTag.DELEGATION,
-        ToolTag.OUTPUT_UNSPECIFIED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "get_delegation_status": _metadata(
         ToolTag.DELEGATION,
@@ -1173,13 +1175,15 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # OUTPUT_TRUSTED: the tool adds the attachment's stored provenance to the
+    # turn itself; see inherit_attachment_taint.
     "read_text_attachment": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DOCUMENTS,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "highlight_image": _metadata(
         ToolTag.STATE_CHANGING,
@@ -1208,12 +1212,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # OUTPUT_TRUSTED: as for read_text_attachment, graded by the attachment read.
     "jq_query": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     # Fixed vendor endpoint with no recipient argument, as for generate_image.
     "generate_video": _metadata(

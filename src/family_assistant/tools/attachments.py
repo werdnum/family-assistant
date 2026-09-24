@@ -6,9 +6,8 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from family_assistant.security.taint import TaintSourceType
 from family_assistant.tools.taint_helpers import (
-    merge_artifact_taint_into_context,
+    inherit_attachment_taint,
     record_sensitive_read,
 )
 from family_assistant.tools.types import ToolResult
@@ -151,14 +150,13 @@ async def _read_text_attachment(
         qualifier=f"text:{attachment_id}",
         surfaced_ids=[attachment_id],
     )
-    if attachment_metadata is not None:
-        merge_artifact_taint_into_context(
-            exec_context,
-            provenance_metadata=attachment_metadata.metadata,
-            fallback_source_type=TaintSourceType.ATTACHMENT,
-            fallback_source_id=attachment_id,
-            fallback_reason="Attachment read provenance.",
-        )
+    inherit_attachment_taint(
+        exec_context,
+        attachment_metadata=(
+            attachment_metadata.metadata if attachment_metadata is not None else None
+        ),
+        attachment_id=attachment_id,
+    )
 
     content_bytes = await registry.get_attachment_content(
         exec_context.db_context, attachment_id, acting_user_id=exec_context.user_id

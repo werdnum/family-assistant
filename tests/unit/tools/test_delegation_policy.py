@@ -36,8 +36,11 @@ from family_assistant.processing.types import (
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
+    TaintMetadata,
     TaintSource,
     TaintSourceType,
+    TurnTaintState,
+    unknown_external_taint_metadata,
 )
 from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
@@ -146,6 +149,9 @@ def _db_without_history() -> Database:
     db = MagicMock(spec=Database)
     db.message_history = MagicMock()
     db.message_history.get_by_turn_id = AsyncMock(return_value=[])
+    db.message_history.get_merged_taint_metadata_for_subconversation = AsyncMock(
+        return_value=None
+    )
     return cast("Database", db)
 
 
@@ -250,6 +256,72 @@ async def test_a_long_confirm_gated_request_reaches_the_confirmation() -> None:
     assert await_args.kwargs["tool_args"]["user_request"] == long_request
 
 
+@pytest.mark.parametrize(
+    ("outcome_taint", "expected_tier"),
+    [
+        (TurnTaintState.empty().to_metadata(), SourceTrustTier.TRUSTED_USER),
+        (
+            unknown_external_taint_metadata("delegate read an email"),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        (None, SourceTrustTier.UNKNOWN_EXTERNAL),
+    ],
+    ids=["trusted-delegate", "external-delegate", "no-recorded-taint"],
+)
+@pytest.mark.asyncio
+async def test_a_confirmed_delegation_returns_the_executed_runs_taint(
+    outcome_taint: TaintMetadata | None, expected_tier: SourceTrustTier
+) -> None:
+    target_service = _Namespace(
+        service_config=_Namespace(
+            id="target_profile",
+            allowed_delegation_sources=None,
+        ),
+        handle_chat_interaction=AsyncMock(),
+    )
+    source_service = _Namespace(
+        service_config=_Namespace(
+            id="source_profile",
+            tools_config=_Namespace(confirmation_timeout_seconds=10.0),
+        ),
+        processing_services_registry={"target_profile": target_service},
+    )
+    tracker = InMemoryTurnTaintTracker()
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id=None,
+        db_context=_db_without_history(),
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        taint_tracker=tracker,
+        credential_resolvers=None,
+        api_backend=None,
+        request_confirmation_callback=AsyncMock(
+            return_value=ConfirmationOutcome(
+                kind="completed",
+                result=ToolResult(text="delegated"),
+                taint_metadata=outcome_taint,
+            )
+        ),
+    )
+
+    await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="summarize my inbox",
+        confirm_delegation=True,
+    )
+
+    assert tracker.snapshot().max_tier is expected_tier
+
+
 @pytest.mark.asyncio
 async def test_synchronous_delegate_to_service_passes_parent_taint_sources() -> None:
     target_handler = AsyncMock(
@@ -306,6 +378,75 @@ async def test_synchronous_delegate_to_service_passes_parent_taint_sources() -> 
     assert len(initial_sources) == 1
     assert initial_sources[0].tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert initial_sources[0].source_type is TaintSourceType.EMAIL
+
+
+@pytest.mark.parametrize(
+    ("delegate_taint", "expected_tier"),
+    [
+        (TurnTaintState.empty().to_metadata(), SourceTrustTier.TRUSTED_USER),
+        (
+            unknown_external_taint_metadata("delegate browsed the web"),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
+        (None, SourceTrustTier.UNKNOWN_EXTERNAL),
+    ],
+    ids=["trusted-delegate", "external-delegate", "no-delegate-rows"],
+)
+@pytest.mark.asyncio
+async def test_synchronous_delegation_returns_the_delegate_turns_taint(
+    delegate_taint: TaintMetadata | None, expected_tier: SourceTrustTier
+) -> None:
+    target_service = _Namespace(
+        service_config=_Namespace(
+            id="target_profile",
+            allowed_delegation_sources=None,
+        ),
+        handle_chat_interaction=AsyncMock(
+            return_value=ChatInteractionResult(
+                status=ChatInteractionStatus.SUCCESS,
+                text_reply="delegated",
+            )
+        ),
+    )
+    source_service = _Namespace(
+        service_config=_Namespace(
+            id="source_profile",
+            tools_config=ToolsConfig(async_delegation_enabled=False),
+        ),
+        processing_services_registry={"target_profile": target_service},
+    )
+    db = _db_without_history()
+    cast(
+        "MagicMock", db.message_history
+    ).get_merged_taint_metadata_for_subconversation = AsyncMock(
+        return_value=delegate_taint
+    )
+    tracker = InMemoryTurnTaintTracker()
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        taint_tracker=tracker,
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="what is on the calendar today?",
+    )
+
+    assert tracker.snapshot().max_tier is expected_tier
 
 
 @pytest.mark.asyncio

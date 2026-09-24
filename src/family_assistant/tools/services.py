@@ -23,7 +23,14 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     resolve_model_selection,
 )
-from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
+from family_assistant.security.taint import (
+    TaintMetadata,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+    merge_taint_state_into_tracker,
+    unknown_external_taint_metadata,
+)
 from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     build_delegation_review_trigger,
@@ -46,7 +53,10 @@ if TYPE_CHECKING:
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing.protocol import DelegatableService
-    from family_assistant.storage.database import DatabaseTransaction
+    from family_assistant.storage.database import (
+        DatabaseExecutor,
+        DatabaseTransaction,
+    )
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
         DelegationRunSummary,
@@ -519,11 +529,23 @@ async def _run_synchronous_delegation(
         logger.exception(
             f"Failed to delegate request to service '{target_service_id}': {e}"
         )
+        await _merge_delegated_result_taint(
+            exec_context,
+            subconversation_id=subconversation_id,
+            parent_taint_metadata=None,
+        )
         return ToolResult(
             text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
             attachments=None,
         )
 
+    # The delegate was seeded with this turn's taint, so its rows already
+    # carry the caller's state.
+    await _merge_delegated_result_taint(
+        exec_context,
+        subconversation_id=subconversation_id,
+        parent_taint_metadata=None,
+    )
     if result.error_traceback:
         logger.error(
             "Delegated service '%s' returned an error: %s",
@@ -555,6 +577,95 @@ async def _run_synchronous_delegation(
             attachments=delegated_attachments,
         )
     return ToolResult(text=final_text_reply, attachments=delegated_attachments)
+
+
+async def delegated_result_taint_metadata(
+    db_context: DatabaseExecutor,
+    *,
+    interface_type: str,
+    conversation_id: str,
+    subconversation_id: str,
+    parent_taint_metadata: TaintMetadata | None,
+) -> TaintMetadata:
+    """Taint for a delegated turn's *result*, as the caller receives it.
+
+    The delegated turn may have read untrusted content even when the caller was
+    trusted, and a trusted delegate returns nothing the caller did not already
+    hold, so the result carries the delegate's OWN accumulated taint -- the
+    merged stamps of the rows persisted in its subconversation -- with the
+    caller's taint folded in (max wins). When the delegate left no stamped row
+    behind, the result's provenance is unknown and it is treated as
+    unknown_external rather than as the caller's state.
+    """
+    result_metadata = (
+        await db_context.message_history.get_merged_taint_metadata_for_subconversation(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+        )
+    )
+    merged = TurnTaintState.from_metadata(
+        result_metadata
+        if result_metadata is not None
+        else unknown_external_taint_metadata(
+            "Delegated result taint unavailable; conservatively treated as "
+            "unknown external."
+        )
+    )
+
+    if parent_taint_metadata is not None:
+        parent_state = TurnTaintState.from_metadata(parent_taint_metadata)
+        for source in parent_state.sources:
+            merged = merged.add_source(source)
+        if parent_state.max_tier > merged.max_tier:
+            merged = merged.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.MANUAL,
+                    source_id=None,
+                    tier=parent_state.max_tier,
+                    labels=frozenset(),
+                    reason=(
+                        "Parent delegation taint max_tier exceeded retained "
+                        "source summaries."
+                    ),
+                )
+            )
+    return merged.to_metadata()
+
+
+async def delegation_run_result_taint_metadata(
+    db_context: DatabaseExecutor,
+    run: DelegationRunDict,
+) -> TaintMetadata:
+    """Taint for the result of a durable delegation run."""
+    return await delegated_result_taint_metadata(
+        db_context,
+        interface_type=run["interface_type"],
+        conversation_id=run["conversation_id"],
+        subconversation_id=run["subconversation_id"],
+        parent_taint_metadata=run["taint_state_json"],
+    )
+
+
+async def _merge_delegated_result_taint(
+    exec_context: ToolExecutionContext,
+    *,
+    subconversation_id: str,
+    parent_taint_metadata: TaintMetadata | None,
+) -> None:
+    """Raise this turn's taint by what the delegate's result carries back."""
+    if exec_context.taint_tracker is None:
+        return
+    metadata = await delegated_result_taint_metadata(
+        exec_context.db_context,
+        interface_type=exec_context.interface_type,
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=subconversation_id,
+        parent_taint_metadata=parent_taint_metadata,
+    )
+    merge_taint_state_into_tracker(
+        exec_context.taint_tracker, TurnTaintState.from_metadata(metadata)
+    )
 
 
 def short_error_summary(error: str | None) -> str | None:
@@ -639,6 +750,11 @@ async def _inline_delegation_result(
     else:
         return None
 
+    await _merge_delegated_result_taint(
+        exec_context,
+        subconversation_id=run["subconversation_id"],
+        parent_taint_metadata=run["taint_state_json"],
+    )
     await _mark_delegation_delivered_inline(
         exec_context, delegation_id=run["delegation_id"]
     )
@@ -955,9 +1071,34 @@ async def _confirm_delegation_if_required(
         return confirmation_outcome
     if confirmation_outcome.kind == "approved":
         return None
+    _merge_confirmed_delegation_taint(exec_context, confirmation_outcome)
     return _delegation_confirmation_outcome_result(
         target_service_id,
         confirmation_outcome,
+    )
+
+
+def _merge_confirmed_delegation_taint(
+    exec_context: ToolExecutionContext, outcome: ConfirmationOutcome
+) -> None:
+    """Raise this turn's taint by a delegation that ran after confirmation.
+
+    The confirmation executor records the executed run's taint on the outcome.
+    A completed or failed outcome without it carries a delegate's output of
+    unknown provenance, so it is treated as unknown_external.
+    """
+    if exec_context.taint_tracker is None:
+        return
+    metadata = outcome.taint_metadata
+    if metadata is None:
+        if outcome.kind not in {"completed", "failed"}:
+            return
+        metadata = unknown_external_taint_metadata(
+            "Confirmed delegation result taint unavailable; conservatively "
+            "treated as unknown external."
+        )
+    merge_taint_state_into_tracker(
+        exec_context.taint_tracker, TurnTaintState.from_metadata(metadata)
     )
 
 
