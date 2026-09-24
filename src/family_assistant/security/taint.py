@@ -1669,14 +1669,15 @@ def derive_tool_result_taint_source(
 ) -> TaintSource | None:
     """Derive result taint from static tool output metadata."""
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
-    if "output_trusted" in tag_values:
-        return None
+    # Conflicting output tags resolve to the least trusted one.
     tier = SourceTrustTier.UNKNOWN_EXTERNAL
     if "output_untrusted" in tag_values:
         reason = f"Tool '{descriptor.name}' is tagged output_untrusted."
     elif "output_machine_data" in tag_values:
         tier = SourceTrustTier.RECOGNIZED_MACHINE
         reason = f"Tool '{descriptor.name}' is tagged output_machine_data."
+    elif "output_trusted" in tag_values:
+        return None
     elif "output_unspecified" in tag_values:
         tier = default_unspecified_tool_output_tier
         reason = (

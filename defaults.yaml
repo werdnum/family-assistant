@@ -457,8 +457,13 @@ mcp_config:
       args: ["--local-timezone=Australia/Sydney"]
       # Computes times and conversions locally from its arguments; nothing it
       # returns was written by anyone outside the household.
+      # Named rather than wildcarded, so a tool a future release adds falls back
+      # to output_unspecified instead of inheriting trust.
       tool_metadata:
-        "*":
+        get_current_time:
+          - "read_only"
+          - "output_trusted"
+        convert_time:
           - "read_only"
           - "output_trusted"
     brave:

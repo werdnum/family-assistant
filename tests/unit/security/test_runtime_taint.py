@@ -1464,6 +1464,14 @@ def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
             SourceTrustTier.UNKNOWN_EXTERNAL,
         ),
         ((ToolTag.OUTPUT_UNTRUSTED,), SourceTrustTier.UNKNOWN_EXTERNAL),
+        (
+            (ToolTag.OUTPUT_TRUSTED, ToolTag.OUTPUT_MACHINE_DATA),
+            SourceTrustTier.RECOGNIZED_MACHINE,
+        ),
+        (
+            (ToolTag.OUTPUT_TRUSTED, ToolTag.OUTPUT_UNTRUSTED),
+            SourceTrustTier.UNKNOWN_EXTERNAL,
+        ),
     ],
 )
 def test_machine_data_output_is_graded_recognized_machine(
