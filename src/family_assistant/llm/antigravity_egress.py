@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -301,9 +302,15 @@ class GitHubAppInstallationTokenSource:
             )
         return f"fa-egress-github-app-{installation_id}"
 
-    def git_credential_id(self) -> str:
-        """The store id of the same token, encoded for git's Basic header."""
-        return f"{self.stored_credential_id()}-git"
+    def git_credential_id(self, domains: Iterable[str]) -> str:
+        """The store id of the same token, encoded for git's Basic header.
+
+        One id per set of trusted domains, so that a profile writing its own
+        set never narrows the trust of a credential another profile's run is
+        still reading.
+        """
+        digest = hashlib.sha256(",".join(sorted(domains)).encode()).hexdigest()
+        return f"{self.stored_credential_id()}-git-{digest[:12]}"
 
     async def token(self) -> str:
         """Return an installation access token, minting one per run.
@@ -508,7 +515,9 @@ class StoredGitHubCredentials:
     """Which forms of the App's token some profile reads from the store."""
 
     rest: bool
-    git_domains: tuple[str, ...]
+    # One entry per distinct set of git domains a profile trusts; each set is
+    # its own stored credential.
+    git_domain_sets: tuple[tuple[str, ...], ...]
 
 
 def stored_github_credentials(
@@ -516,19 +525,23 @@ def stored_github_credentials(
 ) -> StoredGitHubCredentials | None:
     """What the store must hold for these sandbox environments, if anything."""
     rest = False
-    git_domains: list[str] = []
+    git_domain_sets: list[tuple[str, ...]] = []
     for environment in environments:
         if environment is None or environment.network != "allowlist":
             continue
+        git_domains: set[str] = set()
         for rule in environment.allowlist:
             route = _store_route(rule.credential) if rule.credential else None
             if route == "rest":
                 rest = True
-            elif route == "git" and rule.domain not in git_domains:
-                git_domains.append(rule.domain)
-    if not rest and not git_domains:
+            elif route == "git":
+                git_domains.add(rule.domain)
+        domain_set = tuple(sorted(git_domains))
+        if domain_set and domain_set not in git_domain_sets:
+            git_domain_sets.append(domain_set)
+    if not rest and not git_domain_sets:
         return None
-    return StoredGitHubCredentials(rest=rest, git_domains=tuple(git_domains))
+    return StoredGitHubCredentials(rest=rest, git_domain_sets=tuple(git_domain_sets))
 
 
 async def store_github_app_credentials(
@@ -540,9 +553,9 @@ async def store_github_app_credentials(
     token = await source.token()
     if needs.rest:
         await store.ensure(source.stored_credential_id(), token)
-    if needs.git_domains:
+    for domains in needs.git_domain_sets:
         await store.ensure_substituted(
-            source.git_credential_id(), _basic_credential(token), needs.git_domains
+            source.git_credential_id(domains), _basic_credential(token), domains
         )
 
 
@@ -710,11 +723,12 @@ class AntigravityEgressResolver:
 
         env: dict[str, EgressEnvVar] = {}
         git_domains: tuple[str, ...] = ()
-        if stored is not None and stored.git_domains:
+        if stored is not None and stored.git_domain_sets:
+            # Resolved from this profile's config alone, so there is one set.
+            (git_domains,) = stored.git_domain_sets
             env[GITHUB_GIT_AUTH_ENV] = {
-                "credential": self._github_source().git_credential_id()
+                "credential": self._github_source().git_credential_id(git_domains)
             }
-            git_domains = stored.git_domains
         return EgressResolution(
             network={"allowlist": entries}, env=env, git_domains=git_domains
         )

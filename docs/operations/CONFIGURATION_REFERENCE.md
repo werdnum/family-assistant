@@ -2927,8 +2927,10 @@ The two schemes are stored differently:
 
 - `scheme: "bearer"` (the REST API) is stored under `fa-egress-github-app-<installation id>`, and
   the rule names that id.
-- `scheme: "basic"` (git) is stored under `fa-egress-github-app-<installation id>-git`, trusted only
-  for the domains of your `basic` rules. Each run binds it to the sandbox variable
+- `scheme: "basic"` (git) is stored under `fa-egress-github-app-<installation id>-git-<hash>`, one per
+  distinct set of `basic` domains a profile names, and trusted only for those domains. A `basic`
+  rule's domain must be an exact host such as `github.com`, not a wildcard. Each run binds it to the
+  sandbox variable
   `FA_GITHUB_GIT_AUTH`, which holds only a placeholder; the proxy swaps in the real value on requests
   to those domains. The agent is told to set git's `http.extraHeader` from that variable, after
   which clone, fetch, pull and push are plain git.

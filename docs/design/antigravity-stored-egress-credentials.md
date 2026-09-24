@@ -134,7 +134,7 @@ which is the form the `bearer_token` credential cannot produce, without the toke
 The git rule therefore works like this:
 
 - the rotation task writes `base64("x-access-token:<token>")`, as an `environment_variable`
-  credential trusted for the git rules' domains, from the same mint as the REST credential;
+  credential trusted for a profile's git domains, from the same mint as the REST credential;
 - the git rule's allowlist entry carries no `transform`, because the proxy overwrites a
   sandbox-set `Authorization` on any domain that carries a header of its own;
 - the run binds the credential to `FA_GITHUB_GIT_AUTH`, and the agent's system instruction tells it
@@ -317,10 +317,11 @@ credential.
   nothing breaks. The next tick overwrites both, and sustained failure is the "rotation stopped"
   case above arriving as a visible 401.
 
-- **One git credential for every profile.** Its `trusted_domains` is the union of every profile's
-  git rules. A profile can therefore send the placeholder to a git domain another profile trusts,
-  but only if its own allowlist admits that domain too, and every such domain is one the deployment
-  already chose to authenticate to with the same installation.
+- **One git credential per set of git domains, not per profile.** Each profile's `basic` domains
+  form a set, and each distinct set is its own stored credential, so a submit that writes one set
+  never narrows another that a running task still reads. Profiles naming the same set share it. The
+  hosts must be exact, because git's per-host `extraHeader` does not match a bare `*`, and a
+  wildcard would hand the git credential to every host it covered.
 
 - **Git setup is an instruction, not enforcement.** The agent configures git itself. Missing that
   step gives a 401, not a leak, so it is left to the instruction rather than pre-baked into the
