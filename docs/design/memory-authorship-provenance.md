@@ -63,7 +63,8 @@ The review task renders a stretch's rows as it does today, with one filter: **a 
 provenance is not admissible for reuse is left out of the transcript.** In practice that keeps every
 household message and drops the assistant replies of turns that read outside content. The curator's
 taint tracker is seeded from the rows it was shown, so a review whose transcript is all household
-words runs at the trusted pole and may write.
+words runs at the trusted pole and may write. The evidence a review may cite is the same set: only
+rendered rows are acceptable citations, while the watermark still advances over the whole stretch.
 
 The whole-stretch skip survives as the degenerate case: a stretch in which no person's message is
 admissible (an email-intake conversation, say) has nothing to curate and is skipped and audited as
@@ -76,9 +77,11 @@ The curator prompt says that assistant turns may be missing from the transcript,
 
 The notes-repository write floor keeps checking the writing turn's taint: a foreground assistant
 that has read an email is exactly the writer the floor exists to stop. What changes is the refusal.
-In a turn above the reuse boundary, a memory write returns a result telling the model that memory
-is written from the household's own words at the next review, so it can tell the person their
-request will be picked up rather than report an error. The person's "remember that Teija likes…" is
+In a turn above the reuse boundary where this conversation will be reviewed (contribution is on for
+the profile and the interface), a memory write returns a result telling the model that memory is
+written from the household's own words at the next review, so it can tell the person their request
+will be picked up rather than report an error. Where no review will run, the refusal stays, so a
+request is never reported as deferred to a review that will not happen. The person's "remember that Teija likes…" is
 then in a user row the curator can read.
 
 ## Deliberate simplifications
