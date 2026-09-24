@@ -3161,8 +3161,8 @@ def test_merge_history_taint_avoids_quadratic_explosion() -> None:
     assert len(merged_state.sources) == DEFAULT_MAX_SOURCES
     # 5 shared + 40 per-turn = 45 distinct sources
     assert merged_state.distinct_source_count == 45
-    # Total presentations = 40 * 6 = 240
-    assert merged_state.total_source_count == 240
+    # Each history source counts once, however many rows repeat it
+    assert merged_state.total_source_count == 45
     assert merged_state.omitted_source_count == 33
 
 
@@ -3238,9 +3238,9 @@ def test_seen_keys_index_is_strictly_bounded() -> None:
     assert latest_hash in state._seen_keys
 
 
-def test_merge_history_taint_propagates_duplicate_presentation_counts() -> None:
-    """Duplicate presentation counts in history are carried through state merges."""
-    # 1 retained source, but 50 total presentations
+def test_merge_history_taint_counts_history_sources_once() -> None:
+    """A history read contributes distinct sources, not the writer's occurrences."""
+    # 1 retained source, but 50 total presentations in the turn that wrote it
     metadata: TaintMetadata = {
         "version": "runtime_v2",
         "max_tier": SourceTrustTier.KNOWN_CONTACT.config_value,
@@ -3263,14 +3263,14 @@ def test_merge_history_taint_propagates_duplicate_presentation_counts() -> None:
 
     msg1 = SimpleNamespace(taint_metadata=metadata)
     merged = merge_history_taint([msg1])
-    assert merged.total_source_count == 50
+    assert merged.total_source_count == 1
     assert merged.distinct_source_count == 1
     assert merged.omitted_source_count == 0
+    assert merged.to_metadata().get("total_source_count") == 1
 
-    # Merging two such messages carrying the same source duplicates
     msg2 = SimpleNamespace(taint_metadata=metadata)
     merged2 = merge_history_taint([msg1, msg2])
-    assert merged2.total_source_count == 100
+    assert merged2.total_source_count == 1
     assert merged2.distinct_source_count == 1
     assert merged2.omitted_source_count == 0
 
@@ -3351,8 +3351,7 @@ def test_merge_history_taint_bounds_omitted_sources_without_summing() -> None:
     msg2 = SimpleNamespace(taint_metadata=metadata)
 
     merged = merge_history_taint([msg1, msg2])
-    # Total presentations sum across turns (20 + 20 = 40)
-    assert merged.total_source_count == 40
+    assert merged.total_source_count == 20
     # Distinct count is bounded by 20 (not 1 + 19 + 19 = 39)
     assert merged.distinct_source_count == 20
     assert merged.omitted_source_count == 19
@@ -3403,6 +3402,75 @@ def test_merge_taint_state_into_tracker_bounds_omitted_sources() -> None:
     merge_taint_state_into_tracker(tracker, state1)
     merged = merge_taint_state_into_tracker(tracker, state2)
 
-    assert merged.total_source_count == 40
+    assert merged.total_source_count == 20
     assert merged.distinct_source_count == 20
     assert merged.omitted_source_count == 19
+
+
+def _count_test_source(source_id: str) -> TaintSource:
+    return TaintSource(
+        source_type=TaintSourceType.TOOL_OUTPUT,
+        source_id=source_id,
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset(),
+        reason=f"Read {source_id}",
+    )
+
+
+def test_history_counts_stay_linear_when_every_row_inherits_earlier_taint() -> None:
+    """Rows stamped with the whole turn, history included, do not compound."""
+    rows: list[SimpleNamespace] = []
+    for turn in range(60):
+        state = merge_history_taint(rows)
+        state = state.add_source(_count_test_source(f"email-{turn}"))
+        state = state.add_source(_count_test_source(f"email-{turn}"))
+        stamp = state.to_metadata()
+        # A turn persists several rows, each stamped with the turn's state.
+        rows.extend(SimpleNamespace(taint_metadata=stamp) for _ in range(3))
+
+    final = merge_history_taint(rows)
+    assert final.distinct_source_count == 60
+    assert final.total_source_count == 60
+    assert final.omitted_source_count == 60 - DEFAULT_MAX_SOURCES
+
+    one_more = final.add_source(_count_test_source("email-new"))
+    assert one_more.total_source_count == 61
+    assert one_more.distinct_source_count == 61
+
+
+def test_remerging_a_snapshot_into_a_tracker_is_idempotent() -> None:
+    """A delegation result carrying the caller's ancestry is not counted twice."""
+    caller = TurnTaintState.empty()
+    for index in range(20):
+        caller = caller.add_source(_count_test_source(f"doc-{index}"))
+    caller = caller.add_source(_count_test_source("doc-0"))
+    assert caller.total_source_count == 21
+
+    child = TurnTaintState.from_metadata(caller.to_metadata()).add_source(
+        _count_test_source("child-read")
+    )
+    tracker = InMemoryTurnTaintTracker(caller)
+    merged = merge_taint_state_into_tracker(tracker, child)
+    assert merged.distinct_source_count == 21
+    assert merged.total_source_count == 22
+
+    again = merge_taint_state_into_tracker(tracker, child)
+    assert again.total_source_count == 22
+    assert again.distinct_source_count == 21
+
+
+def test_legacy_inflated_history_totals_do_not_propagate() -> None:
+    """Rows stamped before counts were fixed stop carrying their totals forward."""
+    legacy = (
+        TurnTaintState
+        .empty()
+        .add_source(_count_test_source("inbox"))
+        .to_metadata(include_counts=True)
+    )
+    legacy["total_source_count"] = 8_600_000_000_000_000_000_000_000
+    legacy["distinct_source_count"] = 173
+
+    merged = merge_history_taint([SimpleNamespace(taint_metadata=legacy)])
+    assert merged.distinct_source_count == 173
+    assert merged.total_source_count == 173
+    assert merged.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
