@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fnmatch
 import logging
 import os
 from datetime import datetime, timedelta
@@ -458,7 +459,8 @@ def github_push_helper_source(
     if not isinstance(network, dict):
         return None
     if not any(
-        entry.get("domain") == _GITHUB_API_DOMAIN and "credential" in entry
+        "credential" in entry
+        and fnmatch.fnmatchcase(_GITHUB_API_DOMAIN, entry.get("domain", "").lower())
         for entry in network["allowlist"]
     ):
         return None

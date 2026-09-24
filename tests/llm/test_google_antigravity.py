@@ -474,6 +474,19 @@ async def test_a_stored_github_credential_mounts_the_api_push_helper() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_wildcard_rule_covering_the_github_api_mounts_the_helper() -> None:
+    client = _egress_client({
+        "allowlist": [
+            {"domain": "*.GitHub.com", "credential": "fa-egress-github-app-1"}
+        ]
+    })
+
+    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+
+    assert kwargs["environment"]["sources"][-1]["target"] == GITHUB_PUSH_HELPER_TARGET
+
+
+@pytest.mark.asyncio
 async def test_the_push_helper_is_mounted_alongside_delegated_attachments() -> None:
     client = _egress_client(_STORED_GITHUB_NETWORK)
     attachment = {
