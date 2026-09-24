@@ -16,6 +16,7 @@ type ToolImplementation = Callable[..., Awaitable[object]]
 
 _OUTPUT_SAFETY_TAGS = {
     "output_trusted",
+    "output_machine_data",
     "output_untrusted",
     "output_unspecified",
 }
@@ -47,6 +48,10 @@ class ToolTag(StrEnum):
     FILE_SYSTEM = "file_system"
 
     OUTPUT_TRUSTED = "output_trusted"
+    # Structured data from a third-party service (routes, timetables, prices),
+    # graded recognized_machine rather than unknown_external. Free text the
+    # service relays from other people, such as reviews, is not this.
+    OUTPUT_MACHINE_DATA = "output_machine_data"
     OUTPUT_UNTRUSTED = "output_untrusted"
     OUTPUT_UNSPECIFIED = "output_unspecified"
 

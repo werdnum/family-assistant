@@ -1674,6 +1674,9 @@ def derive_tool_result_taint_source(
     tier = SourceTrustTier.UNKNOWN_EXTERNAL
     if "output_untrusted" in tag_values:
         reason = f"Tool '{descriptor.name}' is tagged output_untrusted."
+    elif "output_machine_data" in tag_values:
+        tier = SourceTrustTier.RECOGNIZED_MACHINE
+        reason = f"Tool '{descriptor.name}' is tagged output_machine_data."
     elif "output_unspecified" in tag_values:
         tier = default_unspecified_tool_output_tier
         reason = (

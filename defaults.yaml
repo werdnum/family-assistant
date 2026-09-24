@@ -455,6 +455,12 @@ mcp_config:
       # picking up whatever versions resolve today, inside the MCP initialization timeout.
       command: "mcp-server-time"
       args: ["--local-timezone=Australia/Sydney"]
+      # Computes times and conversions locally from its arguments; nothing it
+      # returns was written by anyone outside the household.
+      tool_metadata:
+        "*":
+          - "read_only"
+          - "output_trusted"
     brave:
       # Invoke the globally installed, pinned entry point (see Dockerfile) rather than
       # resolving the package at MCP startup, which would pick up whatever version is

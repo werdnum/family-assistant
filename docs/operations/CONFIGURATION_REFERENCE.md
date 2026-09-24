@@ -3609,7 +3609,15 @@ boundary, so the runtime taint policy can classify their tools correctly:
   attacker-controlled destinations. Use these rather than `home_auto` for a Home Assistant service
   that does any of those things.
 
-Every configured entry should also declare `output_trusted` or `output_untrusted`. An exact
+Every configured entry should also declare how far its output can be trusted:
+
+- `output_trusted` — output the household or the tool itself produced, such as a time conversion.
+- `output_machine_data` — structured data from a third-party service (routes, timetables, flight
+  and hotel search results, prices), graded `recognized_machine`. Tools that relay free text other
+  people wrote, such as reviews or listing descriptions, are not machine data.
+- `output_untrusted` — arbitrary outside text: web pages, search snippets, email, documents.
+
+An exact
 `tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to them.
 
 `script_deterministic` is an explicit opt-in for operations that do not make a model decision or
