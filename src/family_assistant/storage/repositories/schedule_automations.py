@@ -50,12 +50,26 @@ _UNSET = object()
 # Valid action types for schedule automations
 VALID_ACTION_TYPES = {"wake_llm", "script"}
 
-_COUNT_PART = re.compile(r"(?:^|[;:\s])COUNT=", re.IGNORECASE)
+_COUNT_PART = re.compile(r"(?:^|[;:\s])COUNT=(\d*)", re.IGNORECASE)
+
+# A COUNT-bounded series is evaluated from its first occurrence on every
+# advance, so the count bounds that walk; this keeps it to milliseconds.
+MAX_RECURRENCE_COUNT = 10_000
 
 
 def _is_count_bounded(recurrence_rule: str) -> bool:
     """Whether the rule's ``COUNT`` ties its series to the occurrence it began at."""
     return _COUNT_PART.search(recurrence_rule) is not None
+
+
+def _validate_count(recurrence_rule: str) -> None:
+    """Reject a ``COUNT`` too large to evaluate from the series start on each advance."""
+    match = _COUNT_PART.search(recurrence_rule)
+    if match and match.group(1) and int(match.group(1)) > MAX_RECURRENCE_COUNT:
+        raise ValueError(
+            f"COUNT above {MAX_RECURRENCE_COUNT} is not supported; "
+            "use UNTIL to end a long-running schedule"
+        )
 
 
 def _build_script_payload(
@@ -141,7 +155,10 @@ class ScheduleAutomationsRepository(BaseRepository):
         The series starts on the whole minute: dateutil takes any unspecified
         ``BYSECOND`` from the start, and the second the automation happened to
         be created in is not part of what anyone asked for.
+
+        Raises ValueError for a ``COUNT`` above ``MAX_RECURRENCE_COUNT``.
         """
+        _validate_count(recurrence_rule)
         now = datetime.now(timezone)
         return self._occurrence_after(
             recurrence_rule,
