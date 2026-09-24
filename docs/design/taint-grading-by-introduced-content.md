@@ -71,6 +71,10 @@ unauthenticated callers can post telemetry and logs quote external input.
 - **A bounded note preview can carry a short injection.** A hundred characters of a note stamped
   `unknown_external` now arrive at `recognized_machine`. Accepted as bounded risk: a preview is
   short, and the sinks that matter still confirm or adjudicate at that tier.
+- **Listing names and titles in search results are seller-written.** A product title or a rental's
+  name can carry a short injection under `recognized_machine`. Accepted for the same reason as note
+  previews: the text is short, and arbitrary messages, attacker-addressable egress and sandbox
+  network still confirm or adjudicate at that tier. Detail pages and reviews stay untrusted.
 - **Genuine outside reading stays as cautious as today.** Three quarters of the turns that reach an
   adjudicated sink read the web, a browser, mail or documents first. This design does not relax
   them; any change there is a policy decision, not a grading fix.
