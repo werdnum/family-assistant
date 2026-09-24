@@ -77,6 +77,7 @@ class ScheduleAutomationDict(TypedDict):
     interface_type: str  # InterfaceType value
     recurrence_rule: str
     next_scheduled_at: datetime | None
+    recurrence_anchor: datetime
     action_type: str  # EventActionType value
     action_config: ActionConfig
     enabled: bool

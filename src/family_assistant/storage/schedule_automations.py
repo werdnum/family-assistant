@@ -45,6 +45,11 @@ schedule_automations_table = Table(
     # Schedule-specific trigger configuration
     Column("recurrence_rule", Text, nullable=False),  # RRULE string
     Column("next_scheduled_at", DateTime(timezone=True), nullable=True),
+    # The occurrence the recurrence rule is evaluated from. A COUNT-bounded rule
+    # keeps its first occurrence here, because the count runs from it; any other
+    # rule has it advanced to each scheduled occurrence, which describes the same
+    # series and keeps evaluation short.
+    Column("recurrence_anchor", DateTime(timezone=True), nullable=False),
     # Action configuration
     Column(
         "action_type",

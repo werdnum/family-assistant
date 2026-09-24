@@ -64,7 +64,8 @@ Common patterns:
 - Every Monday and Friday at 9am: `FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9;BYMINUTE=0`
 - Every 4 hours: `FREQ=HOURLY;INTERVAL=4`
 - Monthly on the 15th: `FREQ=MONTHLY;BYMONTHDAY=15`
-- Limit to 10 occurrences: append `;COUNT=10`
+- Limit to 10 occurrences: append `;COUNT=10` (counted from creation or the last schedule change,
+  including runs that fell while paused)
 - Until a date: append `;UNTIL=20251231T235959Z`
 
 ## Best Practices
