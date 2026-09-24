@@ -22,11 +22,11 @@ from starlette.requests import Request
 from starlette.routing import Route, Router
 from starlette.types import Receive, Scope, Send
 
-from family_assistant.web.auth import MCP_ENDPOINT_PATH
-from family_assistant.web.mcp_adapter.config import (
-    adapter_config,
-    builtin_authorization_server_enabled,
+from family_assistant.web.auth import (
+    MCP_ENDPOINT_PATH,
+    mcp_builtin_authorization_server_enabled,
 )
+from family_assistant.web.mcp_adapter.config import adapter_config
 from family_assistant.web.mcp_adapter.oauth.provider import (
     ASSISTANT_SCOPE,
     CLIENT_REGISTRATION_OPTIONS,
@@ -142,7 +142,7 @@ class _AuthServerDispatch:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         app: FastAPI = scope["app"]
-        if not builtin_authorization_server_enabled(app):
+        if not mcp_builtin_authorization_server_enabled(app):
             await _not_enabled(scope, receive, send)
             return
         server = oauth_server(app)

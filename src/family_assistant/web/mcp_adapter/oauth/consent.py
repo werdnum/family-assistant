@@ -15,10 +15,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from family_assistant.web.auth import mcp_builtin_authorization_server_enabled
 from family_assistant.web.dependencies import get_current_user
-from family_assistant.web.mcp_adapter.config import (
-    builtin_authorization_server_enabled,
-)
 from family_assistant.web.mcp_adapter.oauth.provider import (
     CONSENT_PATH,
     PendingConsent,
@@ -126,7 +124,7 @@ async def consent_user(request: Request) -> dict:
     from a dependency that would otherwise run first. An external authorization
     server replaces the page along with the rest of the built-in one.
     """
-    if not builtin_authorization_server_enabled(request.app):
+    if not mcp_builtin_authorization_server_enabled(request.app):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCP authorization server is not enabled.",

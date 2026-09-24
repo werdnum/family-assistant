@@ -119,6 +119,27 @@ def mcp_adapter_enabled(app: object) -> bool:
     return bool(getattr(adapter_config, "enabled", False))
 
 
+def mcp_builtin_authorization_server_enabled(app: object) -> bool:
+    """Whether the adapter's own OAuth endpoints and consent page serve requests.
+
+    They do while the adapter is on and no external authorization server
+    replaces them (``mcp_adapter.authorization_server``).
+    """
+    adapter_config = getattr(
+        getattr(getattr(app, "state", None), "config", None), "mcp_adapter", None
+    )
+    return mcp_adapter_enabled(app) and (
+        getattr(adapter_config, "authorization_server", None) is None
+    )
+
+
+def mcp_adapter_path_serves(app: object, path: str) -> bool:
+    """Whether the adapter serves ``path`` rather than 404ing from its own gate."""
+    if path == MCP_CONSENT_PATH:
+        return mcp_builtin_authorization_server_enabled(app)
+    return mcp_adapter_enabled(app)
+
+
 def mcp_resource_metadata_url(server_url: str) -> str:
     """Where an MCP client finds the OAuth protected-resource metadata."""
     return (
@@ -703,10 +724,13 @@ class AuthMiddleware:
                 await self.app(scope, receive, send)
                 return
 
-        if is_mcp_adapter_path(request_path) and not mcp_adapter_enabled(app):
+        if is_mcp_adapter_path(request_path) and not mcp_adapter_path_serves(
+            app, request_path
+        ):
             # A disabled adapter is a 404 from its own gates (endpoint and
             # consent page), not an OAuth challenge or a login redirect for a
-            # server that is off.
+            # server that is off. The consent page is also off when an external
+            # authorization server replaces the built-in one.
             await self.app(scope, receive, send)
             return
 

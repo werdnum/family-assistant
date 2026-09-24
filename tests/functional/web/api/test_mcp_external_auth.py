@@ -28,6 +28,7 @@ from family_assistant.config_models import (
 )
 from family_assistant.web import auth, mcp_external_tokens
 from family_assistant.web.mcp_adapter import install_mcp_adapter
+from family_assistant.web.route_auth import MCP_CONSENT_PATH
 
 SERVER_URL = "http://localhost:8000"
 ISSUER = "https://id.example.com/realms/household"
@@ -44,14 +45,22 @@ SERVER = MCPExternalAuthorizationServer(
 
 
 class _StaticJWKClient(jwt.PyJWKClient):
-    """The issuer's key set, served from memory instead of over HTTP."""
+    """The issuer's key set, served from memory instead of over HTTP.
+
+    Caches what it serves the way the SDK's own fetch does.
+    """
 
     def __init__(self, jwks: dict[str, list[dict[str, str]]]) -> None:
         super().__init__(SERVER.jwks_uri)
         self._jwks = jwks
+        self.fetches = 0
 
     def fetch_data(self) -> Any:  # noqa: ANN401 - overrides the SDK's untyped method
-        return self._jwks
+        self.fetches += 1
+        jwk_set: Any = self._jwks
+        if self.jwk_set_cache is not None:
+            self.jwk_set_cache.put(jwk_set)
+        return jwk_set
 
 
 @pytest.fixture(scope="module")
@@ -133,6 +142,8 @@ async def test_resource_metadata_names_the_external_issuer(
     ("method", "path"),
     [
         ("GET", "/.well-known/oauth-authorization-server"),
+        ("GET", f"{MCP_CONSENT_PATH}?request_id=anything"),
+        ("POST", MCP_CONSENT_PATH),
         ("GET", "/authorize"),
         ("POST", "/token"),
         ("POST", "/register"),
@@ -142,7 +153,7 @@ async def test_resource_metadata_names_the_external_issuer(
 async def test_builtin_authorization_server_is_off(
     client: AsyncClient, method: str, path: str
 ) -> None:
-    response = await client.request(method, path)
+    response = await client.request(method, path, follow_redirects=False)
 
     assert response.status_code == 404
 
@@ -190,6 +201,28 @@ async def test_token_signed_by_another_key_is_rejected(client: AsyncClient) -> N
     )
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_unknown_key_ids_do_not_refetch_the_key_set_each_time(
+    client: AsyncClient, app_fixture: FastAPI, issuer_key: RSAPrivateKey
+) -> None:
+    jwks = app_fixture.state.mcp_external_token_verifier.jwks
+    tokens = [
+        jwt.encode(
+            {"iss": ISSUER, "aud": AUDIENCE, "sub": "x", "exp": int(time.time()) + 60},
+            issuer_key,
+            algorithm="RS256",
+            headers={"kid": f"made-up-{index}"},
+        )
+        for index in range(5)
+    ]
+
+    for token in tokens:
+        await client.post("/api/mcp", json=TOOLS_LIST, headers=_bearer(token))
+
+    # The first fetch fills the cache and the first miss refreshes it once.
+    assert jwks.fetches == 2
 
 
 @pytest.mark.asyncio

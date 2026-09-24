@@ -10,7 +10,8 @@ into the user the tool runs as. See docs/design/mcp-adapter.md.
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import jwt
@@ -33,6 +34,10 @@ ALLOWED_ALGORITHMS = [
     "ES384",
 ]
 JWKS_CACHE_SECONDS = 300
+# A token naming a key the cached set lacks refetches the set at most this
+# often, so a stream of made-up key IDs cannot turn every request into a fetch
+# while a rotated-in key is still picked up.
+UNKNOWN_KEY_REFRESH_SECONDS = 60
 
 
 @dataclass
@@ -41,6 +46,7 @@ class ExternalTokenVerifier:
 
     server: MCPExternalAuthorizationServer
     jwks: jwt.PyJWKClient
+    last_unknown_key_refresh: float = field(default=float("-inf"), init=False)
 
     @classmethod
     def for_server(
@@ -67,13 +73,14 @@ class ExternalTokenVerifier:
         bad credential, and should look like one.
         """
         try:
-            signing_key = await asyncio.to_thread(
-                self.jwks.get_signing_key_from_jwt, token
-            )
+            signing_key = await self._signing_key(token)
         except jwt.PyJWKClientConnectionError:
             raise
         except jwt.PyJWTError as exc:
             logger.warning("Rejected MCP access token: no signing key (%s).", exc)
+            return None
+        if signing_key is None:
+            logger.warning("Rejected MCP access token: unknown signing key.")
             return None
         try:
             return jwt.decode(
@@ -87,6 +94,26 @@ class ExternalTokenVerifier:
         except jwt.PyJWTError as exc:
             logger.warning("Rejected MCP access token: %s.", exc)
             return None
+
+    async def _signing_key(self, token: str) -> jwt.PyJWK | None:
+        """The issuer's key the token names, refetching the set on a miss if due.
+
+        The throttle is decided here on the event loop rather than in the
+        worker thread, so concurrent misses cannot all claim the same refresh.
+        """
+        kid = jwt.get_unverified_header(token).get("kid")
+        if not isinstance(kid, str):
+            return None
+        keys = await asyncio.to_thread(self.jwks.get_signing_keys)
+        key = self.jwks.match_kid(keys, kid)
+        if key is not None:
+            return key
+        now = time.monotonic()
+        if now - self.last_unknown_key_refresh < UNKNOWN_KEY_REFRESH_SECONDS:
+            return None
+        self.last_unknown_key_refresh = now
+        keys = await asyncio.to_thread(self.jwks.get_signing_keys, True)
+        return self.jwks.match_kid(keys, kid)
 
 
 def verifier_for(

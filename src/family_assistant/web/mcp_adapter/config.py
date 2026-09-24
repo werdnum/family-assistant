@@ -18,12 +18,6 @@ def adapter_config(app: FastAPI) -> MCPAdapterConfig:
     return config.mcp_adapter
 
 
-def builtin_authorization_server_enabled(app: FastAPI) -> bool:
-    """Whether the adapter's own OAuth endpoints and consent page serve requests."""
-    config = adapter_config(app)
-    return config.enabled and config.authorization_server is None
-
-
 def require_authentication_for_adapter(
     config: AppConfig,
     *,
