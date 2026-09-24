@@ -1,6 +1,5 @@
 """Repository for schedule-based automations operations."""
 
-import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -50,33 +49,33 @@ _UNSET = object()
 # Valid action types for schedule automations
 VALID_ACTION_TYPES = {"wake_llm", "script"}
 
-_COUNT_PART = re.compile(r"(?:^|[;:\s])COUNT=", re.IGNORECASE)
-_RENDERED_COUNT = re.compile(r";COUNT=(\d+)")
-
 # A COUNT-bounded series is evaluated from its first occurrence on every
 # advance, so the count bounds that walk; this keeps it to milliseconds.
 MAX_RECURRENCE_COUNT = 10_000
 
 
-def _is_count_bounded(recurrence_rule: str) -> bool:
-    """Whether the rule's ``COUNT`` ties its series to the occurrence it began at."""
-    return _COUNT_PART.search(recurrence_rule) is not None
+def _rule_count(recurrence_rule: str) -> int | None:
+    """The rule's ``COUNT`` as dateutil parsed it, or None if it has none.
+
+    Read from the parsed rule so that every spelling dateutil accepts is taken
+    as the number it evaluates. dateutil offers no public accessor for it.
+
+    Raises ValueError or ParserError for a rule that does not parse.
+    """
+    parsed = rrule.rrulestr(recurrence_rule)
+    if not isinstance(parsed, rrule.rrule):
+        return None
+    return parsed._count  # pyright: ignore[reportAttributeAccessIssue]  # pylint: disable=protected-access
 
 
 def _validate_count(recurrence_rule: str) -> None:
-    """Reject a ``COUNT`` too large to evaluate from the series start on each advance.
-
-    The count is read from dateutil's rendering of the parsed rule rather than
-    the text as written, so every spelling it accepts -- a sign, digit
-    separators -- is read as the number it evaluates.
-    """
+    """Reject a ``COUNT`` too large to evaluate from the series start on each advance."""
     try:
-        rendered = str(rrule.rrulestr(recurrence_rule))
+        count = _rule_count(recurrence_rule)
     except (ValueError, ParserError):
         # Evaluating the rule reports it as invalid.
         return
-    match = _RENDERED_COUNT.search(rendered)
-    if match and int(match.group(1)) > MAX_RECURRENCE_COUNT:
+    if count is not None and count > MAX_RECURRENCE_COUNT:
         raise ValueError(
             f"COUNT above {MAX_RECURRENCE_COUNT} is not supported; "
             "use UNTIL to end a long-running schedule"
@@ -799,7 +798,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         local_cutoff = cutoff.astimezone(timezone)
 
         series = rrule.rrulestr(recurrence_rule, dtstart=local_anchor)
-        if _is_count_bounded(recurrence_rule):
+        if _rule_count(recurrence_rule) is not None:
             return series.after(local_cutoff) is not None
 
         from_anchor = series.after(local_anchor)
@@ -1589,7 +1588,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 return
 
             advanced: dict[str, datetime] = {"next_scheduled_at": next_scheduled_at}
-            if not _is_count_bounded(recurrence_rule):
+            if _rule_count(recurrence_rule) is None:
                 advanced["recurrence_anchor"] = next_scheduled_at
             stmt = (
                 update(schedule_automations_table)
