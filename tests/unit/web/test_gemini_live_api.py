@@ -511,3 +511,14 @@ def test_client_config_carries_transcription_language_codes() -> None:
     config = GeminiLiveConfig.from_dict(app_config.gemini_live_config.model_dump())
 
     assert config.transcription.language_codes == ["en-AU"]
+
+
+def test_client_config_carries_voice_language_code() -> None:
+    app_config = AppConfig.model_validate({
+        "gemini_live_config": {"voice": {"name": "Leda", "language_code": "en-AU"}}
+    })
+
+    config = GeminiLiveConfig.from_dict(app_config.gemini_live_config.model_dump())
+
+    assert config.voice.name == "Leda"
+    assert config.voice.language_code == "en-AU"

@@ -122,10 +122,11 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
 
 - **Setup (client→server, first frame):** `BidiGenerateContentSetup` with `model`,
   `generationConfig.responseModalities=["AUDIO"]`,
-  `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` (from token `config.voice.name`),
-  `systemInstruction` (token `system_instruction`), `tools` (token `tools`),
-  `inputAudioTranscription`, `outputAudioTranscription`, and `realtimeInputConfig` (VAD from token
-  `config.vad`). Mirror the field set used in `useGeminiLive.ts`.
+  `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName` (from token `config.voice.name`) and
+  `speechConfig.languageCode` (from `config.voice.language_code`, when set), `systemInstruction`
+  (token `system_instruction`), `tools` (token `tools`), `inputAudioTranscription`,
+  `outputAudioTranscription`, and `realtimeInputConfig` (VAD from token `config.vad`). Mirror the
+  field set used in `useGeminiLive.ts`.
 - **Realtime audio (client→server):**
   `realtimeInput.audio={mimeType:"audio/pcm;rate=16000", data:<base64 PCM16>}`, ~tens-of-ms frames.
   The native client intentionally uses the current Live API shape and does not send the older

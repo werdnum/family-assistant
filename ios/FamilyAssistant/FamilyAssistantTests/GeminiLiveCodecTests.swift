@@ -15,6 +15,7 @@ final class GeminiLiveCodecTests: XCTestCase {
     private func makeToken(
         model: String = "gemini-3.8-live",
         voiceName: String = "Puck",
+        voiceLanguageCode: String? = nil,
         inputTranscription: Bool = true,
         outputTranscription: Bool = true,
         tools: [JSONValue] = []
@@ -27,6 +28,7 @@ final class GeminiLiveCodecTests: XCTestCase {
             tools: tools,
             config: VoiceLiveConfig(
                 voiceName: voiceName,
+                voiceLanguageCode: voiceLanguageCode,
                 maxSessionMinutes: 15,
                 inputTranscriptionEnabled: inputTranscription,
                 outputTranscriptionEnabled: outputTranscription
@@ -58,6 +60,17 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertNotNil(setup["tools"])
         XCTAssertNotNil(setup["inputAudioTranscription"])
         XCTAssertNotNil(setup["outputAudioTranscription"])
+    }
+
+    func testSetupMessageSpeechLanguageCode() throws {
+        func languageCode(_ token: EphemeralToken) throws -> Any? {
+            let message = try GeminiLiveCodec.setupMessage(for: token, activityDetection: VoiceActivityDetectionConfig())
+            let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+            let generationConfig = try XCTUnwrap(setup["generationConfig"] as? [String: Any])
+            return (generationConfig["speechConfig"] as? [String: Any])?["languageCode"]
+        }
+        XCTAssertEqual(try languageCode(makeToken(voiceLanguageCode: "en-AU")) as? String, "en-AU")
+        XCTAssertNil(try languageCode(makeToken()))
     }
 
     func testSetupMessageOmitsTranscriptionWhenDisabled() throws {

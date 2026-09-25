@@ -572,6 +572,9 @@ export function useGeminiLive(): GeminiLiveState {
                     voiceName: tokenData.config.voice.name,
                   },
                 },
+                ...(tokenData.config.voice.language_code
+                  ? { languageCode: tokenData.config.voice.language_code }
+                  : {}),
               },
               // Enable transcription for UI display (always on for frontend)
               inputAudioTranscription: {},

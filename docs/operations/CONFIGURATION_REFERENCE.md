@@ -2552,6 +2552,21 @@ See [voice-mode-on-demand-tools.md](../design/voice-mode-on-demand-tools.md).
 
 ______________________________________________________________________
 
+## Assistant Voice (`gemini_live_config.voice`)
+
+```yaml
+gemini_live_config:
+  voice:
+    name: "Leda"
+    language_code: "en-AU"
+```
+
+`name` is the Gemini prebuilt voice. `language_code` is sent as `speechConfig.languageCode` and sets
+the language and accent the assistant speaks in; leave it out to let Gemini choose. Both apply to
+the web client, the native iOS app and telephone calls.
+
+______________________________________________________________________
+
 ## Voice Transcription Language (`gemini_live_config.transcription.language_codes`)
 
 ```yaml
@@ -2930,10 +2945,9 @@ The two schemes are stored differently:
 - `scheme: "basic"` (git) is stored under `fa-egress-github-app-<installation id>-git`, trusted only
   for `github.com`. A `github_app` rule with `scheme: "basic"` must use the domain `github.com`;
   anything else, including a wildcard or an Enterprise host, fails config validation. Each run binds
-  it to the sandbox variable
-  `FA_GITHUB_GIT_AUTH`, which holds only a placeholder; the proxy swaps in the real value on requests
-  to those domains. The agent is told to set git's `http.extraHeader` from that variable, after
-  which clone, fetch, pull and push are plain git.
+  it to the sandbox variable `FA_GITHUB_GIT_AUTH`, which holds only a placeholder; the proxy swaps
+  in the real value on requests to those domains. The agent is told to set git's `http.extraHeader`
+  from that variable, after which clone, fetch, pull and push are plain git.
 
 If no credential store is available, a rule falls back to a header fixed at submit, and GitHub
 access stops when that token expires (~1 hour). Static `bearer` credentials never go to the store.
@@ -3612,13 +3626,13 @@ boundary, so the runtime taint policy can classify their tools correctly:
 Every configured entry should also declare how far its output can be trusted:
 
 - `output_trusted` — output the household or the tool itself produced, such as a time conversion.
-- `output_machine_data` — structured data from a third-party service (routes, timetables, flight
-  and hotel search results, prices), graded `recognized_machine`. Tools that relay free text other
+- `output_machine_data` — structured data from a third-party service (routes, timetables, flight and
+  hotel search results, prices), graded `recognized_machine`. Tools that relay free text other
   people wrote, such as reviews or listing descriptions, are not machine data.
 - `output_untrusted` — arbitrary outside text: web pages, search snippets, email, documents.
 
-An exact
-`tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to them.
+An exact `tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to
+them.
 
 `script_deterministic` is an explicit opt-in for operations that do not make a model decision or
 create executable definitions. A reviewed script invocation may reuse its approval for a tagged

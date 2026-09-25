@@ -966,6 +966,9 @@ class GeminiVoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "Puck"
+    # BCP-47 code for the language and accent the assistant speaks in, e.g.
+    # "en-AU". None leaves it to Gemini.
+    language_code: str | None = None
 
 
 class GeminiSessionConfig(BaseModel):

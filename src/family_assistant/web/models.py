@@ -40,6 +40,7 @@ class GeminiLiveVoiceConfig(BaseModel):
     """Voice configuration for Gemini Live."""
 
     name: str = "Puck"
+    language_code: str | None = None
 
 
 class GeminiLiveSessionConfig(BaseModel):

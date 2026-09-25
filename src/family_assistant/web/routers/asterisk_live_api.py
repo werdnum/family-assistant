@@ -527,7 +527,8 @@ class AsteriskLiveHandler:
                         prebuilt_voice_config=PrebuiltVoiceConfig(
                             voice_name=self.gemini_live_config.voice.name
                         )
-                    )
+                    ),
+                    language_code=self.gemini_live_config.voice.language_code,
                 ),
                 system_instruction=Content(parts=[Part(text=self.system_instruction)])
                 if self.system_instruction
