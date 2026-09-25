@@ -65,36 +65,31 @@ def _confirmation_field(label: str, value: object) -> str:
 def _extract_calendar_config_from_provider(
     provider: ToolsProvider | None,
 ) -> CalendarConfig | None:
-    """Extract calendar config from a tools provider.
+    """Find the calendar config of the first LocalToolsProvider in a provider chain.
 
-    This helper avoids circular imports by using TYPE_CHECKING and runtime isinstance checks.
+    Production chains nest several wrappers (taint tracking around policy
+    enforcement around a composite), so the whole chain is walked rather than
+    a fixed number of levels.
     """
-    if provider is None:
-        return None
-
     # Import here to avoid circular dependency at module load time
     from family_assistant.tools.infrastructure import (  # noqa: PLC0415
-        CompositeToolsProvider,
         LocalToolsProvider,
+        ToolProviderComposite,
+        ToolProviderWrapper,
     )
 
-    # Direct LocalToolsProvider
+    if provider is None:
+        return None
     if isinstance(provider, LocalToolsProvider):
         config = provider.get_calendar_config()
         return cast("CalendarConfig", config) if config else None
-
-    # Policy or other wrapper
-    if hasattr(provider, "wrapped_provider"):
-        wrapped = provider.wrapped_provider  # type: ignore[attr-defined]
-        if isinstance(wrapped, LocalToolsProvider):
-            config = wrapped.get_calendar_config()
-            return cast("CalendarConfig", config) if config else None
-        elif isinstance(wrapped, CompositeToolsProvider):
-            for p in wrapped.get_providers():
-                if isinstance(p, LocalToolsProvider):
-                    config = p.get_calendar_config()
-                    return cast("CalendarConfig", config) if config else None
-
+    if isinstance(provider, ToolProviderWrapper):
+        return _extract_calendar_config_from_provider(provider.wrapped_provider)
+    if isinstance(provider, ToolProviderComposite):
+        for sub_provider in provider.get_providers():
+            config = _extract_calendar_config_from_provider(sub_provider)
+            if config is not None:
+                return config
     return None
 
 

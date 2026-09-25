@@ -24,10 +24,12 @@ from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
+    CompositeToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
     PolicyRule,
+    TaintTrackingToolsProvider,
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -603,6 +605,123 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
         f"Event details should have been fetched but got: {prompt}"
     )
     assert "Updated Summary" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_delete_confirmation_through_production_provider_chain(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """The delete prompt shows the event when the renderer sees the full chain.
+
+    Production nests taint tracking around policy enforcement around a
+    composite, so the calendar config sits several wrappers deep. Also checks
+    that one call asks once and that approving it deletes the event.
+    """
+    radicale_base_url, r_user, r_pass, test_calendar_url = radicale_server
+
+    local_tz = ZoneInfo(TEST_TIMEZONE_STR)
+    event_summary = f"Ballet {uuid.uuid4()}"
+    start_dt = datetime.now(local_tz).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    ) + timedelta(days=3)
+    end_dt = start_dt + timedelta(hours=1)
+    event_uid = await create_test_event_in_radicale(
+        radicale_server, event_summary, start_dt, end_dt, pg_vector_db_engine
+    )
+
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": r_user,
+                "password": r_pass,
+                "base_url": radicale_base_url,
+                "calendar_urls": [test_calendar_url],
+            }
+        },
+    )
+    local_provider = LocalToolsProvider(
+        registrations=local_tool_registrations,
+        calendar_config=test_calendar_config,
+    )
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=CompositeToolsProvider(providers=[local_provider]),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["delete_calendar_event"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
+        confirmation_timeout=10.0,
+    )
+    chain = TaintTrackingToolsProvider(policy_provider, confirmation_timeout=10.0)
+
+    rendered_prompts: list[str] = []
+
+    async def rendering_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        # ast-grep-ignore: no-dict-any - tool args from external LLM tool call have dynamic fields
+        tool_args: dict[str, Any],
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        renderer = TOOL_CONFIRMATION_RENDERERS[tool_name]
+        rendered_prompts.append(await renderer(tool_args, context))
+        return ConfirmationOutcome(kind="approved")
+
+    db_ctx = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv-delete-chain",
+        user_name="TestUser",
+        turn_id="test-turn-delete-chain",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=local_tz,
+        request_confirmation_callback=rendering_confirmation_callback,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        tools_provider=chain,
+    )
+
+    result = await chain.execute_tool(
+        name="delete_calendar_event",
+        arguments={"uid": event_uid, "calendar_url": test_calendar_url},
+        context=exec_context,
+    )
+
+    assert len(rendered_prompts) == 1
+    prompt = rendered_prompts[0]
+    assert "Event details not found" not in prompt, prompt
+    assert event_summary in prompt
+    result_text = result.get_text() if isinstance(result, ToolResult) else result
+    assert "deleted" in result_text, result_text
+    assert (
+        await fetch_event_details_for_confirmation(
+            uid=event_uid,
+            calendar_url=test_calendar_url,
+            calendar_config=test_calendar_config,
+            timezone=local_tz,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
