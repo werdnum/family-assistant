@@ -23,17 +23,21 @@ enum GeminiLiveCodec {
         for token: EphemeralToken,
         activityDetection: VoiceActivityDetectionConfig
     ) throws -> String {
+        var speechConfig: [String: JSONValue] = [
+            "voiceConfig": .object([
+                "prebuiltVoiceConfig": .object([
+                    "voiceName": .string(token.config.voiceName)
+                ])
+            ])
+        ]
+        if let languageCode = token.config.voiceLanguageCode {
+            speechConfig["languageCode"] = .string(languageCode)
+        }
         var setup: [String: JSONValue] = [
             "model": .string(qualifiedModelName(token.model)),
             "generationConfig": .object([
                 "responseModalities": .array([.string("AUDIO")]),
-                "speechConfig": .object([
-                    "voiceConfig": .object([
-                        "prebuiltVoiceConfig": .object([
-                            "voiceName": .string(token.config.voiceName)
-                        ])
-                    ])
-                ]),
+                "speechConfig": .object(speechConfig),
             ]),
             "systemInstruction": .object([
                 "parts": .array([.object(["text": .string(token.systemInstruction)])])

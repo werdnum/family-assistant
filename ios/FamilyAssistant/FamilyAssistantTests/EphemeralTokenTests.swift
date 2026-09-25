@@ -38,7 +38,7 @@ final class EphemeralTokenTests: XCTestCase {
       ],
       "config": {
         "model": "gemini-3.8-live",
-        "voice": {"name": "Charon"},
+        "voice": {"name": "Charon", "language_code": "en-AU"},
         "session": {"max_duration_minutes": 10},
         "transcription": {"input_enabled": true, "output_enabled": false, "language_codes": ["en-AU"]},
         "vad": {"automatic": true, "start_of_speech_sensitivity": "DEFAULT", "silence_duration_ms": 700},
@@ -60,6 +60,7 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(token.systemInstruction, "You are a helpful voice assistant.")
         XCTAssertEqual(token.tools.count, 1)
         XCTAssertEqual(token.config.voiceName, "Charon")
+        XCTAssertEqual(token.config.voiceLanguageCode, "en-AU")
         XCTAssertEqual(token.config.maxSessionMinutes, 10)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertFalse(token.config.outputTranscriptionEnabled)
@@ -88,6 +89,7 @@ final class EphemeralTokenTests: XCTestCase {
         """
         let token = try JSONDecoder().decode(EphemeralToken.self, from: Data(json.utf8))
         XCTAssertEqual(token.config.voiceName, VoiceLiveConfig.defaultVoiceName)
+        XCTAssertNil(token.config.voiceLanguageCode)
         XCTAssertEqual(token.config.maxSessionMinutes, VoiceLiveConfig.defaultMaxSessionMinutes)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertTrue(token.config.outputTranscriptionEnabled)

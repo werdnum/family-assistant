@@ -91,6 +91,7 @@ export interface TaintMetadata {
  */
 export interface GeminiLiveVoiceConfig {
   name: string;
+  language_code: string | null;
 }
 
 /**

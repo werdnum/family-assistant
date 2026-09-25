@@ -92,6 +92,9 @@ extension EphemeralToken: Decodable {
 /// The subset of the backend's `GeminiLiveConfig` the native client consumes.
 struct VoiceLiveConfig: Equatable, Decodable {
     let voiceName: String
+    /// BCP-47 code for the language and accent the assistant speaks in. Nil
+    /// leaves it to Gemini.
+    let voiceLanguageCode: String?
     let maxSessionMinutes: Int
     let inputTranscriptionEnabled: Bool
     let outputTranscriptionEnabled: Bool
@@ -105,6 +108,7 @@ struct VoiceLiveConfig: Equatable, Decodable {
 
     init(
         voiceName: String,
+        voiceLanguageCode: String? = nil,
         maxSessionMinutes: Int,
         inputTranscriptionEnabled: Bool,
         outputTranscriptionEnabled: Bool,
@@ -113,6 +117,7 @@ struct VoiceLiveConfig: Equatable, Decodable {
         carAudioActivityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig()
     ) {
         self.voiceName = voiceName
+        self.voiceLanguageCode = voiceLanguageCode
         self.maxSessionMinutes = maxSessionMinutes
         self.inputTranscriptionEnabled = inputTranscriptionEnabled
         self.outputTranscriptionEnabled = outputTranscriptionEnabled
@@ -127,7 +132,10 @@ struct VoiceLiveConfig: Equatable, Decodable {
         case carAudioVAD = "car_audio_vad"
     }
 
-    private enum VoiceKeys: String, CodingKey { case name }
+    private enum VoiceKeys: String, CodingKey {
+        case name
+        case languageCode = "language_code"
+    }
     private enum SessionKeys: String, CodingKey { case maxDurationMinutes = "max_duration_minutes" }
     private enum TranscriptionKeys: String, CodingKey {
         case inputEnabled = "input_enabled"
@@ -140,8 +148,10 @@ struct VoiceLiveConfig: Equatable, Decodable {
 
         if let voice = try? container.nestedContainer(keyedBy: VoiceKeys.self, forKey: .voice) {
             voiceName = try voice.decodeIfPresent(String.self, forKey: .name) ?? Self.defaultVoiceName
+            voiceLanguageCode = try voice.decodeIfPresent(String.self, forKey: .languageCode)
         } else {
             voiceName = Self.defaultVoiceName
+            voiceLanguageCode = nil
         }
 
         if let session = try? container.nestedContainer(keyedBy: SessionKeys.self, forKey: .session) {

@@ -261,7 +261,10 @@ gemini_live_config:
   # Voice configuration
   voice:
     # Prebuilt voice name (e.g., "Puck", "Kore", "Charon", "Fenrir", "Aoede")
-    name: "Autonoe"
+    name: "Leda"
+    # BCP-47 code for the language and accent the assistant speaks in
+    # (speechConfig.languageCode). Omit to let Gemini choose.
+    language_code: "en-AU"
   # Session limits
   session:
     # Maximum duration in minutes before auto-disconnect
@@ -1981,8 +1984,8 @@ service_profiles:
       prompts:
         system_prompt: |
           You are a helpful and friendly telephone assistant.
-          Speak in a friendly, natural manner, but do not sound excessively saccharine or over-enthusiastic.
-          Use a neutral accent that sits somewhere between British, American, and Australian.
+          You are a professional assistant. Speak with a calm, composed, and measured tone at a steady pace. Avoid artificial enthusiasm.
+          Speak with a neutral General Australian accent without exaggerated Australian features.
           Most queries will be conversational and should not require complex processes.
           Keep your responses concise and suitable for voice interaction. Avoid using markdown formatting like bold or lists in your speech unless it translates well to spoken text.
     tools_policy:
