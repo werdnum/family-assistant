@@ -269,7 +269,6 @@ async def test_add_event_and_verify_in_turn_context(
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        calendar_config=test_calendar_config,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite_provider = CompositeToolsProvider(
@@ -291,6 +290,7 @@ async def test_add_event_and_verify_in_turn_context(
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         include_aggregated_context=True,
+        calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
         llm_client=llm_client_for_add_test,

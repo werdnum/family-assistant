@@ -1,4 +1,4 @@
-"""Test that LocalToolsProvider handles calendar_config properly."""
+"""Calendar tools get their calendar_config from the execution context."""
 
 from typing import cast
 from unittest.mock import MagicMock
@@ -16,8 +16,8 @@ from family_assistant.tools.types import (
 
 
 @pytest.mark.asyncio
-async def test_calendar_config_from_provider() -> None:
-    """Test that calendar_config is used from provider when set."""
+async def test_calendar_config_from_context() -> None:
+    """The context's calendar_config is injected into a calendar tool."""
 
     test_calendar_config = cast(
         "CalendarConfig",
@@ -38,7 +38,6 @@ async def test_calendar_config_from_provider() -> None:
         username = caldav_config.get("username", "NO_USER")
         return f"Calendar user: {username}, Event: {summary}"
 
-    # Create LocalToolsProvider WITH calendar_config
     provider = LocalToolsProvider(
         definitions=[
             {
@@ -60,7 +59,6 @@ async def test_calendar_config_from_provider() -> None:
             }
         ],
         implementations={"mock_calendar_tool": mock_calendar_tool},
-        calendar_config=test_calendar_config,
     )
 
     # Create execution context
@@ -81,6 +79,7 @@ async def test_calendar_config_from_provider() -> None:
         camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
+        calendar_config=test_calendar_config,
     )
 
     # Execute the tool
@@ -90,7 +89,6 @@ async def test_calendar_config_from_provider() -> None:
         context=exec_context,
     )
 
-    # Verify the tool received the calendar_config from the provider
     assert result == "Calendar user: test_user, Event: Test Meeting"
 
 
@@ -104,7 +102,6 @@ async def test_calendar_tool_without_config() -> None:
         """Mock calendar tool that requires calendar_config."""
         return "Should not reach here"
 
-    # Create LocalToolsProvider WITHOUT calendar_config
     provider = LocalToolsProvider(
         definitions=[
             {
@@ -126,7 +123,6 @@ async def test_calendar_tool_without_config() -> None:
             }
         ],
         implementations={"mock_calendar_tool": mock_calendar_tool},
-        calendar_config=None,
     )
 
     # Create execution context
@@ -163,82 +159,3 @@ async def test_calendar_tool_without_config() -> None:
         "Error: Tool 'mock_calendar_tool' cannot be executed because the calendar_config is missing."
         in result_text
     )
-
-
-@pytest.mark.asyncio
-async def test_calendar_config_preference() -> None:
-    """Test that instance calendar_config is used when available."""
-
-    instance_calendar_config = cast(
-        "CalendarConfig",
-        {
-            "caldav": {
-                "username": "instance_user",
-                "password": "instance_pass",
-                "calendar_urls": ["https://instance.example.com/cal"],
-            }
-        },
-    )
-
-    # Create a mock calendar tool function
-    # ast-grep-ignore: no-dict-any - CalendarConfig is a TypedDict with dynamic nested fields
-    async def mock_calendar_tool(calendar_config: CalendarConfig, summary: str) -> str:
-        """Mock calendar tool that requires calendar_config."""
-        caldav_config = calendar_config.get("caldav") or {}
-        username = caldav_config.get("username", "NO_USER")
-        return f"Calendar user: {username}, Event: {summary}"
-
-    # Create LocalToolsProvider with calendar_config
-    provider = LocalToolsProvider(
-        definitions=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "mock_calendar_tool",
-                    "description": "Test calendar tool",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "summary": {
-                                "type": "string",
-                                "description": "Event summary",
-                            }
-                        },
-                        "required": ["summary"],
-                    },
-                },
-            }
-        ],
-        implementations={"mock_calendar_tool": mock_calendar_tool},
-        calendar_config=instance_calendar_config,
-    )
-
-    # Create execution context
-    mock_db_context = MagicMock(spec=Database)
-    exec_context = ToolExecutionContext(
-        interface_type="test",
-        conversation_id="test_conv",
-        user_name="TestUser",
-        turn_id="test_turn",
-        db_context=mock_db_context,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        chat_interface=None,
-        timezone=ZoneInfo("UTC"),
-        camera_backend=None,
-        credential_resolvers=None,
-        api_backend=None,
-    )
-
-    # Execute the tool
-    result = await provider.execute_tool(
-        name="mock_calendar_tool",
-        arguments={"summary": "Important Meeting"},
-        context=exec_context,
-    )
-
-    # Should use instance config
-    assert result == "Calendar user: instance_user, Event: Important Meeting"

@@ -289,7 +289,6 @@ async def test_modify_event(
     local_provider_for_add = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        calendar_config=test_calendar_config_for_add,
     )
     mcp_provider_for_add = MCPToolsProvider(mcp_server_configs={})
     composite_provider_for_add = CompositeToolsProvider(
@@ -310,6 +309,7 @@ async def test_modify_event(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        calendar_config=test_calendar_config_for_add,
     )
     processing_service_for_add = ProcessingService(
         llm_client=RuleBasedMockLLMClient(
@@ -516,7 +516,6 @@ async def test_modify_event(
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        calendar_config=test_calendar_config,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite_provider = CompositeToolsProvider(
@@ -538,6 +537,7 @@ async def test_modify_event(
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         include_aggregated_context=True,
+        calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
         llm_client=llm_client,
@@ -715,7 +715,6 @@ async def test_delete_event(
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        calendar_config=test_calendar_config,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite_provider = CompositeToolsProvider(
@@ -737,6 +736,7 @@ async def test_delete_event(
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         include_aggregated_context=True,
+        calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced
@@ -968,7 +968,6 @@ async def test_search_events(
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        calendar_config=test_calendar_config,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite_provider = CompositeToolsProvider(
@@ -989,6 +988,7 @@ async def test_search_events(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced for each phase
@@ -1431,7 +1431,6 @@ async def test_similarity_based_search_finds_similar_events(
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
-        calendar_config=test_calendar_config,
     )
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite_provider = CompositeToolsProvider(
@@ -1452,6 +1451,7 @@ async def test_similarity_based_search_finds_similar_events(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        calendar_config=test_calendar_config,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced

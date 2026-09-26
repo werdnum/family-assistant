@@ -24,10 +24,12 @@ from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
+    CompositeToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
     PolicyRule,
+    TaintTrackingToolsProvider,
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -55,7 +57,7 @@ TEST_TIMEZONE_STR = "Australia/Sydney"
 
 def create_test_execution_context(
     db_context: Database,
-    tools_provider: LocalToolsProvider | None = None,
+    calendar_config: CalendarConfig | None = None,
 ) -> ToolExecutionContext:
     """Helper to create a ToolExecutionContext for tests with minimal boilerplate."""
     return ToolExecutionContext(
@@ -65,7 +67,7 @@ def create_test_execution_context(
         turn_id="test-turn",
         db_context=db_context,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
-        tools_provider=tools_provider,
+        calendar_config=calendar_config,
         processing_service=None,
         clock=None,
         event_sources=None,
@@ -208,11 +210,10 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     # Create a mock ToolExecutionContext with tools_provider
 
     # Create LocalToolsProvider with calendar config so renderer can fetch event details
-    mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
     db_ctx = Database(engine=pg_vector_db_engine)
     mock_context = create_test_execution_context(
-        db_context=db_ctx, tools_provider=mock_provider
+        db_context=db_ctx, calendar_config=test_calendar_config
     )
 
     test_args = {
@@ -307,11 +308,10 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
 
     # Test the delete confirmation renderer - async renderers fetch their own data
     # Create LocalToolsProvider with calendar config so renderer can fetch event details
-    mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
     db_ctx = Database(engine=pg_vector_db_engine)
     mock_context = create_test_execution_context(
-        db_context=db_ctx, tools_provider=mock_provider
+        db_context=db_ctx, calendar_config=test_calendar_config
     )
 
     test_args = {
@@ -380,10 +380,7 @@ async def test_confirming_tools_provider_with_calendar_events(
         },
     )
 
-    local_provider = LocalToolsProvider(
-        registrations=local_tool_registrations,
-        calendar_config=test_calendar_config,
-    )
+    local_provider = LocalToolsProvider(registrations=local_tool_registrations)
 
     # Track confirmation prompts
     confirmation_prompts_shown = []
@@ -437,6 +434,7 @@ async def test_confirming_tools_provider_with_calendar_events(
         chat_interface=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=capture_confirmation_callback,
+        calendar_config=test_calendar_config,
         camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
@@ -484,15 +482,11 @@ async def test_confirming_tools_provider_with_calendar_events(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_confirming_provider_sets_tools_provider_for_renderer(
+async def test_policy_confirmation_renders_event_details(
     pg_vector_db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
 ) -> None:
-    """Test that PolicyEnforcingToolsProvider makes calendar config available to confirmation renderers.
-
-    Reproduces production path where context.tools_provider starts as None
-    and must be set by PolicyEnforcingToolsProvider before the renderer runs.
-    """
+    """A policy-gated modify renders its prompt from the context's calendar config."""
     radicale_base_url, r_user, r_pass, test_calendar_url = radicale_server
 
     local_tz = ZoneInfo(TEST_TIMEZONE_STR)
@@ -518,10 +512,7 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
         },
     )
 
-    local_provider = LocalToolsProvider(
-        registrations=local_tool_registrations,
-        calendar_config=test_calendar_config,
-    )
+    local_provider = LocalToolsProvider(registrations=local_tool_registrations)
 
     rendered_prompts: list[str] = []
 
@@ -574,10 +565,10 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
         chat_interface=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=rendering_confirmation_callback,
+        calendar_config=test_calendar_config,
         camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
-        # tools_provider intentionally left as None to mimic production
     )
 
     test_args = {
@@ -606,6 +597,120 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_delete_confirmation_through_production_provider_chain(
+    pg_vector_db_engine: AsyncEngine,
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    """A delete through the production provider chain shows the event.
+
+    Production nests taint tracking around policy enforcement around a
+    composite; the prompt must show the event regardless. Also checks that one
+    call asks once and that approving it deletes the event.
+    """
+    radicale_base_url, r_user, r_pass, test_calendar_url = radicale_server
+
+    local_tz = ZoneInfo(TEST_TIMEZONE_STR)
+    event_summary = f"Ballet {uuid.uuid4()}"
+    start_dt = datetime.now(local_tz).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    ) + timedelta(days=3)
+    end_dt = start_dt + timedelta(hours=1)
+    event_uid = await create_test_event_in_radicale(
+        radicale_server, event_summary, start_dt, end_dt, pg_vector_db_engine
+    )
+
+    test_calendar_config = cast(
+        "CalendarConfig",
+        {
+            "caldav": {
+                "username": r_user,
+                "password": r_pass,
+                "base_url": radicale_base_url,
+                "calendar_urls": [test_calendar_url],
+            }
+        },
+    )
+    local_provider = LocalToolsProvider(registrations=local_tool_registrations)
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=CompositeToolsProvider(providers=[local_provider]),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["delete_calendar_event"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
+        confirmation_timeout=10.0,
+    )
+    chain = TaintTrackingToolsProvider(policy_provider, confirmation_timeout=10.0)
+
+    rendered_prompts: list[str] = []
+
+    async def rendering_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        # ast-grep-ignore: no-dict-any - tool args from external LLM tool call have dynamic fields
+        tool_args: dict[str, Any],
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        renderer = TOOL_CONFIRMATION_RENDERERS[tool_name]
+        rendered_prompts.append(await renderer(tool_args, context))
+        return ConfirmationOutcome(kind="approved")
+
+    db_ctx = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv-delete-chain",
+        user_name="TestUser",
+        turn_id="test-turn-delete-chain",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=local_tz,
+        request_confirmation_callback=rendering_confirmation_callback,
+        calendar_config=test_calendar_config,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await chain.execute_tool(
+        name="delete_calendar_event",
+        arguments={"uid": event_uid, "calendar_url": test_calendar_url},
+        context=exec_context,
+    )
+
+    assert len(rendered_prompts) == 1
+    prompt = rendered_prompts[0]
+    assert "Event details not found" not in prompt, prompt
+    assert event_summary in prompt
+    result_text = result.get_text() if isinstance(result, ToolResult) else result
+    assert "deleted" in result_text, result_text
+    assert (
+        await fetch_event_details_for_confirmation(
+            uid=event_uid,
+            calendar_url=test_calendar_url,
+            calendar_config=test_calendar_config,
+            timezone=local_tz,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_confirmation_when_event_not_found(
     db_engine: AsyncEngine,
 ) -> None:
@@ -613,13 +718,10 @@ async def test_confirmation_when_event_not_found(
 
     # Test with non-existent event - async renderer will try to fetch and fail gracefully
     # Create LocalToolsProvider with empty calendar config (no valid caldav server)
-    mock_provider = LocalToolsProvider(
-        [], {}, calendar_config=cast("CalendarConfig", {})
-    )
 
     db_ctx = Database(engine=db_engine)
     mock_context = create_test_execution_context(
-        db_context=db_ctx, tools_provider=mock_provider
+        db_context=db_ctx, calendar_config=cast("CalendarConfig", {})
     )
 
     test_args = {
@@ -643,13 +745,10 @@ async def test_modify_calendar_confirmation_shows_empty_string_changes(
     db_engine: AsyncEngine,
 ) -> None:
     """Empty string updates must be visible before the user approves them."""
-    mock_provider = LocalToolsProvider(
-        [], {}, calendar_config=cast("CalendarConfig", {})
-    )
 
     db_ctx = Database(engine=db_engine)
     mock_context = create_test_execution_context(
-        db_context=db_ctx, tools_provider=mock_provider
+        db_context=db_ctx, calendar_config=cast("CalendarConfig", {})
     )
 
     confirmation_prompt = await render_modify_calendar_event_confirmation(

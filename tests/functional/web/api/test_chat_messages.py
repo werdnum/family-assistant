@@ -111,9 +111,6 @@ async def test_tools_provider(
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,  # Not needed for add_note
-        calendar_config=cast(
-            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
-        ),
     )
     # Mock MCP provider as it's not the focus here
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)

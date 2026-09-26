@@ -4740,6 +4740,11 @@ class TaskWorker:
                     update_activity_callback=self._update_last_activity,  # Pass activity callback
                     embedding_generator=self.embedding_generator,
                     indexing_source=self.indexing_source,  # Pass the indexing source
+                    calendar_config=(
+                        self.processing_service.service_config.calendar_config
+                        if self.processing_service
+                        else None
+                    ),
                     visibility_grants=(
                         set(self.processing_service.service_config.visibility_grants)
                         if self.processing_service
@@ -6082,6 +6087,7 @@ async def handle_script_execution(
             home_assistant_client=processing_service.home_assistant_client,
             attachment_registry=processing_service.attachment_registry,
             camera_backend=processing_service.camera_backend,
+            calendar_config=processing_service.service_config.calendar_config,
             visibility_grants=(
                 set(processing_service.service_config.visibility_grants)
                 if processing_service.service_config.visibility_grants
@@ -6480,6 +6486,7 @@ async def _build_confirmation_execution_context(
         embedding_generator=exec_context.embedding_generator,
         indexing_source=exec_context.indexing_source,
         tools_provider=tools_provider,
+        calendar_config=processing_service.service_config.calendar_config,
         visibility_grants=processing_service.service_config.visibility_grants,
         default_note_visibility_labels=(
             processing_service.service_config.default_note_visibility_labels
