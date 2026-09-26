@@ -435,7 +435,14 @@ class ScriptValidator:
                 progress = session.feed_start(f"{_TYPE_CHECK_HALT}()\n{script}")
             except pydantic_monty.MontyTypingError as e:
                 diagnostics = _parse_typing_error(e)
-                return ValidationResult(is_valid=False, diagnostics=diagnostics)
+                # Type diagnostics on code that does not parse are noise, and
+                # callers classify a script by its first error.
+                syntax_errors = [
+                    d for d in diagnostics if d.message.startswith("Syntax error:")
+                ]
+                return ValidationResult(
+                    is_valid=False, diagnostics=syntax_errors or diagnostics
+                )
             except pydantic_monty.MontySyntaxError as e:
                 return ValidationResult(
                     is_valid=False,

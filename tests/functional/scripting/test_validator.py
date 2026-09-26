@@ -50,6 +50,12 @@ class TestScriptValidatorDiagnostics:
         assert result.errors[0].message.startswith("Syntax error:")
         assert result.errors[0].line == 2
 
+    def test_syntax_error_suppresses_type_errors(self) -> None:
+        v = ScriptValidator()
+        result = v.validate("if true")
+        assert not result.is_valid
+        assert all(d.message.startswith("Syntax error:") for d in result.errors)
+
     def test_valid_script_is_not_executed(self) -> None:
         v = ScriptValidator(config=ScriptConfig(max_execution_time=1))
         result = v.validate("while True:\n    pass")
