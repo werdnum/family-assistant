@@ -837,6 +837,43 @@ async def test_modify_google_event_patches_only_changed_fields(
 
 
 @pytest.mark.asyncio
+async def test_modify_google_event_preserves_other_private_properties(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = _alice_backend()
+    path = "/calendars/primary/events/evt-dentist"
+    existing = _event("evt-dentist", "Dentist")
+    existing["extendedProperties"] = {
+        "private": {
+            "otherIntegrationId": "external-123",
+            "familyAssistantProvenanceId": "old-marker",
+        }
+    }
+    backend.serve("tok-alice", "GET", path, existing)
+    backend.serve("tok-alice", "PATCH", path, _event("evt-dentist", "Orthodontist"))
+    ctx = _context(Database(db_engine), resolver=_alice_resolver(), backend=backend)
+
+    result = await modify_calendar_event_tool(
+        ctx,
+        NO_DUPLICATE_CHECK,
+        uid="evt-dentist",
+        calendar_id="google:primary",
+        new_summary="Orthodontist",
+    )
+
+    assert result.startswith("OK. Event 'Dentist' updated")
+    patch = backend.requests[-1]
+    assert isinstance(patch.body, dict)
+    properties = patch.body["extendedProperties"]
+    assert isinstance(properties, dict)
+    private = properties["private"]
+    assert isinstance(private, dict)
+    assert private["otherIntegrationId"] == "external-123"
+    UUID(private["familyAssistantProvenanceId"])
+    assert private["familyAssistantProvenanceId"] != "old-marker"
+
+
+@pytest.mark.asyncio
 async def test_modify_google_event_to_all_day_clears_the_time(
     db_engine: AsyncEngine,
 ) -> None:

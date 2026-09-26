@@ -1422,7 +1422,11 @@ async def _modify_google_event(
     if not body:
         return f"OK. Event '{original_summary}' checked (no changes made)."
     provenance_marker = new_event_marker()
-    body["extendedProperties"] = {"private": {PROVENANCE_PROPERTY: provenance_marker}}
+    extended_properties = existing.get("extendedProperties") or {}
+    private_properties = extended_properties.get("private") or {}
+    body["extendedProperties"] = {
+        "private": {**private_properties, PROVENANCE_PROPERTY: provenance_marker}
+    }
     try:
         changed = await client.patch_event(calendar_id, uid, body)
     except _GOOGLE_CALENDAR_ERRORS as exc:
