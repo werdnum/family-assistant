@@ -1555,6 +1555,9 @@ async def handle_llm_callback(
             taint_metadata=machine_authored_taint_metadata(
                 callback_trigger_taint_state
             ),
+            authorship_taint_metadata=machine_authored_taint_metadata(
+                callback_trigger_taint_state
+            ),
         )
         if existing_callback_trigger is None:
             await db_context.message_history.add_message(
@@ -3713,6 +3716,9 @@ class TaskWorker:
                 UserMessage(
                     content=self._delegation_wakeup_data_text(run),
                     taint_metadata=floor_machine_authored_metadata(
+                        wakeup_data_taint_metadata
+                    ),
+                    authorship_taint_metadata=floor_machine_authored_metadata(
                         wakeup_data_taint_metadata
                     ),
                 ),

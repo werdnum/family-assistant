@@ -196,7 +196,7 @@ async def test_web_chat_sends_push_notification_with_user_message(
     # First, save a user message to establish user_id in conversation
     db_context = Database(engine=db_engine)
     await db_context.message_history.add_message(
-        message=UserMessage(content="Hello, assistant"),
+        message=UserMessage.from_trusted_user(content="Hello, assistant"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=clock.now(),

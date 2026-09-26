@@ -115,7 +115,7 @@ async def test_send_message_to_user_tool(
     # Bob is only a legitimate target because he has already talked to the
     # assistant -- the tool refuses conversations it has no user message for.
     await fix.database.message_history.add_message(
-        UserMessage(content="Hi assistant"),
+        UserMessage.from_trusted_user(content="Hi assistant"),
         interface_type="telegram",
         conversation_id=str(bob_chat_id),
         timestamp=datetime.now(UTC),

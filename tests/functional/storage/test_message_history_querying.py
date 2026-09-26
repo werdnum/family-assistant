@@ -229,7 +229,7 @@ async def test_message_history_query_excludes_internal_rows_by_default(
     db = Database(engine=db_engine)
     now = datetime.now(UTC)
     await db.message_history.add_message(
-        UserMessage(content="Hidden delegated result data"),
+        UserMessage.from_trusted_user(content="Hidden delegated result data"),
         interface_type="test",
         conversation_id="current",
         timestamp=now,
@@ -238,7 +238,7 @@ async def test_message_history_query_excludes_internal_rows_by_default(
         is_internal=True,
     )
     await db.message_history.add_message(
-        UserMessage(content="Visible passport note"),
+        UserMessage.from_trusted_user(content="Visible passport note"),
         interface_type="test",
         conversation_id="current",
         timestamp=now + timedelta(seconds=1),
@@ -344,7 +344,7 @@ async def test_get_latest_user_profile_id_follows_most_recent_user_message(
     db = Database(engine=db_engine)
     now = datetime.now(UTC)
     await db.message_history.add_message(
-        UserMessage(content="Research and book it"),
+        UserMessage.from_trusted_user(content="Research and book it"),
         interface_type="test",
         conversation_id="conv-adopt",
         timestamp=now,
@@ -379,7 +379,7 @@ async def test_get_latest_user_profile_id_ignores_subconversations_and_empty(
     # The newest user row lives in a delegated subconversation under a
     # different profile; the foreground page omits it, so adoption must too.
     await db.message_history.add_message(
-        UserMessage(content="Top-level question"),
+        UserMessage.from_trusted_user(content="Top-level question"),
         interface_type="test",
         conversation_id="conv-sub",
         timestamp=now,
@@ -388,7 +388,7 @@ async def test_get_latest_user_profile_id_ignores_subconversations_and_empty(
         processing_profile_id="default_assistant",
     )
     await db.message_history.add_message(
-        UserMessage(content="Delegated sub-question"),
+        UserMessage.from_trusted_user(content="Delegated sub-question"),
         interface_type="test",
         conversation_id="conv-sub",
         timestamp=now + timedelta(seconds=5),
@@ -716,7 +716,7 @@ async def test_get_message_history_tool_excludes_internal_rows(
     """The model-facing history tool does not expose hidden wake rows."""
     db = Database(engine=db_engine)
     await db.message_history.add_message(
-        UserMessage(content="Hidden delegated completion payload"),
+        UserMessage.from_trusted_user(content="Hidden delegated completion payload"),
         interface_type="test",
         conversation_id="current",
         timestamp=datetime.now(UTC),
@@ -939,7 +939,7 @@ async def test_add_message_surfaces_index_enqueue_failures(
     db = Database(engine=db_engine)
     with pytest.raises(RuntimeError, match="queue unavailable"):
         await db.message_history.add_message(
-            UserMessage(content="Index me"),
+            UserMessage.from_trusted_user(content="Index me"),
             interface_type="test",
             conversation_id="current",
             timestamp=datetime.now(UTC),
@@ -976,7 +976,7 @@ async def test_add_message_raises_on_a_database_write_failure(
     db = Database(engine=db_engine)
     with pytest.raises(SQLAlchemyError, match="database unavailable"):
         await db.message_history.add_message(
-            UserMessage(content="Never stored"),
+            UserMessage.from_trusted_user(content="Never stored"),
             interface_type="test",
             conversation_id="write-failure",
             timestamp=datetime.now(UTC),
@@ -1273,7 +1273,7 @@ async def test_message_history_indexer_excludes_internal_rows(
     db = Database(engine=db_engine)
     timestamp = datetime.now(UTC)
     await db.message_history.add_message(
-        UserMessage(content="Hidden delegated wake payload"),
+        UserMessage.from_trusted_user(content="Hidden delegated wake payload"),
         interface_type="test",
         conversation_id="current",
         timestamp=timestamp,
@@ -1323,7 +1323,7 @@ async def _store_user_message(
     turn_id: str | None = None,
 ) -> None:
     await db.message_history.add_message(
-        UserMessage(content=content),
+        UserMessage.from_trusted_user(content=content),
         interface_type="test",
         conversation_id=conversation_id,
         timestamp=timestamp,
@@ -1498,7 +1498,7 @@ async def _seed_conversation(
     """
     for pair in range(message_pairs):
         await db.message_history.add_message(
-            UserMessage(content=f"user {pair} in {conversation_id}"),
+            UserMessage.from_trusted_user(content=f"user {pair} in {conversation_id}"),
             interface_type="web",
             conversation_id=conversation_id,
             timestamp=timestamp,
@@ -1517,7 +1517,7 @@ async def _seed_conversation(
         )
     if extra_owner is not None:
         await db.message_history.add_message(
-            UserMessage(content=f"foreign user in {conversation_id}"),
+            UserMessage.from_trusted_user(content=f"foreign user in {conversation_id}"),
             interface_type="web",
             conversation_id=conversation_id,
             timestamp=timestamp,

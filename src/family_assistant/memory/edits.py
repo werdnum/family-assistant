@@ -131,6 +131,7 @@ class EvidenceScope:
     turn_id: str | None = None
     first_internal_id: int | None = None
     last_internal_id: int | None = None
+    allowed_message_ids: frozenset[int] | None = None
 
     @classmethod
     def for_turn(
@@ -151,6 +152,7 @@ class EvidenceScope:
         conversation_id: str,
         first_internal_id: int,
         last_internal_id: int,
+        allowed_message_ids: frozenset[int],
     ) -> EvidenceScope:
         """The unreviewed stretch of a conversation, which is what a review cites."""
         return cls(
@@ -158,6 +160,7 @@ class EvidenceScope:
             conversation_id=conversation_id,
             first_internal_id=first_internal_id,
             last_internal_id=last_internal_id,
+            allowed_message_ids=allowed_message_ids,
         )
 
     def condition(self, message_ids: Iterable[int]) -> sa.ColumnElement[bool]:
@@ -175,6 +178,10 @@ class EvidenceScope:
             )
         if self.last_internal_id is not None:
             clauses.append(message_history_table.c.internal_id <= self.last_internal_id)
+        if self.allowed_message_ids is not None:
+            clauses.append(
+                message_history_table.c.internal_id.in_(self.allowed_message_ids)
+            )
         return sa.and_(*clauses)
 
     def describe(self) -> str:
@@ -183,5 +190,8 @@ class EvidenceScope:
         if self.turn_id is not None:
             return f"the current turn of {where}"
         if self.first_internal_id is not None and self.last_internal_id is not None:
-            return f"messages #{self.first_internal_id}-#{self.last_internal_id} of {where}"
+            return (
+                f"the shown messages in #{self.first_internal_id}-"
+                f"#{self.last_internal_id} of {where}"
+            )
         return where

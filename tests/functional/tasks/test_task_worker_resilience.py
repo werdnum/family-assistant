@@ -1207,7 +1207,7 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
 
     if genuine_response:
         await db_context.message_history.add_message(
-            UserMessage(content="I handled the reminder already."),
+            UserMessage.from_trusted_user(content="I handled the reminder already."),
             interface_type="telegram",
             conversation_id=conversation_id,
             interface_message_id="genuine-user-response-id",

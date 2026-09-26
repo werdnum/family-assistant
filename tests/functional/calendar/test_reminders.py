@@ -1260,7 +1260,7 @@ async def test_schedule_reminder_with_follow_up(
     response_timestamp = mock_clock.now() + timedelta(seconds=5)
     db_context = Database(engine=db_engine)
     await db_context.message_history.add_message(
-        message=UserMessage(content="OK, I took my medication!"),
+        message=UserMessage.from_trusted_user(content="OK, I took my medication!"),
         interface_type="test",
         conversation_id=str(test_chat_id),
         interface_message_id=str(user_message_id_response),

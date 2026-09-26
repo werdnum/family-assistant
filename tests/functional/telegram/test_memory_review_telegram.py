@@ -313,7 +313,11 @@ async def _seed_turn(
             user_id=speaker,
         )
         for message in (
-            UserMessage(content=said, taint_metadata=trusted),
+            UserMessage(
+                content=said,
+                taint_metadata=trusted,
+                authorship_taint_metadata=trusted,
+            ),
             AssistantMessage(content="Noted.", taint_metadata=trusted),
         )
     ]

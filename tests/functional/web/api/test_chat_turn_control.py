@@ -258,7 +258,7 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
     conversation_id = f"conv_persist_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="plan my week"),
+        UserMessage.from_trusted_user(content="plan my week"),
         interface_type="web",
         conversation_id=conversation_id,
         turn_id=turn_id,
@@ -354,7 +354,7 @@ async def test_stopped_reply_inherits_initial_history_taint(
     )
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="continue"),
+        UserMessage.from_trusted_user(content="continue"),
         interface_type="web",
         conversation_id=conversation_id,
         turn_id=turn_id,
@@ -405,7 +405,7 @@ async def test_stopped_reply_inherits_initial_context_taint(
     )
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="continue"),
+        UserMessage.from_trusted_user(content="continue"),
         interface_type="web",
         conversation_id=conversation_id,
         turn_id=turn_id,
@@ -456,7 +456,7 @@ async def test_stopped_reply_inherits_uncommitted_live_taint(
     )
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="continue"),
+        UserMessage.from_trusted_user(content="continue"),
         interface_type="web",
         conversation_id=conversation_id,
         turn_id=turn_id,
@@ -536,7 +536,7 @@ async def _seed_user_row(
 ) -> None:
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="hi"),
+        UserMessage.from_trusted_user(content="hi"),
         interface_type="web",
         conversation_id=conversation_id,
         turn_id=turn_id,
@@ -986,7 +986,7 @@ async def test_cancel_rejects_conversation_owned_by_another_user(
     conversation_id = f"conv_owned_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="victim's private message"),
+        UserMessage.from_trusted_user(content="victim's private message"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
@@ -1742,7 +1742,7 @@ async def test_steer_rejects_conversation_owned_by_another_user(
     conversation_id = f"conv_steerowned_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="victim's private message"),
+        UserMessage.from_trusted_user(content="victim's private message"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),

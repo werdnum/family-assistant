@@ -87,11 +87,11 @@ The v1 invariants, each of which is enforced by code rather than by prompt:
 - **Confined writes.** The curator writes memory notes and nothing else, through no broad tools.
 - **Bounded sizes.** The always-loaded memory contribution, every memory note, and every review
   input have fixed caps enforced at the write chokepoint for every writer.
-- **Provenance.** No memory is written from a turn whose recorded provenance is outside the trusted
-  pole, whoever writes it. *(Amended by
-  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): the boundary
-  is the reuse predicate, which admits `machine_reviewed` alongside the trusted pole; unreviewed
-  external taint is still refused.)*
+- **Provenance.** No memory is written from unreviewed outside content. A curator uses the
+  provenance of the rows it was shown, while a foreground write uses its turn's provenance. The
+  reuse predicate admits `machine_reviewed` material alongside the trusted pole; see
+  [memory-authorship-provenance.md](memory-authorship-provenance.md) and
+  [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md).
 - **Bounded, recoverable review.** A durable per-conversation watermark, reviews over bounded
   chunks, and a sweep that recovers from any crash by re-evaluating stored state.
 - **No silent stale overwrite.** A memory write is short, atomic with its watermark advance, and
@@ -345,38 +345,19 @@ exists, and one new read-side rule where it does not:
 
 The curator does not fetch history with `get_message_history`. That tool is a broadening sensitive
 read, which the taint matrix turns into a confirmation at high taint, and there is no human present
-to confirm. Instead the review task renders the unreviewed rows into the request text, the same way
-a delegation carries its request, and seeds the curator's taint tracker with the merged taint of
-those rows. Rendering user rows only, or omitting tool result bodies, changes what the model sees;
-it never changes the provenance the review carries.
+to confirm. Instead the review task renders the unreviewed rows into the request text, leaving out
+each row whose own provenance is not admissible for reuse. The curator's taint tracker is seeded
+from the rendered rows, and only those rows can be cited; the watermark still covers the whole
+stretch. Tool result bodies are omitted in any case. A stretch with no admissible message from a
+person is skipped before the model call and audited. Counters measure both skipped stretches and
+rows excluded from transcripts.
 
-**Memory holds nothing above the trusted pole, whoever writes it.** *(Amended by
-[ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md): the boundary is
-the reuse predicate — `TRUSTED_USER`, `TRUSTED_INTERNAL` and `MACHINE_REVIEWED` — not
-`is_externally_authored`, so material a judge admitted may be curated into memory and a memory note
-may carry `machine_reviewed`; everything below stands with that substitution.)* The trusted pole is
-the pair `TRUSTED_USER` and `TRUSTED_INTERNAL` in the existing `SourceTrustTier`, and the boundary
-is the one `is_externally_authored` already draws. The notes repository refuses any write to a
-memory-labelled note whose provenance stamp lies outside it. For the curator that means a review
-whose turn taint has risen above the ceiling cannot write and fails visibly; for the foreground
-assistant it means a "remember this" in a turn that has read an untrusted email is refused with a
-clear error. The guarantee is about origin, not truth: a household member can be wrong, a curator
-can misread them, and a true statement can still be a poor standing instruction. The evidence links
-and the evaluation are what address that.
-
-**Tainted stretches are skipped before the model call, and the loss is measured from day one.** The
-review task checks the merged taint of the unreviewed rows up front, and when it exceeds the ceiling
-it skips the stretch, advances the watermark, and records the skip. This is the conservative choice,
-and for this assistant its cost may be large: a user who says "for family hotels we need a separate
-sleeping area for the children" and then has the assistant search hotel sites loses that preference
-to the research that followed it, and research-heavy conversations are exactly where durable
-preferences and decisions tend to emerge. Skip observability is therefore part of the first
-milestone: how many stretches and how much user text are skipped, with a sampled review of skipped
-stretches to estimate the useful facts lost. The likely refinement, reviewing the user's own rows
-under their own recorded provenance when only later rows in the stretch are tainted, is the first
-item under future hardening, and the measurement decides when it is built. Tool result bodies are
-omitted from the rendered transcript in any case: the user's words and the assistant's replies carry
-what mattered, and tool output is where injected text lives.
+The notes repository still refuses a foreground write to a memory-labelled note when the writing
+turn has read unreviewed outside content. In a conversation eligible for later review, a foreground
+"remember this" request instead explains that the household's own words may be considered then,
+without claiming anything was saved. A household member can be wrong, and a curator can misread
+them; evidence links and evaluation address those risks. The full authorship rule and its deliberate
+simplifications are in [memory-authorship-provenance.md](memory-authorship-provenance.md).
 
 ### What the curator is asked to do
 
@@ -527,10 +508,6 @@ Each of these is a chosen limitation of v1, with the reason it is acceptable.
 
 Nothing here is built until the stated evidence appears. Each item names the trigger.
 
-- **Per-evidence provenance for the taint skip.** Review the user's own rows under their own
-  recorded provenance when only later rows in a stretch are tainted. Trigger: the skip measurement
-  from milestone 1 shows a material share of user text, or of useful facts in the sampled review,
-  being lost.
 - **Durable forgetting.** A suppression record for removed facts, honoured by the apply path across
   pending reviews and retries, with a rule for when a later human statement releases it. Trigger:
   removed facts observably returning, in the recent-changes view or the evaluation, at a rate people

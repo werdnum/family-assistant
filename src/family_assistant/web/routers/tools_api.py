@@ -177,7 +177,10 @@ async def execute_tool_api(
             raise HTTPException(status_code=404, detail="Voice conversation not found.")
         if not owner_ids:
             await db_context.message_history.add_message(
-                UserMessage(content=""),
+                UserMessage(
+                    content="",
+                    authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
                 interface_type="web",
                 conversation_id=voice_conversation_id,
                 timestamp=datetime.now(UTC),

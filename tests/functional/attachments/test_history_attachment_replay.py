@@ -32,7 +32,7 @@ async def _replay(
 ) -> UserMessage:
     db = Database(db_engine)
     await db.message_history.add_message(
-        UserMessage(content="What is this?"),
+        UserMessage.from_trusted_user(content="What is this?"),
         interface_type="web",
         conversation_id=CONVERSATION_ID,
         timestamp=datetime.now(UTC),

@@ -333,7 +333,7 @@ async def test_a_tier_command_keeps_the_profile_a_reply_adopts(
         fix, other_clients, ALL_TIERS, profile_id="specialist_profile"
     )
     await fix.database.message_history.add_message(
-        UserMessage(content="an earlier answer"),
+        UserMessage.from_trusted_user(content="an earlier answer"),
         interface_type="telegram",
         conversation_id=str(CHAT_ID),
         timestamp=datetime.now(UTC),
@@ -361,7 +361,7 @@ async def test_a_tier_command_on_a_reply_stays_in_that_thread(
     fix = telegram_handler_fixture
     install_tiered_service(fix, tier_clients, ALL_TIERS)
     root_id = await fix.database.message_history.add_message(
-        UserMessage(content="an earlier answer"),
+        UserMessage.from_trusted_user(content="an earlier answer"),
         interface_type="telegram",
         conversation_id=str(CHAT_ID),
         timestamp=datetime.now(UTC),

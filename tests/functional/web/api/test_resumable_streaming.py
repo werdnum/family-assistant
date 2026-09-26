@@ -425,7 +425,7 @@ async def test_post_turn_rejects_conversation_owned_by_another_user(
     # Seed a message owned by a *different* user directly in the DB.
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="victim's private message"),
+        UserMessage.from_trusted_user(content="victim's private message"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
@@ -508,14 +508,14 @@ async def test_stream_on_multi_owner_conversation_returns_404(
     conversation_id = f"conv_multi_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="from the caller"),
+        UserMessage.from_trusted_user(content="from the caller"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
         user_id="test_user",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="from another group member"),
+        UserMessage.from_trusted_user(content="from another group member"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
@@ -685,7 +685,7 @@ async def test_post_turn_rejects_turn_id_from_another_conversation(
     # The caller (test_user) already used this turn_id in another conversation.
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        message=UserMessage(content="original turn"),
+        message=UserMessage.from_trusted_user(content="original turn"),
         interface_type="web",
         conversation_id=other_conversation,
         interface_message_id=f"temp_{turn_id}",
@@ -1207,28 +1207,28 @@ async def test_conversation_list_filters_to_owned(
     await init_db(db_engine)
     await ctx.init_vector_db()
     await ctx.message_history.add_message(
-        UserMessage(content="mine"),
+        UserMessage.from_trusted_user(content="mine"),
         interface_type="web",
         conversation_id=owned,
         timestamp=datetime.now(UTC),
         user_id="test_user",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="theirs"),
+        UserMessage.from_trusted_user(content="theirs"),
         interface_type="web",
         conversation_id=foreign,
         timestamp=datetime.now(UTC),
         user_id="someone_else",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="mine in group"),
+        UserMessage.from_trusted_user(content="mine in group"),
         interface_type="web",
         conversation_id=multi,
         timestamp=datetime.now(UTC),
         user_id="test_user",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="theirs in group"),
+        UserMessage.from_trusted_user(content="theirs in group"),
         interface_type="web",
         conversation_id=multi,
         timestamp=datetime.now(UTC),
@@ -1269,7 +1269,7 @@ async def test_conversation_list_identity_maps_telegram_owner(
     # Stored under the raw Telegram numeric id, which canonicalizes to
     # test_user via the resolver.
     await ctx.message_history.add_message(
-        UserMessage(content="from telegram"),
+        UserMessage.from_trusted_user(content="from telegram"),
         interface_type="telegram",
         conversation_id=telegram_conv,
         timestamp=datetime.now(UTC),
@@ -1317,7 +1317,7 @@ async def test_conversation_list_attributes_unnormalized_stored_owner_ids(
     await init_db(db_engine)
     await ctx.init_vector_db()
     await ctx.message_history.add_message(
-        UserMessage(content="stored before normalization"),
+        UserMessage.from_trusted_user(content="stored before normalization"),
         interface_type="web",
         conversation_id=padded_conv,
         timestamp=datetime.now(UTC),
@@ -1354,7 +1354,7 @@ async def _seed_owned_conversations(
     for index in range(count):
         conversation_id = f"{prefix}_{index}_{uuid.uuid4().hex[:8]}"
         await ctx.message_history.add_message(
-            UserMessage(content=f"message {index}"),
+            UserMessage.from_trusted_user(content=f"message {index}"),
             interface_type="web",
             conversation_id=conversation_id,
             # Distinct increasing timestamps give a deterministic order.
@@ -1410,7 +1410,7 @@ async def test_conversation_list_count_is_ownership_filtered(
     ctx = Database(engine=db_engine)
     for index in range(4):
         await ctx.message_history.add_message(
-            UserMessage(content="theirs"),
+            UserMessage.from_trusted_user(content="theirs"),
             interface_type="web",
             conversation_id=f"conv_foreign_{index}_{uuid.uuid4().hex[:8]}",
             timestamp=datetime.now(UTC) + timedelta(seconds=100 + index),
@@ -1442,7 +1442,7 @@ async def test_conversation_list_pagination_has_no_empty_nonfinal_pages(
     ctx = Database(engine=db_engine)
     for index in range(10):
         await ctx.message_history.add_message(
-            UserMessage(content="theirs"),
+            UserMessage.from_trusted_user(content="theirs"),
             interface_type="web",
             conversation_id=f"conv_other_{index}_{uuid.uuid4().hex[:8]}",
             timestamp=datetime.now(UTC) + timedelta(seconds=200 + index),
@@ -1476,14 +1476,14 @@ async def test_conversation_list_multi_owner_excluded_from_count(
     multi = f"conv_shared_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="mine in group"),
+        UserMessage.from_trusted_user(content="mine in group"),
         interface_type="web",
         conversation_id=multi,
         timestamp=datetime.now(UTC) + timedelta(seconds=300),
         user_id="test_user",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="theirs in group"),
+        UserMessage.from_trusted_user(content="theirs in group"),
         interface_type="web",
         conversation_id=multi,
         timestamp=datetime.now(UTC) + timedelta(seconds=301),

@@ -69,7 +69,7 @@ async def _seed_due_conversation(
         profile_ids_contributing={CONTRIBUTOR}, now=ENABLED_AT
     )
     await db.message_history.add_message(
-        UserMessage(content="we always take the tram"),
+        UserMessage.from_trusted_user(content="we always take the tram"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=NOW - timedelta(minutes=45),
@@ -211,7 +211,7 @@ async def test_a_profile_configured_but_not_recorded_contributes_nothing(
     """Stored enablement is the other half: no moment, no eligible rows."""
     db = Database(engine=db_engine)
     await db.message_history.add_message(
-        UserMessage(content="we always take the tram"),
+        UserMessage.from_trusted_user(content="we always take the tram"),
         interface_type="web",
         conversation_id=CONVERSATION,
         timestamp=NOW - timedelta(minutes=45),

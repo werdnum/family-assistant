@@ -952,7 +952,7 @@ async def test_conversation_history_enriches_bare_attachment_references(
         user_id="test_user",
     )
     await db_context.message_history.add_message(
-        UserMessage(content="Show me the chart"),
+        UserMessage.from_trusted_user(content="Show me the chart"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
