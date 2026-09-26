@@ -77,48 +77,6 @@ class TestProfilePreambleInSystemPrompt:
     """Test that the profile preamble is injected into system prompts."""
 
     @pytest.mark.asyncio
-    async def test_preamble_contains_profile_id(self, db_engine: AsyncEngine) -> None:
-        """The system prompt should identify the active processing profile."""
-        service, mock_llm = _make_service("engineer")
-
-        db_context = Database(engine=db_engine)
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test-conv-1",
-            trigger_content_parts=[text_content("hello")],
-            trigger_interface_message_id="msg-1",
-            user_name="TestUser",
-        )
-
-        system_prompt = _get_system_prompt_from_calls(mock_llm)
-        assert "[Active Processing Profile: engineer]" in system_prompt
-
-    @pytest.mark.asyncio
-    async def test_preamble_makes_no_claim_about_how_profile_was_reached(
-        self, db_engine: AsyncEngine
-    ) -> None:
-        """A delegated run reaches a profile identically to a slash command.
-
-        Nothing in the prompt-formatting path knows which one happened, so the
-        preamble asserts neither.
-        """
-        service, mock_llm = _make_service("camera_analyst")
-
-        db_context = Database(engine=db_engine)
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test-conv-2",
-            trigger_content_parts=[text_content("check the front door")],
-            trigger_interface_message_id="msg-2",
-            user_name="TestUser",
-        )
-
-        system_prompt = _get_system_prompt_from_calls(mock_llm)
-        assert "explicitly selected" not in system_prompt
-
-    @pytest.mark.asyncio
     async def test_preamble_excludes_caller_facing_description(
         self, db_engine: AsyncEngine
     ) -> None:
@@ -150,7 +108,12 @@ class TestProfilePreambleInSystemPrompt:
     async def test_preamble_is_the_identity_line_alone(
         self, db_engine: AsyncEngine
     ) -> None:
-        """Everything ahead of the profile's own prompt is the one header line."""
+        """Everything ahead of the profile's own prompt is the one header line.
+
+        No description, no claim about how the profile was reached (a delegated
+        run and a slash command arrive identically), and no scope warning (the
+        tool policy enforces scope, and some profiles hold no tools at all).
+        """
         service, mock_llm = _make_service(
             "minimal_profile",
             description="Some catalog blurb",
@@ -168,56 +131,9 @@ class TestProfilePreambleInSystemPrompt:
         )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
-        head, _, _ = system_prompt.partition("You are a test assistant")
+        head, body_marker, _ = system_prompt.partition("You are a test assistant")
+        assert body_marker, "Expected the profile's own prompt in the system prompt"
         assert head.strip() == "[Active Processing Profile: minimal_profile]"
-
-    @pytest.mark.asyncio
-    async def test_preamble_precedes_profile_system_prompt(
-        self, db_engine: AsyncEngine
-    ) -> None:
-        """The preamble should appear before the profile's own system prompt."""
-        service, mock_llm = _make_service(
-            "default_assistant",
-            description="Main assistant",
-            system_prompt="You are a helpful family assistant for {user_name}.",
-        )
-
-        db_context = Database(engine=db_engine)
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test-conv-5",
-            trigger_content_parts=[text_content("hi")],
-            trigger_interface_message_id="msg-5",
-            user_name="TestUser",
-        )
-
-        system_prompt = _get_system_prompt_from_calls(mock_llm)
-        preamble_pos = system_prompt.index("[Active Processing Profile:")
-        body_pos = system_prompt.index("You are a helpful family assistant")
-        assert preamble_pos < body_pos
-
-    @pytest.mark.asyncio
-    async def test_preamble_omits_scope_warning(self, db_engine: AsyncEngine) -> None:
-        """Scope is what the tool policy enforces; prose about it only misleads.
-
-        A profile holding no tools at all -- ``coder``, ``media_analyst`` -- was
-        being warned about a tool surface it does not have.
-        """
-        service, mock_llm = _make_service("engineer")
-
-        db_context = Database(engine=db_engine)
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test-conv-6",
-            trigger_content_parts=[text_content("investigate")],
-            trigger_interface_message_id="msg-6",
-            user_name="TestUser",
-        )
-
-        system_prompt = _get_system_prompt_from_calls(mock_llm)
-        assert "outside your profile's scope" not in system_prompt
 
 
 class TestProfilePreambleInStream:
@@ -243,7 +159,7 @@ class TestProfilePreambleInStream:
             pass
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
-        assert "[Active Processing Profile: engineer]" in system_prompt
-        assert "explicitly selected" not in system_prompt
+        head, body_marker, _ = system_prompt.partition("You are a test assistant")
+        assert body_marker, "Expected the profile's own prompt in the system prompt"
+        assert head.strip() == "[Active Processing Profile: engineer]"
         assert "Read-only diagnostic access" not in system_prompt
-        assert "outside your profile's scope" not in system_prompt

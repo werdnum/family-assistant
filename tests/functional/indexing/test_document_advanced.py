@@ -409,6 +409,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     # The mock LLM client is passed directly to DocumentIndexer, no need to set app.state
 
     mock_chat_interface_summary = MagicMock()
+    test_shutdown_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=_create_mock_processing_service(),
@@ -416,6 +417,7 @@ async def test_document_indexing_with_llm_summary_e2e(
         calendar_config={},
         timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
+        shutdown_event_instance=test_shutdown_event,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
@@ -427,10 +429,8 @@ async def test_document_indexing_with_llm_summary_e2e(
 
     worker_id = f"test-doc-summary-worker-{uuid.uuid4()}"
     logger.info(f"Starting document summary worker: {worker_id}")  # Use worker_id
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     document_db_id = None
     indexing_task_id = None
@@ -470,13 +470,13 @@ async def test_document_indexing_with_llm_summary_e2e(
 
         # Fetch task ID
         db = Database(engine=pg_vector_db_engine)
-        await asyncio.sleep(0.2)
         select_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
+                tasks_table.c.task_type == "process_uploaded_document",
                 tasks_table.c.payload.cast(sqlalchemy.Text).like(
                     f'%"document_id": {document_db_id}%'
-                )
+                ),
             )
             .order_by(tasks_table.c.created_at.desc())
             .limit(1)
@@ -549,6 +549,7 @@ async def test_document_indexing_with_llm_summary_e2e(
     finally:
         # Cleanup
         test_shutdown_event.set()
+        test_new_task_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
         except TimeoutError:
@@ -675,6 +676,7 @@ async def test_url_indexing_e2e(
     # --- Arrange: Task Worker Setup ---
     # The mock embedding generator is injected via dependency override in http_client fixture
     mock_chat_interface_url = MagicMock()
+    test_shutdown_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=_create_mock_processing_service(),
@@ -682,6 +684,7 @@ async def test_url_indexing_e2e(
         calendar_config={},
         timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
+        shutdown_event_instance=test_shutdown_event,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
@@ -694,11 +697,9 @@ async def test_url_indexing_e2e(
     )
 
     worker_id = f"test-url-worker-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id} for URL test...")
-    await asyncio.sleep(0.1)
 
     document_db_id = None
     indexing_task_id = None
@@ -730,13 +731,13 @@ async def test_url_indexing_e2e(
 
         # Fetch task ID
         db = Database(engine=pg_vector_db_engine)
-        await asyncio.sleep(0.2)  # Give task time to appear
         select_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
+                tasks_table.c.task_type == "process_uploaded_document",
                 tasks_table.c.payload.cast(sqlalchemy.Text).like(
                     f'%"document_id": {document_db_id}%'
-                )
+                ),
             )
             .order_by(tasks_table.c.created_at.desc())
             .limit(1)
@@ -841,6 +842,7 @@ async def test_url_indexing_e2e(
         # Cleanup
         logger.info(f"Stopping background task worker {worker_id} for URL test...")
         test_shutdown_event.set()
+        test_new_task_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
             logger.info(f"Background task worker {worker_id} for URL test stopped.")
@@ -959,6 +961,7 @@ async def test_url_indexing_auto_title_e2e(
 
     # --- Arrange: Task Worker Setup ---
     mock_chat_interface_auto_title = MagicMock()
+    test_shutdown_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=_create_mock_processing_service(),
@@ -966,6 +969,7 @@ async def test_url_indexing_auto_title_e2e(
         calendar_config={},
         timezone=ZoneInfo("UTC"),
         embedding_generator=mock_embedding_generator,
+        shutdown_event_instance=test_shutdown_event,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
@@ -978,11 +982,9 @@ async def test_url_indexing_auto_title_e2e(
     )
 
     worker_id = f"test-auto-title-worker-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id} for auto-title test...")
-    await asyncio.sleep(0.1)
 
     document_db_id = None
     indexing_task_id = None
@@ -1016,13 +1018,13 @@ async def test_url_indexing_auto_title_e2e(
 
         # Fetch task ID
         db = Database(engine=pg_vector_db_engine)
-        await asyncio.sleep(0.2)
         select_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
+                tasks_table.c.task_type == "process_uploaded_document",
                 tasks_table.c.payload.cast(sqlalchemy.Text).like(
                     f'%"document_id": {document_db_id}%'
-                )
+                ),
             )
             .order_by(tasks_table.c.created_at.desc())
             .limit(1)
@@ -1095,6 +1097,7 @@ async def test_url_indexing_auto_title_e2e(
             f"Stopping background task worker {worker_id} for auto-title test..."
         )
         test_shutdown_event.set()
+        test_new_task_event.set()
         try:
             await asyncio.wait_for(worker_task, timeout=5.0)
         except TimeoutError:

@@ -1,5 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import type React from 'react';
+import { describe, expect, it, vi } from 'vitest';
 import { AttachmentPreview } from '../AttachmentPreview';
 
 describe('AttachmentPreview', () => {
@@ -17,15 +19,26 @@ describe('AttachmentPreview', () => {
     });
   });
 
-  it('renders remove button when canRemove is true', async () => {
+  it('removes the attachment by id without submitting the enclosing form', async () => {
+    const user = userEvent.setup();
     const handleRemove = vi.fn();
+    const handleSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
     render(
-      <AttachmentPreview attachmentId="test-attachment" onRemove={handleRemove} canRemove={true} />
+      <form onSubmit={handleSubmit}>
+        <AttachmentPreview
+          attachmentId="test-attachment"
+          onRemove={handleRemove}
+          canRemove={true}
+        />
+      </form>
     );
 
-    await waitFor(() => {
-      expect(screen.getByTitle('Remove attachment')).toBeInTheDocument();
-    });
+    await user.click(await screen.findByTitle('Remove attachment'));
+
+    expect(handleRemove).toHaveBeenCalledTimes(1);
+    expect(handleRemove).toHaveBeenCalledWith('test-attachment');
+    expect(handleSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('does not render remove button when canRemove is false', async () => {

@@ -379,27 +379,24 @@ class TestDocumentRetrieval:
             db_context=db_context,
             document_id=document_id,
             chunk_index=0,
-            embedding_type="full_text",
+            embedding_type="raw_file_text",
             embedding=test_embedding,
             embedding_model="mock-embedding-model",
             content="Missing PDF Document content",
         )
 
-        # Remove the file to simulate missing file
         stored_files = [
             p async for p in anyio.Path(temp_storage_path).glob("*missing.pdf")
         ]
+        assert len(stored_files) == 1
         for file_path in stored_files:
             await anyio.Path(file_path).unlink()
 
-        # Retrieve should fall back to text content
         content_result = await get_full_document_content_tool(
             exec_context=exec_context, document_id=document_id
         )
 
-        # Should fall back to string when file is missing
-        # (PDF processing would have extracted text during indexing)
-        assert isinstance(content_result, str)
+        assert content_result == "Missing PDF Document content"
 
     @pytest.mark.postgres
     async def test_file_size_limit_fallback(
@@ -458,19 +455,17 @@ class TestDocumentRetrieval:
             db_context=db_context,
             document_id=document_id,
             chunk_index=0,
-            embedding_type="full_text",
+            embedding_type="raw_file_text",
             embedding=test_embedding,
             embedding_model="mock-embedding-model",
             content="Large Document content",
         )
 
-        # Retrieve should fall back to text due to size limit
         content_result = await get_full_document_content_tool(
             exec_context=exec_context, document_id=document_id
         )
 
-        # Should fall back to string for large files
-        assert isinstance(content_result, str)
+        assert content_result == "Large Document content"
 
     @pytest.mark.postgres
     async def test_file_path_persistence(

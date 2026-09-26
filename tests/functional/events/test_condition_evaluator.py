@@ -154,13 +154,6 @@ class TestEventConditionEvaluator:
             await evaluator.evaluate_condition(script, {})
 
     @pytest.mark.asyncio
-    async def test_no_tool_access(self, evaluator: EventConditionEvaluator) -> None:
-        """Test that tools are not accessible."""
-        script = "tools_list()"
-        with pytest.raises(ScriptExecutionError):
-            await evaluator.evaluate_condition(script, {})
-
-    @pytest.mark.asyncio
     async def test_no_print_function(self, evaluator: EventConditionEvaluator) -> None:
         """Test that print is not available."""
         script = "print('test') or True"
@@ -207,22 +200,6 @@ class TestEventConditionEvaluator:
             await evaluator.evaluate_condition("time_hour(time_now()) >= 0", {})
 
     @pytest.mark.asyncio
-    async def test_time_api_in_realistic_condition(
-        self, evaluator: EventConditionEvaluator
-    ) -> None:
-        """Realistic afternoon-arrival condition combining state + time."""
-        script = (
-            "event.get('old_state', {}).get('state') != 'Barangaroo Metro' "
-            "and time_hour(time_now()) >= 0"
-        )
-        event_data = {
-            "old_state": {"state": "Wynyard"},
-            "new_state": {"state": "Barangaroo Metro"},
-        }
-        result = await evaluator.evaluate_condition(script, event_data)
-        assert result is True
-
-    @pytest.mark.asyncio
     async def test_llm_api_not_available(
         self, evaluator: EventConditionEvaluator
     ) -> None:
@@ -233,7 +210,7 @@ class TestEventConditionEvaluator:
         cost path, so it must be unreachable at runtime regardless of the
         rest of the API surface.
         """
-        with pytest.raises(ScriptExecutionError):
+        with pytest.raises(ScriptExecutionError, match=r"name 'llm' is not defined"):
             await evaluator.evaluate_condition("llm('hi') == 'x'", {})
 
     @pytest.mark.asyncio
@@ -247,7 +224,9 @@ class TestEventConditionEvaluator:
         call them must fail at runtime, matching what the validator rejects
         at save-time.
         """
-        with pytest.raises(ScriptExecutionError):
+        with pytest.raises(
+            ScriptExecutionError, match=r"name 'tools_list' is not defined"
+        ):
             await evaluator.evaluate_condition("tools_list() == []", {})
 
     @pytest.mark.asyncio
@@ -260,7 +239,9 @@ class TestEventConditionEvaluator:
         registry is never wired up and attachment_* names are never registered
         at runtime.
         """
-        with pytest.raises(ScriptExecutionError):
+        with pytest.raises(
+            ScriptExecutionError, match=r"name 'attachment_get' is not defined"
+        ):
             await evaluator.evaluate_condition("attachment_get('x') is not None", {})
 
 
@@ -367,6 +348,8 @@ class TestEventConditionValidator:
         is_valid, error = await validator.validate_script("llm('x') == 'y'")
         assert is_valid is False
         assert error is not None
+        assert error.startswith("Type error"), error
+        assert "llm" in error
 
     @pytest.mark.asyncio
     async def test_validator_rejects_tools_execute(
@@ -381,6 +364,8 @@ class TestEventConditionValidator:
         )
         assert is_valid is False
         assert error is not None
+        assert error.startswith("Type error"), error
+        assert "tools_execute" in error
 
     @pytest.mark.asyncio
     async def test_validator_rejects_tools_list(
@@ -395,6 +380,8 @@ class TestEventConditionValidator:
         is_valid, error = await validator.validate_script("tools_list() == []")
         assert is_valid is False
         assert error is not None
+        assert error.startswith("Type error"), error
+        assert "tools_list" in error
 
     @pytest.mark.asyncio
     async def test_validator_rejects_attachment_get(
@@ -408,3 +395,5 @@ class TestEventConditionValidator:
         )
         assert is_valid is False
         assert error is not None
+        assert error.startswith("Type error"), error
+        assert "attachment_get" in error

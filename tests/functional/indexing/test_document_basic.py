@@ -31,6 +31,7 @@ from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.scraping import MockScraper
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_embedding_generator_dependency
+from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -282,12 +283,16 @@ async def test_document_indexing_and_query_e2e(
     dummy_timezone_str = "UTC"
     mock_chat_interface = MagicMock()  # Create a mock ChatInterface
 
+    test_shutdown_event = asyncio.Event()
+    test_new_task_event = asyncio.Event()
+
     worker = TaskWorker(
         processing_service=_create_mock_processing_service(),  # No processing service needed for this handler
         chat_interface=mock_chat_interface,  # Pass mock ChatInterface
         calendar_config=None,
         timezone=ZoneInfo(dummy_timezone_str),
         embedding_generator=mock_embedding_generator,  # Pass the mock generator
+        shutdown_event_instance=test_shutdown_event,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
@@ -303,15 +308,7 @@ async def test_document_indexing_and_query_e2e(
     )
 
     # --- Act: Start Background Worker ---
-    worker_id = f"test-doc-worker-{uuid.uuid4()}"
-    test_shutdown_event = asyncio.Event()  # Use local event for worker control
-    test_new_task_event = asyncio.Event()  # Worker will wait on this
-
-    worker_task = asyncio.create_task(
-        worker.run(test_new_task_event)  # Pass the event to the worker's run method
-    )
-    logger.info(f"Started background task worker {worker_id}...")
-    await asyncio.sleep(0.1)  # Give worker time to start
+    worker_task = asyncio.create_task(worker.run(test_new_task_event))
 
     document_db_id = None
     indexing_task_id = None
@@ -346,8 +343,6 @@ async def test_document_indexing_and_query_e2e(
         # --- Act: Fetch the Task ID ---
         # Need to query the DB to find the task enqueued by the API call
         db = Database(engine=pg_vector_db_engine)
-        # Wait briefly for task to likely appear in DB after API commit
-        await asyncio.sleep(0.2)
         select_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
@@ -373,9 +368,6 @@ async def test_document_indexing_and_query_e2e(
         )
 
         # --- Act: Wait for Indexing Task Completion ---
-        # Signal the worker (in case it was waiting) - API doesn't pass the event,
-        # but worker polls periodically anyway. Setting it ensures faster pickup if needed.
-        test_new_task_event.set()
         logger.info(f"Waiting for task {indexing_task_id} to complete...")
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,
@@ -501,21 +493,12 @@ async def test_document_indexing_and_query_e2e(
 
     finally:
         # --- Cleanup ---
-        # Stop the worker
-        logger.info(f"Stopping background task worker {worker_id}...")
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-            logger.info(f"Background task worker {worker_id} stopped.")
-        except TimeoutError:
-            logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
-            worker_task.cancel()
-            try:
-                await worker_task
-            except asyncio.CancelledError:
-                logger.info(f"Worker task {worker_id} cancellation confirmed.")
-        except Exception as e:
-            logger.exception(f"Error stopping worker task {worker_id}: {e}")
+        await cleanup_task_worker(
+            worker_task,
+            test_shutdown_event,
+            test_new_task_event,
+            test_name="test_document_indexing_and_query_e2e",
+        )
 
         # Clean up document and task
         if document_db_id:

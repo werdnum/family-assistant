@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -33,6 +34,7 @@ from family_assistant.processing import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
+from family_assistant.processing.service import ProcessingService
 from family_assistant.processing.types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
@@ -70,13 +72,7 @@ from family_assistant.task_worker import (
 )
 from family_assistant.tools.confirmation import render_generic_tool_confirmation
 from family_assistant.tools.metadata import ToolDescriptor
-
-# The inline-delivery helpers are module-internal but are exercised directly here
-# to cover the tool-side fast path (notified-at marking and empty-text attachment
-# delivery) without standing up a concurrent worker loop.
 from family_assistant.tools.services import (
-    _completed_delegation_result,  # noqa: PLC2701
-    _inline_delegation_result,  # noqa: PLC2701
     delegate_to_service_tool,
     get_delegation_status_tool,
     list_delegations_tool,
@@ -87,17 +83,19 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
 )
 from family_assistant.utils.clock import SystemClock
+from tests.helpers import wait_for_condition
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.processing.service import ProcessingService
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunCreate,
+        DelegationRunDict,
     )
     from family_assistant.telegram.protocols import ConfirmationUIManager
+    from family_assistant.tools.types import ToolResult
 
 TEST_INTERFACE_TYPE = "test_interface"
 TEST_CONVERSATION_ID = "async_delegation_chat"
@@ -200,6 +198,7 @@ class FakeDelegatableService:
         attachment_registry: AttachmentRegistry | None = None,
         tier_eligibility: ModelTierEligibility | None = None,
         routes_to: ResolvedModelSelection | None = None,
+        text_reply: str = "background delegation done",
     ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
@@ -208,6 +207,7 @@ class FakeDelegatableService:
         )
         self.request_confirmation = request_confirmation
         self.attachment_registry = attachment_registry
+        self.text_reply = text_reply
         self.calls: list[FakeDelegationCall] = []
         self.routes_to = routes_to
         """What this target's Auto decides, if it routes at all."""
@@ -284,46 +284,43 @@ class FakeDelegatableService:
             )
             attachment_ids = [attachment.attachment_id]
         return ChatInteractionResult.success(
-            text_reply="background delegation done",
+            text_reply=self.text_reply,
             attachment_ids=attachment_ids,
         )
 
 
-class TaintReadingDelegatableService:
+class TaintReadingDelegatableService(FakeDelegatableService):
     """Target service that reads untrusted content during its delegated turn.
 
     Persists an assistant row into its own delegated subconversation carrying
     unknown_external taint, modeling a delegation that read attacker-controlled
-    data even though the parent that queued it was trusted.
+    data even though the parent that queued it was trusted. ``row_taint``
+    overrides the stamp, for a delegate that read nothing external.
     """
 
-    kind = "local"
-
-    def __init__(self) -> None:
-        self.service_config = SimpleNamespace(
-            id="target_profile",
-            allowed_delegation_sources=["source_profile"],
-            tier_eligibility=ModelTierEligibility(),
-        )
-        self.calls: list[FakeDelegationCall] = []
+    def __init__(self, *, row_taint: TaintMetadata | None = None) -> None:
+        super().__init__()
+        if row_taint is None:
+            tainted_state = TurnTaintState.empty().add_source(
+                TaintSource(
+                    source_type=TaintSourceType.EMAIL,
+                    source_id="attacker-email",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="delegated read of untrusted email",
+                )
+            )
+            row_taint = tainted_state.to_metadata()
+        self.row_taint = row_taint
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.calls.append(cast("FakeDelegationCall", kwargs))
         db_context = cast("Database", kwargs["db_context"])
         subconversation_id = cast("str | None", kwargs["subconversation_id"])
-        tainted_state = TurnTaintState.empty().add_source(
-            TaintSource(
-                source_type=TaintSourceType.EMAIL,
-                source_id="attacker-email",
-                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-                labels=frozenset(),
-                reason="delegated read of untrusted email",
-            )
-        )
         await db_context.message_history.add_message(
             AssistantMessage(
                 content="delegated result derived from untrusted content",
-                taint_metadata=tainted_state.to_metadata(),
+                taint_metadata=self.row_taint,
             ),
             interface_type=kwargs["interface_type"],
             conversation_id=kwargs["conversation_id"],
@@ -1021,9 +1018,7 @@ async def test_notification_uses_delegated_result_taint_not_trusted_parent(
     taint.
     """
     target_service = TaintReadingDelegatableService()
-    processing_service = _source_processing_service(
-        cast("FakeDelegatableService", target_service)
-    )
+    processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
@@ -1120,17 +1115,14 @@ async def test_failed_delivery_is_not_recorded_as_notified(
     run = await db_context.delegation_runs.get_by_delegation_id("delegation_send_fails")
     assert run is not None
     assert run["notified_at"] is None
-    # Nothing was recorded for the undelivered notification.
-    rows = await db_context.fetch_all(
-        select(message_history_table).where(
-            message_history_table.c.conversation_id == TEST_CONVERSATION_ID
-        )
+    # Nothing was recorded for the undelivered notification. The run was
+    # already terminal, so the delegate did not run again and wrote nothing.
+    assistant_rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.role == "assistant")
     )
-    assert [
-        row["content"]
-        for row in rows
-        if row["content"] and row["content"].startswith("Delegated task")
-    ] == []
+    assert assistant_rows == []
 
 
 @pytest.mark.asyncio
@@ -1418,6 +1410,7 @@ async def test_worker_commits_delegated_attachments_before_notification(
     )
 
     assert chat_interface.sent_attachment_ids is not None
+    assert len(chat_interface.sent_attachment_ids) == 1
     assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
 
     db_context = Database(engine=db_engine)
@@ -2003,6 +1996,52 @@ async def test_cleanup_recovers_terminal_unnotified_run(
     assert run["notified_at"] is not None
 
 
+async def _delegate_with_fast_completion(
+    db_engine: AsyncEngine,
+    exec_context: ToolExecutionContext,
+    chat_interface: ChatInterface,
+) -> tuple[ToolResult, str]:
+    """Call delegate_to_service in auto mode while a worker finishes the run fast.
+
+    The worker is driven by hand, as elsewhere in this file, once the tool has
+    queued the run. The tool is still inside its handoff window then, so it
+    collects the terminal result and returns it as its own output.
+    """
+    processing_service = cast("ProcessingService", exec_context.processing_service)
+
+    async def queued_runs() -> list[DelegationRunDict]:
+        return await Database(engine=db_engine).delegation_runs.list_for_conversation(
+            conversation_id=TEST_CONVERSATION_ID,
+            interface_type=TEST_INTERFACE_TYPE,
+            status=None,
+            limit=1,
+        )
+
+    async with asyncio.TaskGroup() as group:
+        tool_call = group.create_task(
+            delegate_to_service_tool(
+                exec_context=exec_context,
+                target_service_id="target_profile",
+                user_request="answer this quickly",
+                delivery_hint="auto",
+                handoff_after_seconds=60.0,
+            )
+        )
+        runs = await wait_for_condition(
+            queued_runs, description="the run delegate_to_service queued"
+        )
+        delegation_id = runs[0]["delegation_id"]
+        await _build_worker(
+            db_engine, processing_service, chat_interface
+        ).handle_delegated_profile_run(
+            _tool_context(
+                Database(engine=db_engine), processing_service, chat_interface
+            ),
+            _payload(delegation_id),
+        )
+    return tool_call.result(), delegation_id
+
+
 @pytest.mark.asyncio
 async def test_inline_delivery_marks_run_notified(db_engine: AsyncEngine) -> None:
     """Delivering a terminal result inline records notified_at.
@@ -2014,34 +2053,23 @@ async def test_inline_delivery_marks_run_notified(db_engine: AsyncEngine) -> Non
     """
     target_service = FakeDelegatableService()
     processing_service = _source_processing_service(target_service)
-    clock = SystemClock()
+    chat_interface = AsyncMock(spec=ChatInterface)
 
-    db_context = Database(engine=db_engine)
-    await _create_run(db_context, delegation_id="delegation_inline")
-    await db_context.delegation_runs.mark_completed(
-        delegation_id="delegation_inline",
-        result_text="fast inline result",
-        result_attachment_ids=[],
-        completed_at=clock.now(),
+    result, delegation_id = await _delegate_with_fast_completion(
+        db_engine,
+        _tool_context(Database(engine=db_engine), processing_service),
+        chat_interface,
     )
 
-    db_context = Database(engine=db_engine)
-    run = await db_context.delegation_runs.get_by_delegation_id("delegation_inline")
+    assert result.text == "background delegation done"
+    chat_interface.send_message.assert_not_awaited()
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        delegation_id
+    )
     assert run is not None
-    assert run["notified_at"] is None
-    result = await _inline_delegation_result(
-        _tool_context(db_context, processing_service),
-        target_service_id="target_profile",
-        run=run,
-    )
-    assert result is not None
-    assert result.text == "fast inline result"
-
-    db_context = Database(engine=db_engine)
-    marked = await db_context.delegation_runs.get_by_delegation_id("delegation_inline")
-    assert marked is not None
-    assert marked["notified_at"] is not None
-    assert marked["handed_off_at"] is None
+    assert run["status"] == "completed"
+    assert run["notified_at"] is not None
+    assert run["handed_off_at"] is None
 
 
 @pytest.mark.parametrize(
@@ -2063,36 +2091,16 @@ async def test_inline_delivery_returns_the_delegate_turns_taint(
     delegate_row_taint: TaintMetadata,
     expected_tier: SourceTrustTier,
 ) -> None:
-    target_service = FakeDelegatableService()
+    target_service = TaintReadingDelegatableService(row_taint=delegate_row_taint)
     processing_service = _source_processing_service(target_service)
-    clock = SystemClock()
-    db_context = Database(engine=db_engine)
-    await _create_run(db_context, delegation_id="delegation_taint")
-    await db_context.message_history.add_message(
-        AssistantMessage(content="the answer", taint_metadata=delegate_row_taint),
-        interface_type=TEST_INTERFACE_TYPE,
-        conversation_id=TEST_CONVERSATION_ID,
-        timestamp=clock.now(),
-        turn_id="turn_delegate",
-        thread_root_id=None,
-        processing_profile_id="target_profile",
-        subconversation_id="sub_delegation_taint",
-        user_id="async-delegation-user",
-    )
-    await db_context.delegation_runs.mark_completed(
-        delegation_id="delegation_taint",
-        result_text="the answer",
-        result_attachment_ids=[],
-        completed_at=clock.now(),
-    )
-    run = await db_context.delegation_runs.get_by_delegation_id("delegation_taint")
-    assert run is not None
     tracker = InMemoryTurnTaintTracker()
 
-    await _inline_delegation_result(
-        _tool_context(db_context, processing_service, taint_tracker=tracker),
-        target_service_id="target_profile",
-        run=run,
+    await _delegate_with_fast_completion(
+        db_engine,
+        _tool_context(
+            Database(engine=db_engine), processing_service, taint_tracker=tracker
+        ),
+        AsyncMock(spec=ChatInterface),
     )
 
     assert tracker.snapshot().max_tier is expected_tier
@@ -2113,33 +2121,21 @@ async def test_cleanup_does_not_redeliver_inline_delivered_run(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
-    clock = SystemClock()
-    stale_completed_at = clock.now() - timedelta(hours=2)
-    db_context = Database(engine=db_engine)
-    await _create_run(db_context, delegation_id="delegation_inline_aged")
-    await db_context.delegation_runs.mark_completed(
-        delegation_id="delegation_inline_aged",
-        result_text="delivered inline",
-        result_attachment_ids=[],
-        completed_at=stale_completed_at,
+    _, delegation_id = await _delegate_with_fast_completion(
+        db_engine,
+        _tool_context(Database(engine=db_engine), processing_service),
+        chat_interface,
     )
-
-    db_context = Database(engine=db_engine)
-    run = await db_context.delegation_runs.get_by_delegation_id(
-        "delegation_inline_aged"
-    )
-    assert run is not None
-    # The caller delivers the terminal result inline, which marks it notified.
-    await _inline_delegation_result(
-        _tool_context(db_context, processing_service),
-        target_service_id="target_profile",
-        run=run,
+    # Age the run past the sweep's completed_at window.
+    await Database(engine=db_engine).execute(
+        update(delegation_runs_table)
+        .where(delegation_runs_table.c.delegation_id == delegation_id)
+        .values(completed_at=SystemClock().now() - timedelta(hours=2))
     )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    db_context = Database(engine=db_engine)
     await worker.handle_delegation_run_cleanup(
-        _tool_context(db_context, processing_service, chat_interface),
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
         {"running_timeout_seconds": 60.0},
     )
 
@@ -2163,47 +2159,30 @@ async def test_inline_result_delivers_attachments_when_text_empty(
         db_engine=db_engine,
         config=None,
     )
-    target_service = FakeDelegatableService()
+    target_service = FakeDelegatableService(
+        attachment_registry=attachment_registry, text_reply=""
+    )
     processing_service = _source_processing_service(target_service)
-    clock = SystemClock()
 
-    db_context = Database(engine=db_engine)
-    stored = await attachment_registry.store_and_register_tool_attachment(
-        file_content=b"chart bytes",
-        filename="chart.png",
-        content_type="image/png",
-        tool_name="data_visualization",
-        description="Generated chart",
-        conversation_id=TEST_CONVERSATION_ID,
-        db_context=db_context,
-        taint_state=TurnTaintState.empty(),
-    )
-    await _create_run(db_context, delegation_id="delegation_attach_no_text")
-    await db_context.delegation_runs.mark_completed(
-        delegation_id="delegation_attach_no_text",
-        result_text=None,
-        result_attachment_ids=[stored.attachment_id],
-        completed_at=clock.now(),
-    )
-
-    db_context = Database(engine=db_engine)
-    run = await db_context.delegation_runs.get_by_delegation_id(
-        "delegation_attach_no_text"
-    )
-    assert run is not None
-    result = await _completed_delegation_result(
+    result, delegation_id = await _delegate_with_fast_completion(
+        db_engine,
         _tool_context(
-            db_context,
+            Database(engine=db_engine),
             processing_service,
             attachment_registry=attachment_registry,
         ),
-        target_service_id="target_profile",
-        run=run,
+        AsyncMock(spec=ChatInterface),
     )
 
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        delegation_id
+    )
+    assert run is not None
     assert result.attachments is not None
     assert len(result.attachments) == 1
-    assert result.attachments[0].attachment_id == stored.attachment_id
+    assert [attachment.attachment_id for attachment in result.attachments] == run[
+        "result_attachment_ids_json"
+    ]
     assert "no textual response" in (result.text or "")
 
 
@@ -2884,8 +2863,9 @@ async def test_pollable_delegation_retry_reattaches_without_duplicate_submit(
     assert run is not None
     assert run["status"] == "awaiting_remote"
     assert run["remote_task_id"] == stored_id
+    # One poll from the first submit, one from the re-attach.
     polls = await db_context.tasks.get_all(task_type="delegation_poll")
-    assert len(polls) >= 1
+    assert len(polls) == 2
 
 
 @pytest.mark.asyncio
@@ -3287,16 +3267,8 @@ class _NoToolsProvider:
         pass
 
 
-def _deep_research_target_service(
-    llm_client: GoogleGenAIClient,
-) -> InteractionsAgentProcessingService:
-    """A real InteractionsAgentProcessingService, registered as a delegation target.
-
-    Proves InteractionsAgentProcessingService actually satisfies the
-    PollableDelegationService protocol end-to-end through TaskWorker, not just
-    in isolation (see tests/unit/processing/test_interactions_agent_service.py).
-    """
-    config = ProcessingServiceConfig(
+def _research_target_config() -> ProcessingServiceConfig:
+    return ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
@@ -3306,10 +3278,21 @@ def _deep_research_target_service(
         id="target_profile",
         allowed_delegation_sources=["source_profile"],
     )
+
+
+def _deep_research_target_service(
+    llm_client: GoogleGenAIClient,
+) -> InteractionsAgentProcessingService:
+    """A real InteractionsAgentProcessingService, registered as a delegation target.
+
+    Proves InteractionsAgentProcessingService actually satisfies the
+    PollableDelegationService protocol end-to-end through TaskWorker, not just
+    in isolation (see tests/unit/processing/test_interactions_agent_service.py).
+    """
     return InteractionsAgentProcessingService(
         llm_client=llm_client,
         tools_provider=_NoToolsProvider(),
-        service_config=config,
+        service_config=_research_target_config(),
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
@@ -3325,12 +3308,20 @@ async def test_deep_research_is_pollable_but_ordinary_local_profile_is_not() -> 
     to the base ProcessingService would silently make every local delegation
     target "pollable".
     """
-    deep_research = _deep_research_target_service(
-        GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    llm_client = GoogleGenAIClient(
+        api_key="test", model="deep-research-preview-04-2026"
     )
+    deep_research = _deep_research_target_service(llm_client)
     assert isinstance(deep_research, PollableDelegationService)
 
-    ordinary = FakeDelegatableService()
+    ordinary = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=_NoToolsProvider(),
+        service_config=_research_target_config(),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
     assert not isinstance(ordinary, PollableDelegationService)
 
 
@@ -3709,8 +3700,9 @@ async def test_pollable_delegation_poll_not_found_resubmits(
     assert run is not None
     # The run reconciled the newly-assigned remote id.
     assert run["remote_task_id"] == new_task_id
+    # One poll from the first submit, one from the re-submit.
     polls = await db_context.tasks.get_all(task_type="delegation_poll")
-    assert len(polls) >= 1
+    assert len(polls) == 2
     chat_interface.send_message.assert_not_awaited()
 
 

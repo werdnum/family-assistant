@@ -1,7 +1,7 @@
 """Functional tests for thought signature round-trip through ProcessingService."""
 
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,12 +29,26 @@ from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
 )
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _thought_signature_bytes(provider_metadata: object) -> bytes | None:
+    """Decode a tool call's thought signature from either form the Google client accepts."""
+    if isinstance(provider_metadata, dict):
+        provider_metadata = GeminiProviderMetadata.from_dict(
+            cast("dict[str, Any]", provider_metadata)
+        )
+    if (
+        isinstance(provider_metadata, GeminiProviderMetadata)
+        and provider_metadata.thought_signature
+    ):
+        return provider_metadata.thought_signature.to_google_format()
+    return None
 
 
 class SimpleToolsProvider:
@@ -74,8 +88,7 @@ class MockLLMWithThoughtSignatures:
     """Mock LLM client that simulates thought signatures in provider_metadata."""
 
     def __init__(self) -> None:
-        self.call_count = 0
-        self.last_messages: list[LLMMessage] = []
+        self.messages_by_call: list[list[LLMMessage]] = []
 
     async def generate_response(
         self,
@@ -84,12 +97,10 @@ class MockLLMWithThoughtSignatures:
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
         """Generate mock response with thought signatures."""
-        self.call_count += 1
-        # Store messages as list for introspection
-        self.last_messages = list(messages) if messages else []
+        self.messages_by_call.append(list(messages))
 
         # First call: Return response with tool call and thought signature
-        if self.call_count == 1:
+        if len(self.messages_by_call) == 1:
             # Create a proper GeminiThoughtSignature object
             thought_sig = GeminiThoughtSignature(b"mock_thought_123")
             provider_metadata = GeminiProviderMetadata(thought_signature=thought_sig)
@@ -327,27 +338,26 @@ async def test_thought_signatures_persist_and_roundtrip(
         None,
     )
     assert assistant_msg is not None
-    assert assistant_msg.provider_metadata is not None
-    # provider_metadata is now a GeminiProviderMetadata object, not a dict
     assert isinstance(assistant_msg.provider_metadata, GeminiProviderMetadata)
     assert assistant_msg.provider_metadata.thought_signature is not None
-
-    # Verify signature content
     thought_sig = assistant_msg.provider_metadata.thought_signature
-    # GeminiThoughtSignature stores raw bytes, use to_google_format() to retrieve
     assert thought_sig.to_google_format() == b"mock_thought_123"
 
-    # Assert: Verify thought signature round-trip happened (2 LLM calls made)
-    # The first call returns a message with tool calls and provider_metadata
-    # That gets stored, tool executes, then second LLM call happens
-    assert mock_llm.call_count == 2
-
-    # The functional round-trip test is complete:
-    # 1. First LLM call returned provider_metadata ✓
-    # 2. Provider_metadata was stored in database ✓ (verified above)
-    # 3. Second LLM call completed successfully ✓ (call_count == 2)
-    # The actual reconstruction of thought signatures into the Gemini API format
-    # is tested in the Google client integration tests
+    # Assert: the follow-up call after the tool ran hands the signature back to
+    # the model on the tool call it belongs to, which is where the Google
+    # client reads it from when building the request.
+    assert len(mock_llm.messages_by_call) == 2
+    replayed_tool_calls = {
+        tool_call.id: tool_call
+        for message in mock_llm.messages_by_call[1]
+        if isinstance(message, AssistantMessage) and message.tool_calls
+        for tool_call in message.tool_calls
+    }
+    assert "call_1" in replayed_tool_calls
+    assert (
+        _thought_signature_bytes(replayed_tool_calls["call_1"].provider_metadata)
+        == b"mock_thought_123"
+    )
 
 
 @pytest.mark.asyncio

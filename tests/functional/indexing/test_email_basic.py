@@ -267,8 +267,6 @@ async def _ingest_and_index_email(
     # After API call, the email should be in DB and task enqueued.
     # Fetch the email ID and task ID from the database
     db = Database(engine=engine)
-    # Wait briefly for task to likely appear in DB after API commit
-    await asyncio.sleep(0.2)
     select_email_stmt = select(
         received_emails_table.c.id, received_emails_table.c.indexing_task_id
     ).where(received_emails_table.c.message_id_header == message_id)
@@ -434,7 +432,6 @@ async def test_email_indexing_and_query_e2e(
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id}...")
-    await asyncio.sleep(0.1)  # Give worker time to start
 
     async def cleanup(test_failed: bool) -> None:
         logger.info(f"Stopping background task worker {worker_id}...")
@@ -522,17 +519,12 @@ async def test_email_indexing_and_query_e2e(
             "Distance should be small"
         ).is_less_than(0.1)
 
-        assert_that(found_result.get("embedding_type")).is_in(
-            "raw_body_text_chunk", "title_chunk"
+        assert_that(found_result.get("embedding_type")).is_equal_to(
+            "raw_body_text_chunk"
         )
-        if found_result.get("embedding_type") == "raw_body_text_chunk":
-            assert_that(found_result.get("embedding_source_content")).is_equal_to(
-                TEST_EMAIL_BODY
-            )
-        else:
-            assert_that(found_result.get("embedding_source_content")).is_equal_to(
-                TEST_EMAIL_SUBJECT
-            )
+        assert_that(found_result.get("embedding_source_content")).is_equal_to(
+            TEST_EMAIL_BODY
+        )
 
         assert_that(found_result.get("title")).is_equal_to(TEST_EMAIL_SUBJECT)
         assert_that(found_result.get("source_type")).is_equal_to("email")

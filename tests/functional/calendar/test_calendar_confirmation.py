@@ -4,7 +4,6 @@ This test ensures that when calendar events are modified or deleted with confirm
 the confirmation prompt properly displays the event details fetched from the calendar.
 """
 
-import asyncio
 import logging
 import re
 import uuid
@@ -251,13 +250,15 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
         "Should not show error message"
     )
 
-    # Verify it formats the event time correctly
-    # The exact format depends on format_datetime_or_date but should mention the time
-    assert (
-        "14:00" in confirmation_prompt
-        or "2:00" in confirmation_prompt
-        or "2 PM" in confirmation_prompt
-    ), "Original event time not properly formatted in confirmation"
+    event_section, separator, _ = confirmation_prompt.partition(
+        "With the following changes"
+    )
+    assert separator, (
+        f"Changes section missing from confirmation: {confirmation_prompt}"
+    )
+    assert re.search(r"14:00 - .*15:00", event_section), (
+        f"Original event start/end times not shown in the event section: {event_section}"
+    )
 
 
 @pytest.mark.asyncio
@@ -362,10 +363,6 @@ async def test_confirming_tools_provider_with_calendar_events(
     # Debug logging
     logger.info(f"Created event with UID: {event_uid}")
     logger.info(f"Using calendar URL: {test_calendar_url}")
-
-    # Small delay to ensure event is saved
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar event to be saved
-    await asyncio.sleep(0.1)
 
     # Setup providers with real calendar config
     test_calendar_config = cast(
@@ -472,14 +469,17 @@ async def test_confirming_tools_provider_with_calendar_events(
         f"New summary not in confirmation info: {confirmation_info}"
     )
 
-    # The tool should have executed successfully
-
     result_text = result.get_text() if isinstance(result, ToolResult) else str(result)
-    assert (
-        "updated" in result_text.lower()
-        or "successfully" in result_text.lower()
-        or "modified" in result_text.lower()
-    ), f"Tool execution failed: {result}"
+    assert result_text.startswith("OK."), f"Tool execution failed: {result}"
+
+    stored_event = await fetch_event_details_for_confirmation(
+        uid=event_uid,
+        calendar_url=test_calendar_url,
+        calendar_config=test_calendar_config,
+        timezone=ZoneInfo("UTC"),
+    )
+    assert stored_event is not None, "Modified event missing from the calendar"
+    assert stored_event["summary"] == "Quarterly Business Review"
 
 
 @pytest.mark.asyncio

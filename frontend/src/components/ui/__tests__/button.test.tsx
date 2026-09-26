@@ -1,35 +1,37 @@
 import { render, screen } from '@testing-library/react';
-import { Button } from '../button';
+import { Button, type ButtonProps } from '../button';
+
+function classesOf(name: string): string[] {
+  return screen.getByRole('button', { name }).className.split(/\s+/).filter(Boolean);
+}
 
 describe('Button', () => {
-  it('renders with default styling', () => {
-    render(<Button>Test Button</Button>);
+  it.each<{ prop: string; props: ButtonProps }>([
+    { prop: 'variant', props: { variant: 'secondary' } },
+    { prop: 'size', props: { size: 'lg' } },
+  ])('styles the button according to its $prop prop', ({ props }) => {
+    render(
+      <>
+        <Button>Default</Button>
+        <Button {...props}>Styled</Button>
+      </>
+    );
 
-    const button = screen.getByRole('button', { name: 'Test Button' });
-    expect(button).toBeInTheDocument();
-    expect(button).toHaveClass('inline-flex', 'items-center', 'justify-center');
-  });
-
-  it('applies variant classes correctly', () => {
-    render(<Button variant="secondary">Secondary Button</Button>);
-
-    const button = screen.getByRole('button', { name: 'Secondary Button' });
-    expect(button).toHaveClass('bg-secondary', 'text-secondary-foreground');
-  });
-
-  it('applies size classes correctly', () => {
-    render(<Button size="lg">Large Button</Button>);
-
-    const button = screen.getByRole('button', { name: 'Large Button' });
-    expect(button).toHaveClass('h-11', 'rounded-md', 'px-8');
+    expect(classesOf('Styled')).not.toEqual(classesOf('Default'));
   });
 
   it('merges custom className with variant classes', () => {
-    render(<Button className="custom-class">Button with custom class</Button>);
+    render(
+      <>
+        <Button>Default</Button>
+        <Button className="custom-class">Custom</Button>
+      </>
+    );
 
-    const button = screen.getByRole('button', { name: 'Button with custom class' });
-    expect(button).toHaveClass('custom-class');
-    expect(button).toHaveClass('inline-flex'); // Should still have base classes
+    expect(screen.getByRole('button', { name: 'Custom' })).toHaveClass(
+      'custom-class',
+      ...classesOf('Default')
+    );
   });
 
   it('forwards props correctly', () => {

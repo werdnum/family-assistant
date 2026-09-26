@@ -6,7 +6,7 @@ import io
 import json
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
@@ -18,7 +18,7 @@ from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS, LocalToolsProvider
 from family_assistant.tools.attachments import attach_to_response_tool
 from family_assistant.tools.communication import send_message_to_user_tool
 from family_assistant.tools.image_tools import highlight_image_tool
@@ -45,14 +45,6 @@ class MockAttachmentMetadata:
 
 
 @pytest.fixture
-def mock_attachment_registry() -> Mock:
-    """Mock attachment registry."""
-    registry = Mock()
-    registry.get_attachment_metadata = AsyncMock()
-    return registry
-
-
-@pytest.fixture
 def mock_attachment_metadata() -> MockAttachmentMetadata:
     """Create mock attachment metadata."""
     return MockAttachmentMetadata(
@@ -72,15 +64,9 @@ class TestAttachToResponseTool:
     async def test_attach_to_response_success(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_registry: Mock,
         mock_attachment_metadata: MockAttachmentMetadata,
     ) -> None:
-        """Test successful attachment bundling."""
-        # Setup attachment service mock
-        mock_attachment_registry.get_attachment_metadata.return_value = (
-            mock_attachment_metadata
-        )
-
+        """A registered attachment ID is resolved and queued for the response."""
         db_context = Database(db_engine)
         # Create attachment registry and register the attachment in the database
         attachment_registry = AttachmentRegistry(
@@ -117,27 +103,15 @@ class TestAttachToResponseTool:
             api_backend=None,
         )
 
-        # Create ScriptAttachment object for the tool
-        # Get the attachment metadata from registry
-        attachment_metadata = await attachment_registry.get_attachment(
-            db_context, mock_attachment_metadata.id, acting_user_id=None
-        )
-        assert attachment_metadata is not None
-
-        # Create ScriptAttachment object
-        script_attachment = ScriptAttachment(
-            metadata=attachment_metadata,
-            registry=attachment_registry,
-            db_context_getter=lambda: Database(db_engine),
+        result = await LocalToolsProvider(
+            registrations=LOCAL_TOOL_REGISTRATIONS
+        ).execute_tool(
+            "attach_to_response",
+            {"attachment_ids": [mock_attachment_metadata.id]},
+            context=exec_context,
         )
 
-        # Execute tool
-        result = await attach_to_response_tool(
-            exec_context=exec_context,
-            attachment_ids=[script_attachment],
-        )
-
-        # Verify result
+        assert isinstance(result, str)
         result_data = json.loads(result)
         assert result_data["status"] == "attachments_queued"
         assert result_data["attachment_ids"] == [mock_attachment_metadata.id]
@@ -145,18 +119,12 @@ class TestAttachToResponseTool:
         assert "Successfully attached 1 attachment" in result_data["message"]
         assert "No further action needed" in result_data["message"]
 
-    async def test_attach_to_response_invalid_attachment(
+    async def test_attach_to_response_rejects_unknown_attachment_id(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_registry: Mock,
     ) -> None:
-        """Test attach_to_response with invalid attachment ID."""
-
-        # Setup attachment service mock to return None (not found)
-        mock_attachment_registry.get_attachment_metadata.return_value = None
-
+        """An ID the registry does not know is rejected rather than queued."""
         db_context = Database(db_engine)
-        # Create attachment registry for this test
         attachment_registry = AttachmentRegistry(
             storage_path="/tmp/test_attachments", db_engine=db_engine, config=None
         )
@@ -178,28 +146,26 @@ class TestAttachToResponseTool:
             credential_resolvers=None,
             api_backend=None,
         )
+        unknown_id = str(uuid.uuid4())
 
-        # Create a mock ScriptAttachment that will fail validation
-        invalid_attachment = Mock(spec=ScriptAttachment)
-        invalid_attachment.get_id.side_effect = Exception("Invalid attachment")
-
-        result = await attach_to_response_tool(
-            exec_context=exec_context,
-            attachment_ids=[invalid_attachment],
+        result = await LocalToolsProvider(
+            registrations=LOCAL_TOOL_REGISTRATIONS
+        ).execute_tool(
+            "attach_to_response",
+            {"attachment_ids": [unknown_id]},
+            context=exec_context,
         )
 
-        result_data = json.loads(result)
-        assert result_data["status"] == "error"
-        assert "No valid attachments found" in result_data["message"]
+        assert isinstance(result, str)
+        assert result.startswith("Error:")
+        assert f"Attachment '{unknown_id}' not found or access denied" in result
 
     async def test_attach_to_response_no_attachment_registry(
         self,
         db_engine: AsyncEngine,
     ) -> None:
-        """Test attach_to_response without attachment registry."""
-
+        """Without a registry the tool reports an error instead of queueing IDs."""
         db_context = Database(db_engine)
-        await seed_known_conversation(db_engine, "456789")
         exec_context = ToolExecutionContext(
             conversation_id="test_conversation",
             interface_type="telegram",
@@ -211,20 +177,16 @@ class TestAttachToResponseTool:
             home_assistant_client=None,
             event_sources=None,
             chat_interface=None,
-            attachment_registry=None,  # No attachment registry
+            attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,
             api_backend=None,
         )
 
-        # Create a mock ScriptAttachment for this test
-        mock_attachment = Mock(spec=ScriptAttachment)
-        mock_attachment.get_id.return_value = "some_id"
-
         result = await attach_to_response_tool(
             exec_context=exec_context,
-            attachment_ids=[mock_attachment],
+            attachment_ids=[str(uuid.uuid4())],
         )
 
         result_data = json.loads(result)
@@ -238,15 +200,9 @@ class TestSendMessageToUserWithAttachments:
     async def test_send_message_with_valid_attachments(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_registry: Mock,
         mock_attachment_metadata: MockAttachmentMetadata,
     ) -> None:
         """Test send_message_to_user with valid attachments."""
-        # Setup attachment service mock
-        mock_attachment_registry.get_attachment_metadata.return_value = (
-            mock_attachment_metadata
-        )
-
         # Create mock chat interface
         mock_chat_interface = Mock()
         mock_chat_interface.send_message = AsyncMock(return_value="message_123")
@@ -311,7 +267,6 @@ class TestSendMessageToUserWithAttachments:
     async def test_send_message_without_attachments(
         self,
         db_engine: AsyncEngine,
-        mock_attachment_registry: Mock,
     ) -> None:
         """Test send_message_to_user without attachments."""
 
@@ -356,54 +311,6 @@ class TestSendMessageToUserWithAttachments:
 
         assert "Message sent successfully" in result
         assert "attachment" not in result
-
-
-class TestToolRegistration:
-    """Test that attachment tools are properly registered."""
-
-    def test_attach_to_response_tool_registered(self) -> None:
-        """Test that attach_to_response tool is registered."""
-
-        # Check function is registered
-        assert "attach_to_response" in AVAILABLE_FUNCTIONS
-
-        # Check tool definition is included
-        tool_names = [
-            tool.get("function", {}).get("name")
-            for tool in TOOLS_DEFINITION
-            if tool.get("type") == "function"
-        ]
-        assert "attach_to_response" in tool_names
-
-    def test_attach_to_response_tool_definition(self) -> None:
-        """Test that attach_to_response tool has correct definition."""
-
-        # Find the tool definition
-        attach_tool = None
-        for tool in TOOLS_DEFINITION:
-            if (
-                tool.get("type") == "function"
-                and tool.get("function", {}).get("name") == "attach_to_response"
-            ):
-                attach_tool = tool
-                break
-
-        assert attach_tool is not None
-        function_def = attach_tool["function"]
-
-        # Verify key aspects of the definition
-        assert function_def["name"] == "attach_to_response"
-        assert (
-            "attach files/images to your current response"
-            in function_def["description"].lower()
-        )
-
-        # Verify parameters (cast to dict for test assertions on optional TypedDict keys)
-        params = cast("dict[str, Any]", function_def["parameters"])
-        assert params["type"] == "object"
-        assert "attachment_ids" in params["properties"]
-        assert params["properties"]["attachment_ids"]["type"] == "array"
-        assert "attachment_ids" in params["required"]
 
 
 def create_test_image(

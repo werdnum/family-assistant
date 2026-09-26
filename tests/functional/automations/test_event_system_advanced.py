@@ -204,21 +204,14 @@ async def test_end_to_end_event_listener_wakes_llm(
         },
     )
 
-    # Step 2: Create event processor and refresh cache
+    # Step 2: Create and start the event processor
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-
-    processor._running = True
-    await processor._refresh_listener_cache()
-
-    # Verify listener is in cache
-    listeners = processor._listener_cache.get("home_assistant", [])
-    assert len(listeners) == 1
-    assert listeners[0]["name"] == "Motion Light Automation"
+    await processor.start()
 
     # Step 3: Process a motion detection event
     motion_event = {
@@ -270,9 +263,8 @@ async def test_end_to_end_event_listener_wakes_llm(
         )
     )
 
-    # There should be at least one llm_callback task
-    assert len(tasks_result) > 0
-    callback_task = tasks_result[0]  # Get the first one
+    assert len(tasks_result) == 1
+    callback_task = tasks_result[0]
 
     # Verify task payload
     # Handle both string (SQLite) and dict (PostgreSQL) formats
@@ -462,8 +454,7 @@ async def test_failing_listener_undoes_the_ones_that_already_ran(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     with pytest.raises(RuntimeError, match="action enqueue unavailable"):
         await processor.process_event(
@@ -520,8 +511,7 @@ async def test_a_failed_event_record_does_not_disturb_the_listeners(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     await processor.process_event("home_assistant", {"entity_id": "binary_sensor.gate"})
 
@@ -573,8 +563,7 @@ async def test_two_listeners_on_one_event_both_enqueue_their_action(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     await processor.process_event(
         "home_assistant", {"entity_id": "binary_sensor.side_door"}
@@ -626,8 +615,7 @@ async def test_one_time_listener_disables_after_trigger(
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     door_event = {
         "entity_id": "binary_sensor.front_door",

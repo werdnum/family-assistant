@@ -22,6 +22,26 @@ interface MockServiceWorkerRegistration {
   };
 }
 
+const TEST_ENDPOINT = 'https://push.example.com/subscription/test-endpoint';
+
+function recordPushBackendRequests(): { subscribe: unknown[]; unsubscribe: unknown[] } {
+  const bodies: { subscribe: unknown[]; unsubscribe: unknown[] } = {
+    subscribe: [],
+    unsubscribe: [],
+  };
+  server.use(
+    http.post('/api/push/subscribe', async ({ request }) => {
+      bodies.subscribe.push(await request.json());
+      return HttpResponse.json({ status: 'success', id: 'sub_test' });
+    }),
+    http.post('/api/push/unsubscribe', async ({ request }) => {
+      bodies.unsubscribe.push(await request.json());
+      return HttpResponse.json({ status: 'success' });
+    })
+  );
+  return bodies;
+}
+
 describe('PushNotificationButton', () => {
   let mockSubscription: MockPushSubscription;
   let mockRegistration: MockServiceWorkerRegistration;
@@ -32,9 +52,9 @@ describe('PushNotificationButton', () => {
 
     // Mock PushSubscription
     mockSubscription = {
-      endpoint: 'https://push.example.com/subscription/test-endpoint',
+      endpoint: TEST_ENDPOINT,
       toJSON: () => ({
-        endpoint: 'https://push.example.com/subscription/test-endpoint',
+        endpoint: TEST_ENDPOINT,
         keys: {
           p256dh: 'test-p256dh-key',
           auth: 'test-auth-key',
@@ -84,49 +104,39 @@ describe('PushNotificationButton', () => {
 
   afterEach(() => {
     server.resetHandlers();
+    vi.restoreAllMocks();
   });
 
   describe('rendering', () => {
-    it('should not render if push is not supported', () => {
-      // Remove serviceWorker to simulate unsupported environment
-      Object.defineProperty(navigator, 'serviceWorker', {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
+    // The unsupported cases assert that no request was made synchronously after
+    // mount; this control proves a supported mount does make it by then.
+    it('should request push settings as soon as it mounts in a supported browser', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-      const { container } = render(<PushNotificationButton />);
-      expect(container.firstChild).toBeNull();
+      render(<PushNotificationButton />);
+
+      expect(fetchSpy).toHaveBeenCalledWith('/api/client_config');
+      expect(
+        await screen.findByRole('button', { name: /push notification settings/i })
+      ).toBeInTheDocument();
     });
 
-    it('should not render if PushManager is not available', async () => {
-      // Remove PushManager
-      Object.defineProperty(window, 'PushManager', {
-        value: undefined,
-        configurable: true,
-      });
+    it.each([
+      ['service workers', () => Reflect.deleteProperty(navigator, 'serviceWorker')],
+      ['the Push API', () => Reflect.deleteProperty(window, 'PushManager')],
+      ['the Notification API', () => Reflect.deleteProperty(globalThis, 'Notification')],
+    ])(
+      'should not render or request push settings when the browser lacks %s',
+      (_api: string, removeApi: () => boolean) => {
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+        removeApi();
 
-      const { container } = render(<PushNotificationButton />);
-      expect(container.firstChild).toBeNull();
-    });
+        const { container } = render(<PushNotificationButton />);
 
-    it('should not render if Notification API is not available', async () => {
-      // Remove Notification
-      const originalNotification = globalThis.Notification;
-      Object.defineProperty(globalThis, 'Notification', {
-        value: undefined,
-        configurable: true,
-      });
-
-      const { container } = render(<PushNotificationButton />);
-      expect(container.firstChild).toBeNull();
-
-      // Restore
-      Object.defineProperty(globalThis, 'Notification', {
-        value: originalNotification,
-        configurable: true,
-      });
-    });
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(container).toBeEmptyDOMElement();
+      }
+    );
 
     it('should not render if VAPID public key is not configured', async () => {
       server.use(
@@ -139,43 +149,52 @@ describe('PushNotificationButton', () => {
 
       const { container } = render(<PushNotificationButton />);
 
-      // Wait for component to fetch config and decide not to render
       await waitFor(() => {
-        expect(container.firstChild).toBeNull();
+        expect(mockRegistration.pushManager.getSubscription).toHaveBeenCalled();
       });
+      expect(container).toBeEmptyDOMElement();
     });
 
-    it('should render button with bell icon when supported and subscribed', async () => {
-      mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(mockSubscription));
+    it.each([
+      { state: 'subscribed', existing: () => mockSubscription, icon: 'lucide-bell', checked: true },
+      { state: 'not subscribed', existing: () => null, icon: 'lucide-bell-off', checked: false },
+    ])(
+      'should reflect the existing subscription in the icon and toggle when $state',
+      async ({
+        existing,
+        icon,
+        checked,
+      }: {
+        existing: () => MockPushSubscription | null;
+        icon: string;
+        checked: boolean;
+      }) => {
+        const user = userEvent.setup();
+        mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(existing()));
 
-      render(<PushNotificationButton />);
+        render(<PushNotificationButton />);
 
-      await waitFor(() => {
-        // Check for the button element
+        await waitFor(() => {
+          expect(mockRegistration.pushManager.getSubscription).toHaveBeenCalled();
+        });
+
         const button = screen.getByRole('button', { name: /push notification settings/i });
-        expect(button).toBeInTheDocument();
+        expect(button.querySelector('svg')).toHaveClass(icon);
 
-        // Button should show the bell icon when subscribed
-        const bellIcon = button.querySelector('svg');
-        expect(bellIcon).toBeInTheDocument();
-      });
-    });
+        await user.click(button);
 
-    it('should render button with bell-off icon when not subscribed', async () => {
-      mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(null));
-
-      render(<PushNotificationButton />);
-
-      await waitFor(() => {
-        const button = screen.getByRole('button', { name: /push notification settings/i });
-        expect(button).toBeInTheDocument();
-      });
-    });
+        expect(screen.getByRole('switch', { name: /enable push notifications/i })).toHaveAttribute(
+          'aria-checked',
+          String(checked)
+        );
+      }
+    );
   });
 
   describe('subscription flow', () => {
     it('should toggle subscription on and request permission when not already granted', async () => {
       const user = userEvent.setup();
+      const backend = recordPushBackendRequests();
       mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(null));
 
       render(<PushNotificationButton />);
@@ -193,15 +212,17 @@ describe('PushNotificationButton', () => {
       const toggle = screen.getByRole('switch', { name: /enable push notifications/i });
       await user.click(toggle);
 
-      // Verify permission was requested
       await waitFor(() => {
-        expect(requestPermissionMock).toHaveBeenCalled();
+        expect(backend.subscribe).toEqual([
+          {
+            subscription: {
+              endpoint: TEST_ENDPOINT,
+              keys: { p256dh: 'test-p256dh-key', auth: 'test-auth-key' },
+            },
+          },
+        ]);
       });
-
-      // Verify subscription was made
-      await waitFor(() => {
-        expect(mockRegistration.pushManager.subscribe).toHaveBeenCalled();
-      });
+      expect(requestPermissionMock).toHaveBeenCalled();
     });
 
     it('should skip permission request if already granted', async () => {
@@ -221,15 +242,10 @@ describe('PushNotificationButton', () => {
       const toggle = screen.getByRole('switch', { name: /enable push notifications/i });
       await user.click(toggle);
 
-      // Verify permission was NOT requested
-      await waitFor(() => {
-        expect(requestPermissionMock).not.toHaveBeenCalled();
-      });
-
-      // Verify subscription was made directly
       await waitFor(() => {
         expect(mockRegistration.pushManager.subscribe).toHaveBeenCalled();
       });
+      expect(requestPermissionMock).not.toHaveBeenCalled();
     });
 
     it('should show error when permission is denied', async () => {
@@ -316,6 +332,7 @@ describe('PushNotificationButton', () => {
   describe('unsubscription flow', () => {
     it('should unsubscribe when toggle is turned off', async () => {
       const user = userEvent.setup();
+      const backend = recordPushBackendRequests();
       mockRegistration.pushManager.getSubscription = vi.fn(() => Promise.resolve(mockSubscription));
 
       render(<PushNotificationButton />);
@@ -333,10 +350,10 @@ describe('PushNotificationButton', () => {
       const toggle = screen.getByRole('switch', { name: /enable push notifications/i });
       await user.click(toggle);
 
-      // Verify unsubscribe was called
       await waitFor(() => {
-        expect(mockSubscription.unsubscribe).toHaveBeenCalled();
+        expect(backend.unsubscribe).toEqual([{ endpoint: TEST_ENDPOINT }]);
       });
+      expect(mockSubscription.unsubscribe).toHaveBeenCalled();
     });
 
     it('should update status badge to Inactive after unsubscription', async () => {
@@ -351,6 +368,8 @@ describe('PushNotificationButton', () => {
 
       const button = screen.getByRole('button', { name: /push notification settings/i });
       await user.click(button);
+
+      expect(screen.getByText('Active')).toBeInTheDocument();
 
       const toggle = screen.getByRole('switch', { name: /enable push notifications/i });
       await user.click(toggle);
@@ -480,6 +499,7 @@ describe('PushNotificationButton', () => {
     });
 
     it('should show error when initialization fails', async () => {
+      const user = userEvent.setup();
       Object.defineProperty(navigator, 'serviceWorker', {
         get: () => {
           throw new Error('Service worker access denied');
@@ -489,11 +509,11 @@ describe('PushNotificationButton', () => {
 
       render(<PushNotificationButton />);
 
-      // Component should render null in case of initialization failure
-      await waitFor(() => {
-        // The component should either show an error or render nothing
-        // Based on the component code, it handles errors gracefully
-      });
+      await user.click(await screen.findByRole('button', { name: /push notification settings/i }));
+
+      expect(
+        await screen.findByText('Failed to load push notification settings')
+      ).toBeInTheDocument();
     });
   });
 

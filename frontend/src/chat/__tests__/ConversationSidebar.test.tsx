@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
@@ -17,6 +17,64 @@ describe('ConversationSidebar', () => {
     // Clean up DOM attributes
     document.documentElement.removeAttribute('data-app-ready');
   });
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 1024,
+    });
+  });
+
+  const renderedConversationIds = (): (string | null)[] =>
+    screen
+      .queryAllByTestId(/^conversation-item-/)
+      .map((item) => item.getAttribute('data-conversation-id'));
+
+  const serveConversationHistories = (): void => {
+    server.use(
+      http.get('/api/v1/chat/conversations', () =>
+        HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'conv-1',
+              last_message: 'Preview of conv-1',
+              last_timestamp: '2025-01-01T10:00:00Z',
+              message_count: 1,
+            },
+            {
+              conversation_id: 'conv-2',
+              last_message: 'Preview of conv-2',
+              last_timestamp: '2025-01-01T09:00:00Z',
+              message_count: 1,
+            },
+          ],
+          count: 2,
+        })
+      ),
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        const conversationId = String(params.conversationId);
+        if (conversationId !== 'conv-1' && conversationId !== 'conv-2') {
+          return HttpResponse.json({ messages: [] });
+        }
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: `${conversationId}-msg-1`,
+              role: 'user',
+              content: `Hello from ${conversationId}`,
+              timestamp: '2025-01-01T09:00:00Z',
+            },
+          ],
+        });
+      })
+    );
+  };
+
+  const lastConversationIdWrites = (): unknown[] =>
+    mockLocalStorage.setItem.mock.calls
+      .filter(([key]) => key === 'lastConversationId')
+      .map(([, value]) => value);
 
   it('displays conversation list', async () => {
     // Mock conversations endpoint with existing conversations
@@ -44,55 +102,24 @@ describe('ConversationSidebar', () => {
 
     await renderChatApp({ waitForReady: true });
 
-    // Wait for conversations to load
-    await waitFor(() => {
-      expect(screen.getByText('Conversations')).toBeInTheDocument();
-    });
-
-    // Note: Specific conversation items depend on how @assistant-ui/react
-    // renders the conversation list. This tests the basic structure.
+    await screen.findByTestId('conversation-item-conv-1');
+    expect(renderedConversationIds()).toEqual(['conv-1', 'conv-2']);
   });
 
   it('allows switching between conversations', async () => {
-    // Mock conversation messages for different conversations
-    server.use(
-      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
-        const { conversationId } = params;
-
-        if (conversationId === 'conv-1') {
-          return HttpResponse.json({
-            messages: [
-              {
-                id: 'msg-1',
-                role: 'user',
-                content: [{ type: 'text', text: 'Hello from conv-1' }],
-                createdAt: '2025-01-01T10:00:00Z',
-              },
-            ],
-          });
-        }
-
-        if (conversationId === 'conv-2') {
-          return HttpResponse.json({
-            messages: [
-              {
-                id: 'msg-2',
-                role: 'user',
-                content: [{ type: 'text', text: 'Hello from conv-2' }],
-                createdAt: '2025-01-01T09:00:00Z',
-              },
-            ],
-          });
-        }
-
-        return HttpResponse.json({ messages: [] });
-      })
-    );
+    const user = userEvent.setup();
+    serveConversationHistories();
 
     await renderChatApp({ waitForReady: true });
 
-    // Test switching between conversations if the UI provides this functionality
-    // Implementation depends on @assistant-ui/react's conversation management
+    await user.click(await screen.findByTestId('conversation-item-conv-1'));
+    expect(await screen.findByText('Hello from conv-1')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('conversation-item-conv-2'));
+    expect(await screen.findByText('Hello from conv-2')).toBeInTheDocument();
+    expect(screen.queryByText('Hello from conv-1')).not.toBeInTheDocument();
+    expect(lastConversationIdWrites().slice(-2)).toEqual(['conv-1', 'conv-2']);
+    expect(window.location.search).toBe('?conversation_id=conv-2');
   });
 
   it('toggles sidebar open/closed on desktop', async () => {
@@ -124,29 +151,23 @@ describe('ConversationSidebar', () => {
 
   it('creates new conversation from sidebar', async () => {
     const user = userEvent.setup();
+    serveConversationHistories();
+    mockLocalStorage.getItem.mockImplementation((key: string) =>
+      key === 'lastConversationId' ? 'conv-1' : null
+    );
+
     await renderChatApp({ waitForReady: true });
+    expect(await screen.findByText('Hello from conv-1')).toBeInTheDocument();
+    expect(lastConversationIdWrites()).toEqual([]);
 
-    // Look for new conversation button
-    const newConversationElements = screen.queryAllByText(/new/i);
-    const newButton = newConversationElements.find((el) => {
-      const button = el.tagName === 'BUTTON' ? el : el.closest('button');
-      return button !== null;
-    });
+    await user.click(screen.getByTestId('new-chat-button'));
 
-    if (newButton) {
-      await user.click(newButton);
-
-      // Verify new conversation was created
-      await waitFor(
-        () => {
-          expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-            'lastConversationId',
-            expect.stringMatching(/web_conv_/)
-          );
-        },
-        { timeout: 5000 }
-      );
-    }
+    expect(await screen.findByText('How can I help you?')).toBeInTheDocument();
+    expect(screen.queryByText('Hello from conv-1')).not.toBeInTheDocument();
+    const writes = lastConversationIdWrites();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^web_conv_/);
+    expect(window.location.search).toBe(`?conversation_id=${String(writes[0])}`);
   });
 
   it('searches conversations on the server and shows where each matched', async () => {
@@ -213,19 +234,17 @@ describe('ConversationSidebar', () => {
 
     await renderChatApp({ waitForReady: true });
 
-    // Wait for conversations to load
-    await waitFor(() => {
-      expect(screen.getByText('Conversations')).toBeInTheDocument();
-    });
-
-    // Check for preview text in conversation list
-    // Implementation depends on how previews are rendered
+    const item = await screen.findByTestId('conversation-item-conv-preview-test');
+    expect(
+      within(item).getByText('This is a preview of the conversation content')
+    ).toBeInTheDocument();
   });
 
   it('handles empty conversation list', async () => {
-    // Mock empty conversations response
+    let listServed = false;
     server.use(
       http.get('/api/v1/chat/conversations', () => {
+        listServed = true;
         return HttpResponse.json({
           conversations: [],
           count: 0,
@@ -235,13 +254,12 @@ describe('ConversationSidebar', () => {
 
     await renderChatApp({ waitForReady: true });
 
-    // Should still show conversations header even when empty
     await waitFor(() => {
-      expect(screen.getByText('Conversations')).toBeInTheDocument();
+      expect(listServed).toBe(true);
     });
-
-    // Should not show any conversation items
-    // This tests the empty state handling
+    expect(await screen.findByText('No conversations yet')).toBeInTheDocument();
+    expect(screen.getByText('Conversations')).toBeInTheDocument();
+    expect(renderedConversationIds()).toEqual([]);
   });
 
   it('works on mobile viewport', async () => {
@@ -263,13 +281,6 @@ describe('ConversationSidebar', () => {
 
     // The back button should be present to navigate to conversation list
     expect(screen.getByLabelText('Back to conversations')).toBeInTheDocument();
-
-    // Reset viewport
-    Object.defineProperty(window, 'innerWidth', {
-      writable: true,
-      configurable: true,
-      value: 1024,
-    });
   });
 
   it('shows conversation list when navigating back on mobile', async () => {
@@ -285,21 +296,14 @@ describe('ConversationSidebar', () => {
     await renderChatApp({ waitForReady: true });
 
     const user = userEvent.setup();
+    expect(screen.queryByText('Conversations')).not.toBeInTheDocument();
 
     // Tap back button to go to conversation list
     const backButton = screen.getByLabelText('Back to conversations');
     await user.click(backButton);
 
-    // Should now see the conversation list
-    await waitFor(() => {
-      expect(screen.getByText('Conversations')).toBeInTheDocument();
-    });
-
-    // Reset viewport
-    Object.defineProperty(window, 'innerWidth', {
-      writable: true,
-      configurable: true,
-      value: 1024,
-    });
+    expect(await screen.findByTestId('conversation-item-web_conv_test-1')).toBeInTheDocument();
+    expect(screen.getByText('Conversations')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Back to conversations')).not.toBeInTheDocument();
   });
 });

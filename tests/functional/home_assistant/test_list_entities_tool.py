@@ -17,7 +17,7 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
-from family_assistant.llm.messages import is_turn_scaffolding
+from family_assistant.llm.messages import ToolMessage, is_turn_scaffolding
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -45,6 +45,19 @@ logger = logging.getLogger(__name__)
 TEST_CHAT_ID = "ha_list_entities_test_123"
 TEST_USER_NAME = "HAListTestUser"
 TEST_TIMEZONE_STR = "UTC"
+
+
+async def _persisted_tool_result_text(db_context: Database, tool_call_id: str) -> str:
+    history = await db_context.message_history.get_recent(
+        interface_type="test", conversation_id=TEST_CHAT_ID
+    )
+    tool_messages = [
+        message
+        for message in history
+        if isinstance(message, ToolMessage) and message.tool_call_id == tool_call_id
+    ]
+    assert len(tool_messages) == 1, f"Expected one tool result, history: {history}"
+    return tool_messages[0].content
 
 
 @pytest.mark.asyncio
@@ -206,12 +219,18 @@ async def test_list_home_assistant_entities_with_filter(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    assert final_reply, "No reply received"
-    assert "Living Room Temperature" in final_reply, "Expected entity not in reply"
-    assert "Bedroom Temperature" in final_reply, "Expected entity not in reply"
+    assert "I found 2 temperature sensors" in final_reply, final_reply
 
-    # Verify the mock was called correctly
-    mock_ha_client.async_get_entity_list_with_metadata.assert_awaited()
+    tool_result_text = await _persisted_tool_result_text(db_context, tool_call_id)
+    listed_entity_ids = {
+        entity["entity_id"]
+        for entity in mock_entities
+        if entity["entity_id"] in tool_result_text
+    }
+    assert listed_entity_ids == {
+        "sensor.living_room_temperature",
+        "sensor.bedroom_temperature",
+    }, f"entity_id filter not applied: {tool_result_text}"
 
     logger.info("Test List Home Assistant Entities With Filter PASSED.")
 
@@ -381,8 +400,17 @@ async def test_list_home_assistant_entities_with_area_filter(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    assert final_reply, "No reply received"
-    assert "pool" in final_reply.lower(), "Expected pool devices in reply"
+    assert "I found 2 devices in the pool area" in final_reply, final_reply
+
+    tool_result_text = await _persisted_tool_result_text(db_context, tool_call_id)
+    listed_entity_ids = {
+        entity["entity_id"]
+        for entity in mock_entities
+        if entity["entity_id"] in tool_result_text
+    }
+    assert listed_entity_ids == {"sensor.pool_temperature", "switch.pool_pump"}, (
+        f"area filter not applied: {tool_result_text}"
+    )
 
     logger.info("Test List Home Assistant Entities With Area Filter PASSED.")
 

@@ -13,62 +13,24 @@ import { streamResumeTuning, useStreamingResponse } from '../useStreamingRespons
 // Stop/Steer action is mounted. While running the main composer doubles as the
 // steer input, so steering = type into the chat input then click the steer
 // action (which replaces Stop once there's text).
+//
+// Only the stream of the conversation this test kicked off is handed back;
+// anything else is parked. A stray stream request left over from an earlier
+// test would otherwise take the controller, and the test would then enqueue
+// events into a stream nothing is reading. `controllers` holds every stream the
+// conversation opened, in order, so later turns (recoveries, follow-ups) can be
+// driven and closed too; `kickoffPrompts` records every POST /turns prompt.
 function installOpenStream(): {
   ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
+  controllers: ReadableStreamDefaultController<Uint8Array>[];
   turnIdRef: { current: string };
-} {
-  const encoder = new TextEncoder();
-  const turnIdRef = { current: 'mock-turn' };
-  let resolveController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
-  const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
-    resolveController = resolve;
-  });
-
-  server.use(
-    http.post('/api/v1/chat/turns', async ({ request }) => {
-      const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-      turnIdRef.current = body.turn_id;
-      return HttpResponse.json({
-        turn_id: body.turn_id,
-        conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
-        first_seq: 0,
-      });
-    }),
-    http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(
-            encoder.encode(
-              `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
-            )
-          );
-          // Hand the controller to the test; it stays open until the test
-          // enqueues a terminal event and closes it.
-          resolveController(controller);
-        },
-      });
-      return new HttpResponse(stream, {
-        headers: { 'Content-Type': 'text/event-stream' },
-      });
-    })
-  );
-
-  return { ready, turnIdRef };
-}
-
-// installOpenStream serves any conversation, so a stray stream request left over
-// from an earlier test can resolve its controller — and the test then enqueues
-// events into a stream nothing is reading. This variant hands back only the
-// stream belonging to the kickoff it saw, and parks anything else.
-function installOwnOpenStream(): {
-  ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
-  turnIdRef: { current: string };
-  turnsPostsRef: { current: number };
+  kickoffPrompts: string[];
 } {
   const encoder = new TextEncoder();
   const turnIdRef = { current: 'mock-turn' };
   const conversationIdRef = { current: '' };
-  const turnsPostsRef = { current: 0 };
+  const kickoffPrompts: string[] = [];
+  const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
   let resolveController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
   const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
     resolveController = resolve;
@@ -76,8 +38,12 @@ function installOwnOpenStream(): {
 
   server.use(
     http.post('/api/v1/chat/turns', async ({ request }) => {
-      turnsPostsRef.current += 1;
-      const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+      const body = (await request.json()) as {
+        turn_id: string;
+        conversation_id?: string;
+        prompt: string;
+      };
+      kickoffPrompts.push(body.prompt);
       turnIdRef.current = body.turn_id;
       conversationIdRef.current = body.conversation_id || `web_conv_${Date.now()}`;
       return HttpResponse.json({
@@ -98,6 +64,7 @@ function installOwnOpenStream(): {
               `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
             )
           );
+          controllers.push(controller);
           resolveController(controller);
         },
       });
@@ -105,7 +72,7 @@ function installOwnOpenStream(): {
     })
   );
 
-  return { ready, turnIdRef, turnsPostsRef };
+  return { ready, controllers, turnIdRef, kickoffPrompts };
 }
 
 const enc = new TextEncoder();
@@ -245,25 +212,13 @@ describe('Web turn control (Stop / Steer)', () => {
   it(
     'clicking Steer injects mid-turn without also submitting a new turn',
     async () => {
-      // The Steer button lives inside the composer form; if it defaults to a
-      // submit button, a mouse click both steers and fires the form's submit
-      // (a second kickoff POST). It must be type="button" so only the steer
-      // endpoint is hit.
-      const { ready, turnIdRef } = installOpenStream();
-      let turnsPosts = 0;
+      // The Steer button lives inside the composer form, so a click must reach
+      // only the steer endpoint and never also submit the form as a second
+      // kickoff.
+      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       let steerPosts = 0;
       let steerInputId = '';
       server.use(
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-          turnIdRef.current = body.turn_id;
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
-            first_seq: 0,
-          });
-        }),
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
           steerPosts += 1;
           const body = (await request.json()) as { conversation_id: string; input_id: string };
@@ -284,25 +239,16 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.keyboard('{Enter}');
 
       const controller = await ready;
-      await waitFor(() => {
-        expect(turnsPosts).toBe(1);
-      }, WAIT);
+      expect(kickoffPrompts).toEqual(['Plan my week']);
 
       const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'focus on tomorrow');
-      const steerButton = await screen.findByTestId('steer-button', undefined, WAIT);
-      // The button lives inside the composer form, so it must opt out of the
-      // default type="submit" or a click would also submit a new message.
-      expect(steerButton).toHaveAttribute('type', 'button');
-      await user.click(steerButton);
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
 
       await waitFor(() => {
         expect(steerPosts).toBe(1);
       }, WAIT);
-      // The composer clears on an accepted steer; give any errant form submit a
-      // chance to fire a second kickoff before asserting it never happened.
       await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
-      expect(turnsPosts).toBe(1);
 
       // Echo the steer as a user_input event so it counts as delivered; without
       // this the un-echoed-steer recovery would re-send it as a fresh turn.
@@ -318,7 +264,13 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
       );
       controller.close();
-      expect(turnsPosts).toBe(1);
+
+      // Back to idle once the only turn has ended; an errant form submit made
+      // at click time would have posted its kickoff (and kept a turn running)
+      // long before this.
+      await screen.findByTestId('send-button', undefined, WAIT);
+      expect(kickoffPrompts).toEqual(['Plan my week']);
+      expect(steerPosts).toBe(1);
     },
     { timeout: 30000 }
   );
@@ -441,20 +393,8 @@ describe('Web turn control (Stop / Steer)', () => {
   it(
     'steering a finished turn falls back to sending a normal new message',
     async () => {
-      const { ready, turnIdRef } = installOpenStream();
-      let turnsPosts = 0;
+      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       server.use(
-        // Count kickoff POSTs; the fallback sends the steer as a new turn.
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-          turnIdRef.current = body.turn_id;
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
-            first_seq: 0,
-          });
-        }),
         http.post('/api/v1/chat/turns/:turnId/steer', () =>
           HttpResponse.json({ detail: 'Turn is not running' }, { status: 409 })
         )
@@ -468,9 +408,6 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.keyboard('{Enter}');
 
       const controller = await ready;
-      await waitFor(() => {
-        expect(turnsPosts).toBe(1);
-      }, WAIT);
 
       const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'do it differently');
@@ -486,7 +423,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // 409 from steer → the text is sent as a normal follow-up (a 2nd kickoff),
       // not silently lost.
       await waitFor(() => {
-        expect(turnsPosts).toBe(2);
+        expect(kickoffPrompts).toEqual(['Plan my week', 'do it differently']);
       }, WAIT);
     },
     { timeout: 30000 }
@@ -495,19 +432,8 @@ describe('Web turn control (Stop / Steer)', () => {
   it(
     'abandons an un-echoed accepted steer when the user stops the turn',
     async () => {
-      const { ready, turnIdRef } = installOpenStream();
-      let turnsPosts = 0;
+      const { ready, controllers, turnIdRef, kickoffPrompts } = installOpenStream();
       server.use(
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-          turnIdRef.current = body.turn_id;
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
-            first_seq: 0,
-          });
-        }),
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
           const body = (await request.json()) as { conversation_id: string };
           return HttpResponse.json({
@@ -534,9 +460,6 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.keyboard('{Enter}');
 
       const controller = await ready;
-      await waitFor(() => {
-        expect(turnsPosts).toBe(1);
-      }, WAIT);
 
       // Steer (accepted, awaiting echo) then Stop before the echo arrives.
       const steerInput = screen.getByTestId('chat-input');
@@ -554,9 +477,22 @@ describe('Web turn control (Stop / Steer)', () => {
       await waitFor(() => {
         expect(screen.getByText('Stopped.')).toBeInTheDocument();
       }, WAIT);
-      // The completion handler ran (Stopped. rendered) and, because the turn was
-      // stopped, scheduled no follow-up — so the abandoned steer is not resent.
-      expect(turnsPosts).toBe(1);
+
+      // A follow-up is scheduled from the completion handler and posted
+      // asynchronously, so "Stopped." rendering does not prove none was sent.
+      // Send a fresh message as a barrier: any resend of the abandoned steer
+      // would have gone out before it.
+      await screen.findByTestId('send-button', undefined, WAIT);
+      await user.type(screen.getByTestId('chat-input'), 'next question');
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(kickoffPrompts).toHaveLength(2), WAIT);
+      expect(kickoffPrompts).toEqual(['Plan my week', 'next question']);
+
+      await waitFor(() => expect(controllers).toHaveLength(2), WAIT);
+      controllers[1].enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+      );
+      controllers[1].close();
     },
     { timeout: 30000 }
   );
@@ -564,19 +500,8 @@ describe('Web turn control (Stop / Steer)', () => {
   it(
     'recovers an accepted steer that the turn never echoes',
     async () => {
-      const { ready, turnIdRef } = installOpenStream();
-      let turnsPosts = 0;
+      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       server.use(
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-          turnIdRef.current = body.turn_id;
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
-            first_seq: 0,
-          });
-        }),
         // Accept the steer, but the stream below never echoes a user_input for
         // it (simulating a final text-only iteration that never drains it).
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
@@ -597,13 +522,11 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.keyboard('{Enter}');
 
       const controller = await ready;
-      await waitFor(() => {
-        expect(turnsPosts).toBe(1);
-      }, WAIT);
 
       const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'use the newer plan');
       await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
 
       // The turn completes WITHOUT echoing the accepted steer; on completion it
       // is recovered as a normal follow-up (a 2nd kickoff) rather than lost.
@@ -613,7 +536,7 @@ describe('Web turn control (Stop / Steer)', () => {
       controller.close();
 
       await waitFor(() => {
-        expect(turnsPosts).toBe(2);
+        expect(kickoffPrompts).toEqual(['Plan my week', 'use the newer plan']);
       }, WAIT);
     },
     { timeout: 30000 }
@@ -673,21 +596,10 @@ describe('Web turn control (Stop / Steer)', () => {
   it(
     'retries a steer through the turn-registration race (404 then accepted)',
     async () => {
-      const { ready, turnIdRef } = installOpenStream();
+      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       let steerCalls = 0;
-      let turnsPosts = 0;
       const steerInputIds: string[] = [];
       server.use(
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
-          turnIdRef.current = body.turn_id;
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
-            first_seq: 0,
-          });
-        }),
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
           steerCalls += 1;
           const body = (await request.json()) as { conversation_id: string; input_id: string };
@@ -735,7 +647,7 @@ describe('Web turn control (Stop / Steer)', () => {
       await waitFor(() => {
         expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
       }, WAIT);
-      expect(turnsPosts).toBe(1);
+      expect(kickoffPrompts).toEqual(['Plan my week']);
 
       controller.enqueue(
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
@@ -1288,25 +1200,8 @@ describe('Web turn control (Stop / Steer)', () => {
       // persists a steer once the loop drains it and emits the echo. A failed
       // turn that never drained it therefore leaves the client's queue holding
       // the user's only copy — dropping it deletes the message.
-      const { ready, turnIdRef } = installOpenStream();
-      let turnsPosts = 0;
-      const kickoffPrompts: string[] = [];
+      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       server.use(
-        http.post('/api/v1/chat/turns', async ({ request }) => {
-          turnsPosts += 1;
-          const body = (await request.json()) as {
-            turn_id: string;
-            conversation_id?: string;
-            prompt: string;
-          };
-          turnIdRef.current = body.turn_id;
-          kickoffPrompts.push(body.prompt);
-          return HttpResponse.json({
-            turn_id: body.turn_id,
-            conversation_id: body.conversation_id || 'web_conv_steerfail',
-            first_seq: 0,
-          });
-        }),
         http.post('/api/v1/chat/turns/:turnId/steer', () => HttpResponse.json({ accepted: true }))
       );
 
@@ -1335,9 +1230,8 @@ describe('Web turn control (Stop / Steer)', () => {
       controller.close();
 
       await waitFor(() => {
-        expect(turnsPosts).toBe(2);
+        expect(kickoffPrompts).toEqual(['Plan my week', 'and book the dentist']);
       }, WAIT);
-      expect(kickoffPrompts[1]).toBe('and book the dentist');
     },
     { timeout: 30000 }
   );
@@ -1421,6 +1315,7 @@ describe('Web turn control (Stop / Steer)', () => {
       const steerStarted = new Promise<void>((resolve) => {
         steerRequested = resolve;
       });
+      let streamRequests = 0;
 
       server.use(
         http.post('/api/v1/chat/turns', () =>
@@ -1450,8 +1345,11 @@ describe('Web turn control (Stop / Steer)', () => {
             { status: 409 }
           );
         }),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          throw new Error('must not subscribe: the turn was cancelled');
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          if (params.conversationId === 'web_conv_stopped_adopt') {
+            streamRequests += 1;
+          }
+          return new HttpResponse(null, { status: 500 });
         })
       );
 
@@ -1471,9 +1369,11 @@ describe('Web turn control (Stop / Steer)', () => {
       releaseSteer();
       await sending;
 
-      // Nothing to recover: the send is abandoned with the turn it joined.
+      // Nothing to recover: the send is abandoned with the turn it joined, and
+      // the cancelled turn is never followed.
       expect(completions).toHaveLength(1);
       expect(completions[0].undeliveredPrompt).toBeNull();
+      expect(streamRequests).toBe(0);
     },
     { timeout: 30000 }
   );
@@ -2037,6 +1937,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // Steering carries text only. Adopting here would answer the prompt with
       // its files silently missing, so the send fails and the user keeps them.
       let steers = 0;
+      let streamRequests = 0;
       server.use(
         http.post('/api/v1/chat/turns', () =>
           HttpResponse.json(
@@ -2054,8 +1955,11 @@ describe('Web turn control (Stop / Steer)', () => {
           steers += 1;
           return HttpResponse.json({ accepted: true, queued_after_seq: 2 });
         }),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
-          throw new Error('must not subscribe: the send was never delivered');
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          if (params.conversationId === 'web_conv_attach') {
+            streamRequests += 1;
+          }
+          return new HttpResponse(null, { status: 500 });
         })
       );
 
@@ -2070,6 +1974,7 @@ describe('Web turn control (Stop / Steer)', () => {
       });
 
       expect(steers).toBe(0);
+      expect(streamRequests).toBe(0);
       expect(errors).toHaveLength(1);
       expect(errors[0].message).toMatch(/attachments could not be sent/);
       // Flagged for verbatim rendering: the caller shows this text as written
@@ -2173,7 +2078,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // retries, and by then the turn has drained the message and ended, so the
       // retry gets 409 ('finished'). Falling back to a new turn there would make
       // the assistant act on the same instruction twice.
-      const { ready, turnIdRef, turnsPostsRef } = installOwnOpenStream();
+      const { ready, turnIdRef, kickoffPrompts } = installOpenStream();
       let steerInputId = '';
       let steerPosts = 0;
       let releaseSteer: () => void = () => {};
@@ -2232,7 +2137,7 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(screen.queryByTestId('stop-button')).toBeNull();
       }, WAIT);
       // Only the original kickoff: the steer was not resent as a new turn.
-      expect(turnsPostsRef.current).toBe(1);
+      expect(kickoffPrompts).toEqual(['Plan my week']);
     },
     { timeout: 30000 }
   );
@@ -2366,7 +2271,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // The turn can drain the steer and publish its echo while the POST is
       // still failing. Seeing that echo is what lets the composer clear instead
       // of asking the user to resend an instruction the turn already acted on.
-      const { ready, turnIdRef } = installOwnOpenStream();
+      const { ready, turnIdRef } = installOpenStream();
       let steerInputId = '';
       // The POST is held open until the test has seen the echo rendered, so the
       // ordering under test — echo observed, THEN the request fails — is fixed
@@ -2431,7 +2336,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // Same failing POST, but the echo names a submission this client never
       // made — another interface sent the same words. Reading it as delivery
       // would clear the composer and lose the only copy of this message.
-      const { ready, turnIdRef } = installOwnOpenStream();
+      const { ready, turnIdRef } = installOpenStream();
       let steerPosts = 0;
       let releaseSteer: () => void = () => {};
       const steerGate = new Promise<void>((resolve) => {

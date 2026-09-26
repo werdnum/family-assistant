@@ -106,7 +106,16 @@ async def test_a_watermark_never_moves_backwards(db_engine: AsyncEngine) -> None
 
 
 @pytest.mark.asyncio
-async def test_watermarks_are_per_conversation(db_engine: AsyncEngine) -> None:
+@pytest.mark.parametrize(
+    ("other_interface", "other_conversation"),
+    [
+        pytest.param("telegram", CONVERSATION, id="other-interface"),
+        pytest.param(INTERFACE, "conv-2", id="other-conversation"),
+    ],
+)
+async def test_watermarks_are_per_conversation(
+    db_engine: AsyncEngine, other_interface: str, other_conversation: str
+) -> None:
     db = Database(engine=db_engine)
     await db.memory_review.advance_watermark(
         interface_type=INTERFACE,
@@ -116,7 +125,7 @@ async def test_watermarks_are_per_conversation(db_engine: AsyncEngine) -> None:
     )
 
     other = await db.memory_review.get_watermark(
-        interface_type="telegram", conversation_id=CONVERSATION
+        interface_type=other_interface, conversation_id=other_conversation
     )
 
     assert other is None

@@ -19,6 +19,9 @@ from zoneinfo import ZoneInfo
 import pytest
 import pytest_asyncio
 
+from family_assistant.assistant import (
+    _build_profile_policy_engine,  # noqa: PLC2701 - the helper that injects the synthetic self-delegation allow these tests exercise
+)
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.interfaces import ChatInterface
@@ -34,7 +37,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
     PolicyEnforcingToolsProvider,
-    PolicyEngine,
     PolicyRule,
     ToolMatcher,
     ToolPolicyConfig,
@@ -127,15 +129,11 @@ def _make_target_llm_mock() -> RuleBasedMockLLMClient:
 
 def _build_tools_provider(
     *,
+    profile_id: str,
     profile_tools_policy: ToolPolicyConfig,
-    self_delegation_profile_id: str,
     operator_tools_policy: ToolPolicyConfig | None = None,
 ) -> PolicyEnforcingToolsProvider:
-    """Build a PolicyEnforcingToolsProvider the same way production does.
-
-    Uses PolicyEngine.from_layers with a synthetic self-delegation allow
-    rule at the profile layer, mirroring _build_profile_policy_engine.
-    """
+    """Wrap delegate_to_service in the policy engine production builds for a profile."""
     registrations = [
         r for r in local_tool_registrations if r.name == "delegate_to_service"
     ]
@@ -143,24 +141,11 @@ def _build_tools_provider(
     mcp_provider = MCPToolsProvider(mcp_server_configs={})
     composite = CompositeToolsProvider(providers=[local_provider, mcp_provider])
 
-    self_delegation_policy = ToolPolicyConfig(
-        rules=[
-            PolicyRule(
-                match=ToolMatcher(
-                    names=["delegate_to_service"],
-                    argument_equals={"target_service_id": self_delegation_profile_id},
-                ),
-                decision=ToolPolicyDecision.ALLOW,
-                priority=50,
-                description=f"Allow self-delegation for profile '{self_delegation_profile_id}'",
-            ),
-        ],
-    )
-
-    engine = PolicyEngine.from_layers(
-        defaults=profile_tools_policy,
-        profile=self_delegation_policy,
-        operator=operator_tools_policy,
+    engine = _build_profile_policy_engine(
+        profile_id,
+        profile_tools_policy,
+        operator_tools_policy,
+        memory_read=True,
     )
     return PolicyEnforcingToolsProvider(
         wrapped_provider=composite, policy_engine=engine
@@ -196,9 +181,8 @@ async def test_self_delegation_succeeds_without_confirmation(
     config = _make_service_config(PROFILE_ID)
     llm = _make_llm_mock(target_service_id=PROFILE_ID, task_description=DELEGATED_TASK)
 
-    # Build provider with a base policy that would normally require confirm
-    # for delegation to PROFILE_ID, but the synthetic self-delegation rule
-    # at the profile layer overrides it.
+    # The profile's own policy asks for confirmation on self-delegation; the
+    # synthetic allow production injects at the profile layer must outrank it.
     base_policy = ToolPolicyConfig(
         default_decision=ToolPolicyDecision.DENY,
         rules=[
@@ -219,8 +203,8 @@ async def test_self_delegation_succeeds_without_confirmation(
         ],
     )
     tools_provider = _build_tools_provider(
+        profile_id=PROFILE_ID,
         profile_tools_policy=base_policy,
-        self_delegation_profile_id=PROFILE_ID,
     )
     await tools_provider.get_tool_definitions()
 
@@ -229,8 +213,8 @@ async def test_self_delegation_succeeds_without_confirmation(
     target_llm = _make_target_llm_mock()
     target_config = _make_service_config(PROFILE_ID)
     target_tools_provider = _build_tools_provider(
+        profile_id=PROFILE_ID,
         profile_tools_policy=base_policy,
-        self_delegation_profile_id=PROFILE_ID,
     )
     await target_tools_provider.get_tool_definitions()
     target_service = ProcessingService(
@@ -312,16 +296,16 @@ async def test_cross_profile_delegation_still_requires_confirmation(
         ],
     )
     tools_provider = _build_tools_provider(
+        profile_id=PROFILE_ID,
         profile_tools_policy=base_policy,
-        self_delegation_profile_id=PROFILE_ID,
     )
     await tools_provider.get_tool_definitions()
 
     target_llm = _make_target_llm_mock()
     target_config = _make_service_config(OTHER_PROFILE_ID)
     target_tools_provider = _build_tools_provider(
+        profile_id=OTHER_PROFILE_ID,
         profile_tools_policy=ToolPolicyConfig(default_decision=ToolPolicyDecision.DENY),
-        self_delegation_profile_id=OTHER_PROFILE_ID,
     )
     await target_tools_provider.get_tool_definitions()
     target_service = ProcessingService(
@@ -409,8 +393,8 @@ async def test_operator_deny_overrides_self_delegation(
         ],
     )
     tools_provider = _build_tools_provider(
+        profile_id=PROFILE_ID,
         profile_tools_policy=base_policy,
-        self_delegation_profile_id=PROFILE_ID,
         operator_tools_policy=operator_policy,
     )
     await tools_provider.get_tool_definitions()
@@ -442,4 +426,5 @@ async def test_operator_deny_overrides_self_delegation(
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None
     assert "not allowed" in result.text_reply.lower()
+    assert "Operator blocks self-delegation" in result.text_reply
     mock_confirmation_callback.assert_not_called()

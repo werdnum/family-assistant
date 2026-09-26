@@ -101,7 +101,10 @@ async def test_notify_conversation_no_owner_is_noop(db_engine: AsyncEngine) -> N
 
 @pytest.mark.asyncio
 async def test_notify_conversation_disabled_is_noop(db_engine: AsyncEngine) -> None:
-    """A disabled notifier is never invoked."""
+    """A disabled notifier is never invoked, even when the owner is resolvable."""
+    await _add_user_message(
+        db_engine, interface_type="web", conversation_id="conv-1", user_id="owner-1"
+    )
     notifier = _RecordingNotifier(enabled=False)
     db = Database(engine=db_engine)
     dispatched = await notify_conversation(

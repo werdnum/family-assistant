@@ -5,7 +5,7 @@ import re
 import time
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -24,6 +24,7 @@ from family_assistant.llm import (
     LLMInterface,
     ToolCallFunction,
     ToolCallItem,
+    ToolMessage,
     UserMessage,
 )
 from family_assistant.processing import (
@@ -104,6 +105,45 @@ def latest_turn_context(llm_client: RuleBasedMockLLMClient) -> str:
             ):
                 return message.content
     raise AssertionError("No <turn_context> block was sent to the LLM")
+
+
+def tool_result_sent_to_llm(
+    llm_client: RuleBasedMockLLMClient, tool_call_id: str
+) -> str:
+    """The content of the tool result for ``tool_call_id`` as the LLM received it."""
+    for call in reversed(llm_client.get_calls()):
+        for message in call["kwargs"]["messages"]:
+            if (
+                isinstance(message, ToolMessage)
+                and message.tool_call_id == tool_call_id
+            ):
+                return message.content
+    raise AssertionError(f"No tool result for {tool_call_id} was sent to the LLM")
+
+
+class SearchResultEntry(NamedTuple):
+    summary: str
+    similarity: float | None
+    start: str
+
+
+_SEARCH_RESULT_ENTRY_RE = re.compile(
+    r"^\d+\. (?P<summary>.+?)(?: \(similarity: (?P<similarity>\d+\.\d+)\))?\n"
+    r"\s+Start: (?P<start>.+)$",
+    re.MULTILINE,
+)
+
+
+def parse_search_results(search_result: str) -> list[SearchResultEntry]:
+    """The events listed by search_calendar_events, in the order it lists them."""
+    return [
+        SearchResultEntry(
+            summary=match["summary"],
+            similarity=float(match["similarity"]) if match["similarity"] else None,
+            start=match["start"],
+        )
+        for match in _SEARCH_RESULT_ENTRY_RE.finditer(search_result)
+    ]
 
 
 def get_radicale_client(
@@ -356,10 +396,6 @@ async def test_modify_event(
     )
 
     # --- Retrieve UID of the event created by the LLM tool ---
-    # Add a small delay to ensure the event is fully saved
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar event to be saved
-    await asyncio.sleep(1.0)
-
     original_radicale_event = await get_event_by_summary_from_radicale(
         radicale_server, original_summary
     )
@@ -588,8 +624,6 @@ async def test_modify_event(
     )
 
     # --- Verify Modified Event in the Turn Context Given to the Model ---
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
-    await asyncio.sleep(0.5)
     # The context block is built once per turn, so the turn that modified the
     # event still carries the pre-modification calendar. Take another turn and
     # read what the model was given.
@@ -889,8 +923,6 @@ async def test_delete_event(
         "later absence would prove nothing."
     )
 
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
-    await asyncio.sleep(0.5)
     # The context block is built once per turn, so the turn that deleted the
     # event still carries it. Take another turn and read what the model was given.
     db_context = Database(engine=pg_vector_db_engine)
@@ -1223,7 +1255,7 @@ async def test_search_events(
         tool_calls=None,
     )
 
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
+    llm_client = RuleBasedMockLLMClient(
         rules=[
             (search_intent_matcher, search_intent_response),
             (present_search_results_matcher, present_search_results_response),
@@ -1256,8 +1288,19 @@ async def test_search_events(
     assert event2_summary in final_reply_search, (
         "Event 2 summary not in LLM's final reply."
     )
-    assert "9 AM" in final_reply_search or "09:00" in final_reply_search
-    assert "1 PM" in final_reply_search or "13:00" in final_reply_search
+
+    listed_starts = {
+        entry.summary: entry.start
+        for entry in parse_search_results(
+            tool_result_sent_to_llm(llm_client, tool_call_id_search)
+        )
+    }
+    assert listed_starts.get(event1_summary) == event1_start.strftime(
+        "%Y-%m-%d %H:%M %Z"
+    ), f"Event 1 not listed with its 09:00 start: {listed_starts}"
+    assert listed_starts.get(event2_summary) == event2_start.strftime(
+        "%Y-%m-%d %H:%M %Z"
+    ), f"Event 2 not listed with its 13:00 start: {listed_starts}"
 
     logger.info("Test Search Events PASSED.")
 
@@ -1603,11 +1646,15 @@ async def test_similarity_based_search_finds_similar_events(
                 type="function",
                 function=ToolCallFunction(
                     name="add_calendar_event",
+                    # Duplicate detection scores "Soccer practice" 0.42 against
+                    # "Doctor appointment" two hours earlier, above its 0.30
+                    # threshold, and would refuse to create it.
                     arguments=json.dumps({
                         "summary": event3_summary,
                         "start_time": event3_start.isoformat(),
                         "end_time": event3_end.isoformat(),
                         "all_day": False,
+                        "bypass_duplicate_check": True,
                     }),
                 ),
             )
@@ -1647,6 +1694,12 @@ async def test_similarity_based_search_finds_similar_events(
     )
     err_add3 = result.error_traceback
     assert err_add3 is None, f"Error creating event3: {err_add3}"
+
+    for summary in (event1_summary, event2_summary, event3_summary):
+        assert (
+            await get_event_by_summary_from_radicale(radicale_server, summary)
+            is not None
+        ), f"Event '{summary}' was not created, so the search below proves nothing"
 
     # Now search for "doctor" directly using the tool
     db_context = Database(engine=pg_vector_db_engine)
@@ -1773,35 +1826,20 @@ async def test_similarity_search_threshold_filtering(
         api_backend=None,
     )
 
-    # Create high similarity event
-    await add_calendar_event_tool(
-        exec_context=exec_context,
-        calendar_config=test_calendar_config,
-        summary=high_similarity_event,
-        start_time=start_time.isoformat(),
-        end_time=end_time.isoformat(),
-        all_day=False,
-    )
-
-    # Create medium similarity event
-    await add_calendar_event_tool(
-        exec_context=exec_context,
-        calendar_config=test_calendar_config,
-        summary=medium_similarity_event,
-        start_time=(start_time + timedelta(hours=1)).isoformat(),
-        end_time=(end_time + timedelta(hours=1)).isoformat(),
-        all_day=False,
-    )
-
-    # Create low similarity event
-    await add_calendar_event_tool(
-        exec_context=exec_context,
-        calendar_config=test_calendar_config,
-        summary=low_similarity_event,
-        start_time=(start_time + timedelta(hours=2)).isoformat(),
-        end_time=(end_time + timedelta(hours=2)).isoformat(),
-        all_day=False,
-    )
+    for offset_hours, summary in enumerate((
+        high_similarity_event,
+        medium_similarity_event,
+        low_similarity_event,
+    )):
+        add_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=summary,
+            start_time=(start_time + timedelta(hours=offset_hours)).isoformat(),
+            end_time=(end_time + timedelta(hours=offset_hours)).isoformat(),
+            all_day=False,
+        )
+        assert f"OK. Event '{summary}' added" in add_result, add_result
 
     # Search for "meeting" with threshold 0.50
     search_result = await search_calendar_events_tool(
@@ -1817,7 +1855,12 @@ async def test_similarity_search_threshold_filtering(
         f"High similarity event '{high_similarity_event}' should be in results"
     )
 
-    # Low similarity event should NOT be found (below threshold)
+    # Both score between the default 0.30 and the configured 0.50 threshold
+    # (0.32 and 0.35 against "meeting"), so they are excluded only if the
+    # configured threshold is honoured.
+    assert medium_similarity_event not in search_result, (
+        f"Medium similarity event '{medium_similarity_event}' should NOT be in results"
+    )
     assert low_similarity_event not in search_result, (
         f"Low similarity event '{low_similarity_event}' should NOT be in results"
     )
@@ -1889,36 +1932,25 @@ async def test_similarity_search_score_sorting(
         api_backend=None,
     )
 
-    # Create events (in random order)
-    await add_calendar_event_tool(
-        exec_context=exec_context,
-        calendar_config=test_calendar_config,
-        summary=partial_match,
-        start_time=(start_time + timedelta(hours=2)).isoformat(),
-        end_time=(start_time + timedelta(hours=3)).isoformat(),
-        all_day=False,
-    )
+    # close_match starts before exact_match, so a chronological listing would
+    # put it first; only ranking by similarity puts exact_match ahead of it.
+    for summary, offset_hours, bypass_duplicate_check in (
+        (partial_match, 1, False),
+        (close_match, 0, False),
+        # Duplicate detection would refuse this as a near-copy of close_match.
+        (exact_match, 2, True),
+    ):
+        add_result = await add_calendar_event_tool(
+            exec_context=exec_context,
+            calendar_config=test_calendar_config,
+            summary=summary,
+            start_time=(start_time + timedelta(hours=offset_hours)).isoformat(),
+            end_time=(start_time + timedelta(hours=offset_hours + 1)).isoformat(),
+            all_day=False,
+            bypass_duplicate_check=bypass_duplicate_check,
+        )
+        assert f"OK. Event '{summary}' added" in add_result, add_result
 
-    await add_calendar_event_tool(
-        exec_context=exec_context,
-        calendar_config=test_calendar_config,
-        summary=exact_match,
-        start_time=start_time.isoformat(),
-        end_time=(start_time + timedelta(hours=1)).isoformat(),
-        all_day=False,
-    )
-
-    await add_calendar_event_tool(
-        exec_context=exec_context,
-        calendar_config=test_calendar_config,
-        summary=close_match,
-        start_time=(start_time + timedelta(hours=1)).isoformat(),
-        end_time=(start_time + timedelta(hours=2)).isoformat(),
-        all_day=False,
-        bypass_duplicate_check=True,  # Bypass since we want multiple similar events for sorting test
-    )
-
-    # Search for "appointment"
     search_result = await search_calendar_events_tool(
         exec_context=exec_context,
         calendar_config=test_calendar_config,
@@ -1927,21 +1959,22 @@ async def test_similarity_search_score_sorting(
 
     logger.info(f"Search result:\n{search_result}")
 
-    # Parse the result to verify sorting
-    # Results should be sorted by similarity (highest first)
-    # exact_match should come before close_match
-    exact_match_pos = search_result.find(exact_match)
-    close_match_pos = search_result.find(close_match)
-
-    assert exact_match_pos != -1, "Exact match should be in results"
-    assert close_match_pos != -1, "Close match should be in results"
-    assert exact_match_pos < close_match_pos, (
-        "Results should be sorted by similarity: exact match before close match"
+    entries = parse_search_results(search_result)
+    ranked = [entry.summary for entry in entries]
+    assert exact_match in ranked, f"Exact match should be in results: {ranked}"
+    assert close_match in ranked, f"Close match should be in results: {ranked}"
+    assert ranked.index(exact_match) < ranked.index(close_match), (
+        f"Results should be ranked by similarity, not start time: {ranked}"
     )
 
-    # Verify similarity scores are included
-    assert "similarity:" in search_result.lower(), (
-        "Results should include similarity scores"
+    similarities = [
+        entry.similarity for entry in entries if entry.similarity is not None
+    ]
+    assert len(similarities) == len(entries), (
+        f"Every result should include a similarity score: {search_result}"
+    )
+    assert similarities == sorted(similarities, reverse=True), (
+        f"Similarity scores should be non-increasing: {similarities}"
     )
 
     logger.info("Test similarity search score sorting PASSED.")
@@ -2254,24 +2287,35 @@ async def test_duplicate_detection_disabled(
 
     assert "OK. Event 'Doctor appointment' added" in event1_result
 
-    # Create second similar event at nearby time
+    indexed = await wait_for_radicale_indexing(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        event_summary="Doctor appointment",
+        timeout_seconds=5.0,
+    )
+    assert indexed, "First event should become searchable within timeout"
+
+    # The same near-duplicate that test_duplicate_detection_error_shown shows
+    # is refused when detection is enabled.
     event2_start = event1_start + timedelta(minutes=15)
     event2_end = event2_start + timedelta(hours=1)
 
     event2_result = await add_calendar_event_tool(
         exec_context=exec_context,
         calendar_config=test_calendar_config,
-        summary="Dr. Smith checkup",
+        summary="Doctor appt",
         start_time=event2_start.isoformat(),
         end_time=event2_end.isoformat(),
     )
 
     logger.info(f"Event 2 result:\n{event2_result}")
 
-    # Verify NO error is shown (duplicate detection disabled)
-    assert "OK. Event 'Dr. Smith checkup' added" in event2_result
+    assert "OK. Event 'Doctor appt' added" in event2_result
     assert "Error:" not in event2_result, (
         "No error should be shown when duplicate detection is disabled"
+    )
+    assert "duplicate check bypassed" not in event2_result, (
+        "The event should be created because detection is off, not via the bypass"
     )
 
     logger.info("Test duplicate detection disabled PASSED.")

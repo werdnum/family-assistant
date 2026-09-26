@@ -67,7 +67,7 @@ from family_assistant.storage.vector import (
     query_vectors,
 )  # Added imports
 from family_assistant.task_worker import TaskWorker
-from family_assistant.utils.scraping import MockScraper  # Added
+from family_assistant.utils.scraping import MockScraper, ScrapeResult
 
 # Import the FastAPI app directly for the test client
 from family_assistant.web.app_creator import app as fastapi_app
@@ -307,8 +307,6 @@ async def _ingest_and_index_email(
     # After API call, the email should be in DB and task enqueued.
     # Fetch the email ID and task ID from the database
     db = Database(engine=engine)
-    # Wait briefly for task to likely appear in DB after API commit
-    await asyncio.sleep(0.2)
     select_email_stmt = select(
         received_emails_table.c.id, received_emails_table.c.indexing_task_id
     ).where(received_emails_table.c.message_id_header == message_id)
@@ -346,6 +344,19 @@ async def _ingest_and_index_email(
     return email_db_id
 
 
+async def _indexed_embeddings_for_source(
+    engine: AsyncEngine, source_id: str
+) -> list[tuple[str, str | None]]:
+    """Return ``(embedding_type, content)`` for every embedding stored for a document."""
+    db = Database(engine=engine)
+    rows = await db.fetch_all(
+        select(DocumentEmbeddingRecord.embedding_type, DocumentEmbeddingRecord.content)
+        .join(DocumentRecord, DocumentEmbeddingRecord.document_id == DocumentRecord.id)
+        .where(DocumentRecord.source_id == source_id)
+    )
+    return [(row["embedding_type"], row["content"]) for row in rows]
+
+
 # --- Test Functions ---
 
 # create_simple_pdf_bytes function removed
@@ -375,6 +386,11 @@ EXPECTED_EXTRACTED_URL = "https://example.com/new-portal-access"
 PRIMARY_LINK_TARGET_TYPE = (
     "raw_url"  # As configured in LLMPrimaryLinkExtractorProcessor
 )
+FETCHED_PORTAL_PAGE_TEXT = (
+    "Sign in with your household account to reach the shared family calendar"
+)
+FETCHED_PORTAL_PAGE_MARKDOWN = f"# New Portal Access\n\n{FETCHED_PORTAL_PAGE_TEXT}."
+FETCHED_CONTENT_EMBEDDING_TYPE = "content_chunk"
 
 # --- Test Data for Email LLM Summary E2E ---
 TEST_EMAIL_BODY_FOR_SUMMARY = "This email contains critical information about the upcoming product launch event, including timelines, key stakeholders, and marketing strategies. Please review thoroughly."
@@ -515,7 +531,6 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id} for PDF test...")
-    await asyncio.sleep(0.1)
 
     async def cleanup(test_failed: bool) -> None:
         logger.info(f"Stopping background task worker {worker_id} for PDF test...")
@@ -804,7 +819,6 @@ async def test_email_indexing_with_llm_summary_e2e(
     logger.info(f"Starting email summary worker: {worker_id}")  # Use worker_id
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_email_summary.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     email_db_id = None
 
@@ -908,8 +922,9 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
 ) -> None:
     """
     End-to-end test for email ingestion with LLM-based primary link extraction.
-    Verifies that the LLMPrimaryLinkExtractorProcessor correctly identifies and
-    outputs a raw_url item, which is then picked up by a WebFetcherProcessor (mocked).
+    The primary link the LLM extracts from an email is fetched, and the fetched
+    page's content is indexed under that email's document. An email the LLM
+    judges to have no primary link fetches nothing.
     """
     logger.info(
         "\n--- Running Email Indexing with Primary Link Extraction E2E Test ---"
@@ -977,10 +992,16 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
 
     # --- Arrange: Mock Scraper for WebFetcherProcessor ---
     mock_scraper = MockScraper(
-        url_map={}
-    )  # No specific content needed, just capture calls
-    fastapi_app.state.scraper = (
-        mock_scraper  # Ensure DocumentIndexer can pick this up if it were used
+        url_map={
+            EXPECTED_EXTRACTED_URL: ScrapeResult(
+                type="markdown",
+                final_url=EXPECTED_EXTRACTED_URL,
+                content=FETCHED_PORTAL_PAGE_MARKDOWN,
+                mime_type="text/markdown",
+                title="New Portal Access",
+                source_description="mock-scraper",
+            )
+        }
     )
 
     # --- Arrange: Mock Embeddings (for other parts of the email) ---
@@ -1013,9 +1034,19 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         scraper=mock_scraper  # Inject mock scraper
         # input_content_types removed as it's not an accepted argument
     )
-    text_chunker = TextChunker(chunk_size=500, chunk_overlap=50)
+    text_chunker = TextChunker(
+        chunk_size=500,
+        chunk_overlap=50,
+        embedding_type_prefix_map={
+            "fetched_content_markdown": FETCHED_CONTENT_EMBEDDING_TYPE
+        },
+    )
     embedding_dispatcher = EmbeddingDispatchProcessor(
-        embedding_types_to_dispatch=["title_chunk", "raw_body_text_chunk"]
+        embedding_types_to_dispatch=[
+            "title_chunk",
+            "raw_body_text_chunk",
+            FETCHED_CONTENT_EMBEDDING_TYPE,
+        ]
     )
 
     test_pipeline_link_extraction = IndexingPipeline(
@@ -1040,19 +1071,6 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     )  # Instantiate EmailIndexer
 
     # --- Arrange: Task Worker Setup ---
-    original_llm_client = getattr(fastapi_app.state, "llm_client", None)
-    fastapi_app.state.llm_client = mock_llm_client_link_ext  # type: ignore[assignment] # For link_extractor_processor
-
-    # Create a mock application object for TaskWorker
-    mock_app_state_link_ext = MagicMock()
-    mock_app_state_link_ext.embedding_generator = current_embedder
-    mock_app_state_link_ext.llm_client = mock_llm_client_link_ext
-    # Add scraper to mock app state if WebFetcherProcessor run by TaskWorker needs it via app.state.scraper
-    mock_app_state_link_ext.scraper = mock_scraper
-
-    mock_application_link_ext = MagicMock()
-    mock_application_link_ext.state = mock_app_state_link_ext
-
     mock_chat_interface_link_ext = MagicMock()
     test_shutdown_event = asyncio.Event()  # Create shutdown event before TaskWorker
     worker_link_ext = TaskWorker(
@@ -1074,7 +1092,6 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
     # worker_id was unused
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker_link_ext.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     email_db_id_link = None
     email_db_id_no_link = None
@@ -1083,15 +1100,6 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         if test_failed:
             logger.info("Dumping tables due to test failure...")
             await dump_tables_on_failure(pg_vector_db_engine)
-
-        if hasattr(fastapi_app.state, "llm_client"):
-            if original_llm_client:
-                fastapi_app.state.llm_client = original_llm_client
-            else:
-                del fastapi_app.state.llm_client
-
-        if hasattr(fastapi_app.state, "scraper"):
-            del fastapi_app.state.scraper
 
         test_shutdown_event.set()
         try:
@@ -1142,39 +1150,34 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
             notify_event=test_new_task_event,
         )
 
-        # --- Assert: Check MockScraper calls ---
-        # The WebFetcherProcessor should have called the scraper with the extracted URL
+        # --- Assert ---
         assert_that(mock_scraper.scraped_urls).described_as(
-            "MockScraper should have been called for the primary link email"
-        ).contains(EXPECTED_EXTRACTED_URL)
-        assert_that(len(mock_scraper.scraped_urls)).described_as(
-            "MockScraper should only be called once for the primary link"
-        ).is_equal_to(1)
+            "Only the primary link extracted from the linked email should be fetched"
+        ).is_equal_to([EXPECTED_EXTRACTED_URL])
 
-        # --- Assert: Check LLM calls ---
-        # Positive case (email with link)
-        positive_call_found = any(
-            primary_link_matcher_positive(call_args["kwargs"])
-            for call_args in mock_llm_client_link_ext.get_calls()
-            if call_args["method_name"] == "generate_response"
+        link_email_embeddings = await _indexed_embeddings_for_source(
+            pg_vector_db_engine, email_msg_id_link
         )
-        assert_that(positive_call_found).described_as(
-            "LLM should have been called for the email with a primary link matching positive rule."
-        ).is_true()
+        fetched_content_chunks = [
+            content or ""
+            for embedding_type, content in link_email_embeddings
+            if embedding_type == FETCHED_CONTENT_EMBEDDING_TYPE
+        ]
+        assert_that(fetched_content_chunks).described_as(
+            f"Fetched page content should be indexed under the linked email's document. "
+            f"Stored embeddings: {link_email_embeddings}"
+        ).is_length(1)
+        assert_that(fetched_content_chunks[0]).contains(FETCHED_PORTAL_PAGE_TEXT)
 
-        # Negative case (email without link)
-        negative_call_found = any(
-            primary_link_matcher_negative(call_args["kwargs"])
-            for call_args in mock_llm_client_link_ext.get_calls()
-            if call_args["method_name"] == "generate_response"
+        no_link_email_embeddings = await _indexed_embeddings_for_source(
+            pg_vector_db_engine, email_msg_id_no_link
         )
-        assert_that(negative_call_found).described_as(
-            "LLM should have been called for the email without a primary link matching negative rule."
-        ).is_true()
-
-        # The assertions for positive_call_found and negative_call_found already verify
-        # that the LLM's generate_response was called with the correct context for each email.
-        # The exact count of calls is less important than these behavioral checks.
+        assert_that({
+            embedding_type for embedding_type, _ in no_link_email_embeddings
+        }).described_as(
+            "The email without a primary link should be indexed from its own title "
+            "and body only, with no fetched content"
+        ).is_equal_to({"title_chunk", "raw_body_text_chunk"})
 
         logger.info(
             "--- Email Indexing with Primary Link Extraction E2E Test Passed ---"

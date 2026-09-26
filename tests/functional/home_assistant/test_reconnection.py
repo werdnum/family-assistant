@@ -4,29 +4,36 @@ Test Home Assistant event source reconnection and health checking.
 
 import asyncio
 import contextlib
-import time
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
+from family_assistant.events.webhook_source import WebhookEventSource
+from family_assistant.storage.database import Database
 
 
-async def _run_health_check_iteration(source: HomeAssistantSource) -> None:
-    if source._connection_healthy:
-        time_since_last_event = time.time() - source._last_event_time
-        if time_since_last_event > 300:
-            connection_ok = await source._test_connection()
-            if not connection_ok:
-                source._connection_healthy = False
-                if source._websocket_task and not source._websocket_task.done():
-                    source._websocket_task.cancel()
+class _SilentWebsocketClient:
+    """Stands in for homeassistant_api's WebsocketClient: connects, then fires no events."""
 
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating health check interval timing
-    await asyncio.sleep(source._health_check_interval)
+    def __init__(self, api_url: str, token: str) -> None:
+        self.api_url = api_url
+        self.token = token
+
+    def __enter__(self) -> "_SilentWebsocketClient":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    @contextlib.contextmanager
+    def listen_events(self) -> Iterator[Iterator[object]]:
+        yield iter([])
 
 
 @pytest.mark.asyncio
@@ -94,57 +101,24 @@ async def test_exponential_backoff_reconnection() -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_triggers_reconnection() -> None:
-    """Test that health check triggers reconnection when no events received."""
-    # Create mock client
+    """A silent connection whose API probe fails is marked unhealthy and its websocket is torn down."""
     mock_client = MagicMock()
     mock_client.api_url = "http://localhost:8123/api"
     mock_client.token = "test_token"
+    mock_client.get_states.side_effect = ConnectionError("Home Assistant unreachable")
 
     source = HomeAssistantSource(mock_client)
     source._connection_healthy = True
-    source._last_event_time = 0  # Very old timestamp
-    source._health_check_interval = 0.05  # Fast health checks for testing
+    source._last_event_time = 0
+    source._health_check_interval = 0
+    websocket_task = asyncio.create_task(asyncio.Event().wait())
+    source._websocket_task = websocket_task
 
-    # Mock the websocket task
-    source._websocket_task = MagicMock()
-    source._websocket_task.done.return_value = False
-    source._websocket_task.cancel = MagicMock()
+    await source._run_health_check()
 
-    # Mock the connection test to fail
-    with patch.object(source, "_test_connection", return_value=False):
-        # Start health check - override the initial delay
-        source._running = True
-
-        # Patch the _health_check_loop to skip initial delay
-        async def patched_health_check_loop() -> None:
-            # Skip initial delay
-            while source._running:
-                try:
-                    await _run_health_check_iteration(source)
-                except asyncio.CancelledError:
-                    # Task is being cancelled, exit cleanly
-                    break
-                except Exception:
-                    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating health check interval timing after exception
-                    await asyncio.sleep(source._health_check_interval)
-
-        with patch.object(source, "_health_check_loop", patched_health_check_loop):
-            health_task = asyncio.create_task(source._health_check_loop())
-
-            # Wait for health check to detect the issue
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for health check to detect connection issue
-            await asyncio.sleep(0.2)
-
-            # Stop the loop
-            source._running = False
-            health_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await health_task
-
-            # Verify connection was marked unhealthy
-            assert not source._connection_healthy
-            # Verify websocket task was cancelled to trigger reconnection
-            source._websocket_task.cancel.assert_called()
+    assert source._connection_healthy is False
+    await asyncio.wait({websocket_task}, timeout=5)
+    assert websocket_task.cancelled()
 
 
 @pytest.mark.asyncio
@@ -191,28 +165,57 @@ async def test_successful_reconnection_resets_attempts() -> None:
 
 @pytest.mark.asyncio
 async def test_event_processor_health_status() -> None:
-    """Test that event processor can report health status."""
-    # Create mock sources
-    mock_ha_source = MagicMock()
-    mock_ha_source._connection_healthy = True
-    mock_ha_source._reconnect_attempts = 0
-    mock_ha_source._last_event_time = 12345.0
+    """Health status reports a connected Home Assistant source's state, and 'unknown' for untracked sources."""
+    mock_client = MagicMock()
+    mock_client.api_url = "http://localhost:8123/api"
+    mock_client.token = "test_token"
+    ha_source = HomeAssistantSource(mock_client)
+    with patch(
+        "family_assistant.events.home_assistant_source.WebsocketClient",
+        _SilentWebsocketClient,
+    ):
+        ha_source._connect_and_listen()
 
-    sources = {"home_assistant": mock_ha_source}
+    processor = EventProcessor(
+        {"home_assistant": ha_source, "webhook": WebhookEventSource()},
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
 
-    # Create processor
-    processor = EventProcessor(sources, timezone=ZoneInfo("Australia/Sydney"))  # type: ignore[arg-type]
-    processor._running = True
-    processor._listener_cache = {"home_assistant": [{}, {}]}  # type: ignore[dict-item]  # minimal stubs; test only checks count
-
-    # Get health status
     status = await processor.get_health_status()
 
-    # Verify status structure
-    assert status["processor_running"] is True
-    assert "sources" in status
-    assert "home_assistant" in status["sources"]
     ha_status = status["sources"]["home_assistant"]
     assert ha_status.get("healthy") is True
     assert ha_status.get("reconnect_attempts") == 0
+    assert ha_status.get("last_event_time", 0) > 0
+    assert status["sources"]["webhook"] == {"status": "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_event_processor_health_status_counts_enabled_listeners(
+    db_engine: AsyncEngine,
+) -> None:
+    """A started processor's health status counts the enabled listeners it has cached, per source."""
+    db = Database(db_engine)
+    for name, enabled in (("Front door", True), ("Back door", True), ("Garage", False)):
+        await db.events.create_event_listener(
+            name=name,
+            source_id="home_assistant",
+            match_conditions={"entity_id": "binary_sensor.door"},
+            conversation_id="test_conversation",
+            enabled=enabled,
+        )
+    processor = EventProcessor(
+        sources={},
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+
+    await processor.start()
+    try:
+        status = await processor.get_health_status()
+    finally:
+        await processor.stop()
+
+    assert status["processor_running"] is True
     assert status["listener_cache"]["listener_count"] == 2
+    assert status["listener_cache"]["by_source"] == {"home_assistant": 2}

@@ -97,7 +97,10 @@ class FakeOutboundEmailClient:
         return f"<sent-{len(self.sent)}@example.net>"
 
 
+@dataclass
 class FailingOutboundEmailClient:
+    attempts: list[SentEmail] = field(default_factory=list)
+
     async def send_email(
         self,
         *,
@@ -107,11 +110,15 @@ class FailingOutboundEmailClient:
         text: str,
         in_reply_to: str | None = None,
     ) -> str:
-        _ = to_address
-        _ = from_address
-        _ = subject
-        _ = text
-        _ = in_reply_to
+        self.attempts.append(
+            SentEmail(
+                to_address=to_address,
+                from_address=from_address,
+                subject=subject,
+                text=text,
+                in_reply_to=in_reply_to,
+            )
+        )
         raise OutboundEmailDeliveryError("delivery failed")
 
 
@@ -685,9 +692,10 @@ async def test_email_action_delivery_failure_does_not_retry_completed_turn(
             "outbound_from_address": "assistant@example.net",
         },
     })
+    outbound_client = FailingOutboundEmailClient()
     email_interface = _email_chat_interface(
         db_engine=db_engine,
-        outbound_client=FailingOutboundEmailClient(),
+        outbound_client=outbound_client,
         app_config=app_config,
     )
     llm = RuleBasedMockLLMClient(
@@ -711,6 +719,19 @@ async def test_email_action_delivery_failure_does_not_retry_completed_turn(
         ),
         {"email_db_id": email_db_id},
     )
+
+    assert len(outbound_client.attempts) == 1
+    assert outbound_client.attempts[0].to_address == "buyer@example.com"
+    assert "I found soccer tickets in the email." in outbound_client.attempts[0].text
+    assert len(llm.get_calls()) == 1
+    messages = await db.message_history.get_recent(
+        interface_type="email",
+        conversation_id=email_conversation_id(email_db_id),
+        processing_profile_id="email_intake",
+    )
+    assert [
+        message.content for message in messages if isinstance(message, AssistantMessage)
+    ] == ["I found soccer tickets in the email."]
 
 
 @pytest.mark.asyncio

@@ -171,7 +171,37 @@ describe('Loading earlier messages', { timeout: TEST_TIMEOUT_MS }, () => {
   });
 
   it('drops an earlier-history load that finishes after starting a new chat', async () => {
+    const refreshedConversationId = 'web_conv_refreshed';
+    let conversationListRefreshed = false;
+    server.use(
+      http.get('/api/v1/chat/conversations', () =>
+        HttpResponse.json({
+          conversations: conversationListRefreshed
+            ? [
+                {
+                  conversation_id: refreshedConversationId,
+                  last_message: 'Refreshed conversation',
+                  last_timestamp: '2026-01-02T00:00:00Z',
+                  message_count: 1,
+                },
+              ]
+            : [],
+          count: conversationListRefreshed ? 1 : 0,
+        })
+      )
+    );
     await openConversation();
+    // Like the follow stream, the activity stream connects once the browser is idle.
+    const activityStream = await waitFor(
+      () => {
+        const stream = MockEventSource.instances.find((es) =>
+          es.url.includes('/chat/activity/stream')
+        );
+        expect(stream).toBeDefined();
+        return stream as MockEventSource;
+      },
+      { timeout: WAIT_TIMEOUT_MS }
+    );
     let releaseWidenedLoad: (() => void) | undefined;
     widenedLoadGate = new Promise<void>((resolve) => {
       releaseWidenedLoad = resolve;
@@ -188,7 +218,20 @@ describe('Loading earlier messages', { timeout: TEST_TIMEOUT_MS }, () => {
     await waitFor(() => {
       expect(widenedLoadServed).toBe(true);
     });
-    await screen.findByText('How can I help you?');
+    // A conversation-list refetch served after the stale page goes through the
+    // same fetch, parse and render steps behind it, so once the refreshed list
+    // is on screen the stale page would be too had it not been dropped.
+    conversationListRefreshed = true;
+    activityStream.emit('conversation_activity', {});
+    await waitFor(
+      () => {
+        expect(
+          screen.queryAllByTestId(`conversation-item-${refreshedConversationId}`).length
+        ).toBeGreaterThan(0);
+      },
+      { timeout: WAIT_TIMEOUT_MS }
+    );
+    expect(screen.getByText('How can I help you?')).toBeInTheDocument();
     expect(screen.queryByText(`Message ${INITIAL_ROWS - 1}`)).not.toBeInTheDocument();
   });
 });

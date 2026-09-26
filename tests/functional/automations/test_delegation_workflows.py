@@ -18,6 +18,7 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
+from family_assistant.llm.messages import LLMMessage
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
@@ -39,7 +40,10 @@ from tests.mocks.mock_llm import (
 from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
+    extract_text_from_content,
     get_last_message_text,
+    get_message_content,
+    get_message_role,
     last_real_message,
 )
 
@@ -54,6 +58,102 @@ USER_QUERY_TEMPLATE = "Please delegate this task: {task_description}"
 TEST_CHAT_ID = 123456789
 TEST_INTERFACE_TYPE = "test_interface"
 TEST_USER_NAME = "DelegationTester"
+
+SPECIALIST_SAW_ATTACHMENT_REPLY = "Specialist analysed the attached image."
+SPECIALIST_NO_ATTACHMENT_REPLY = "Specialist received no attachment."
+
+
+def _user_texts(messages: list[LLMMessage]) -> list[str]:
+    return [
+        extract_text_from_content(get_message_content(msg))
+        for msg in messages
+        if get_message_role(msg) == "user"
+    ]
+
+
+def _sees_delegated_attachment(messages: list[LLMMessage], attachment_id: str) -> bool:
+    """Whether the delegated request and the attachment's ID marker reached the LLM."""
+    texts = _user_texts(messages)
+    return any(DELEGATED_TASK_DESCRIPTION in text for text in texts) and any(
+        f"[Attachment ID: {attachment_id}]" in text for text in texts
+    )
+
+
+def _is_initial_user_turn(kwargs: MatcherArgs) -> bool:
+    last_message = last_real_message(kwargs.get("messages", []))
+    return last_message is not None and last_message.role == "user"
+
+
+def _is_delegation_result(kwargs: MatcherArgs) -> bool:
+    last_message = last_real_message(kwargs.get("messages", []))
+    return (
+        last_message is not None
+        and last_message.role == "tool"
+        and last_message.name == "delegate_to_service"
+    )
+
+
+def _relay_delegation_result(kwargs: MatcherArgs) -> MockLLMOutput:
+    return MockLLMOutput(
+        content=f"The specialist replied: {get_last_message_text(kwargs['messages'])}"
+    )
+
+
+def _attachment_seeing_specialist(attachment_id: str) -> RuleBasedMockLLMClient:
+    return RuleBasedMockLLMClient(
+        rules=[
+            (
+                lambda kwargs: _sees_delegated_attachment(
+                    kwargs["messages"], attachment_id
+                ),
+                MockLLMOutput(content=SPECIALIST_SAW_ATTACHMENT_REPLY),
+            )
+        ],
+        default_response=MockLLMOutput(content=SPECIALIST_NO_ATTACHMENT_REPLY),
+    )
+
+
+def _delegating_primary(attachment_id: str) -> RuleBasedMockLLMClient:
+    return RuleBasedMockLLMClient(
+        rules=[
+            (
+                _is_initial_user_turn,
+                MockLLMOutput(
+                    content="I'll delegate this task with the attachment.",
+                    tool_calls=[
+                        ToolCallItem(
+                            id="delegate_call",
+                            type="function",
+                            function=ToolCallFunction(
+                                name="delegate_to_service",
+                                arguments=json.dumps({
+                                    "target_service_id": SPECIALIZED_PROFILE_ID,
+                                    "user_request": DELEGATED_TASK_DESCRIPTION,
+                                    "confirm_delegation": False,
+                                    "attachment_ids": [attachment_id],
+                                }),
+                            ),
+                        )
+                    ],
+                ),
+            ),
+            (_is_delegation_result, _relay_delegation_result),
+        ]
+    )
+
+
+def _assert_specialist_saw_attachment_once(
+    specialized_llm_client: RuleBasedMockLLMClient, attachment_id: str
+) -> None:
+    specialized_calls = specialized_llm_client.get_calls()
+    assert len(specialized_calls) == 1, (
+        f"Expected exactly one delegated LLM call, got {len(specialized_calls)}"
+    )
+    messages_to_specialized = specialized_calls[0]["kwargs"]["messages"]
+    assert _sees_delegated_attachment(messages_to_specialized, attachment_id), (
+        f"Attachment {attachment_id} was not injected into the delegated request. "
+        f"User messages were: {_user_texts(messages_to_specialized)}"
+    )
 
 
 @pytest.mark.asyncio
@@ -86,59 +186,8 @@ async def test_delegate_to_service_with_attachments(
     )
     test_attachment_id = attachment_record.attachment_id
 
-    # Create LLM client that expects attachment in delegated request
-    def attachment_delegation_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        if not messages:
-            return False
-
-        # Check if this is the delegated request containing attachment reference
-        last_message = last_real_message(messages)
-        content = getattr(last_message, "content", "") or ""
-        return "DELEGATED_TASK_DESCRIPTION" in content and "test_image.png" in content
-
-    llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (
-                attachment_delegation_matcher,
-                MockLLMOutput(
-                    content="I can see the test image attachment and will process the delegated task accordingly.",
-                    tool_calls=None,
-                ),
-            )
-        ],
-        default_response=MockLLMOutput(
-            content="Processed delegation request (no attachments detected).",
-            tool_calls=None,
-        ),
-    )
-
-    # Create primary service that will call delegate_to_service with attachments
-    primary_llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (
-                lambda kwargs: True,  # Match any request
-                MockLLMOutput(
-                    content="I'll delegate this task with the attachment.",
-                    tool_calls=[
-                        ToolCallItem(
-                            id="delegate_call",
-                            type="function",
-                            function=ToolCallFunction(
-                                name="delegate_to_service",
-                                arguments=json.dumps({
-                                    "target_service_id": SPECIALIZED_PROFILE_ID,
-                                    "user_request": DELEGATED_TASK_DESCRIPTION,
-                                    "confirm_delegation": False,
-                                    "attachment_ids": [test_attachment_id],
-                                }),
-                            ),
-                        )
-                    ],
-                ),
-            )
-        ]
-    )
+    specialized_llm_client = _attachment_seeing_specialist(test_attachment_id)
+    primary_llm_client = _delegating_primary(test_attachment_id)
 
     # Create services
     primary_tools_provider = LocalToolsProvider(
@@ -165,7 +214,7 @@ async def test_delegate_to_service_with_attachments(
     )
 
     specialized_service = ProcessingService(
-        llm_client=llm_client,
+        llm_client=specialized_llm_client,
         tools_provider=LocalToolsProvider(definitions=[], implementations={}),
         service_config=ProcessingServiceConfig(
             id=SPECIALIZED_PROFILE_ID,
@@ -213,42 +262,13 @@ async def test_delegate_to_service_with_attachments(
         request_confirmation_callback=None,
     )
 
-    final_reply = result.text_reply
-    error = result.error_traceback
-
-    assert error is None, f"Error during attachment delegation: {error}"
-    assert final_reply is not None
-    assert "delegate this task with the attachment" in final_reply
-
-    # Verify that the delegated LLM actually saw the attachment metadata
-    specialized_llm_calls = llm_client.get_calls()
-    assert len(specialized_llm_calls) > 0, "No LLM calls made to specialized service"
-
-    # Get the messages sent to the delegated LLM
-    messages_to_specialized = specialized_llm_calls[0]["kwargs"]["messages"]
-
-    # Verify attachment was properly injected into LLM messages
-    found_attachment_injection = False
-    for msg in messages_to_specialized:
-        if msg.role == "user":
-            content = msg.content or ""
-            # Check for attachment injection markers that should be present
-            # when an attachment is properly processed
-            if isinstance(content, str) and (
-                f"[Attachment ID: {test_attachment_id}]" in content
-                or ("[System:" in content and test_attachment_id in content)
-            ):
-                found_attachment_injection = True
-                logger.info(f"Found attachment injection in message: {content[:200]}")
-                break
-
-    assert found_attachment_injection, (
-        f"Attachment {test_attachment_id} was not properly injected into delegated LLM messages. "
-        f"Expected to find '[Attachment ID: {test_attachment_id}]' or similar marker "
-        f"but messages were: {json.dumps(messages_to_specialized, indent=2)}"
+    assert result.error_traceback is None, (
+        f"Error during attachment delegation: {result.error_traceback}"
     )
-
-    logger.info("Attachment delegation test completed successfully")
+    assert SPECIALIST_SAW_ATTACHMENT_REPLY in (result.text_reply or ""), (
+        f"Delegated reply did not reach the primary: {result.text_reply}"
+    )
+    _assert_specialist_saw_attachment_once(specialized_llm_client, test_attachment_id)
 
 
 @pytest.mark.asyncio
@@ -282,71 +302,8 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
     )
     other_attachment_id = attachment_record.attachment_id
 
-    def initial_user_request_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        if not messages:
-            return False
-        last_message = last_real_message(messages)
-        return (
-            last_message is not None
-            and last_message.role == "user"
-            and DELEGATED_TASK_DESCRIPTION in (last_message.content or "")
-        )
-
-    def tool_result_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        return any(
-            msg.role == "tool" and "I can see the attachment" in (msg.content or "")
-            for msg in messages
-        )
-
-    primary_llm_client = RuleBasedMockLLMClient(
-        rules=[
-            # Rule: Handle initial user request and attempt delegation
-            (
-                initial_user_request_matcher,
-                MockLLMOutput(
-                    content="I'll delegate this task with the attachment from another conversation.",
-                    tool_calls=[
-                        ToolCallItem(
-                            id="delegate_call_security_test",
-                            type="function",
-                            function=ToolCallFunction(
-                                name="delegate_to_service",
-                                arguments=json.dumps({
-                                    "target_service_id": SPECIALIZED_PROFILE_ID,
-                                    "user_request": DELEGATED_TASK_DESCRIPTION,
-                                    "confirm_delegation": False,
-                                    "attachment_ids": [other_attachment_id],
-                                }),
-                            ),
-                        )
-                    ],
-                ),
-            ),
-            # Rule: Handle tool result from specialized service
-            (
-                tool_result_matcher,
-                MockLLMOutput(
-                    content="I can see the attachment even though it was from another conversation.",
-                    tool_calls=None,
-                ),
-            ),
-        ],
-        default_response=MockLLMOutput(
-            content="Delegation completed successfully.",
-            tool_calls=None,
-        ),
-    )
-
-    # Create specialized service
-    specialized_llm_client = RuleBasedMockLLMClient(
-        rules=[],
-        default_response=MockLLMOutput(
-            content="I can see the attachment even though it was from another conversation.",
-            tool_calls=None,
-        ),
-    )
+    primary_llm_client = _delegating_primary(other_attachment_id)
+    specialized_llm_client = _attachment_seeing_specialist(other_attachment_id)
 
     # Create services
     primary_tools_provider = LocalToolsProvider(
@@ -418,23 +375,15 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
         request_confirmation_callback=None,
     )
 
-    final_reply = result.text_reply
-    error = result.error_traceback
-
-    # Verify delegation succeeded
-    assert error is None
-    assert final_reply is not None
-    assert "I can see the attachment" in final_reply
-
-    logger.info("Cross-conversation attachment allowed test completed successfully")
+    assert result.error_traceback is None, (
+        f"Error during cross-conversation delegation: {result.error_traceback}"
+    )
+    assert SPECIALIST_SAW_ATTACHMENT_REPLY in (result.text_reply or ""), (
+        f"Delegated reply did not reach the primary: {result.text_reply}"
+    )
+    _assert_specialist_saw_attachment_once(specialized_llm_client, other_attachment_id)
 
 
-# Load-sensitive: the delegated attachments propagate via the background task
-# worker, and under heavy CI load (SQLite devcontainer, full parallel suite) the
-# result occasionally returns before they land. Passes consistently locally
-# (flake-finder 48/48 under xdist). Rerun rather than fail unrelated PRs; tracked
-# in https://github.com/werdnum/family-assistant/issues/966.
-@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_delegate_to_service_propagates_generated_attachments(
     db_engine: AsyncEngine,
@@ -529,17 +478,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
                     ],
                 ),
             ),
-            # After delegation completes, primary LLM gets the response WITH attachment references
-            (
-                lambda kwargs: any(
-                    msg.role == "tool" and msg.name == "delegate_to_service"
-                    for msg in kwargs.get("messages", [])
-                ),
-                MockLLMOutput(
-                    content="The specialized service has completed your request with a camera snapshot.",
-                    tool_calls=None,
-                ),
-            ),
+            (_is_delegation_result, _relay_delegation_result),
         ]
     )
 
@@ -620,29 +559,23 @@ async def test_delegate_to_service_propagates_generated_attachments(
         request_confirmation_callback=None,
     )
 
-    final_reply = result.text_reply
-    error = result.error_traceback
-    attachment_ids = result.attachment_ids
-
-    assert error is None, f"Error during delegation: {error}"
-    assert final_reply is not None
-    assert "specialized service" in final_reply.lower()
-
-    # KEY ASSERTION: Verify that attachments from the delegated service are propagated back
-    assert attachment_ids is not None and len(attachment_ids) > 0, (
-        "Expected attachment IDs from delegated service to be propagated back to primary profile"
+    assert result.error_traceback is None, (
+        f"Error during delegation: {result.error_traceback}"
     )
+    # The relayed tool result shows whether the delegation completed inline or
+    # was handed off / failed, which is what a missing attachment would mean.
+    assert "Here's the camera snapshot I captured for your request." in (
+        result.text_reply or ""
+    ), f"Delegation did not complete inline: {result.text_reply}"
 
-    # Verify the attachment exists in the registry
-    db_context = Database(engine=db_engine)
-    for att_id in attachment_ids:
-        attachment_metadata = await attachment_registry.get_attachment(
-            db_context, att_id, acting_user_id=None
-        )
-        assert attachment_metadata is not None
-        assert (
-            attachment_metadata.mime_type == "image/png"
-        )  # mock_camera_snapshot returns PNG
-        logger.info(f"Verified propagated attachment: {att_id}")
-
-    logger.info("Delegation attachment propagation test completed successfully")
+    attachment_ids = result.attachment_ids
+    assert attachment_ids is not None and len(attachment_ids) == 1, (
+        "Expected the delegated service's camera snapshot to be propagated back "
+        f"to the primary profile, got {attachment_ids}"
+    )
+    attachment_metadata = await attachment_registry.get_attachment(
+        Database(engine=db_engine), attachment_ids[0], acting_user_id=None
+    )
+    assert attachment_metadata is not None
+    assert attachment_metadata.mime_type == "image/png"
+    assert "camera.test" in attachment_metadata.description

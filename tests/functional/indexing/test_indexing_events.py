@@ -9,7 +9,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -32,69 +31,50 @@ from family_assistant.storage.events import recent_events_table
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector import add_document
 from family_assistant.tools.types import ToolExecutionContext
+from tests.helpers import wait_for_condition
 
 if TYPE_CHECKING:
-    from family_assistant.storage.types import ActionConfig, MatchConditions
+    from family_assistant.storage.types import ActionConfig
 
 logger = logging.getLogger(__name__)
 
 
 async def poll_for_document_ready_event(
     doc_id: int,
-    timeout_seconds: float = 2.0,
-    poll_interval: float = 0.1,
-    engine: AsyncEngine | None = None,
+    engine: AsyncEngine,
     # ast-grep-ignore: no-dict-any - Event data is unstructured JSON
 ) -> dict[str, Any]:
-    """Poll for DOCUMENT_READY event to appear in recent_events table.
-
-    Args:
-        doc_id: Document ID to look for
-        timeout_seconds: Maximum time to wait
-        poll_interval: Time between polls
-
-    Returns:
-        The event_data dict
-
-    Raises:
-        AssertionError: If event not found within timeout
-    """
-
-    max_attempts = int(timeout_seconds / poll_interval)
-
-    for _ in range(max_attempts):
-        if not engine:
-            raise RuntimeError("Database engine not initialized")
-        db_ctx = Database(engine=engine)
-        # Use SQLAlchemy's JSON operators for cross-database compatibility
-        stmt = select(recent_events_table.c.event_data).where(
-            and_(
-                recent_events_table.c.source_id == "indexing",
-                recent_events_table.c.event_data["event_type"].as_string()
-                == IndexingEventType.DOCUMENT_READY.value,
-                # Cast to integer for proper comparison
-                sa_cast(
-                    recent_events_table.c.event_data["document_id"].as_string(),
-                    Integer,
-                )
-                == doc_id,
+    """Wait for the DOCUMENT_READY event for ``doc_id`` to be stored in recent_events."""
+    stmt = select(recent_events_table.c.event_data).where(
+        and_(
+            recent_events_table.c.source_id == "indexing",
+            recent_events_table.c.event_data["event_type"].as_string()
+            == IndexingEventType.DOCUMENT_READY.value,
+            sa_cast(
+                recent_events_table.c.event_data["document_id"].as_string(),
+                Integer,
             )
+            == doc_id,
         )
-
-        result = await db_ctx.fetch_all(stmt)
-        if result:
-            # Extract and return event data
-            event_data_raw = result[0]["event_data"]
-            if isinstance(event_data_raw, str):
-                return json.loads(event_data_raw)
-            else:
-                return event_data_raw
-
-        await asyncio.sleep(poll_interval)
-
-    raise AssertionError(
-        f"No DOCUMENT_READY event found for doc_id {doc_id} after {timeout_seconds}s"
     )
+
+    # ast-grep-ignore: no-dict-any - Event data is unstructured JSON
+    async def fetch_event_data() -> dict[str, Any] | None:
+        rows = await Database(engine=engine).fetch_all(stmt)
+        if not rows:
+            return None
+        event_data_raw = rows[0]["event_data"]
+        if isinstance(event_data_raw, str):
+            return json.loads(event_data_raw)
+        return event_data_raw
+
+    event_data = await wait_for_condition(
+        fetch_event_data,
+        timeout=10.0,
+        description=f"DOCUMENT_READY event for document {doc_id}",
+    )
+    assert event_data is not None
+    return event_data
 
 
 @dataclass
@@ -222,23 +202,14 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 priority=TaskPriority.INTERACTIVE,
             )
 
-        # Process all embedding tasks
-        # Keep track of how many we've processed
-        tasks_processed = 0
-        total_tasks = 1 + len(TEST_DOC_CHUNKS)  # 1 title + 3 chunks
-
-        # Process tasks one by one
-        while tasks_processed < total_tasks:
+        for _ in range(1 + len(TEST_DOC_CHUNKS)):
             db_ctx = Database(engine=db_engine)
             task = await db_ctx.tasks.dequeue(
                 task_types=["embed_and_store_batch"],
                 worker_id="test-worker",
                 current_time=datetime.now(UTC),
             )
-            if task is None:
-                # Give a moment for tasks to become available
-                await asyncio.sleep(0.1)
-                continue
+            assert task is not None
 
             task_context = ToolExecutionContext(
                 interface_type="web",
@@ -264,17 +235,10 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                 task_context, cast("EmbedAndStoreBatchPayload", task["payload"])
             )
             await db_ctx.tasks.update_status(task["task_id"], "done")
-            tasks_processed += 1
 
-        # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
 
-        # Poll for DOCUMENT_READY event and verify its contents
-        # Use longer timeout since event processing is async
-        # SQLite might need more time for transaction visibility
-        event_data = await poll_for_document_ready_event(
-            doc_id, timeout_seconds=10.0, poll_interval=0.2, engine=db_engine
-        )
+        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
         assert event_data["document_id"] == doc_id
         assert event_data["document_title"] == TEST_DOC_TITLE
@@ -404,39 +368,19 @@ async def test_document_ready_not_emitted_with_pending_tasks(
 
 @pytest.mark.asyncio
 async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> None:
-    """Test full integration with event listeners triggering on document ready."""
-    # Clean up any leftover tasks from previous tests to ensure isolation
-    db_ctx = Database(engine=db_engine)
-    await db_ctx.execute(
-        tasks_table.delete().where(tasks_table.c.task_type == "embed_and_store_batch")
-    )
-
-    # Create components
+    """A listener filtering DOCUMENT_READY events wakes the LLM for a matching document."""
     indexing_source = IndexingSource()
 
-    # Create event listener
     db_ctx = Database(engine=db_engine)
-    await db_ctx.events.create_event_listener(
+    listener_id = await db_ctx.events.create_event_listener(
         name="Newsletter Ready Listener",
         description="Test listener for newsletter ready events",
         conversation_id="test-conv",
         interface_type="web",
         source_id="indexing",
-        match_conditions=cast(
-            "MatchConditions",
-            {
-                "event_type": IndexingEventType.DOCUMENT_READY.value,
-                "document_title": {"$contains": "Newsletter"},  # Only match newsletters
-            },
-        ),
-        action_config=cast(
-            "ActionConfig",
-            {
-                "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
-                "interface_type": "test",
-                "conversation_id": "test-conv",
-            },
-        ),
+        match_conditions={"event_type": IndexingEventType.DOCUMENT_READY.value},
+        condition_script="'Newsletter' in event['document_title']",
+        action_config={"context": "Summarize the newsletter that was just indexed."},
         enabled=True,
     )
 
@@ -488,13 +432,6 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    # Mock processing service for wake_llm action
-    mock_processing_service = MagicMock()
-    mock_processing_service.generate_llm_response_for_chat = AsyncMock()
-
-    # Skip the wake_llm handler test for now as it's complex to mock
-    # The important part is that the event is emitted and stored
-
     try:
         # Start processor and wait for it to be fully initialized
         await event_processor.start()
@@ -540,14 +477,26 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
         # block deadlocks until the busy timeout.
         await indexing_source.wait_for_pending_events()
 
-        # Poll for the event and verify
-        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
-
+        callback_tasks = await Database(engine=db_engine).tasks.get_all(
+            task_type="llm_callback"
+        )
+        assert len(callback_tasks) == 1
+        callback_payload = callback_tasks[0]["payload"]
+        assert callback_payload is not None
+        assert callback_payload["conversation_id"] == "test-conv"
+        callback_context = callback_payload["callback_context"]
+        assert callback_context["listener_id"] == listener_id
+        assert (
+            callback_context["message"]
+            == "Summarize the newsletter that was just indexed."
+        )
+        event_data = callback_context["event_data"]
+        assert event_data["event_type"] == IndexingEventType.DOCUMENT_READY.value
+        assert event_data["document_id"] == doc_id
         assert event_data["document_title"] == "School Newsletter - December 2024"
         assert event_data["document_metadata"] == {"sender": "newsletter@school.edu"}
 
     finally:
-        # Stop processor
         await event_processor.stop()
 
 
@@ -656,10 +605,7 @@ async def test_document_ready_event_includes_rich_metadata(
         # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
 
-        # Poll for the event with longer timeout for rich metadata test
-        event_data = await poll_for_document_ready_event(
-            doc_id, timeout_seconds=3.0, engine=db_engine
-        )
+        event_data = await poll_for_document_ready_event(doc_id, engine=db_engine)
 
         # Verify all fields are present
         assert event_data["document_id"] == doc_id
@@ -816,11 +762,12 @@ async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
         await db_ctx.tasks.enqueue(
             task_id=f"test_json_{i}",
             task_type="embed_and_store_batch",
-            payload={"document_id": test_doc_id if i < 2 else 888},
+            payload={
+                "document_id": test_doc_id if i < 2 else 888,
+                "other_field": "test",
+            },
             priority=TaskPriority.INTERACTIVE,
         )
-
-    # Import the function to test
 
     # Test that it correctly counts pending tasks
     pending_count = await check_document_completion(db_ctx, test_doc_id)
@@ -835,35 +782,4 @@ async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
     # Clean up
     await db_ctx.execute(
         tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
-    )
-
-
-@pytest.mark.asyncio
-async def test_json_extraction_cross_database(db_engine: AsyncEngine) -> None:
-    """Test JSON extraction works with both SQLite and PostgreSQL."""
-    db_ctx = Database(engine=db_engine)
-    # Clean up any existing test tasks
-    await db_ctx.execute(
-        tasks_table.delete().where(tasks_table.c.task_id.like("test_json_extract_%"))
-    )
-
-    # Create test task
-    test_doc_id = 12345
-    await db_ctx.tasks.enqueue(
-        task_id="test_json_extract_1",
-        task_type="embed_and_store_batch",
-        payload={"document_id": test_doc_id, "other_field": "test"},
-        priority=TaskPriority.INTERACTIVE,
-    )
-
-    # Verify our cross-database JSON extraction implementation works
-
-    # Test that our check_document_completion function works
-
-    pending_count = await check_document_completion(db_ctx, test_doc_id)
-    assert pending_count == 1, f"Expected 1 pending task, got {pending_count}"
-
-    # Clean up
-    await db_ctx.execute(
-        tasks_table.delete().where(tasks_table.c.task_id.like("test_json_extract_%"))
     )

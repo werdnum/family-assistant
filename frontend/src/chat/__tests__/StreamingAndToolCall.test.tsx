@@ -7,16 +7,9 @@ import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 
 describe('Streaming with Tool Calls', () => {
-  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
-    consoleWarnSpy = vi.spyOn(console, 'warn');
-  });
-
-  afterEach(() => {
-    consoleWarnSpy.mockRestore();
   });
 
   it(
@@ -113,7 +106,11 @@ describe('Streaming with Tool Calls', () => {
     'renders per-file attachment events emitted by the turn producer',
     async () => {
       let ourTurnId = '';
+      const attachmentFetches: string[] = [];
       server.use(
+        http.get('/api/attachments/:attachmentId', ({ params }) => {
+          attachmentFetches.push(String(params.attachmentId));
+        }),
         http.post('/api/v1/chat/turns', async ({ request }) => {
           const body = (await request.json()) as {
             turn_id: string;
@@ -201,9 +198,7 @@ describe('Streaming with Tool Calls', () => {
       // The event's own metadata reaches the tool UI, so it never falls back to
       // refetching each attachment to discover its name and type.
       expect(screen.getByText('A photo')).toBeInTheDocument();
-      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
-        'AttachToResponseTool: Using fallback attachment metadata fetching'
-      );
+      expect(attachmentFetches).toEqual([]);
     },
     { timeout: 30000 }
   );

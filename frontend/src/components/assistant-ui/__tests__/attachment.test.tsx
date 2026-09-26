@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../../test/mocks/localStorageMock';
 import { renderChatApp } from '../../../test/utils/renderChatApp';
@@ -9,13 +10,18 @@ describe('ComposerAddAttachment', () => {
     vi.clearAllMocks();
   });
 
-  it('has type="button" to prevent form submission', async () => {
+  // The attach button sits inside the composer form, so if it acted as a submit
+  // button, clicking it would send the half-written message. Sending empties the
+  // composer synchronously, so the draft still being there shows no send began.
+  it('leaves the message being composed unsent when clicked', async () => {
     await renderChatApp({ waitForReady: true });
 
-    const attachButton = screen.getByTestId('add-attachment-button');
+    const chatInput = screen.getByTestId('chat-input');
+    fireEvent.change(chatInput, { target: { value: 'hello' } });
 
-    // Verify the button has type="button" to prevent it from submitting forms
-    expect(attachButton).toHaveAttribute('type', 'button');
+    fireEvent.click(screen.getByTestId('add-attachment-button'));
+
+    expect(chatInput).toHaveValue('hello');
   });
 
   it('opens file picker when clicked', async () => {
@@ -46,25 +52,34 @@ describe('AttachmentUI Loading States', () => {
     vi.clearAllMocks();
   });
 
-  it('can upload a file through the hidden input', async () => {
+  // A browser fires no change event when the picker returns the selection the
+  // input already holds, and user.upload models that. The composer therefore
+  // has to clear the input after taking a file, or picking the same file again
+  // would silently do nothing.
+  it('attaches the same file again when it is picked a second time', async () => {
+    const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    const fileInput = (await screen.findByTestId('file-input')) as HTMLInputElement;
+    const fileInput = await screen.findByTestId('file-input');
     const testFile = new File(['test content'], 'test.png', { type: 'image/png' });
 
-    // fireEvent is more stable than user.upload for this hidden input path.
-    fireEvent.change(fileInput, { target: { files: [testFile] } });
-
-    // The composer clears the file input value after enqueueing files so the
-    // same file can be selected again. This is a stable assertion across
-    // timing variations in attachment preview rendering.
+    await user.upload(fileInput, testFile);
     await waitFor(
       () => {
-        expect(fileInput.value).toBe('');
+        expect(screen.getAllByTestId('remove-attachment-button')).toHaveLength(1);
       },
       { timeout: 15000 }
     );
-  }, 20000);
+    expect(screen.getAllByText('test.png').length).toBeGreaterThan(0);
+
+    await user.upload(fileInput, testFile);
+    await waitFor(
+      () => {
+        expect(screen.getAllByTestId('remove-attachment-button')).toHaveLength(2);
+      },
+      { timeout: 15000 }
+    );
+  }, 35000);
 
   // The composer disables sending while an attachment reports itself pending an
   // upload, so an attachment left in that state locks the composer: the file
@@ -84,17 +99,4 @@ describe('AttachmentUI Loading States', () => {
     expect(screen.queryByText('Uploading...')).not.toBeInTheDocument();
     expect(screen.getByTestId('send-button')).toBeEnabled();
   }, 20000);
-
-  // Note: These tests verify the UI components exist and are properly structured
-  // The actual upload flow is tested in integration tests
-  it('AttachmentUI component renders with proper data-testid attributes', async () => {
-    await renderChatApp({ waitForReady: true });
-
-    // Verify the attachment UI structure is in place
-    const fileInput = screen.getByTestId('file-input');
-    expect(fileInput).toBeInTheDocument();
-
-    const attachButton = screen.getByTestId('add-attachment-button');
-    expect(attachButton).toBeInTheDocument();
-  });
 });
