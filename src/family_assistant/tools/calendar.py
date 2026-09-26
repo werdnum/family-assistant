@@ -672,19 +672,6 @@ async def check_for_duplicate_events(
             "If you believe this is NOT a duplicate, retry with bypass_duplicate_check=true."
         )
 
-        has_external_events = any(
-            e.get("source_kind") in {"ical", "google"} for e in similar_events
-        )
-        if has_external_events:
-            _record_external_calendar_taint(
-                exec_context,
-                source_id=f"calendar_duplicate_{similar_events[0].get('uid', 'event')}",
-                reason=(
-                    "Subscribed iCal or Google Calendar event contributed to "
-                    "duplicate detection warning."
-                ),
-            )
-
         return "\n".join(error_lines)
 
     try:

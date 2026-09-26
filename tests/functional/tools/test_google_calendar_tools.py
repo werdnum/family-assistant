@@ -777,6 +777,37 @@ async def test_add_event_refused_when_duplicate_check_cannot_read_google(
 
 
 @pytest.mark.asyncio
+async def test_google_duplicate_warning_keeps_user_authored_event_trusted(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _connect(db)
+    backend = _alice_backend()
+    backend.serve(
+        "tok-alice",
+        "GET",
+        "/calendars/primary/events",
+        {"items": [_event("evt-dentist", "Dentist", creator={"self": True})]},
+    )
+    tracker = InMemoryTurnTaintTracker()
+    ctx = _context(
+        db, resolver=_alice_resolver(), backend=backend, taint_tracker=tracker
+    )
+
+    result = await add_calendar_event_tool(
+        ctx,
+        {"duplicate_detection": {"enabled": True, "similarity_strategy": "fuzzy"}},
+        summary="Dentist",
+        start_time="2026-09-17T10:00:00Z",
+        end_time="2026-09-17T11:00:00Z",
+        calendar_id="google:primary",
+    )
+
+    assert "found 1 similar event" in result
+    assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
+
+
+@pytest.mark.asyncio
 async def test_writes_refused_when_events_scope_not_requested(
     db_engine: AsyncEngine,
 ) -> None:
