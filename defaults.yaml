@@ -782,6 +782,8 @@ default_profile_settings:
     max_iterations: 10 # Maximum number of tool call iterations
   tools_config:
     mcp_initialization_timeout_seconds: 60 # Default 1 minute
+    mcp_health_check_interval_seconds: 30 # Connection ping interval
+    mcp_tool_refresh_interval_seconds: 1800 # Tool discovery refresh interval (30 minutes)
     on_demand_local_tools:
       - "execute_script"
       - "test_script_with_simulated_tools"

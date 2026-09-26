@@ -62,11 +62,17 @@ def _paginated_session(pages: Sequence[Sequence[Tool]]) -> ClientSession:
     )
 
 
-def _provider(*server_ids: str) -> MCPToolsProvider:
+def _provider(
+    *server_ids: str,
+    tool_refresh_interval_seconds: float | None = 0,
+) -> MCPToolsProvider:
     configs: dict[str, MCPServerConfig] = {
         server_id: {"transport": "stdio", "command": "echo"} for server_id in server_ids
     }
-    provider = MCPToolsProvider(configs)
+    provider = MCPToolsProvider(
+        configs,
+        tool_refresh_interval_seconds=tool_refresh_interval_seconds,
+    )
     # These tests model a provider that has already connected; nothing here
     # should reach out to a real server.
     provider._initialized = True

@@ -35,11 +35,16 @@ def _provider(**kwargs: float) -> MCPToolsProvider:
 
 def _make_session(*, healthy: bool = True) -> ClientSession:
     """A stand-in session whose health check passes or reports a dead transport."""
+    error = None if healthy else ConnectionError("connection closed by peer")
+    send_ping = AsyncMock(return_value=None, side_effect=error)
     list_tools = AsyncMock(
         return_value=ListToolsResult(tools=[]),
-        side_effect=None if healthy else ConnectionError("connection closed by peer"),
+        side_effect=error,
     )
-    return cast("ClientSession", SimpleNamespace(list_tools=list_tools))
+    return cast(
+        "ClientSession",
+        SimpleNamespace(send_ping=send_ping, list_tools=list_tools),
+    )
 
 
 def _connect_stub(provider: MCPToolsProvider, *, succeed: bool) -> AsyncMock:

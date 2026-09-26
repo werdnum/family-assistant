@@ -1043,7 +1043,9 @@ class Assistant:
         }
         root_mcp_provider = MCPToolsProvider(
             mcp_server_configs=all_mcp_servers_config,
-            initialization_timeout_seconds=60,
+            initialization_timeout_seconds=self.config.tools_config.mcp_initialization_timeout_seconds,
+            health_check_interval_seconds=self.config.tools_config.mcp_health_check_interval_seconds,
+            tool_refresh_interval_seconds=self.config.tools_config.mcp_tool_refresh_interval_seconds,
         )
         self.root_tools_provider = CompositeToolsProvider(
             providers=[root_local_provider, root_mcp_provider]
