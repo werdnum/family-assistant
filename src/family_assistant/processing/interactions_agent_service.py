@@ -194,8 +194,8 @@ def _interaction_duration_seconds(interaction: Interaction) -> float:
     the poll that observed it finishing. Zero when either is missing: a run
     with no duration is better than a wrong one, and the call still counts.
     """
-    created = _interaction_timestamp(getattr(interaction, "created", None))
-    updated = _interaction_timestamp(getattr(interaction, "updated", None))
+    created = _interaction_timestamp(interaction.created)
+    updated = _interaction_timestamp(interaction.updated)
     if created is None or updated is None:
         return 0.0
     return max(0.0, (updated - created).total_seconds())
@@ -556,10 +556,9 @@ class InteractionsAgentProcessingService(ProcessingService):
         # through ``record_remote_observation``'s stale-write guard.
         observed_at = self.clock.now()
         interaction = await self._google_client().get_agent_interaction(remote_task_id)
-        status = str(interaction.status or "")
+        status = str(interaction.status)
         output_text = interaction.output_text or ""
-        steps = getattr(interaction, "steps", None)
-        step_count = len(steps) if isinstance(steps, list) else None
+        step_count = len(interaction.steps) if interaction.steps is not None else None
         usage = self._google_client().reasoning_info_from_interaction(interaction)
         total_tokens = usage.get("total_tokens") if usage is not None else None
         error_summary = _describe_interaction_errors(interaction) or None
@@ -589,18 +588,14 @@ class InteractionsAgentProcessingService(ProcessingService):
                 if disposition is RemoteDisposition.COMPLETED
                 else None
             ),
-            remote_created_at=_interaction_timestamp(
-                getattr(interaction, "created", None)
-            ),
-            remote_updated_at=_interaction_timestamp(
-                getattr(interaction, "updated", None)
-            ),
+            remote_created_at=_interaction_timestamp(interaction.created),
+            remote_updated_at=_interaction_timestamp(interaction.updated),
             output_chars=len(output_text),
             step_count=step_count,
             total_tokens=total_tokens,
             resolved_model=interaction.model,
             error_summary=error_summary,
-            event_cursor=getattr(interaction, "previous_interaction_id", None),
+            event_cursor=interaction.previous_interaction_id,
         )
 
     def _completion_is_useful(
