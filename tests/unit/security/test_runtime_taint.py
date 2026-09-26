@@ -1956,6 +1956,40 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "highlight_image",
+        "annotate_image",
+        "generate_image",
+        "transform_image",
+        "generate_video",
+        "create_vega_chart",
+    ],
+)
+def test_derived_media_tools_do_not_introduce_external_taint(name: str) -> None:
+    metadata = LOCAL_TOOL_METADATA_BY_NAME[name]
+    descriptor = ToolDescriptor(
+        name=name,
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+    assert (
+        derive_tool_result_taint_source(descriptor=descriptor, call_id="call") is None
+    )
+
+
+@pytest.mark.parametrize(
     ("domain", "expected"),
     [
         ("light", SinkClass.HOME_LOCAL),
