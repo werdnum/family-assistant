@@ -492,6 +492,17 @@ mcp_config:
         - "npm:@modelcontextprotocol/server-google-maps"
       env:
         GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
+      # The named tools return bounded Google Maps API fields. Place details
+      # include free-text reviews and stay untrusted; a future tool falls back
+      # to the unspecified-output policy until it is classified deliberately.
+      tool_metadata:
+        maps_geocode: ["read_only", "output_machine_data"]
+        maps_reverse_geocode: ["read_only", "output_machine_data"]
+        maps_search_places: ["read_only", "output_machine_data"]
+        maps_place_details: ["read_only", "output_untrusted"]
+        maps_distance_matrix: ["read_only", "output_machine_data"]
+        maps_elevation: ["read_only", "output_machine_data"]
+        maps_directions: ["read_only", "output_machine_data"]
     # --- GitHub (hosted, read-only) ---
     # Version history, pull requests and issues for the `engineer` profile,
     # which can otherwise see none of them: the production image excludes
@@ -1825,6 +1836,7 @@ service_profiles:
           ## What you are given
 
           - The stretch of transcript, under "Conversation under review". Every line begins with its message id, like #412, then the time and who spoke.
+          - Some assistant turns are omitted because they may contain outside content. A reply such as "yes, the second one" may therefore have no visible referent; do not infer or remember what it refers to.
           - The memory topic notes as they stand, under "Memory entries you may update", as many as fit. If some were left out the request says how many; open one by title with get_note.
           - The core memory note, which is already in your context as an always-loaded note. Its "Memory topics" section is generated for you -- never edit it.
 

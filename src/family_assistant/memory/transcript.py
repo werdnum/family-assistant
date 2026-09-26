@@ -19,10 +19,9 @@ rules can be tested against a table of turns rather than against a database.
   That is the whole turn-lifecycle model in v1.
 - *A single turn larger than the budget is rendered truncated*, with a marker,
   rather than blocking its conversation for ever.
-- *Tool result bodies are omitted.* Tool output is where injected text lives,
-  and the user's words and the assistant's replies carry what mattered. A tool
-  *call* may be named, so the curator can see that the assistant looked
-  something up, without being shown what came back.
+- *Rows carrying unreviewed outside content are omitted.* A person's own
+  message remains visible after a researched turn, while any tainted assistant
+  reply is hidden. Tool result bodies are omitted even at the trusted pole.
 
 Rows with no ``turn_id`` are each their own complete unit. The column is
 nullable for rows written outside a turn, which have no request-and-outcome
@@ -38,6 +37,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING
+
+from family_assistant.security.taint import TurnTaintState, is_admissible_for_reuse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
@@ -59,9 +60,9 @@ class RenderedStretch:
 
     Attributes:
         text: The rendered chunk, empty when no complete chunk was available.
-        rows: Every row the chunk covers, tool results included. What the
-            curator was *shown* is narrower than what the chunk *covers*; the
-            evidence scope and the merged taint are both about the coverage.
+        rows: Every row the chunk covers, tool results included. The watermark
+            advances over these rows, while evidence and curator taint are
+            restricted to the rendered rows.
         first_internal_id: The chunk's first covered row, or 0 when empty.
         last_internal_id: The chunk's last covered row, which is what the
             watermark advances to. 0 when empty.
@@ -78,6 +79,9 @@ class RenderedStretch:
     last_internal_id: int
     user_char_count: int
     user_row_count: int
+    admissible_user_row_count: int
+    excluded_row_count: int
+    rendered_message_ids: frozenset[int]
     rows_remain: bool
 
     @property
@@ -127,6 +131,7 @@ def render_stretch(
 
     rendered: list[str] = []
     covered: list[MessageHistoryRow] = []
+    rendered_message_ids: set[int] = set()
     used = 0
 
     for index, turn in enumerate(turns):
@@ -135,7 +140,7 @@ def render_stretch(
         ):
             break
 
-        block = _render_turn(turn, sender_label=sender_label)
+        block, visible_lines = _render_turn(turn, sender_label=sender_label)
         if covered and used + len(block) + 1 > budget_chars:
             break
         if not covered and len(block) > budget_chars:
@@ -143,6 +148,9 @@ def render_stretch(
 
         rendered.append(block)
         covered.extend(turn.rows)
+        rendered_message_ids.update(
+            message_id for line, message_id in visible_lines if line in block
+        )
         used += len(block) + 1
 
     if not covered:
@@ -157,6 +165,11 @@ def render_stretch(
             len(row["content"] or "") for row in covered if _is_user(row)
         ),
         user_row_count=sum(1 for row in covered if _is_user(row)),
+        admissible_user_row_count=sum(
+            1 for row in covered if _is_user(row) and _is_admissible(row)
+        ),
+        excluded_row_count=sum(1 for row in covered if not _is_admissible(row)),
+        rendered_message_ids=frozenset(rendered_message_ids),
         rows_remain=len(covered) < len(rows),
     )
 
@@ -206,6 +219,9 @@ def _empty() -> RenderedStretch:
         last_internal_id=0,
         user_char_count=0,
         user_row_count=0,
+        admissible_user_row_count=0,
+        excluded_row_count=0,
+        rendered_message_ids=frozenset(),
         rows_remain=True,
     )
 
@@ -241,16 +257,27 @@ def _group_into_turns(
 
 def _render_turn(
     turn: _Turn, *, sender_label: Callable[[MessageHistoryRow], str]
-) -> str:
+) -> tuple[str, tuple[tuple[str, int], ...]]:
     """One turn's visible lines, with the never-finished marker where it applies."""
-    lines = [
-        line
-        for row in turn.rows
-        if (line := _render_row(row, sender_label=sender_label)) is not None
-    ]
+    lines: list[str] = []
+    visible_lines: list[tuple[str, int]] = []
+    for row in turn.rows:
+        if not _is_admissible(row):
+            continue
+        line = _render_row(row, sender_label=sender_label)
+        if line is not None:
+            lines.append(line)
+            visible_lines.append((line, int(row["internal_id"])))
     if not turn.complete:
         lines.append(f"  {UNFINISHED_TURN_MARKER}")
-    return "\n".join(lines)
+    return "\n".join(lines), tuple(visible_lines)
+
+
+def _is_admissible(row: MessageHistoryRow) -> bool:
+    metadata = row.get("taint_metadata")
+    if metadata is None:
+        return False
+    return is_admissible_for_reuse(TurnTaintState.from_metadata(metadata).max_tier)
 
 
 def _render_row(

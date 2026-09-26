@@ -1117,8 +1117,12 @@ class MessageHistoryRepository(BaseRepository):
         error_traceback: str | None = None
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None
         taint_metadata = getattr(message, "taint_metadata", None)
-        if taint_metadata is None and role == "user":
-            taint_metadata = TurnTaintState.empty().to_metadata()
+        if isinstance(message, UserMessage):
+            taint_metadata = message.authorship_taint_metadata
+            if taint_metadata is None:
+                raise ValueError(
+                    "A persisted user message requires authorship_taint_metadata"
+                )
         elif taint_metadata is None and role in _HISTORY_ROLES_REQUIRING_TAINT_METADATA:
             # Regression guard: every write path for taint-applicable roles must
             # supply runtime taint metadata. A row persisted without it is

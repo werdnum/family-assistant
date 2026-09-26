@@ -461,6 +461,7 @@ ENGINEER_TRUSTED_OUTPUT_ALLOWLIST = {
     "get_automation_stats": "execution counts, timestamps and statuses only",
     "get_note": "merges the note's stored provenance onto the turn on read",
     "list_notes": "merges each listed note's stored provenance on read",
+    "query_recent_events": "grades each returned event by its source on read",
     "read_text_attachment": "merges the attachment's stored provenance on read",
     "jq_query": "merges the queried attachment's stored provenance on read",
     "delegate_to_service": "merges the delegated turn's own taint on return",

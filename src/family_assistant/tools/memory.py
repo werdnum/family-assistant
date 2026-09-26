@@ -24,6 +24,7 @@ from family_assistant.memory.edits import (
     MemoryEdit,
     MemoryEditList,
 )
+from family_assistant.security.taint import is_admissible_for_reuse
 from family_assistant.tools.notes import note_stamp_from_context
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -41,6 +42,15 @@ _REVIEW_EXHAUSTED = (
     "fed back, and both have now been refused. Stop proposing edits and reply "
     "with a short note of what you would have kept, so the reason this review "
     "was given up on is on the record."
+)
+
+_DEFERRED_MEMORY = (
+    "No memory edits were applied in this turn because it has read content from "
+    "outside the household. This conversation is eligible for a later memory "
+    "review, which may keep facts the person stated in their own messages. "
+    "Outside results and assistant replies from this turn will not be shown to "
+    "that review. If the request depends on one of those, ask the person to "
+    "state what they want remembered in their own words. Do not say it has been saved."
 )
 """The reply to a third proposal, which the review budget refuses outright.
 
@@ -96,7 +106,11 @@ MEMORY_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "correction, an inference) into the entry text yourself. Message references are "
                 "appended for you.\n\n"
                 "Returns a string saying whether the list was applied, and if not, exactly why each "
-                "edit was refused. A profile that does not read the household's memory cannot "
+                "edit was refused. If this turn has read outside content, a contributing "
+                "conversation may defer the request to its later review. That review can keep "
+                "what the person said in their own messages, not outside results or assistant "
+                "replies; ask them to state any needed detail in their own words and do not "
+                "claim it was saved. A profile that does not read the household's memory cannot "
                 "write it either, and every call is refused with that reason."
             ),
             "parameters": {
@@ -171,7 +185,24 @@ async def propose_memory_edits_tool(
             )
         )
 
+    tracker = exec_context.taint_tracker
     review = exec_context.memory_review
+    if (
+        review is None
+        and tracker is not None
+        and not is_admissible_for_reuse(tracker.snapshot().max_tier)
+    ):
+        if await _review_will_run(exec_context):
+            return ToolResult(text=_DEFERRED_MEMORY)
+        return ToolResult(
+            text=(
+                "No memory edits were applied: this turn has read content from "
+                "outside the household, and no later memory review is enabled "
+                "for this conversation. Ask the person to make the request in a "
+                "fresh conversation without outside content."
+            )
+        )
+
     if review is not None and review.proposals_exhausted:
         return ToolResult(text=_REVIEW_EXHAUSTED)
 
@@ -240,6 +271,21 @@ async def propose_memory_edits_tool(
     if review is not None:
         _record_progress(review, outcome)
     return ToolResult(text=_render(outcome), data=_summarise(outcome))
+
+
+async def _review_will_run(exec_context: ToolExecutionContext) -> bool:
+    service = exec_context.processing_service
+    if service is None:
+        return False
+    config = service.service_config
+    if (
+        not config.memory_contribute
+        or exec_context.interface_type not in config.memory_contributing_interfaces
+        or exec_context.subconversation_id is not None
+    ):
+        return False
+    enabled = await exec_context.db_context.memory_review.get_enablement()
+    return config.id in enabled
 
 
 def _record_progress(review: MemoryReviewContext, outcome: ApplyOutcome) -> None:

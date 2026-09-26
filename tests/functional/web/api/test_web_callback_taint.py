@@ -165,7 +165,7 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
     await ctx.init_vector_db()
 
     await ctx.message_history.add_message(
-        UserMessage(content="Schedule the callback"),
+        UserMessage.from_trusted_user(content="Schedule the callback"),
         interface_type="web",
         conversation_id=TEST_CONVERSATION_ID,
         timestamp=SystemClock().now(),

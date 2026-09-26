@@ -157,7 +157,11 @@ async def seed_turn(
     trusted = TurnTaintState.empty().to_metadata()
     ids = [
         await db.message_history.add_message(
-            UserMessage(content=said, taint_metadata=user_taint or trusted),
+            UserMessage(
+                content=said,
+                taint_metadata=user_taint or trusted,
+                authorship_taint_metadata=user_taint or trusted,
+            ),
             interface_type=WEB,
             conversation_id=conversation_id,
             timestamp=moment,

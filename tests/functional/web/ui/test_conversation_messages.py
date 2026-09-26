@@ -117,7 +117,7 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
 
     db_context = Database(db_engine)
     await db_context.message_history.add_message(
-        UserMessage(content="Main user request"),
+        UserMessage.from_trusted_user(content="Main user request"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,
@@ -126,7 +126,7 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
         user_id="test_user",
     )
     await db_context.message_history.add_message(
-        UserMessage(content="Delegated prompt from model"),
+        UserMessage.from_trusted_user(content="Delegated prompt from model"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,
@@ -144,7 +144,7 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
         subconversation_id="delegated-subconversation",
     )
     await db_context.message_history.add_message(
-        UserMessage(content="Internal delegated result data"),
+        UserMessage.from_trusted_user(content="Internal delegated result data"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,
@@ -211,7 +211,7 @@ async def test_get_conversation_messages_exposes_turn_id(
 
     db_context = Database(db_engine)
     await db_context.message_history.add_message(
-        UserMessage(content="Turn-produced request"),
+        UserMessage.from_trusted_user(content="Turn-produced request"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,

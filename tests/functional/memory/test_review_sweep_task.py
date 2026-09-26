@@ -65,7 +65,7 @@ async def test_a_sweep_occurrence_enqueues_a_review(
         profile_ids_contributing={CONTRIBUTOR}, now=now - timedelta(days=1)
     )
     await db.message_history.add_message(
-        UserMessage(content="we always take the tram"),
+        UserMessage.from_trusted_user(content="we always take the tram"),
         interface_type="web",
         conversation_id=CONVERSATION,
         timestamp=now - timedelta(minutes=45),

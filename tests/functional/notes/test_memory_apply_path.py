@@ -28,6 +28,7 @@ from family_assistant.memory.limits import MemoryLimits
 from family_assistant.memory.review_context import MemoryReviewContext
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
@@ -68,7 +69,7 @@ async def _seed_turn(
     """Persist ``count`` user messages and return their internal ids."""
     return [
         await db.message_history.add_message(
-            UserMessage(content=f"message {index} of {turn_id}"),
+            UserMessage.from_trusted_user(content=f"message {index} of {turn_id}"),
             interface_type="web",
             conversation_id=conversation_id,
             timestamp=NOW,
@@ -410,6 +411,33 @@ async def test_evidence_from_another_conversation_is_refused(
         await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_tainted_foreground_write_refuses_when_no_review_will_run(
+    db_engine: AsyncEngine,
+) -> None:
+    db = _db(db_engine)
+    context = _tool_context(db)
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="outside",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="Read outside content.",
+        )
+    )
+    context.taint_tracker = tracker
+
+    result = await propose_memory_edits_tool(
+        context,
+        edits=[{"op": "add", "note_title": "Sam", "entry": "Sam prefers the tram."}],
+    )
+
+    assert "no later memory review is enabled" in result.get_text()
+    assert "eligible for a later memory review" not in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -1176,6 +1204,7 @@ async def test_the_curator_must_cite_the_stretch_it_was_shown(
                     conversation_id=CONVERSATION,
                     first_internal_id=reviewed[0],
                     last_internal_id=reviewed[-1],
+                    allowed_message_ids=frozenset(reviewed),
                 ),
                 read_revision,
             ),
@@ -1287,6 +1316,7 @@ async def test_the_tool_uses_the_supplied_scope_and_revision(
                     conversation_id=CONVERSATION,
                     first_internal_id=reviewed[0],
                     last_internal_id=reviewed[-1],
+                    allowed_message_ids=frozenset(reviewed),
                 ),
                 read_revision,
             ),
@@ -1304,6 +1334,44 @@ async def test_the_tool_uses_the_supplied_scope_and_revision(
     assert "Applied" in result.get_text()
     rows = await db.memory_change_log.get_recent(10)
     assert rows[0].actor_kind == "curator"
+
+
+@pytest.mark.asyncio
+async def test_curator_cannot_cite_a_covered_but_unshown_row(
+    db_engine: AsyncEngine,
+) -> None:
+    db = _db(db_engine)
+    reviewed = await _seed_turn(db, turn_id="reviewed-turn", count=2)
+    revision = await db.memory_store.get_revision()
+    scope = EvidenceScope.for_stretch(
+        interface_type="web",
+        conversation_id=CONVERSATION,
+        first_internal_id=reviewed[0],
+        last_internal_id=reviewed[-1],
+        allowed_message_ids=frozenset({reviewed[0]}),
+    )
+
+    result = await propose_memory_edits_tool(
+        _tool_context(
+            db,
+            turn_id="curator-run",
+            memory_review=_review_context(scope, revision),
+        ),
+        edits=[
+            {
+                "op": "add",
+                "note_title": "Sam",
+                "entry": "Sam prefers the tram.",
+                "message_ids": [reviewed[1]],
+            }
+        ],
+    )
+
+    assert "Cite only messages you were shown" in result.get_text()
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio

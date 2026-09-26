@@ -583,7 +583,7 @@ async def _create_source_message(
 ) -> int:
     db = Database(engine=db_engine)
     internal_id = await db.message_history.add_message(
-        UserMessage(content="Please run the confirmed tool."),
+        UserMessage.from_trusted_user(content="Please run the confirmed tool."),
         interface_type="web",
         conversation_id="web-conversation-1",
         interface_message_id="web-message-1",

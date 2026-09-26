@@ -856,7 +856,7 @@ async def test_legacy_history_row_missing_taint_metadata_restores_unknown_extern
     caplog.set_level(logging.WARNING)
     db_context = Database(db_engine)
     internal_id = await db_context.message_history.add_message(
-        UserMessage(content="legacy untrusted text"),
+        UserMessage.from_trusted_user(content="legacy untrusted text"),
         interface_type="test",
         conversation_id="legacy-taint",
         timestamp=datetime.now(UTC),
@@ -1130,7 +1130,7 @@ async def _seed_history_row(
 ) -> int:
     db_context = Database(db_engine)
     internal_id = await db_context.message_history.add_message(
-        UserMessage(content="history text"),
+        UserMessage.from_trusted_user(content="history text"),
         interface_type="test",
         conversation_id=conversation_id,
         timestamp=timestamp,
@@ -1956,6 +1956,40 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "highlight_image",
+        "annotate_image",
+        "generate_image",
+        "transform_image",
+        "generate_video",
+        "create_vega_chart",
+    ],
+)
+def test_derived_media_tools_do_not_introduce_external_taint(name: str) -> None:
+    metadata = LOCAL_TOOL_METADATA_BY_NAME[name]
+    descriptor = ToolDescriptor(
+        name=name,
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+    assert (
+        derive_tool_result_taint_source(descriptor=descriptor, call_id="call") is None
+    )
+
+
+@pytest.mark.parametrize(
     ("domain", "expected"),
     [
         ("light", SinkClass.HOME_LOCAL),
@@ -2602,7 +2636,7 @@ async def test_text_attachment_read_restores_stored_provenance_taint(
 
 
 @pytest.mark.asyncio
-async def test_list_notes_preview_restores_stored_provenance_taint(
+async def test_list_notes_preview_bounds_external_provenance_to_machine_data(
     db_engine: AsyncEngine,
 ) -> None:
     provenance_state = _unknown_external_tracker().snapshot()
@@ -2621,10 +2655,10 @@ async def test_list_notes_preview_restores_stored_provenance_taint(
 
     assert any(note["title"] == "tainted listed note" for note in result)
     read_state = read_tracker.snapshot()
-    assert read_state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert read_state.max_tier is SourceTrustTier.RECOGNIZED_MACHINE
     assert any(
-        source.source_type is TaintSourceType.TOOL_OUTPUT
-        and source.source_id == "external"
+        source.source_type is TaintSourceType.NOTE
+        and source.source_id == "tainted listed note"
         for source in read_state.sources
     )
 

@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
     from family_assistant.storage.repositories import (
         AutomationsRepository,
+        CalendarProvenanceRepository,
         ConfirmationRequestsRepository,
         ConversationSharesRepository,
         DelegationRunsRepository,
@@ -497,6 +498,15 @@ class DatabaseExecutor(ABC):
         )
 
         return self._repository(MemoryStoreRepository)
+
+    @property
+    def calendar_provenance(self) -> CalendarProvenanceRepository:
+        """Get durable provenance for assistant-written calendar events."""
+        from family_assistant.storage.repositories import (  # noqa: PLC0415
+            CalendarProvenanceRepository,
+        )
+
+        return self._repository(CalendarProvenanceRepository)
 
     @property
     def notes(self) -> NotesRepository:

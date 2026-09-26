@@ -115,7 +115,7 @@ async def test_get_conversations_excludes_delegated_subconversations_from_summar
 
     db_context = Database(db_engine)
     await db_context.message_history.add_message(
-        UserMessage(content="Main user request"),
+        UserMessage.from_trusted_user(content="Main user request"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,
@@ -133,7 +133,7 @@ async def test_get_conversations_excludes_delegated_subconversations_from_summar
         user_id="test_user",
     )
     await db_context.message_history.add_message(
-        UserMessage(content="Delegated prompt from model"),
+        UserMessage.from_trusted_user(content="Delegated prompt from model"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,
@@ -151,7 +151,7 @@ async def test_get_conversations_excludes_delegated_subconversations_from_summar
         subconversation_id="delegated-subconversation",
     )
     await db_context.message_history.add_message(
-        UserMessage(content="Internal delegated result data"),
+        UserMessage.from_trusted_user(content="Internal delegated result data"),
         interface_type="web",
         conversation_id=conv_id,
         timestamp=timestamp,
@@ -245,7 +245,7 @@ async def test_get_conversations_interface_filter(
     db_context = Database(db_engine)
     # Add web conversation
     result1 = await db_context.message_history.add_message(
-        UserMessage(content="Web user message"),
+        UserMessage.from_trusted_user(content="Web user message"),
         interface_type="web",
         conversation_id="web_conv_filter_test",
         interface_message_id="web_msg_1",
@@ -268,7 +268,7 @@ async def test_get_conversations_interface_filter(
 
     # Add telegram conversation
     result3 = await db_context.message_history.add_message(
-        UserMessage(content="Telegram user message"),
+        UserMessage.from_trusted_user(content="Telegram user message"),
         interface_type="telegram",
         conversation_id="tg_conv_filter_test",
         interface_message_id="tg_msg_1",
@@ -351,7 +351,7 @@ async def test_get_conversations_conversation_id_filter(
     for i in range(3):
         conv_id = f"conv_id_filter_test_{i}"
         result = await db_context.message_history.add_message(
-            UserMessage(content=f"Test message {i}"),
+            UserMessage.from_trusted_user(content=f"Test message {i}"),
             interface_type="web",
             conversation_id=conv_id,
             interface_message_id=f"msg_{i}",
@@ -406,7 +406,7 @@ async def test_get_conversations_date_filters(
     db_context = Database(db_engine)
     # Old conversation (3 days ago)
     result1 = await db_context.message_history.add_message(
-        UserMessage(content="Old message"),
+        UserMessage.from_trusted_user(content="Old message"),
         interface_type="web",
         conversation_id="old_conv",
         interface_message_id="old_msg",
@@ -418,7 +418,7 @@ async def test_get_conversations_date_filters(
 
     # Recent conversation (1 day ago)
     result2 = await db_context.message_history.add_message(
-        UserMessage(content="Recent message"),
+        UserMessage.from_trusted_user(content="Recent message"),
         interface_type="web",
         conversation_id="recent_conv",
         interface_message_id="recent_msg",
@@ -430,7 +430,7 @@ async def test_get_conversations_date_filters(
 
     # Today's conversation
     result3 = await db_context.message_history.add_message(
-        UserMessage(content="Today's message"),
+        UserMessage.from_trusted_user(content="Today's message"),
         interface_type="web",
         conversation_id="today_conv",
         interface_message_id="today_msg",
@@ -525,7 +525,7 @@ async def test_get_conversations_combined_filters(
     db_context = Database(db_engine)
     # Web conversation from yesterday matching all filters
     result1 = await db_context.message_history.add_message(
-        UserMessage(content="Matching message"),
+        UserMessage.from_trusted_user(content="Matching message"),
         interface_type="web",
         conversation_id="matching_conv",
         interface_message_id="match_msg",
@@ -537,7 +537,7 @@ async def test_get_conversations_combined_filters(
 
     # Telegram conversation from yesterday (wrong interface)
     result2 = await db_context.message_history.add_message(
-        UserMessage(content="Wrong interface message"),
+        UserMessage.from_trusted_user(content="Wrong interface message"),
         interface_type="telegram",
         conversation_id="wrong_interface_conv",
         interface_message_id="wrong_msg",
@@ -549,7 +549,7 @@ async def test_get_conversations_combined_filters(
 
     # Web conversation from 3 days ago (wrong date)
     result3 = await db_context.message_history.add_message(
-        UserMessage(content="Wrong date message"),
+        UserMessage.from_trusted_user(content="Wrong date message"),
         interface_type="web",
         conversation_id="wrong_date_conv",
         interface_message_id="date_msg",

@@ -245,6 +245,8 @@ class ProcessingServiceConfig:
     # Whether this profile sees household memory notes. Fail-closed by default:
     # see ProcessingConfig.memory_read.
     memory_read: bool = False
+    memory_contribute: bool = False
+    memory_contributing_interfaces: frozenset[str] = frozenset()
     note_registry: NoteRegistry | None = None
     # The profile's effective calendars: its own when it names some, else the
     # application-wide ones. Carried onto every tool context built for it.

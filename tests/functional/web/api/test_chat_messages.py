@@ -600,7 +600,7 @@ async def test_conversation_share_is_authenticated_read_only_and_revocable(
 ) -> None:
     conversation_id = str(uuid.uuid4())
     await db_context.message_history.add_message(
-        UserMessage(content="Please help me choose a gift"),
+        UserMessage.from_trusted_user(content="Please help me choose a gift"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
