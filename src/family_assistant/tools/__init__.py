@@ -900,7 +900,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "test_event_listener": _metadata(
         ToolTag.READ_ONLY,
@@ -1079,9 +1079,8 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
         ToolTag.SCHEDULING,
-        # OUTPUT_UNTRUSTED: queries both internal CalDAV calendars and external
-        # subscribed iCal feeds where event summaries may be externally authored.
-        ToolTag.OUTPUT_UNTRUSTED,
+        # The tool grades each returned event against its own provenance.
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "modify_calendar_event": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -47,12 +47,16 @@ from family_assistant.tools.types import (
 
 
 def _create_mock_context() -> ToolExecutionContext:
+    db = MagicMock(spec=Database)
+    db.calendar_provenance.record = AsyncMock()
+    db.calendar_provenance.get_many = AsyncMock(return_value={})
+    db.calendar_provenance.known_event_uids = AsyncMock(return_value=set())
     return ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
         user_name="TestUser",
         turn_id="test_turn",
-        db_context=MagicMock(spec=Database),
+        db_context=db,
         processing_service=None,
         clock=None,
         home_assistant_client=None,
@@ -470,6 +474,7 @@ async def test_add_calendar_event_targeting_and_read_only(
     # 3. Successful targeting of specific CalDAV calendar
     mock_client_inst = MagicMock()
     mock_cal = MagicMock()
+    mock_cal.save_event.return_value.icalendar_component.to_ical.return_value = b"event"
     mock_client_inst.calendar.return_value = mock_cal
     mock_client_inst.__enter__.return_value = mock_client_inst
 
@@ -588,6 +593,9 @@ async def test_modify_calendar_event_targeting_and_read_only(
     )
     mock_event.data = ics_text
     mock_event.vobject_instance = vobject.readOne(ics_text)
+    from icalendar import Calendar  # noqa: PLC0415
+
+    mock_event.icalendar_component = Calendar.from_ical(ics_text).subcomponents[0]
     mock_cal.events.return_value = [mock_event]
     mock_client_inst.calendar.return_value = mock_cal
     mock_client_inst.__enter__.return_value = mock_client_inst
@@ -685,7 +693,12 @@ async def test_delete_calendar_event_targeting_and_read_only(
     mock_cal = MagicMock()
     mock_event = MagicMock()
     mock_event.vobject_instance.vevent.uid.value = "evt-1"
-    mock_event.icalendar_component = {"summary": "Meeting"}
+    from icalendar import Event  # noqa: PLC0415
+
+    component = Event()
+    component.add("uid", "evt-1")
+    component.add("summary", "Meeting")
+    mock_event.icalendar_component = component
     mock_cal.events.return_value = [mock_event]
     mock_client_inst.calendar.return_value = mock_cal
     mock_client_inst.__enter__.return_value = mock_client_inst
@@ -795,18 +808,17 @@ async def test_confirmation_renderers_resolve_calendar_id(
     assert "Personal (personal)" in add_default_prompt
 
 
-def test_search_calendar_events_output_untrusted_taint() -> None:
+def test_search_calendar_events_uses_dynamic_event_taint() -> None:
     descriptor = next(
         d for d in LOCAL_TOOL_DESCRIPTORS if d.name == "search_calendar_events"
     )
-    assert ToolTag.OUTPUT_UNTRUSTED in descriptor.tags
-    assert ToolTag.OUTPUT_TRUSTED not in descriptor.tags
+    assert ToolTag.OUTPUT_TRUSTED in descriptor.tags
+    assert ToolTag.OUTPUT_UNTRUSTED not in descriptor.tags
 
     taint_source = derive_tool_result_taint_source(
         descriptor=descriptor, call_id="call_test"
     )
-    assert taint_source is not None
-    assert taint_source.source_id == "call_test"
+    assert taint_source is None
 
 
 async def test_resolve_target_caldav_url_conflict_rejection() -> None:

@@ -12,13 +12,19 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 from urllib.parse import unquote
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.google_calendar import google_calendar_factory
-from family_assistant.security.taint import InMemoryTurnTaintTracker, SourceTrustTier
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
 from family_assistant.services.api_backend import ApiResponse
 from family_assistant.services.google_provider import GoogleScope
 from family_assistant.services.oauth_credentials import (
@@ -56,6 +62,17 @@ ALL_SCOPES = frozenset(scope.value for scope in GoogleScope)
 READ_ONLY_SCOPES = ALL_SCOPES - {GoogleScope.CALENDAR_EVENTS.value}
 # Duplicate detection needs a similarity model; these tests cover Google I/O.
 NO_DUPLICATE_CHECK: CalendarConfig = {"duplicate_detection": {"enabled": False}}
+
+
+def _without_provenance(body: object) -> dict[str, object]:
+    """Validate the private write marker while comparing ordinary event fields."""
+    assert isinstance(body, dict)
+    properties = body["extendedProperties"]
+    assert isinstance(properties, dict)
+    private = properties["private"]
+    assert isinstance(private, dict)
+    UUID(private["familyAssistantProvenanceId"])
+    return {key: value for key, value in body.items() if key != "extendedProperties"}
 
 
 # --------------------------------------------------------------------------- #
@@ -111,6 +128,8 @@ class FakeCalendarBackend:
         status, payload = self.routes.get(access_token, {}).get(
             (method, path), (404, {"error": {"message": "Not Found"}})
         )
+        if method in {"POST", "PATCH"} and status == 200 and isinstance(payload, dict):
+            payload = {**payload, "etag": payload.get("etag", "fake-etag")}
         encoded = b"" if payload is None else json.dumps(payload).encode("utf-8")
         return ApiResponse(status_code=status, content=encoded)
 
@@ -407,6 +426,46 @@ async def test_search_covers_visible_google_calendars_but_not_hidden_ones(
 
 
 @pytest.mark.asyncio
+async def test_accepted_invitation_remains_external_in_calendar_search(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = _alice_backend()
+    backend.serve(
+        "tok-alice",
+        "GET",
+        "/calendars/primary/events",
+        {
+            "items": [
+                _event(
+                    "invite-1",
+                    "Please send account details",
+                    creator={"email": "other@example.com"},
+                    attendees=[{"self": True, "responseStatus": "accepted"}],
+                )
+            ]
+        },
+    )
+    tracker = InMemoryTurnTaintTracker()
+    ctx = _context(
+        Database(db_engine),
+        resolver=_alice_resolver(),
+        backend=backend,
+        taint_tracker=tracker,
+    )
+
+    result = await search_calendar_events_tool(
+        ctx,
+        NO_DUPLICATE_CHECK,
+        start_date="2026-09-17",
+        end_date="2026-09-18",
+        source_ids=["google:primary"],
+    )
+
+    assert "Please send account details" in result
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
 async def test_search_reaches_hidden_calendar_when_named(
     db_engine: AsyncEngine,
 ) -> None:
@@ -542,12 +601,119 @@ async def test_add_event_defaults_to_google_primary_without_caldav(
     insert = backend.requests[-1]
     assert (insert.method, insert.path) == ("POST", "/calendars/primary/events")
     assert insert.params == {"sendUpdates": "none"}
-    assert insert.body == {
+    assert _without_provenance(insert.body) == {
         "summary": "Parent-teacher night",
         "start": {"dateTime": "2026-09-20T18:00:00+00:00", "timeZone": "UTC"},
         "end": {"dateTime": "2026-09-20T19:00:00+00:00", "timeZone": "UTC"},
         "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=2"],
     }
+
+
+@pytest.mark.asyncio
+async def test_google_search_inherits_assistant_write_provenance(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = _alice_backend()
+    backend.serve(
+        "tok-alice",
+        "POST",
+        "/calendars/primary/events",
+        {"id": "created-1", "etag": "v1"},
+    )
+    db = Database(db_engine)
+    await _connect(db)
+    writer_tracker = InMemoryTurnTaintTracker()
+    writer_tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="flight-listing",
+            tier=SourceTrustTier.RECOGNIZED_MACHINE,
+            labels=frozenset(),
+            reason="Structured flight data.",
+        )
+    )
+    writer = _context(
+        db, resolver=_alice_resolver(), backend=backend, taint_tracker=writer_tracker
+    )
+    result = await add_calendar_event_tool(
+        writer,
+        NO_DUPLICATE_CHECK,
+        summary="Flight to Canberra",
+        start_time="2026-09-17T10:00:00Z",
+        end_time="2026-09-17T11:00:00Z",
+    )
+    assert result.startswith("OK.")
+    body = backend.requests[-1].body
+    assert isinstance(body, dict)
+    marker = body["extendedProperties"]["private"]["familyAssistantProvenanceId"]
+    event = _event(
+        "created-1",
+        "Flight to Canberra",
+        etag="v1",
+        creator={"self": True},
+        extendedProperties={"private": {"familyAssistantProvenanceId": marker}},
+    )
+    backend.serve("tok-alice", "GET", "/calendars/primary/events", {"items": [event]})
+
+    reader_tracker = InMemoryTurnTaintTracker()
+    reader = _context(
+        db, resolver=_alice_resolver(), backend=backend, taint_tracker=reader_tracker
+    )
+    result = await search_calendar_events_tool(
+        reader,
+        NO_DUPLICATE_CHECK,
+        start_date="2026-09-17",
+        end_date="2026-09-18",
+        source_ids=["google:primary"],
+    )
+    assert "Flight to Canberra" in result
+    assert reader_tracker.snapshot().max_tier is SourceTrustTier.RECOGNIZED_MACHINE
+
+    backend.serve(
+        "tok-alice",
+        "GET",
+        "/calendars/primary/events",
+        {"items": [{**event, "etag": "v2"}]},
+    )
+    changed_tracker = InMemoryTurnTaintTracker()
+    changed_reader = _context(
+        db, resolver=_alice_resolver(), backend=backend, taint_tracker=changed_tracker
+    )
+    await search_calendar_events_tool(
+        changed_reader,
+        NO_DUPLICATE_CHECK,
+        start_date="2026-09-17",
+        end_date="2026-09-18",
+        source_ids=["google:primary"],
+    )
+    assert changed_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_google_write_without_a_version_reports_partial_success(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _connect(db)
+    backend = _alice_backend()
+    backend.serve(
+        "tok-alice",
+        "POST",
+        "/calendars/primary/events",
+        {"id": "created-without-version", "etag": None},
+    )
+    ctx = _context(db, resolver=_alice_resolver(), backend=backend)
+
+    result = await add_calendar_event_tool(
+        ctx,
+        NO_DUPLICATE_CHECK,
+        summary="Checkup",
+        start_time="2026-09-17T10:00:00Z",
+        end_time="2026-09-17T11:00:00Z",
+    )
+
+    assert result.startswith("Warning: Event 'Checkup' was added")
+    assert "Check the calendar before retrying" in result
 
 
 @pytest.mark.asyncio
@@ -573,7 +739,7 @@ async def test_add_all_day_event_to_named_google_calendar(
         calendar_id="google:kids@group.calendar.google.com",
     )
 
-    assert backend.requests[-1].body == {
+    assert _without_provenance(backend.requests[-1].body) == {
         "summary": "School camp",
         "start": {"date": "2026-09-21"},
         "end": {"date": "2026-09-23"},
@@ -660,7 +826,7 @@ async def test_modify_google_event_patches_only_changed_fields(
     patch = backend.requests[-1]
     assert patch.method == "PATCH"
     assert patch.params == {"sendUpdates": "none"}
-    assert patch.body == {
+    assert _without_provenance(patch.body) == {
         "summary": "Orthodontist",
         "start": {
             "dateTime": "2026-09-17T12:00:00+00:00",
@@ -689,7 +855,7 @@ async def test_modify_google_event_to_all_day_clears_the_time(
         new_end_time="2026-09-18",
     )
 
-    assert backend.requests[-1].body == {
+    assert _without_provenance(backend.requests[-1].body) == {
         "start": {"date": "2026-09-17", "dateTime": None, "timeZone": None},
         "end": {"date": "2026-09-18", "dateTime": None, "timeZone": None},
     }

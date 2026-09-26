@@ -13,6 +13,12 @@ from sqlalchemy import text
 
 # Database import removed - using exec_context.db_context for dependency injection
 from family_assistant.events.validation import format_validation_errors
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
+from family_assistant.storage.events import EventSourceType
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -39,6 +45,33 @@ def _format_event_timestamp(timestamp: str | datetime, timezone: ZoneInfo) -> st
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     return timestamp.astimezone(timezone).isoformat()
+
+
+def _record_event_taint(
+    exec_context: ToolExecutionContext, *, source_id: str, event_id: str
+) -> None:
+    """Grade one returned event without relaxing webhook or indexing payloads."""
+    tracker = exec_context.taint_tracker
+    if tracker is None:
+        return
+    is_home_assistant = source_id == EventSourceType.home_assistant.value
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.EVENT,
+            source_id=event_id,
+            tier=(
+                SourceTrustTier.RECOGNIZED_MACHINE
+                if is_home_assistant
+                else SourceTrustTier.UNKNOWN_EXTERNAL
+            ),
+            labels=frozenset(),
+            reason=(
+                "Structured Home Assistant event."
+                if is_home_assistant
+                else "Raw event from a non-Home Assistant source."
+            ),
+        )
+    )
 
 
 # Tool definitions
@@ -195,6 +228,11 @@ async def query_recent_events_tool(
     # Collect raw events
     events = []
     for row in result:
+        _record_event_taint(
+            exec_context,
+            source_id=str(row["source_id"]),
+            event_id=str(row["event_id"]),
+        )
         # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
         event_data = row["event_data"]
         if isinstance(event_data, str):
