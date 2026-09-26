@@ -6,6 +6,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -87,7 +89,7 @@ async def record_event_write(
             event_version=event_version,
             taint_metadata=state.to_metadata(),
         )
-    except Exception:
+    except SQLAlchemyError:
         logger.exception(
             "Calendar event was saved remotely but its provenance was not recorded"
         )

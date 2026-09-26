@@ -20,6 +20,7 @@ import httpx
 import vobject
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse
+from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.calendar_integration import (
     CalendarSource,
@@ -1587,6 +1588,12 @@ async def search_calendar_events_tool(
     all_sources = turn_sources.sources
     if not all_sources:
         note = turn_sources.google_error_note(include_not_connected=True)
+        if note:
+            _record_external_calendar_taint(
+                exec_context,
+                source_id="google_calendar_error",
+                reason="Google Calendar diagnostic text returned to the model.",
+            )
         return "\n\n".join(
             filter(
                 None,
@@ -1616,6 +1623,12 @@ async def search_calendar_events_tool(
         matching = [sources_by_id[sid] for sid in source_ids if sid in sources_by_id]
         if not matching:
             available = ", ".join(s.source_id for s in all_sources)
+            if any(not source.owned for source in all_sources):
+                _record_external_calendar_taint(
+                    exec_context,
+                    source_id="calendar_source_ids",
+                    reason="External calendar identifiers returned in an error.",
+                )
             return "\n\n".join([
                 f"Error: None of the requested calendar source IDs ({', '.join(source_ids)}) were found. "
                 f"Available sources: {available}.",
@@ -1664,6 +1677,11 @@ async def search_calendar_events_tool(
         )
     except Exception as e:
         logger.exception(f"Unexpected error searching calendar events: {e}")
+        _record_external_calendar_taint(
+            exec_context,
+            source_id="calendar_search_error",
+            reason="Calendar provider error text returned to the model.",
+        )
         return f"Error: An unexpected error occurred while searching events. {e}"
 
     if notes:
@@ -2051,7 +2069,7 @@ async def modify_calendar_event_tool(
         if prior_event is not None:
             try:
                 await grade_calendar_events(exec_context, [prior_event])
-            except Exception:
+            except SQLAlchemyError:
                 logger.exception(
                     "CalDAV event was modified but prior provenance could not be read"
                 )
@@ -2237,7 +2255,7 @@ async def delete_calendar_event_tool(
         if prior_event is not None:
             try:
                 await grade_calendar_events(exec_context, [prior_event])
-            except Exception:
+            except SQLAlchemyError:
                 logger.exception(
                     "CalDAV event was deleted but prior provenance could not be read"
                 )
