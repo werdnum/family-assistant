@@ -583,6 +583,8 @@ class ToolsConfig(BaseModel):
     on_demand_local_tools: list[str] = Field(default_factory=list)
     on_demand_mcp_server_ids: list[str] = Field(default_factory=list)
     mcp_initialization_timeout_seconds: int = 60
+    mcp_health_check_interval_seconds: int = 30
+    mcp_tool_refresh_interval_seconds: float | None = Field(default=1800.0, gt=0)
     confirmation_timeout_seconds: float = 3600.0
     async_delegation_enabled: bool = True
     delegate_handoff_after_seconds: float = 15.0
@@ -2769,3 +2771,8 @@ class AppConfig(BaseSettings):
             config_dir = Path(yaml_files[0]).resolve().parent
             return str(config_dir / path)
         return os.path.abspath(value)
+
+    @property
+    def tools_config(self) -> ToolsConfig:
+        """Operational tool configuration from default_profile_settings."""
+        return self.default_profile_settings.tools_config
