@@ -1003,13 +1003,18 @@ class MCPToolsProvider:
             server_tools = await asyncio.wait_for(
                 self._list_all_tools(session), timeout=15.0
             )
-            self._last_tool_refresh_at[server_id] = time.monotonic()
         except TimeoutError:
             logger.warning(f"Tool refresh timeout for server '{server_id}'")
             return
         except Exception as e:
             logger.warning(f"Tool refresh failed for server '{server_id}': {e}")
             if _is_connection_error(e):
+                if self._sessions.get(server_id) is not session:
+                    logger.info(
+                        f"Server '{server_id}' session changed during failed tool refresh; "
+                        "leaving replacement session intact"
+                    )
+                    return
                 logger.info(
                     f"Detected connection issue for server '{server_id}' during tool refresh, dropping session"
                 )
@@ -1020,6 +1025,14 @@ class MCPToolsProvider:
                 )
             return
 
+        if self._sessions.get(server_id) is not session:
+            logger.info(
+                f"Server '{server_id}' session changed during tool refresh; "
+                "leaving replacement session intact"
+            )
+            return
+
+        self._last_tool_refresh_at[server_id] = time.monotonic()
         try:
             self._refresh_server_tools(server_id, server_tools)
         except jsonschema.SchemaError as exc:
@@ -1034,8 +1047,9 @@ class MCPToolsProvider:
                 server_id,
                 exc.message,
             )
-            self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
-            await self._teardown_server(server_id)
+            if self._sessions.get(server_id) is session:
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                await self._teardown_server(server_id)
 
     async def _run_health_checks(self, *, force_tool_refresh: bool = False) -> None:
         """Ping every live session, reconnecting the ones that have died.
@@ -1066,6 +1080,13 @@ class MCPToolsProvider:
                 if not _is_connection_error(e):
                     continue
 
+                if self._sessions.get(server_id) is not session:
+                    logger.info(
+                        f"Server '{server_id}' session changed during failed health check; "
+                        "leaving replacement session intact"
+                    )
+                    continue
+
                 logger.info(
                     f"Detected connection issue for server '{server_id}', dropping session"
                 )
@@ -1077,6 +1098,8 @@ class MCPToolsProvider:
                     server_id, reason="health check"
                 )
             else:
+                if self._sessions.get(server_id) is not session:
+                    continue
                 logger.debug(f"Health check passed for server '{server_id}'")
                 self._reset_reconnect_backoff(server_id)
 

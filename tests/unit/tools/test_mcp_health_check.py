@@ -11,6 +11,8 @@ import pytest
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, ListToolsResult, Tool
 
+from pydantic import ValidationError
+
 from family_assistant.config_models import ToolsConfig
 from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
@@ -250,3 +252,91 @@ def test_tools_config_defaults() -> None:
         config.mcp_tool_refresh_interval_seconds
         == DEFAULT_TOOL_REFRESH_INTERVAL_SECONDS
     )
+
+
+def test_tools_config_allows_none_refresh_interval() -> None:
+    """mcp_tool_refresh_interval_seconds accepts None to disable periodic refresh."""
+    config = ToolsConfig(mcp_tool_refresh_interval_seconds=None)
+    assert config.mcp_tool_refresh_interval_seconds is None
+
+    # Simulating YAML loading with null
+    validated = ToolsConfig.model_validate({"mcp_tool_refresh_interval_seconds": None})
+    assert validated.mcp_tool_refresh_interval_seconds is None
+
+
+def test_tools_config_validates_positive_refresh_interval() -> None:
+    """Non-None mcp_tool_refresh_interval_seconds must be positive (> 0)."""
+    with pytest.raises(ValidationError):
+        ToolsConfig(mcp_tool_refresh_interval_seconds=0)
+
+    with pytest.raises(ValidationError):
+        ToolsConfig(mcp_tool_refresh_interval_seconds=-10.0)
+
+    config = ToolsConfig(mcp_tool_refresh_interval_seconds=120.0)
+    assert config.mcp_tool_refresh_interval_seconds == 120.0
+
+
+@pytest.mark.asyncio
+async def test_refresh_preserves_replacement_session_on_stale_connection_error() -> None:
+    """When a stale session refresh fails with ConnectionError, the replacement session is kept."""
+    provider = _provider()
+    # old_session will fail with BrokenPipeError when list_tools is called
+    old_session, _, _ = _session_with_ping(
+        list_tools_side_effect=BrokenPipeError("Connection reset")
+    )
+    new_session, _, _ = _session_with_ping([_tool("new_tool")])
+
+    # Simulate that new_session has replaced old_session in provider._sessions
+    provider._sessions[SERVER_ID] = new_session
+    provider._server_statuses[SERVER_ID] = MCP_SERVER_STATUS_CONNECTED
+
+    # Attempt to refresh from old_session (which was passed when the check started)
+    await provider._refresh_server_tools_from_session(SERVER_ID, old_session)
+
+    # Replacement session should still be intact and not torn down
+    assert provider._sessions.get(SERVER_ID) is new_session
+    assert provider._server_statuses[SERVER_ID] == MCP_SERVER_STATUS_CONNECTED
+
+
+@pytest.mark.asyncio
+async def test_refresh_discards_stale_results_when_session_replaced() -> None:
+    """When a stale session successfully lists tools after replacement, results are ignored."""
+    provider = _provider()
+    old_session, _, _ = _session_with_ping([_tool("stale_tool")])
+    new_session, _, _ = _session_with_ping([_tool("current_tool")])
+
+    # Initially register current_tool for new_session
+    _register(provider, SERVER_ID, [_tool("current_tool")])
+    provider._sessions[SERVER_ID] = new_session
+
+    # Run refresh with the old_session reference
+    await provider._refresh_server_tools_from_session(SERVER_ID, old_session)
+
+    # Tools registered should still be from new_session, not stale_tool
+    assert {d.name for d in provider._descriptors} == {"current_tool"}
+    assert provider._sessions.get(SERVER_ID) is new_session
+
+
+@pytest.mark.asyncio
+async def test_health_check_preserves_replacement_session_on_stale_ping_error() -> None:
+    """A stale ping failure does not tear down a session that was reconnected in the meantime."""
+    provider = _provider()
+
+    new_session, _, _ = _session_with_ping()
+
+    async def ping_side_effect() -> None:
+        # Simulate that while ping was in flight, a tool call reconnected the server
+        provider._sessions[SERVER_ID] = new_session
+        provider._server_statuses[SERVER_ID] = MCP_SERVER_STATUS_CONNECTED
+        raise BrokenPipeError("Connection lost on old transport")
+
+    old_session, send_ping, _ = _session_with_ping()
+    send_ping.side_effect = ping_side_effect
+
+    provider._sessions[SERVER_ID] = old_session
+
+    await provider._run_health_checks()
+
+    # The new session installed in the meantime must be preserved
+    assert provider._sessions.get(SERVER_ID) is new_session
+    assert provider._server_statuses[SERVER_ID] == MCP_SERVER_STATUS_CONNECTED
