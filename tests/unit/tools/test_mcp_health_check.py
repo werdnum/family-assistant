@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, ListToolsResult, Tool
-
 from pydantic import ValidationError
 
 from family_assistant.config_models import ToolsConfig
@@ -70,6 +69,10 @@ def _provider(
     )
     provider._initialized = True
     provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+    provider._connect_and_discover_mcp = AsyncMock(  # type: ignore[method-assign]
+        return_value=(None, [], [], {})
+    )
+    provider._close_server_connections = AsyncMock()  # type: ignore[method-assign]
     return provider
 
 
@@ -277,7 +280,9 @@ def test_tools_config_validates_positive_refresh_interval() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_preserves_replacement_session_on_stale_connection_error() -> None:
+async def test_refresh_preserves_replacement_session_on_stale_connection_error() -> (
+    None
+):
     """When a stale session refresh fails with ConnectionError, the replacement session is kept."""
     provider = _provider()
     # old_session will fail with BrokenPipeError when list_tools is called

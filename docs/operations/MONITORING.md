@@ -645,14 +645,15 @@ INFO - MCP server 'brave' reported a changed tool list on health check: now 3 to
 
 **Cause**: Periodic connection health checks (`mcp_health_check_interval_seconds`, default 30s) use
 lightweight pings to verify transport liveness without polling full schemas. Tool discovery is
-decoupled from health checking: tool lists are retrieved on initial startup, upon server reconnection,
-on demand via `refresh_server_tools`, or periodically when `mcp_tool_refresh_interval_seconds`
-(default: 1800s / 30m; `null` to disable) has elapsed. When a refresh detects changes to available
-tools, this log line is emitted. A server that initially reported an incomplete or empty tool set
-recovers when tool refresh runs, upon reconnection, or via on-demand refresh. **Solution**: none
-needed for routine updates. If updated tool definitions are needed immediately without waiting for
-the refresh interval, reconnect the server or trigger on-demand refresh. A server that flips its list
-back and forth every cycle is misbehaving; check that server's own logs.
+decoupled from health checking: tool lists are retrieved on initial startup, upon server
+reconnection, on demand via `refresh_server_tools`, or periodically when
+`mcp_tool_refresh_interval_seconds` (default: 1800s / 30m; `null` to disable) has elapsed. When a
+refresh detects changes to available tools, this log line is emitted. A server that initially
+reported an incomplete or empty tool set recovers when tool refresh runs, upon reconnection, or via
+on-demand refresh. **Solution**: none needed for routine updates. If updated tool definitions are
+needed immediately without waiting for the refresh interval, reconnect the server or trigger
+on-demand refresh. A server that flips its list back and forth every cycle is misbehaving; check
+that server's own logs.
 
 ### Debugging Tips
 

@@ -2657,15 +2657,17 @@ ______________________________________________________________________
 
 Interval in seconds between lightweight ping-based MCP server health checks.
 
-| Property  | Value                                                              |
-| --------- | ------------------------------------------------------------------ |
+| Property  | Value                                                                     |
+| --------- | ------------------------------------------------------------------------- |
 | YAML Path | `default_profile_settings.tools_config.mcp_health_check_interval_seconds` |
-| Required  | No                                                                 |
-| Default   | `30`                                                               |
-| Sensitive | No                                                                 |
-| Example   | `60`                                                               |
+| Required  | No                                                                        |
+| Default   | `30`                                                                      |
+| Sensitive | No                                                                        |
+| Example   | `60`                                                                      |
 
-Controls how frequently the assistant checks connection health for active MCP sessions. Health checks send a lightweight JSON-RPC ping to verify the server transport without polling full tool lists. If a server does not implement ping, it falls back to `list_tools`.
+Controls how frequently the assistant checks connection health for active MCP sessions. Health
+checks send a lightweight JSON-RPC ping to verify the server transport without polling full tool
+lists. If a server does not implement ping, it falls back to `list_tools`.
 
 ______________________________________________________________________
 
@@ -2673,15 +2675,18 @@ ______________________________________________________________________
 
 Interval in seconds between periodic background MCP tool list discovery refreshes.
 
-| Property  | Value                                                              |
-| --------- | ------------------------------------------------------------------ |
+| Property  | Value                                                                     |
+| --------- | ------------------------------------------------------------------------- |
 | YAML Path | `default_profile_settings.tools_config.mcp_tool_refresh_interval_seconds` |
-| Required  | No                                                                 |
-| Default   | `1800` (30 minutes)                                                |
-| Sensitive | No                                                                 |
-| Example   | `null` (disables periodic refresh)                                 |
+| Required  | No                                                                        |
+| Default   | `1800` (30 minutes)                                                       |
+| Sensitive | No                                                                        |
+| Example   | `null` (disables periodic refresh)                                        |
 
-Decoupled from connection health checks to eliminate repeated full-schema transfers and prevent memory accumulation from servers with large schemas. Tool lists are always fetched at startup, upon reconnecting a dropped session, and on-demand via `refresh_server_tools()`. Set to `null` to disable periodic background discovery entirely.
+Decoupled from connection health checks to eliminate repeated full-schema transfers and prevent
+memory accumulation from servers with large schemas. Tool lists are always fetched at startup, upon
+reconnecting a dropped session, and on-demand via `refresh_server_tools()`. Set to `null` to disable
+periodic background discovery entirely.
 
 ______________________________________________________________________
 

@@ -645,6 +645,12 @@ class MCPToolsProvider:
             if server_id in self._connection_contexts:
                 await self._close_server_connections(server_id)
             return None, [], [], {}  # Return empty on failure
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                await exit_stack.aclose()
+            if server_id in self._connection_contexts:
+                await self._close_server_connections(server_id)
+            raise
 
     async def initialize(self) -> None:
         """Connects to configured MCP servers, fetches and sanitizes tool definitions."""
