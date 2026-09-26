@@ -553,6 +553,7 @@ def _processing_service(
         allow_wake_llm=True,
         memory_read=False,
         note_registry=None,
+        calendar_config=None,
     )
     service = SimpleNamespace(
         kind="local",
