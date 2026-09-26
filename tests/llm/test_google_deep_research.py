@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.genai.interactions import Interaction
 from pydantic import TypeAdapter
 
 from family_assistant.llm.base import (
@@ -717,9 +718,7 @@ async def test_start_agent_interaction_does_not_stream(
     """The non-blocking submit calls create with stream=False and returns immediately."""
     client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
-    mock_interaction = MagicMock()
-    mock_interaction.id = "inter_submit_1"
-    mock_interaction.status = "in_progress"
+    mock_interaction = Interaction(id="inter_submit_1", status="in_progress")
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
     result = await client.start_agent_interaction([
@@ -741,8 +740,7 @@ async def test_start_agent_interaction_passes_previous_interaction_id(
     """An explicit previous_interaction_id overrides history scanning."""
     client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
-    mock_interaction = MagicMock()
-    mock_interaction.id = "inter_submit_2"
+    mock_interaction = Interaction(id="inter_submit_2", status="in_progress")
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
     await client.start_agent_interaction(
@@ -761,9 +759,7 @@ async def test_get_agent_interaction_polls_without_streaming(
     """A single poll calls interactions.get with stream=False."""
     client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
-    mock_interaction = MagicMock()
-    mock_interaction.status = "completed"
-    mock_interaction.output_text = "The final report."
+    mock_interaction = Interaction(status="completed", output_text="The final report.")
     mock_genai_client.aio.interactions.get = AsyncMock(return_value=mock_interaction)
 
     result = await client.get_agent_interaction("inter_poll_1")
@@ -772,6 +768,27 @@ async def test_get_agent_interaction_polls_without_streaming(
     mock_genai_client.aio.interactions.get.assert_called_once_with(
         "inter_poll_1", stream=False
     )
+
+
+@pytest.mark.asyncio
+async def test_get_agent_interaction_validates_mapping_response(
+    mock_genai_client: MagicMock,
+) -> None:
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    mock_genai_client.aio.interactions.get = AsyncMock(
+        return_value={
+            "status": "failed",
+            "errors": [{"code": "limit", "message": "Capacity exceeded"}],
+            "usage": {"total_tokens": 12},
+        }
+    )
+
+    result = await client.get_agent_interaction("inter_poll_1")
+
+    assert isinstance(result, Interaction)
+    assert result.status == "failed"
+    assert result.errors is not None and result.errors[0].code == "limit"
+    assert result.usage is not None and result.usage.total_tokens == 12
 
 
 @pytest.mark.asyncio

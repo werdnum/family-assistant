@@ -22,7 +22,7 @@ import aiofiles
 from google import genai
 from google.genai import types
 from google.genai.client import DebugConfig
-from google.genai.interactions import Interaction
+from google.genai.interactions import Interaction, Usage
 from opentelemetry import trace
 from pydantic import BaseModel, ValidationError
 
@@ -138,6 +138,17 @@ _INTERACTION_TERMINAL_ERROR_STATUSES = {
     "incomplete",
     "budget_exceeded",
 }
+
+
+def _agent_interaction_response(response: object) -> Interaction:
+    """Normalize an agent response at the SDK boundary before callers inspect it."""
+    if isinstance(response, Interaction):
+        return response
+    if isinstance(response, dict):
+        return Interaction.model_validate(response)
+    raise TypeError(
+        f"Expected an Interactions API Interaction, got {type(response).__name__}"
+    )
 
 
 def _image_modality_tokens(
@@ -1551,7 +1562,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
     @staticmethod
     def _reasoning_info_from_interaction_usage(
-        usage: Any,  # noqa: ANN401 - google.genai interactions Usage
+        usage: Usage | None,
     ) -> MessageReasoningInfo | None:
         """Build reasoning info from an Interactions API run's `usage`.
 
@@ -1561,12 +1572,12 @@ class GoogleGenAIClient(BaseLLMClient):
         chat path does: cached tokens are a subset of the input, while thought
         and server-side tool tokens are billed apart from the output.
         """
-        if not usage:
+        if usage is None:
             return None
         reasoning_info = MessageReasoningInfo(
-            prompt_tokens=getattr(usage, "total_input_tokens", 0) or 0,
-            completion_tokens=getattr(usage, "total_output_tokens", 0) or 0,
-            total_tokens=getattr(usage, "total_tokens", 0) or 0,
+            prompt_tokens=usage.total_input_tokens or 0,
+            completion_tokens=usage.total_output_tokens or 0,
+            total_tokens=usage.total_tokens or 0,
         )
         for field, key in (
             ("total_cached_tokens", "cached_prompt_tokens"),
@@ -2010,11 +2021,8 @@ class GoogleGenAIClient(BaseLLMClient):
         # reaches no terminal poll.
         started = time.monotonic()
         try:
-            interaction = cast(
-                "Interaction",
-                await self.client.aio.interactions.create(
-                    **create_kwargs, stream=False
-                ),
+            interaction = _agent_interaction_response(
+                await self.client.aio.interactions.create(**create_kwargs, stream=False)
             )
         except Exception as e:
             error = self._classify_agent_delegation_error(e)
@@ -2059,9 +2067,7 @@ class GoogleGenAIClient(BaseLLMClient):
         The pollable delegation path never sees the stream that would otherwise
         carry usage, so it reads the totals off the interaction it polled.
         """
-        return self._reasoning_info_from_interaction_usage(
-            getattr(interaction, "usage", None)
-        )
+        return self._reasoning_info_from_interaction_usage(interaction.usage)
 
     async def get_agent_interaction(self, interaction_id: str) -> Interaction:
         """Fetch the current state of any Interactions API agent run (one poll).
@@ -2071,9 +2077,8 @@ class GoogleGenAIClient(BaseLLMClient):
         ``start_agent_interaction``).
         """
         try:
-            return cast(
-                "Interaction",
-                await self.client.aio.interactions.get(interaction_id, stream=False),
+            return _agent_interaction_response(
+                await self.client.aio.interactions.get(interaction_id, stream=False)
             )
         except Exception as e:
             raise self._classify_agent_delegation_error(e) from e

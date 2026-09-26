@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import urllib.request
-from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from google.genai.interactions import ModalityTokens, Usage
 from opentelemetry import trace as otel_trace
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
@@ -648,19 +648,17 @@ def test_the_exporter_serves_the_metrics_it_has_collected() -> None:
 # --- Managed-agent runs --------------------------------------------------
 
 
-class _FakeInteractionUsage:
-    total_input_tokens = 12000
-    total_output_tokens = 3000
-    total_cached_tokens = 9000
-    total_thought_tokens = 800
-    total_tool_use_tokens = 450
-    total_tokens = 15800
-
-
 def test_an_agent_run_reports_the_tokens_it_spent() -> None:
     """A managed agent's spend is on the interaction, not in a chat response."""
     usage = GoogleGenAIClient._reasoning_info_from_interaction_usage(
-        _FakeInteractionUsage()
+        Usage(
+            total_input_tokens=12000,
+            total_output_tokens=3000,
+            total_cached_tokens=9000,
+            total_thought_tokens=800,
+            total_tool_use_tokens=450,
+            total_tokens=15800,
+        )
     )
     assert usage is not None
 
@@ -676,19 +674,18 @@ def test_an_agent_run_reports_the_tokens_it_spent() -> None:
 def test_an_agent_run_reports_its_token_modalities() -> None:
     """An Interactions run can be multimodal both ways -- images in, video out."""
 
-    @dataclass
-    class _Modality:
-        modality: str
-        tokens: int
-
-    class _Usage:
-        total_input_tokens = 5000
-        total_output_tokens = 9000
-        total_tokens = 14000
-        input_tokens_by_modality = [_Modality("TEXT", 500), _Modality("IMAGE", 4500)]
-        output_tokens_by_modality = [_Modality("IMAGE", 8000)]
-
-    usage = GoogleGenAIClient._reasoning_info_from_interaction_usage(_Usage())
+    usage = GoogleGenAIClient._reasoning_info_from_interaction_usage(
+        Usage(
+            total_input_tokens=5000,
+            total_output_tokens=9000,
+            total_tokens=14000,
+            input_tokens_by_modality=[
+                ModalityTokens(modality="text", tokens=500),
+                ModalityTokens(modality="image", tokens=4500),
+            ],
+            output_tokens_by_modality=[ModalityTokens(modality="image", tokens=8000)],
+        )
+    )
     assert usage is not None
 
     buckets = normalized_token_buckets(usage, "google")

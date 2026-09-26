@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.genai.interactions import Interaction
 from pydantic import TypeAdapter
 
 from family_assistant.llm import LLMStreamEvent
@@ -223,8 +224,7 @@ async def test_start_agent_interaction_submits_antigravity_without_streaming(
         model=ANTIGRAVITY_AGENT_ID,
         antigravity_model="gemini-3.8-flash",
     )
-    mock_interaction = MagicMock()
-    mock_interaction.id = "inter_ag_submit"
+    mock_interaction = Interaction(id="inter_ag_submit", status="in_progress")
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
     result = await client.start_agent_interaction(
@@ -356,8 +356,7 @@ async def test_submit_path_merges_mounted_sources_with_egress_policy(
 ) -> None:
     """One environment block carries both, rather than either overwriting the other."""
     client = _egress_client("disabled")
-    mock_interaction = MagicMock()
-    mock_interaction.id = "inter_ag_env_submit"
+    mock_interaction = Interaction(id="inter_ag_env_submit", status="in_progress")
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
     await client.start_agent_interaction(
@@ -402,8 +401,7 @@ async def test_default_sandbox_is_stated_rather_than_omitted(
         model=ANTIGRAVITY_AGENT_ID,
         antigravity_model="gemini-3.8-flash",
     )
-    mock_interaction = MagicMock()
-    mock_interaction.id = "inter_ag_plain"
+    mock_interaction = Interaction(id="inter_ag_plain", status="in_progress")
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
     await client.start_agent_interaction([UserMessage(content="Do the thing.")])
