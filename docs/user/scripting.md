@@ -9,145 +9,38 @@ write effective scripts.
 
 ## Python Scripting Overview
 
-Scripts run real Python code in a sandboxed environment. Standard Python syntax is fully supported,
-including:
+Scripts run real Python code in a sandboxed environment. Most everyday Python works, including:
 
 - **Exception handling**: `try`/`except`/`finally` blocks work normally
-- **All loop types**: `for` loops, `while` loops, and comprehensions
-- **Classes**: You can define and use classes
-- **Float arithmetic**: `float()`, decimal math, and all numeric types
-- **Standard control flow**: Generators, context managers, and all Python constructs
+- **All loop types**: `for` loops, `while` loops, comprehensions and generator expressions
+- **Functions, classes and decorators**: including `@dataclass`, lambdas and closures
+- **Context managers**: `with` statements work with classes that define `__enter__`/`__exit__`
+- **String formatting**: f-strings, `str.format()` and `%` formatting
+- **Builtins**: `map`, `filter`, `sorted`, `sum`, dict unpacking (`{**d1, **d2}`) and so on
+- **Standard modules**: `re`, `math`, `json`, `datetime`, `collections`, `itertools`, `functools`,
+  `base64`, `random`, `dataclasses` and `typing` can be imported
 
 ### Sandbox Constraints
 
 While the scripting engine runs real Python, it operates in a restricted sandbox:
 
-1. **No imports**: Cannot import external modules (except heavily sandboxed os, sys, typing,
-   pathlib)
-2. **No file/network access**: Scripts are sandboxed with no filesystem or network access
-3. **Limited builtins**: Only safe built-in functions are available
-4. **Resource limits**: Scripts have memory (256MB) and recursion depth (100) limits
-5. **Timeout**: Scripts timeout after 10 minutes
+1. **Limited imports**: Only the modules the sandbox implements can be imported. Anything else (for
+   example `statistics` or `requests`) fails with `ModuleNotFoundError`.
+2. **No file/network access**: Scripts are sandboxed with no filesystem or network access; use the
+   tool and API functions below instead
+3. **Resource limits**: Scripts have memory (256MB) and recursion depth (100) limits
+4. **Timeout**: Scripts timeout after 10 minutes
+5. **Local time**: `datetime.now()` returns the household's local time
 
 ### Sandbox Limitations
 
-The Monty scripting engine is a sandboxed Python subset. Some Python features are **not available**:
+A few Python features are **not available**:
 
-#### Structural Limitations
-
-- **No class definitions**: You cannot define classes using the `class` keyword
-- **No generators**: No `yield` statements or generator functions
-- **No match/case statements**: Pattern matching is not supported
-- **No context managers**: No `with` statements (use try/finally instead)
-- **No del statement**: Cannot explicitly delete variables
-
-#### Syntax Limitations
-
-- **No dict unpacking in literals**: `{**d1, **d2}` syntax is not supported (use
-  `dict1.update(dict2)` or manual merging)
-- **No str.format() method**: Use f-strings instead (`f"Hello {name}"` not
-  `"Hello {}".format(name)`)
-- **No map/filter builtins**: Use list comprehensions instead (`[x*2 for x in items]` not
-  `map(lambda x: x*2, items)`)
-
-#### Buggy or Limited Features
-
-- **Decorators are buggy**: Avoid using decorators on functions
-- **Exception arguments**: Exceptions only accept 0 or 1 string arguments (`raise ValueError("msg")`
+- **No generator functions**: No `yield` (generator expressions like `sum(x for x in items)` work)
+- **No match/case statements**: Use `if`/`elif` instead
+- **No del statement**: Reassign or `pop()` instead
+- **Exception arguments**: Exceptions accept only 0 or 1 string arguments (`raise ValueError("msg")`
   works, `raise ValueError("msg", data)` does not)
-
-#### What IS Supported
-
-Despite these limitations, the following features **do work** (unlike some other sandboxed Python
-environments):
-
-- **Exception handling**: `try`/`except`/`finally` blocks work normally
-- **While loops**: `while` loops are fully supported
-- **All numeric types**: `float()`, `int()`, and decimal math work correctly
-- **Set types**: `set()` and `frozenset()` are available
-- **For loops and comprehensions**: All iteration constructs work normally
-- **Function definitions**: You can define and call functions normally
-
-### Working Around Limitations
-
-Here are patterns for common tasks:
-
-**Instead of classes, use functions and dicts:**
-
-```python
-# Instead of:
-# class Counter:
-#     def __init__(self):
-#         self.count = 0
-#     def increment(self):
-#         self.count += 1
-
-# Use:
-def create_counter():
-    return {"count": 0}
-
-def increment_counter(counter):
-    counter["count"] += 1
-    return counter
-
-counter = create_counter()
-increment_counter(counter)
-```
-
-**Instead of dict unpacking, use update():**
-
-```python
-# Instead of: merged = {**dict1, **dict2}
-
-# Use:
-merged = dict1.copy()
-merged.update(dict2)
-
-# Or manually merge:
-merged = {}
-for k, v in dict1.items():
-    merged[k] = v
-for k, v in dict2.items():
-    merged[k] = v
-```
-
-**Instead of str.format(), use f-strings:**
-
-```python
-# Instead of: "Hello {}".format(name)
-
-# Use:
-f"Hello {name}"
-```
-
-**Instead of map/filter, use comprehensions:**
-
-```python
-# Instead of: list(map(lambda x: x*2, items))
-
-# Use:
-[x * 2 for x in items]
-
-# Instead of: list(filter(lambda x: x > 10, items))
-
-# Use:
-[x for x in items if x > 10]
-```
-
-**Instead of context managers, use try/finally:**
-
-```python
-# Instead of:
-# with resource:
-#     do_something()
-
-# Use:
-resource = acquire_resource()
-try:
-    do_something(resource)
-finally:
-    release_resource(resource)
-```
 
 ## Available APIs
 

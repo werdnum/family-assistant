@@ -16,6 +16,9 @@ import pydantic_monty
 
 from .config import ScriptConfig
 
+_TYPE_CHECK_HALT = "fa_type_check_halt"
+_SCRIPT_FILENAME = "main.py"
+
 # JSON Schema type -> Python type annotation mapping
 _JSON_TYPE_MAP: dict[str, str] = {
     "string": "str",
@@ -405,29 +408,6 @@ class ScriptValidator:
         Returns:
             ValidationResult with any diagnostics found.
         """
-        diagnostics: list[ValidationDiagnostic] = []
-
-        # Build the Monty instance (catches syntax errors)
-        try:
-            m = pydantic_monty.Monty(
-                script,
-                inputs=input_names or [],
-            )
-        except pydantic_monty.MontySyntaxError as e:
-            line = None
-            match = re.search(r"line (\d+)", str(e))
-            if match:
-                line = int(match.group(1))
-            diagnostics.append(
-                ValidationDiagnostic(
-                    message=f"Syntax error: {e}",
-                    line=line,
-                    severity="error",
-                )
-            )
-            return ValidationResult(is_valid=False, diagnostics=diagnostics)
-
-        # Generate prefix_code with type stubs
         prefix_code = generate_prefix_code(
             tool_definitions=self.tool_definitions,
             input_names=input_names,
@@ -438,28 +418,40 @@ class ScriptValidator:
             include_time_api=self.config.enable_time_api,
             include_llm_api=self.config.enable_llm_api,
         )
+        stubs = f"{prefix_code}\ndef {_TYPE_CHECK_HALT}() -> None: ...\n"
 
-        # Run type checking — let infrastructure errors (RuntimeError) propagate
-        try:
-            m.type_check(type_check_stubs=prefix_code)
-        except pydantic_monty.MontyTypingError as e:
-            diagnostics.extend(_parse_typing_error(e))
-            return ValidationResult(is_valid=False, diagnostics=diagnostics)
-        except pydantic_monty.MontySyntaxError as e:
-            # Syntax error in prefix_code (our generated stubs), not the user's script.
-            # Fail closed: a broken stub is a bug that should be surfaced.
-            logger.error("Syntax error in generated prefix code: %s", e)
-            return ValidationResult(
-                is_valid=False,
-                diagnostics=[
-                    ValidationDiagnostic(
-                        message=f"Internal error: invalid type definitions: {e}",
-                        severity="error",
-                    )
-                ],
+        # Monty only type-checks a snippet as the first step of running it. The
+        # leading halt call is a host function that is never answered, so the
+        # feed suspends before any line of the script executes.
+        with (
+            pydantic_monty.Monty(min_processes=1, max_processes=1) as pool,
+            pool.checkout(
+                type_check=True,
+                type_check_stubs=stubs,
+                type_check_format="full",
+            ) as session,
+        ):
+            try:
+                progress = session.feed_start(f"{_TYPE_CHECK_HALT}()\n{script}")
+            except pydantic_monty.MontyTypingError as e:
+                diagnostics = _parse_typing_error(e)
+                return ValidationResult(is_valid=False, diagnostics=diagnostics)
+            except pydantic_monty.MontySyntaxError as e:
+                return ValidationResult(
+                    is_valid=False,
+                    diagnostics=[ValidationDiagnostic(message=f"Syntax error: {e}")],
+                )
+
+        # Anything else means the checker is not being consulted, so fail loudly
+        # rather than treating every script as valid.
+        if not (
+            isinstance(progress, pydantic_monty.FunctionSnapshot)
+            and progress.function_name == _TYPE_CHECK_HALT
+        ):
+            raise RuntimeError(
+                f"Type-check run did not stop at its halt call: {progress!r}"
             )
-
-        return ValidationResult(is_valid=True, diagnostics=diagnostics)
+        return ValidationResult(is_valid=True, diagnostics=[])
 
 
 def _parse_typing_error(
@@ -467,14 +459,14 @@ def _parse_typing_error(
 ) -> list[ValidationDiagnostic]:
     """Parse a MontyTypingError into structured diagnostics."""
     diagnostics: list[ValidationDiagnostic] = []
-    error_text = error.display(format="full", color=False)
+    error_text = error.display()
 
     # Parse individual error blocks (e.g. "error[rule-name]: message\n --> file:line:col")
     pattern = re.compile(
         r"(error|warning)\[([^\]]+)\]:\s*(.+?)(?=\n\s*-->|\Z)",
         re.DOTALL,
     )
-    line_pattern = re.compile(r"-->\s*\S+:(\d+):\d+")
+    location_pattern = re.compile(r"-->\s*(\S+):(\d+):\d+")
 
     # Split by "error[" or "warning[" boundaries
     blocks = re.split(r"(?=(?:error|warning)\[)", error_text)
@@ -497,12 +489,18 @@ def _parse_typing_error(
             continue
 
         severity = severity_match.group(1)
+        rule = severity_match.group(2)
         message = severity_match.group(3).strip()
 
         line = None
-        line_match = line_pattern.search(block)
-        if line_match:
-            line = int(line_match.group(1))
+        location_match = location_pattern.search(block)
+        if location_match and location_match.group(1) == _SCRIPT_FILENAME:
+            # The script is fed after a one-line halt call, so shift back.
+            line = int(location_match.group(2)) - 1
+        elif location_match:
+            message = f"Internal error: invalid type definitions: {message}"
+        if rule == "invalid-syntax":
+            message = f"Syntax error: {message}"
 
         diagnostics.append(
             ValidationDiagnostic(

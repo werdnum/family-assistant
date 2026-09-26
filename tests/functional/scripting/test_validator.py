@@ -34,6 +34,28 @@ class TestScriptValidatorSyntax:
         assert not result.is_valid
 
 
+class TestScriptValidatorDiagnostics:
+    """Test where diagnostics point and that validation never executes the script."""
+
+    def test_error_line_refers_to_script(self) -> None:
+        v = ScriptValidator()
+        result = v.validate('x = 1\ny = 2\n"hello" + 1')
+        assert not result.is_valid
+        assert [d.line for d in result.errors] == [3]
+
+    def test_syntax_error_is_labelled(self) -> None:
+        v = ScriptValidator()
+        result = v.validate("x = 1\ny = (")
+        assert not result.is_valid
+        assert result.errors[0].message.startswith("Syntax error:")
+        assert result.errors[0].line == 2
+
+    def test_valid_script_is_not_executed(self) -> None:
+        v = ScriptValidator(config=ScriptConfig(max_execution_time=1))
+        result = v.validate("while True:\n    pass")
+        assert result.is_valid
+
+
 class TestScriptValidatorTypeChecking:
     """Test static type checking."""
 

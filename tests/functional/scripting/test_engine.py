@@ -280,6 +280,42 @@ result
         assert result == "Hello, World!"
 
     @pytest.mark.asyncio
+    async def test_async_function_called_without_await(self) -> None:
+        """Async host functions are awaited on the host, so scripts call them plainly."""
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
+
+        async def fetch(key: str) -> dict[str, str]:
+            return {"key": key}
+
+        result = await engine.evaluate_async('fetch("a")["key"]', {"fetch": fetch})
+        assert result == "a"
+
+    @pytest.mark.asyncio
+    async def test_many_host_calls(self) -> None:
+        """A script may make more host calls than Monty's default cap of 1000."""
+        engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
+
+        def one() -> int:
+            return 1
+
+        result = await engine.evaluate_async(
+            "total = 0\nfor _ in range(1500):\n    total += one()\ntotal",
+            {"one": one},
+        )
+        assert result == 1500
+
+    @pytest.mark.asyncio
+    async def test_naive_now_uses_household_timezone(self) -> None:
+        engine = MontyEngine(default_timezone=ZoneInfo("Asia/Kolkata"))
+
+        script = """
+from datetime import datetime
+datetime.now().astimezone().utcoffset().total_seconds()
+"""
+        result = await engine.evaluate_async(script)
+        assert result == 5.5 * 3600
+
+    @pytest.mark.asyncio
     async def test_no_double_resume_on_function_exception(self) -> None:
         """Regression: each snapshot must resume exactly once.
 
