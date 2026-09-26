@@ -10,12 +10,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
 )
 from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
+from family_assistant.storage.database import Database
+from family_assistant.tools.types import ToolExecutionContext
 
 
 class TestEngineIntegration:
@@ -313,6 +316,35 @@ from datetime import datetime
 datetime.now().astimezone().utcoffset().total_seconds()
 """
         result = await engine.evaluate_async(script)
+        assert result == 5.5 * 3600
+
+    @pytest.mark.asyncio
+    async def test_naive_now_prefers_call_timezone(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        engine = MontyEngine(default_timezone=ZoneInfo("UTC"))
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=Database(engine=db_engine),
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("Asia/Kolkata"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
+
+        script = """
+from datetime import datetime
+datetime.now().astimezone().utcoffset().total_seconds()
+"""
+        result = await engine.evaluate_async(script, execution_context=context)
         assert result == 5.5 * 3600
 
     @pytest.mark.asyncio

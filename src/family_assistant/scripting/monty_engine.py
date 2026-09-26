@@ -296,7 +296,7 @@ class MontyEngine:
             pydantic_monty.AsyncMonty(min_processes=1, max_processes=1) as pool,
             pool.checkout(
                 limits=self._build_resource_limits(),
-                os_policy=self._build_os_policy(),
+                os_policy=self._build_os_policy(execution_context),
             ) as session,
         ):
             progress = await session.feed_start(
@@ -949,10 +949,15 @@ class MontyEngine:
             max_suspensions=_MAX_SUSPENSIONS,
         )
 
-    def _build_os_policy(self) -> pydantic_monty.OSPolicy:
-        """Give naive ``datetime.now()`` in the sandbox the household's timezone."""
-        if isinstance(self.default_timezone, ZoneInfo):
-            return pydantic_monty.OSPolicy(timezone=self.default_timezone.key)
+    def _build_os_policy(
+        self, execution_context: "ToolExecutionContext | None"
+    ) -> pydantic_monty.OSPolicy:
+        """Give naive ``datetime.now()`` in the sandbox the timezone the time API uses."""
+        tz = (
+            execution_context.timezone if execution_context is not None else None
+        ) or self.default_timezone
+        if isinstance(tz, ZoneInfo):
+            return pydantic_monty.OSPolicy(timezone=tz.key)
         return pydantic_monty.OSPolicy()
 
     def _create_print_callback(
