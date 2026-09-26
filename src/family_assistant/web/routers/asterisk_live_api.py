@@ -1330,6 +1330,7 @@ class AsteriskLiveHandler:
                     attachment_registry=self.processing_service.attachment_registry,
                     camera_backend=self.processing_service.camera_backend,
                     tools_provider=self.processing_service.tools_provider,
+                    calendar_config=self.processing_service.service_config.calendar_config,
                     visibility_grants=(
                         set(self.processing_service.service_config.visibility_grants)
                         if self.processing_service.service_config.visibility_grants

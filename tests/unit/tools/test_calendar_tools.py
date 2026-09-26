@@ -146,9 +146,9 @@ async def test_list_calendars_via_local_tools_provider() -> None:
     provider = LocalToolsProvider(
         definitions=CALENDAR_TOOLS_DEFINITION,
         implementations={"list_calendars": list_calendars_tool},
-        calendar_config=calendar_config,
     )
     ctx = _create_mock_context()
+    ctx.calendar_config = calendar_config
 
     result = await provider.execute_tool("list_calendars", {}, context=ctx)
     assert isinstance(result, str)
@@ -728,9 +728,7 @@ async def test_confirmation_renderers_resolve_calendar_id(
             ],
         }
     }
-    tools_provider = MagicMock(spec=LocalToolsProvider)
-    tools_provider.get_calendar_config.return_value = config
-    ctx.tools_provider = tools_provider
+    ctx.calendar_config = config
 
     async def fake_fetch_details(
         uid: str, calendar_url: str, **kwargs: object

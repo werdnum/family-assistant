@@ -178,7 +178,6 @@ from family_assistant.tools import (
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
-    ToolsProvider,
 )
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
@@ -213,7 +212,6 @@ if TYPE_CHECKING:
     from family_assistant.security.taint import SinkClass
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
-    from family_assistant.tools import ToolRegistration
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -238,34 +236,16 @@ def _calendar_config_to_dict(
     return cast("CalendarConfigDict", dumped)
 
 
-def _root_provider_for_profile(
-    shared_root: ToolsProvider,
+def _profile_calendar_config(
     profile_calendar_config: PydanticCalendarConfig | None,
-    local_registrations: Sequence[ToolRegistration],
-    mcp_provider: ToolsProvider,
-    embedding_generator: EmbeddingGenerator | None,
-) -> ToolsProvider:
-    """The provider a profile's policy chain wraps.
+    app_calendar_config: PydanticCalendarConfig,
+) -> CalendarConfigDict:
+    """The calendars a profile's tools, prompts and context all use.
 
-    Calendar tools read the calendar from the `LocalToolsProvider` they were built
-    with, so a profile naming its own calendar needs its own local provider.
-    Sharing the root one would let the profile's prompt context and its tool calls
-    disagree about which calendar it is looking at -- events listed from one, added
-    to another. Profiles without their own calendar share the root provider; the
-    MCP provider is shared either way, since nothing in it is calendar-scoped.
+    A profile naming its own calendar uses only that one, so its prompt context
+    and its tool calls never disagree about which calendar it is looking at.
     """
-    if profile_calendar_config is None:
-        return shared_root
-    return CompositeToolsProvider(
-        providers=[
-            LocalToolsProvider(
-                registrations=list(local_registrations),
-                embedding_generator=embedding_generator,
-                calendar_config=_calendar_config_to_dict(profile_calendar_config),
-            ),
-            mcp_provider,
-        ]
-    )
+    return _calendar_config_to_dict(profile_calendar_config or app_calendar_config)
 
 
 # Helper function (can be moved to utils if used elsewhere)
@@ -1050,11 +1030,9 @@ class Assistant:
         root_local_registrations = build_effective_local_tool_registrations(
             self.config, google_integration_state
         )
-        self._root_local_registrations = root_local_registrations
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
             embedding_generator=self.embedding_generator,
-            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
         )
 
         all_mcp_servers_config: dict[str, MCPServerConfig] = {
@@ -1067,7 +1045,6 @@ class Assistant:
             mcp_server_configs=all_mcp_servers_config,
             initialization_timeout_seconds=60,
         )
-        self._root_mcp_provider = root_mcp_provider
         self.root_tools_provider = CompositeToolsProvider(
             providers=[root_local_provider, root_mcp_provider]
         )
@@ -1138,7 +1115,6 @@ class Assistant:
         """Build every configured local or remote processing service."""
         assert self.fastapi_app is not None
         assert self.root_tools_provider is not None
-        assert self._root_mcp_provider is not None
         resolved_profiles = self.config.service_profiles
         note_registry = self._load_note_registry()
         delegation_sink_classes = {
@@ -1373,6 +1349,10 @@ class Assistant:
             memory_read=self.config.effective_memory_read(profile_conf),
             include_aggregated_context=(profile_proc_conf.include_aggregated_context),
             note_registry=note_registry,
+            calendar_config=_profile_calendar_config(
+                profile_conf.processing_config.calendar_config,
+                self.config.calendar_config,
+            ),
             greeting_wav_path=profile_proc_conf.greeting_wav_path,
             poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
             max_async_seconds=profile_proc_conf.max_async_seconds,
@@ -1501,8 +1481,9 @@ class Assistant:
                 note_registry=note_registry,
             ),
             CalendarContextProvider(
-                calendar_config=_calendar_config_to_dict(
-                    profile_config.calendar_config or self.config.calendar_config
+                calendar_config=_profile_calendar_config(
+                    profile_conf.processing_config.calendar_config,
+                    self.config.calendar_config,
                 ),
                 timezone=ZoneInfo(profile_config.timezone),
                 prompts=profile_config.prompts,
@@ -1636,15 +1617,8 @@ class Assistant:
             memory_read=self.config.effective_memory_read(profile_conf),
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
-        profile_root_provider = _root_provider_for_profile(
-            shared_root=self.root_tools_provider,
-            profile_calendar_config=profile_proc_conf.calendar_config,
-            local_registrations=self._root_local_registrations,
-            mcp_provider=self._root_mcp_provider,
-            embedding_generator=self.embedding_generator,
-        )
         policy_provider = PolicyEnforcingToolsProvider(
-            wrapped_provider=profile_root_provider,
+            wrapped_provider=self.root_tools_provider,
             policy_engine=policy_engine,
             confirmation_timeout=confirmation_timeout,
         )

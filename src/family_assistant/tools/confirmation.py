@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from family_assistant import calendar_integration
 from family_assistant.calendar_integration import CalendarSource
@@ -28,9 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from zoneinfo import ZoneInfo
 
-    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import (
-        CalendarConfig,
         CalendarEvent,
         ToolArgumentsView,
         ToolExecutionContext,
@@ -60,37 +58,6 @@ def _confirmation_value(value: object) -> str:
 def _confirmation_field(label: str, value: object) -> str:
     """Format a single confirmation field."""
     return f"- {label}:\n{_markdown_code_block(_confirmation_value(value))}"
-
-
-def _extract_calendar_config_from_provider(
-    provider: ToolsProvider | None,
-) -> CalendarConfig | None:
-    """Find the calendar config of the first LocalToolsProvider in a provider chain.
-
-    Production chains nest several wrappers (taint tracking around policy
-    enforcement around a composite), so the whole chain is walked rather than
-    a fixed number of levels.
-    """
-    # Import here to avoid circular dependency at module load time
-    from family_assistant.tools.infrastructure import (  # noqa: PLC0415
-        LocalToolsProvider,
-        ToolProviderComposite,
-        ToolProviderWrapper,
-    )
-
-    if provider is None:
-        return None
-    if isinstance(provider, LocalToolsProvider):
-        config = provider.get_calendar_config()
-        return cast("CalendarConfig", config) if config else None
-    if isinstance(provider, ToolProviderWrapper):
-        return _extract_calendar_config_from_provider(provider.wrapped_provider)
-    if isinstance(provider, ToolProviderComposite):
-        for sub_provider in provider.get_providers():
-            config = _extract_calendar_config_from_provider(sub_provider)
-            if config is not None:
-                return config
-    return None
 
 
 class ConfirmationRenderer(Protocol):
@@ -177,9 +144,7 @@ async def _fetch_event_details_for_confirmation(
     if calendar_id and is_google_source_id(calendar_id):
         return await _fetch_google_event_for_confirmation(context, calendar_id, uid)
 
-    calendar_config = _extract_calendar_config_from_provider(
-        getattr(context, "tools_provider", None)
-    )
+    calendar_config = context.calendar_config
     if (calendar_url or calendar_id) and calendar_config:
         resolved_url, err = resolve_target_caldav_url(
             calendar_config=calendar_config,
@@ -313,9 +278,7 @@ async def render_add_calendar_event_confirmation(
         _confirmation_field("Title", args.get("summary")),
     ]
 
-    calendar_config = _extract_calendar_config_from_provider(
-        getattr(context, "tools_provider", None)
-    )
+    calendar_config = context.calendar_config
     raw_calendar_id = args.get("calendar_id")
     raw_calendar_url = args.get("calendar_url")
     calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None

@@ -221,6 +221,11 @@ async def execute_tool_api(
         timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
         tools_provider=selected_tools_provider,
+        calendar_config=(
+            processing_service.service_config.calendar_config
+            if processing_service
+            else None
+        ),
         processing_profile_id=(
             processing_service.service_config.id if processing_service else None
         ),

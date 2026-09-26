@@ -574,6 +574,12 @@ class ToolExecutionContext:
     embedding_generator: EmbeddingGenerator | None = None  # Add embedding_generator
     indexing_source: IndexingSource | None = None  # Add indexing_source
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
+    calendar_config: CalendarConfig | None = None
+    """The active profile's calendars, for calendar tools and their prompts.
+
+    ``None`` when the context has no profile behind it; a calendar tool then
+    reports that no calendar is configured.
+    """
     visibility_grants: set[str] | None = None
     required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None

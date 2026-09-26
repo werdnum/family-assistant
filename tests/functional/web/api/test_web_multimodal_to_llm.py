@@ -219,9 +219,6 @@ async def test_tools_provider(
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,
-        calendar_config=cast(
-            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
-        ),
     )
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
     mock_mcp_provider.get_tool_definitions.return_value = []

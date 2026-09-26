@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
     from family_assistant.security.taint import SinkClass
     from family_assistant.skills.registry import NoteRegistry
+    from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class ToolExecutorConfig(Protocol):
     allow_wake_llm: bool
     memory_read: bool
     note_registry: NoteRegistry | None
+    calendar_config: CalendarConfig | None
 
 
 class LLMStreamingLoopConfig(Protocol):
@@ -244,6 +246,9 @@ class ProcessingServiceConfig:
     # see ProcessingConfig.memory_read.
     memory_read: bool = False
     note_registry: NoteRegistry | None = None
+    # The profile's effective calendars: its own when it names some, else the
+    # application-wide ones. Carried onto every tool context built for it.
+    calendar_config: CalendarConfig | None = None
     greeting_wav_path: str | None = None
     # Whether the context providers' output reaches this profile at all. See
     # ProcessingConfig.include_aggregated_context.

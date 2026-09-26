@@ -338,6 +338,7 @@ class InteractionsAgentProcessingService(ProcessingService):
             processing_profile_id=self.service_config.id,
             subconversation_id=subconversation_id,
             tools_provider=self.tools_provider,
+            calendar_config=self.service_config.calendar_config,
             taint_tracker=InMemoryTurnTaintTracker(state),
             taint_policy_snapshot=state,
             tool_call_review_messages=tuple(messages),
