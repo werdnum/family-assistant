@@ -102,6 +102,7 @@ export function useGeminiLive(): GeminiLiveState {
   const transcriptsRef = useRef<TranscriptEntry[]>([]);
   const conversationIdRef = useRef<string | null>(null);
   const savedConversationIdRef = useRef<string | null>(null);
+  const savingConversationIdRef = useRef<string | null>(null);
   const attemptIdRef = useRef<string | null>(null);
   const [connectingStatus, setConnectingStatus] = useState<string | undefined>(undefined);
 
@@ -542,6 +543,19 @@ export function useGeminiLive(): GeminiLiveState {
         return;
       }
 
+      const previousConversationId = conversationIdRef.current;
+      if (previousConversationId && transcriptsRef.current.length > 0) {
+        if (savingConversationIdRef.current === previousConversationId) {
+          setError('Saving the previous voice transcript. Please try again shortly.');
+          return;
+        }
+        if (savedConversationIdRef.current !== previousConversationId) {
+          disconnectRef.current();
+          setError('Retrying the previous voice transcript save. Please try again shortly.');
+          return;
+        }
+      }
+
       try {
         setConnectionState('connecting');
         setConnectingStatus('Starting microphone...');
@@ -759,6 +773,7 @@ export function useGeminiLive(): GeminiLiveState {
     const conversationId = conversationIdRef.current;
     if (conversationId && turns.length > 0 && savedConversationIdRef.current !== conversationId) {
       savedConversationIdRef.current = conversationId;
+      savingConversationIdRef.current = conversationId;
       const body = JSON.stringify({
         conversation_id: conversationId,
         profile_id: toolProfileIdRef.current,
@@ -808,8 +823,14 @@ export function useGeminiLive(): GeminiLiveState {
           if (!response.ok) {
             throw new Error(`Failed to save voice session: ${response.status}`);
           }
+          if (savingConversationIdRef.current === conversationId) {
+            savingConversationIdRef.current = null;
+          }
         })
         .catch((saveError) => {
+          if (savingConversationIdRef.current === conversationId) {
+            savingConversationIdRef.current = null;
+          }
           if (savedConversationIdRef.current === conversationId) {
             savedConversationIdRef.current = null;
           }

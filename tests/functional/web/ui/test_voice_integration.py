@@ -745,6 +745,54 @@ async def test_voice_failed_transcript_upload_retries_on_page_exit(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+async def test_voice_new_call_waits_for_failed_transcript_retry(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    page = web_test_fixture.page
+    await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
+    await _setup_mock_audio_apis(page)
+    await _setup_mock_token_endpoint(page, web_test_fixture.base_url)
+    uploads: list[dict] = []
+
+    async def save_transcript(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        uploads.append(body)
+        await route.fulfill(
+            status=503 if len(uploads) == 1 else 200,
+            content_type="application/json",
+            body='{"detail":"temporary failure"}' if len(uploads) == 1 else "{}",
+        )
+
+    await page.route("**/api/v1/chat/voice-sessions", save_transcript)
+    await page.goto(f"{web_test_fixture.base_url}/voice")
+    await page.get_by_role("button", name="Start").click()
+    await page.wait_for_function("window.__TEST_PUSH_MESSAGE__ !== undefined")
+    await page.evaluate("window.__TEST_OLD_CALLBACKS__ = window.__TEST_CALLBACKS__")
+    await page.evaluate(
+        "window.__TEST_PUSH_MESSAGE__({serverContent: {outputTranscription: {text: 'Hello'}}})"
+    )
+    await page.get_by_role("button", name="End Call").click()
+    await page.get_by_text("Could not save the voice transcript.").wait_for()
+
+    async with page.expect_request("**/api/v1/chat/voice-sessions"):
+        await page.get_by_role("button", name="Start").click()
+    await page.wait_for_function(
+        "window.__TEST_CALLBACKS__ === window.__TEST_OLD_CALLBACKS__"
+    )
+    assert len(uploads) == 2
+    assert uploads[0]["conversation_id"] == uploads[1]["conversation_id"]
+    assert uploads[0]["turns"] == uploads[1]["turns"]
+
+    await page.get_by_role("button", name="Start").click()
+    await page.wait_for_function(
+        "window.__TEST_CALLBACKS__ !== window.__TEST_OLD_CALLBACKS__"
+    )
+    await page.get_by_role("button", name="End Call").wait_for()
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
 async def test_voice_tool_response_carries_silence_reminder(
     web_test_fixture: WebTestFixture,
 ) -> None:
