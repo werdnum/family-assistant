@@ -37,9 +37,11 @@ A tool still running when the call ends is saved as a pending call without a fab
 result. Its eventual execution outcome is available in client telemetry when the client remains
 alive. On web, the transcript upload uses a keepalive request when its payload fits the browser's
 keepalive size limit; a larger transcript uses a regular request and may be interrupted by page
-navigation. The web client retains a failed transcript upload while the Voice page is open. Starting
-another call retries that upload first; the new call stays blocked until the earlier transcript is
-saved.
+navigation.
+
+Transcript uploads are a single attempt. A failed request is reported to the user, but the client
+does not retry it automatically: the endpoint appends turns, and a lost response or partial save
+would make a retry duplicate history. Idempotent transcript persistence is a separate change.
 
 ## Delegated results
 

@@ -87,8 +87,8 @@ what you said, what it replied, and the tools it ran along the way. When the cal
 conversation is saved in Chat with its tool calls and results. A quick delegated result comes back
 in the live conversation. If it finishes later, the result appears directly in that Chat
 conversation and can send a notification to your devices; it does not interrupt the live voice call.
-If the web page reports that a voice transcript could not be saved, press **Start** to retry saving
-that call. A new call starts after the previous transcript has been saved.
+If a transcript save fails, the Voice page shows an error; copy anything you need from the visible
+transcript before leaving the page.
 
 A voice conversation starts with the assistant's everyday tools ready to use. Anything beyond those
 — running a scene at home, generating an image, working with your scripts and automations — it picks
