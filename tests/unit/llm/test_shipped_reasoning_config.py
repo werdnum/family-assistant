@@ -32,7 +32,7 @@ def _client_for(config: AppConfig, model: str) -> OpenAIClient:
 @pytest.mark.parametrize(
     "model",
     [
-        pytest.param("gpt-6-sol", id="complex-tasks-primary"),
+        pytest.param("gpt-6-sol", id="complex-tasks-fallback"),
         pytest.param("gpt-5.5", id="retry-fallback"),
         pytest.param("gpt-4.1", id="unconfigured-model"),
     ],
@@ -113,10 +113,10 @@ def test_shipped_opus_5_request_carries_thinking_and_survives_validation(
 def test_shipped_defaults_leave_thinking_off_for_unconfigured_anthropic_models(
     shipped_config: AppConfig,
 ) -> None:
-    """Enabling thinking is per model, so it must not leak to the fallback.
+    """Enabling thinking is per model, so it must not leak to other families.
 
-    `claude-fable-5-1` is the `deep` tier's fallback and rejects an explicit
-    disabled thinking config, so it has to inherit nothing at all here.
+    `claude-fable-5-1` rejects an explicit disabled thinking config, so it has
+    to inherit nothing at all here.
     """
     params = _anthropic_client_for(
         shipped_config, "claude-fable-5-1"
