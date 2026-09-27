@@ -4,18 +4,111 @@ interactions:
       headers:
         accept:
           - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '632'
         content-type:
           - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
       method: POST
       uri: https://api.anthropic.com/v1/messages
     response:
       body:
-        string: '{"model":"claude-haiku-4-5-20251001","id":"msg_test_basic_json_output","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_test_basic_json_output","name":"return_json_object","input":{"expression":"2 + 2","result":4,"explanation":"Adding two and two gives four."},"caller":{"type":"direct"}}],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":148,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":42,"service_tier":"standard","inference_geo":"not_available"}}'
+        string: !!binary |
+          H4sIAAAAAAAA/3RSYWvbMBD9K8Jfl4zYS8bot7FQRmmhH7oPzRjiIp1tpbLOk07NRsh/38lN1naj
+          YLB97+ndvXc6VANZ9NVFZTxki/Me3EOeL+erebNoVvViUVezylkhDKnTi7r+0t7trlffmv3609fr
+          201emiXcC4d/j1hYmBJ0KIVIvhQgJZcYAkvJUGCUr4vvhzOfibzOCc9dyn+WPlfrTXu/dh9uh0va
+          dHyT13gTr4QVYCjnInKOQe8SBU3bHZqi78KYRf1Q4a8xyiCOglAb9U41ZSBM2Qu8nBXcQwB+Iny2
+          1oVO8Z4UBDu9mTrkHqPCnxl8Ui3l+F7d9S4peUBtITmjIDruB2T5pBHjpKf2cgzVHpWhYesCTnqi
+          Etixw6SoPXVQ0kKkmBh8qU49qqPEBN5jLD5OIVkXi8Hj8cdThiCygofs/axKTKOOCGny8iLPCUhi
+          AIPBV2yLIuHTuZanjUm7KT/N9IBBwI/NosxietRG9Is5/ZrxFxfYvoWdz057GXscJCivV8P//Ge0
+          7v9FJRbK/LJUl/ESxkdnUEuyEkhVLpqFaKe70MoexLnukAQKxBoexTZs5V6KnHXQBUqyvFMQxz8A
+          AAD//wMA7C+KUw0DAAA=
       headers:
+        CF-RAY:
+          - a4199415cb5e1c24-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
         Content-Type:
           - application/json
+        Date:
+          - Sun, 27 Sep 2026 09:45:58 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '10000000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '10000000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-09-27T09:45:58Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '2000000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '2000000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-09-27T09:45:58Z'
+        anthropic-ratelimit-requests-limit:
+          - '10000'
+        anthropic-ratelimit-requests-remaining:
+          - '9999'
+        anthropic-ratelimit-requests-reset:
+          - '2026-09-27T09:45:57Z'
+        anthropic-ratelimit-tokens-limit:
+          - '12000000'
+        anthropic-ratelimit-tokens-remaining:
+          - '12000000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-09-27T09:45:58Z'
+        anthropic-workspace-id:
+          - wrkspc_01TyX2k3iWProyRBoEVYPNGB
+        cf-cache-status:
+          - DYNAMIC
         request-id:
-          - req_test_basic_json_output
+          - req_011CfTjL59gEx5cBjCb7vRAj
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        traceresponse:
+          - 00-ed85768e3aa3526ccacb0908e15e467c-28699f43d43e789c-01
+        vary:
+          - Accept-Encoding
       status:
         code: 200
         message: OK

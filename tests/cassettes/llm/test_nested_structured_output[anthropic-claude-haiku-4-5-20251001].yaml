@@ -1,21 +1,113 @@
 interactions:
   - request:
-      body: '{"max_tokens":8192,"messages":[{"role":"user","content":[{"type":"text","text":"Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."},{"type":"text","text":"Respond by calling the `return_structured_response` tool."}]}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"auto"},"tools":[{"name":"return_structured_response","description":"Return the final response as a structured JSON object.","input_schema":{"$defs":{"PersonInfo":{"description":"Person information model.","properties":{"age":{"maximum":150,"minimum":0,"title":"Age","type":"integer"},"name":{"title":"Name","type":"string"},"occupation":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Occupation"}},"required":["name","age"],"title":"PersonInfo","type":"object"}},"description":"Response with nested model.","properties":{"person":{"$ref":"#/$defs/PersonInfo"},"summary":{"title":"Summary","type":"string"}},"required":["person","summary"],"title":"NestedResponse","type":"object"}}]}'
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":[{"type":"text","text":"Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."},{"type":"text","text":"Respond by calling the `return_structured_response` tool."}]}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"auto"},"tools":[{"name":"return_structured_response","description":"Return the final response as a structured JSON object.","input_schema":{"$defs":{"PersonInfo":{"description":"Person information model.","properties":{"name":{"title":"Name","type":"string"},"age":{"maximum":150,"minimum":0,"title":"Age","type":"integer"},"occupation":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Occupation"}},"required":["name","age"],"title":"PersonInfo","type":"object"}},"description":"Response with nested model.","properties":{"person":{"$ref":"#/$defs/PersonInfo"},"summary":{"title":"Summary","type":"string"}},"required":["person","summary"],"title":"NestedResponse","type":"object"}}]}'
       headers:
         accept:
           - application/json
+        accept-encoding:
+          - gzip, deflate
+        anthropic-version:
+          - '2023-06-01'
+        connection:
+          - keep-alive
+        content-length:
+          - '1038'
         content-type:
           - application/json
+        host:
+          - api.anthropic.com
+        user-agent:
+          - AsyncAnthropic/Python 0.79.0
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 0.79.0
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+        x-stainless-timeout:
+          - '600'
       method: POST
       uri: https://api.anthropic.com/v1/messages
     response:
       body:
-        string: '{"model":"claude-haiku-4-5-20251001","id":"msg_test_nested_structured_output","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_test_nested_structured_output","name":"return_structured_response","input":{"person":{"name":"Sarah","age":35,"occupation":"Doctor"},"summary":"Sarah is a 35-year-old doctor."},"caller":{"type":"direct"}}],"stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":230,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":55,"service_tier":"standard","inference_geo":"not_available"}}'
+        string: !!binary |
+          H4sIAAAAAAAA/3VSUW8TMQz+K6c891Bv4yjq41C1abxBhxAIRV7i3YXl4sNJCqXqf8e59sQG2pvj
+          77M/+3MOaiCLXq2V8ZAt1j24x1y/rtv6YnnRNstloxbKWSEMsdPLpnn3sP3+/vfm+vbX/sv1zeZu
+          9QnefhZO2o9YWBgjdCgJJl8SEKOLCUKSlKGQUKL118PMT0Re54izSnln0dmmq7zN29vNztwz/rwi
+          g/nug7ACDKWOMWUOOibORiK0mjGOFE6dwphF5aBG5EihROeyj8DQC6OMuL5sF4qMySMkV1jKkknE
+          6rhQMQ8D8H6uqFysoLps6z0C1+RtdaJWFq0zkNBWiaqRaeesC13VI/jUG2CsIvLOGYyF0CNXRUw8
+          iK+KjAHvkct8ZzusYzRJHY/fTm6BCwUP2XsZKtEoa8K00lPnJiDij4zB4DO2RWnh45zL021EbnJI
+          J3rEIODqzarMYnrURvoXN/RzxnLGBbYvYXNtEcCxxwEZvG6H//l/0ab/FxVbKKenqaaRQ5191OKe
+          GKLKl7LAdrr2A3LZXHdIAgVKGnayNtzLD5R21kEXKCZnzkYc/wD1eISI9wIAAA==
       headers:
+        CF-RAY:
+          - a419940dcf9f33e8-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Security-Policy:
+          - default-src 'none'; frame-ancestors 'none'
         Content-Type:
           - application/json
+        Date:
+          - Sun, 27 Sep 2026 09:45:57 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        X-Robots-Tag:
+          - none
+        anthropic-organization-id:
+          - 47b93e1d-acf2-4be5-b32d-1716b0cff224
+        anthropic-ratelimit-input-tokens-limit:
+          - '10000000'
+        anthropic-ratelimit-input-tokens-remaining:
+          - '10000000'
+        anthropic-ratelimit-input-tokens-reset:
+          - '2026-09-27T09:45:56Z'
+        anthropic-ratelimit-output-tokens-limit:
+          - '2000000'
+        anthropic-ratelimit-output-tokens-remaining:
+          - '2000000'
+        anthropic-ratelimit-output-tokens-reset:
+          - '2026-09-27T09:45:57Z'
+        anthropic-ratelimit-requests-limit:
+          - '10000'
+        anthropic-ratelimit-requests-remaining:
+          - '9997'
+        anthropic-ratelimit-requests-reset:
+          - '2026-09-27T09:45:56Z'
+        anthropic-ratelimit-tokens-limit:
+          - '12000000'
+        anthropic-ratelimit-tokens-remaining:
+          - '12000000'
+        anthropic-ratelimit-tokens-reset:
+          - '2026-09-27T09:45:56Z'
+        anthropic-workspace-id:
+          - wrkspc_01TyX2k3iWProyRBoEVYPNGB
+        cf-cache-status:
+          - DYNAMIC
         request-id:
-          - req_test_nested_structured_output
+          - req_011CfTjKyjVUYGKJRsk2PZFQ
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        traceresponse:
+          - 00-74452c814138abcb3f007183286d9731-164cce10f470c403-01
+        vary:
+          - Accept-Encoding
       status:
         code: 200
         message: OK
