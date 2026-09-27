@@ -83,7 +83,10 @@ the same controls.
 ### Voice
 
 The **Voice** page holds a spoken conversation with the assistant. It shows a running transcript of
-what you said, what it replied, and the tools it ran along the way.
+what you said, what it replied, and the tools it ran along the way. When the call ends, the
+conversation is saved in Chat with its tool calls and results. If a delegated task finishes later,
+its follow-up appears in that Chat conversation and can send a notification to your devices; it does
+not interrupt the live voice call.
 
 A voice conversation starts with the assistant's everyday tools ready to use. Anything beyond those
 — running a scene at home, generating an image, working with your scripts and automations — it picks
@@ -175,8 +178,9 @@ paste it, use the composer's photo button, or share from Files. Long-pressing th
 
 **Voice** asks for microphone permission and shows a level meter while capturing audio. A call runs
 under the profile currently picked in Chat, and when it ends the transcript is saved as its own
-conversation in that profile — so opening it in Chat picks the conversation up where the call left
-off. Calls placed by Siri work the same way.
+conversation in that profile, including its tool calls and results — so opening it in Chat picks the
+conversation up where the call left off. Delegated work that finishes later appears there and can
+send a notification; it does not interrupt the live call. Calls placed by Siri work the same way.
 
 If you need something on your phone while talking, ask voice to **send it to my Chat**. It saves the
 text in that call's conversation and sends a notification to your registered devices. For an HTTPS

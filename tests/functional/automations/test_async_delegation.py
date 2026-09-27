@@ -541,6 +541,37 @@ def _tool_context(
 
 
 @pytest.mark.asyncio
+async def test_voice_delegation_uses_web_history_for_completion(
+    db_engine: AsyncEngine,
+) -> None:
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    db_context = Database(engine=db_engine)
+    context = _tool_context(db_context, processing_service, None)
+    context.interface_type = "voice"
+    context.conversation_id = "web_conv_8d745c3c910a4d129c95f20c029a99dc"
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="do this in the background",
+        delivery_hint="background",
+    )
+    assert isinstance(result.data, dict)
+    assert result.text is not None
+    assert "Chat follow-up" in result.text
+    assert "live voice session will not resume" in result.text
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        result.data["delegation_id"]
+    )
+    assert run is not None
+    assert run["interface_type"] == "web"
+    status = await get_delegation_status_tool(context, result.data["delegation_id"])
+    assert "Chat conversation" in (status.text or "")
+    listing = await list_delegations_tool(context)
+    assert result.data["delegation_id"] in (listing.text or "")
+
+
+@pytest.mark.asyncio
 async def test_delegate_to_service_background_reference_and_completion_notification(
     db_engine: AsyncEngine,
 ) -> None:

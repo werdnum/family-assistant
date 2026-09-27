@@ -512,3 +512,45 @@ async def test_voice_session_rejects_empty_turns(
     ) as client:
         response = await client.post("/api/v1/chat/voice-sessions", json={"turns": []})
         assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_voice_session_persists_tool_call_and_result(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "turns": [
+                    {"role": "user", "text": "Find my note"},
+                    {
+                        "role": "tool_call",
+                        "tool_call_id": "call-1",
+                        "tool_name": "search_notes",
+                        "tool_arguments": {"query": "note"},
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-1",
+                        "tool_name": "search_notes",
+                        "text": "Found one note",
+                    },
+                    {"role": "assistant", "text": "I found it."},
+                ]
+            },
+        )
+        assert response.status_code == 200
+        messages_response = await client.get(
+            f"/api/v1/chat/conversations/{response.json()['conversation_id']}/messages"
+        )
+        assert messages_response.status_code == 200
+        messages = messages_response.json()["messages"]
+        assert messages[1]["tool_calls"][0]["function"]["name"] == "search_notes"
+        assert messages[2]["role"] == "tool"
+        assert messages[2]["tool_call_id"] == "call-1"
+        assert messages[2]["content"] == "Found one note"

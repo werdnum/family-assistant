@@ -4,6 +4,8 @@ import Foundation
 enum VoiceSpeaker: String, Equatable {
     case user
     case assistant
+    case toolCall = "tool_call"
+    case tool
 }
 
 /// One line of the live conversation transcript.
@@ -12,6 +14,9 @@ struct VoiceTranscriptEntry: Identifiable, Equatable {
     let timestamp = Date()
     let speaker: VoiceSpeaker
     var text: String
+    var toolCallID: String? = nil
+    var toolName: String? = nil
+    var toolArguments: JSONValue? = nil
 }
 
 /// Accumulates the streamed input/output transcription chunks Gemini emits into

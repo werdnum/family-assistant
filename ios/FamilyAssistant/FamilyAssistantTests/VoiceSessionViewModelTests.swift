@@ -634,6 +634,13 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertNotNil(received.last?.1["since_tool_results_ms"])
         let recorded = String(describing: recorder.records)
         XCTAssertFalse(recorded.contains("pool") || recorded.contains("Medication"), "arguments stay out of telemetry")
+        XCTAssertEqual(
+            recorder.records.filter { $0.0 == "tool_call_proposed" }.map { $0.1["call_id"] },
+            ["c1", "c2"]
+        )
+        XCTAssertEqual(recorder.records.filter { $0.0 == "tool_call_execution_started" }.count, 2)
+        XCTAssertEqual(recorder.records.filter { $0.0 == "tool_call_succeeded" }.count, 2)
+        XCTAssertEqual(recorder.records.first { $0.0 == "tool_call_proposed" }?.1["target_tool"], "ha_call_read_tool")
         let sent = try XCTUnwrap(recorder.records.first { $0.0 == "tool_results_sent" })
         XCTAssertEqual(sent.1["error_count"], "0")
         XCTAssertNotNil(sent.1["execution_ms"])
@@ -656,6 +663,20 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(failure.1["error_code"], "57")
         XCTAssertEqual(reportedErrors.count, 1)
         guard case .failed = model.phase else { return XCTFail("expected failed, got \(model.phase)") }
+    }
+
+    func testFailedToolExecutionIsRecordedWithoutErrorText() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        toolExecutor.handler = { _, _ in throw SampleError() }
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        session.emit(.toolCall([GeminiFunctionCall(id: "failed-call", name: "noop", args: .object([:]))]))
+        try await waitUntil { recorder.records.contains { $0.0 == "tool_call_failed" } }
+
+        let failure = try XCTUnwrap(recorder.records.first { $0.0 == "tool_call_failed" })
+        XCTAssertEqual(failure.1["call_id"], "failed-call")
+        XCTAssertEqual(failure.1["tool_name"], "noop")
+        XCTAssertFalse(String(describing: failure.1).contains("boom"))
     }
 
     func testHangingUpDuringToolResponseSendIsNotAFailure() async throws {
@@ -764,12 +785,14 @@ final class VoiceSessionViewModelTests: XCTestCase {
         session.emit(.outputTranscription("hello"))
         try await waitUntil { model.transcript.entries.count == 2 }
         session.emit(.toolCall([GeminiFunctionCall(id: "handoff", name: "noop", args: .object([:]))]))
-        try await waitUntil { self.toolExecutor.conversationIDs.isEmpty == false }
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
 
         model.end()
         try await waitUntil { self.store.saved.isEmpty == false }
         XCTAssertEqual(store.saved.count, 1)
-        XCTAssertEqual(store.saved.first?.map(\.text), ["hi", "hello"])
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.user, .assistant, .toolCall, .tool])
+        XCTAssertEqual(store.saved.first?[2].toolCallID, "handoff")
+        XCTAssertEqual(store.saved.first?[3].toolCallID, "handoff")
         XCTAssertEqual(store.savedConversationIDs, toolExecutor.conversationIDs)
     }
 

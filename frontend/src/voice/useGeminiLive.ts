@@ -29,6 +29,25 @@ import { useAudioPlayback } from './useAudioPlayback';
 
 const GEMINI_API_HOST = 'generativelanguage.googleapis.com';
 
+function reportVoiceToolEvent(
+  event: string,
+  fields: Record<string, string | number | boolean | null>
+): void {
+  void fetch('/api/errors/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
+    body: JSON.stringify({
+      message: `Voice tool ${event}`,
+      url: window.location.pathname,
+      component_name: 'Voice.tools',
+      error_type: 'component_error',
+      severity: 'info',
+      extra_data: { event, occurred_at: new Date().toISOString(), ...fields },
+    }),
+  }).catch(() => {});
+}
+
 /**
  * Callbacks for handling messages from Gemini Live session.
  * Used by both real SDK and test mocks.
@@ -80,6 +99,10 @@ export function useGeminiLive(): GeminiLiveState {
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const transcriptsRef = useRef<TranscriptEntry[]>([]);
+  const conversationIdRef = useRef<string | null>(null);
+  const savedConversationIdRef = useRef<string | null>(null);
+  const attemptIdRef = useRef<string | null>(null);
   const [connectingStatus, setConnectingStatus] = useState<string | undefined>(undefined);
 
   // Refs for mutable state
@@ -159,17 +182,16 @@ export function useGeminiLive(): GeminiLiveState {
 
     if (shouldAppend && last) {
       // Append to existing entry
-      setTranscripts((prev) => {
-        const updated = [...prev];
-        const lastIndex = updated.findIndex((t) => t.id === last.entryId);
-        if (lastIndex >= 0) {
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            text: updated[lastIndex].text + text,
-          };
-        }
-        return updated;
-      });
+      const updated = [...transcriptsRef.current];
+      const lastIndex = updated.findIndex((t) => t.id === last.entryId);
+      if (lastIndex >= 0) {
+        updated[lastIndex] = {
+          ...updated[lastIndex],
+          text: updated[lastIndex].text + text,
+        };
+      }
+      transcriptsRef.current = updated;
+      setTranscripts(updated);
       lastTranscriptRef.current = { role, timestamp: now, entryId: last.entryId };
     } else {
       // Create new entry
@@ -181,7 +203,8 @@ export function useGeminiLive(): GeminiLiveState {
         timestamp: new Date(),
         isFinal: true,
       };
-      setTranscripts((prev) => [...prev, newEntry]);
+      transcriptsRef.current = [...transcriptsRef.current, newEntry];
+      setTranscripts(transcriptsRef.current);
       lastTranscriptRef.current = { role, timestamp: now, entryId: newId };
     }
   }, []);
@@ -191,6 +214,18 @@ export function useGeminiLive(): GeminiLiveState {
    */
   const executeToolCall = useCallback(
     async (toolCall: GeminiToolCall): Promise<GeminiToolResponse> => {
+      const fields = {
+        attempt_id: attemptIdRef.current,
+        conversation_id: conversationIdRef.current,
+        call_id: toolCall.id.slice(0, 100),
+        tool_name: toolCall.name.slice(0, 64),
+        target_tool:
+          toolCall.name === 'call_tool' && typeof toolCall.args.name === 'string'
+            ? toolCall.args.name.slice(0, 64)
+            : null,
+      };
+      reportVoiceToolEvent('execution_started', fields);
+      const startedAt = Date.now();
       try {
         const response = await fetch(`/api/tools/execute/${toolCall.name}`, {
           method: 'POST',
@@ -201,6 +236,7 @@ export function useGeminiLive(): GeminiLiveState {
             arguments: toolCall.args,
             taint_metadata: toolTaintMetadataRef.current,
             profile_id: toolProfileIdRef.current,
+            voice_conversation_id: conversationIdRef.current,
           }),
         });
 
@@ -209,6 +245,11 @@ export function useGeminiLive(): GeminiLiveState {
           if (errorData.taint_metadata) {
             toolTaintMetadataRef.current = errorData.taint_metadata as TaintMetadata;
           }
+          reportVoiceToolEvent('failed', {
+            ...fields,
+            status_code: response.status,
+            duration_ms: Date.now() - startedAt,
+          });
           return {
             id: toolCall.id,
             name: toolCall.name,
@@ -222,12 +263,22 @@ export function useGeminiLive(): GeminiLiveState {
         if (result.taint_metadata) {
           toolTaintMetadataRef.current = result.taint_metadata as TaintMetadata;
         }
+        reportVoiceToolEvent('succeeded', {
+          ...fields,
+          status_code: response.status,
+          duration_ms: Date.now() - startedAt,
+        });
         return {
           id: toolCall.id,
           name: toolCall.name,
           response: { result: result.result },
         };
       } catch (err) {
+        reportVoiceToolEvent('failed', {
+          ...fields,
+          status_code: null,
+          duration_ms: Date.now() - startedAt,
+        });
         return {
           id: toolCall.id,
           name: toolCall.name,
@@ -255,6 +306,16 @@ export function useGeminiLive(): GeminiLiveState {
       // Create transcript entries for each tool call with 'running' status (batched)
       const toolEntryIds: Record<string, string> = {};
       const newToolEntries: TranscriptEntry[] = toolCalls.map((toolCall) => {
+        reportVoiceToolEvent('proposed', {
+          attempt_id: attemptIdRef.current,
+          conversation_id: conversationIdRef.current,
+          call_id: toolCall.id.slice(0, 100),
+          tool_name: toolCall.name.slice(0, 64),
+          target_tool:
+            toolCall.name === 'call_tool' && typeof toolCall.args.name === 'string'
+              ? toolCall.args.name.slice(0, 64)
+              : null,
+        });
         const entryId = generateTranscriptId();
         toolEntryIds[toolCall.id] = entryId;
         return {
@@ -268,27 +329,31 @@ export function useGeminiLive(): GeminiLiveState {
           toolStatus: 'running' as const,
         };
       });
-      setTranscripts((prev) => [...prev, ...newToolEntries]);
+      transcriptsRef.current = [...transcriptsRef.current, ...newToolEntries];
+      setTranscripts(transcriptsRef.current);
 
       const responses: GeminiToolResponse[] = [];
       for (const toolCall of toolCalls) {
+        if (!sessionRef.current) {
+          break;
+        }
         responses.push(await executeToolCall(toolCall));
       }
 
       // Update all transcript entries with results in a single state update
-      setTranscripts((prev) =>
-        prev.map((entry) => {
-          const response = responses.find((r) => toolEntryIds[r.id] === entry.id);
-          if (response) {
-            return {
-              ...entry,
-              toolStatus: response.response.error ? 'error' : 'complete',
-              toolResult: response.response.error || response.response.result,
-            };
-          }
-          return entry;
-        })
-      );
+      transcriptsRef.current = transcriptsRef.current.map((entry) => {
+        const response = responses.find((r) => toolEntryIds[r.id] === entry.id);
+        if (response) {
+          return {
+            ...entry,
+            toolStatus: response.response.error ? 'error' : 'complete',
+            toolResult: response.response.error || response.response.result,
+            toolCompletedAt: new Date(),
+          };
+        }
+        return entry;
+      });
+      setTranscripts(transcriptsRef.current);
 
       // Check if session was closed while awaiting tool calls
       if (!sessionRef.current) {
@@ -328,7 +393,17 @@ export function useGeminiLive(): GeminiLiveState {
         }));
 
         await sessionRef.current.sendToolResponse({ functionResponses });
+        reportVoiceToolEvent('responses_sent', {
+          attempt_id: attemptIdRef.current,
+          conversation_id: conversationIdRef.current,
+          call_count: responses.length,
+        });
       } catch (err) {
+        reportVoiceToolEvent('responses_send_failed', {
+          attempt_id: attemptIdRef.current,
+          conversation_id: conversationIdRef.current,
+          call_count: responses.length,
+        });
         console.error('Error sending tool responses:', err);
       }
     },
@@ -465,6 +540,10 @@ export function useGeminiLive(): GeminiLiveState {
         setConnectingStatus('Starting microphone...');
         setError(null);
         setTranscripts([]);
+        transcriptsRef.current = [];
+        conversationIdRef.current = `web_conv_${crypto.randomUUID()}`;
+        savedConversationIdRef.current = null;
+        attemptIdRef.current = crypto.randomUUID();
         setSessionDuration(0);
         lastTranscriptRef.current = null;
         toolProfileIdRef.current = profileId;
@@ -496,6 +575,7 @@ export function useGeminiLive(): GeminiLiveState {
         }
 
         const tokenData: EphemeralTokenResponse = await tokenResponse.json();
+        toolProfileIdRef.current = tokenData.profile_id;
         voiceReminderRef.current =
           tokenData.voice_reminder_key && typeof tokenData.voice_reminder_after_seconds === 'number'
             ? {
@@ -595,6 +675,14 @@ export function useGeminiLive(): GeminiLiveState {
 
         // Set up session state
         setConnectionState('connected');
+        reportVoiceToolEvent('session_connected', {
+          attempt_id: attemptIdRef.current,
+          conversation_id: conversationIdRef.current,
+          function_count: tokenData.tools.reduce(
+            (count, tool) => count + (tool.functionDeclarations?.length ?? 0),
+            0
+          ),
+        });
         setActivityState('listening');
         setSessionStartTime(Date.now());
         setConnectingStatus(undefined); // Clear connecting status
@@ -646,6 +734,63 @@ export function useGeminiLive(): GeminiLiveState {
    * Uses refs for audio stop functions to avoid dependency on objects that change on state updates.
    */
   const disconnect = useCallback(() => {
+    const turns = transcriptsRef.current;
+    const conversationId = conversationIdRef.current;
+    if (conversationId && turns.length > 0 && savedConversationIdRef.current !== conversationId) {
+      savedConversationIdRef.current = conversationId;
+      void fetch('/api/v1/chat/voice-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          profile_id: toolProfileIdRef.current,
+          client_saved_at: new Date().toISOString(),
+          turns: turns
+            .map((entry) => ({
+              role: entry.role === 'tool' ? 'tool_call' : entry.role,
+              text: entry.role === 'tool' ? '' : entry.text,
+              timestamp: entry.timestamp.toISOString(),
+              ...(entry.role === 'tool'
+                ? {
+                    tool_call_id: entry.id,
+                    tool_name: entry.toolName || entry.text,
+                    tool_arguments: entry.toolArgs || {},
+                  }
+                : {}),
+            }))
+            .flatMap((turn, index) => {
+              const entry = turns[index];
+              if (entry.role !== 'tool') {
+                return [turn];
+              }
+              return [
+                turn,
+                {
+                  role: 'tool',
+                  text: JSON.stringify(
+                    entry.toolStatus === 'running'
+                      ? { error: 'Voice session ended before the tool returned.' }
+                      : (entry.toolResult ?? null)
+                  ),
+                  timestamp: (entry.toolCompletedAt ?? new Date()).toISOString(),
+                  tool_call_id: entry.id,
+                  tool_name: entry.toolName || entry.text,
+                },
+              ];
+            })
+            .sort((a, b) => a.timestamp.localeCompare(b.timestamp)),
+        }),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Failed to save voice session: ${response.status}`);
+          }
+        })
+        .catch((saveError) => {
+          console.error('Error saving voice transcript:', saveError);
+          setError('Could not save the voice transcript.');
+        });
+    }
     // Stop session timer
     if (sessionTimerRef.current) {
       clearInterval(sessionTimerRef.current);

@@ -448,6 +448,18 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
         )
 
     await page.route("**/api/tools/execute/**", capture_tool_call)
+    telemetry_events: list[dict] = []
+
+    async def capture_voice_telemetry(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        if body.get("component_name") == "Voice.tools":
+            telemetry_events.append(body)
+        await route.fulfill(
+            status=200, content_type="application/json", body='{"status":"reported"}'
+        )
+
+    await page.route("**/api/errors/", capture_voice_telemetry)
 
     # Click Start to initiate the connection
     await page.click("button:has-text('Start')")
@@ -510,6 +522,31 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
         "Mic level meter should be visible during capture"
     )
 
+    async with page.expect_request("**/api/v1/chat/voice-sessions") as save_request:
+        await page.get_by_role("button", name="End Call").click()
+    saved_body = (await save_request.value).post_data_json
+    assert isinstance(saved_body, dict)
+    saved_turns = saved_body["turns"]
+    assert [(turn["role"], turn.get("tool_name")) for turn in saved_turns] == [
+        ("tool_call", "list_notes"),
+        ("tool", "list_notes"),
+    ]
+    assert saved_turns[0]["tool_call_id"] == saved_turns[1]["tool_call_id"]
+    await page.wait_for_function("window.__TEST_TOOL_RESPONSES__.length > 0")
+    events = {event["extra_data"]["event"] for event in telemetry_events}
+    assert {
+        "session_connected",
+        "proposed",
+        "execution_started",
+        "succeeded",
+        "responses_sent",
+    } <= events
+    assert all(event["severity"] == "info" for event in telemetry_events)
+    assert all(
+        "arguments" not in event["extra_data"] and "result" not in event["extra_data"]
+        for event in telemetry_events
+    )
+
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
@@ -557,6 +594,55 @@ async def test_voice_tool_response_carries_silence_reminder(
     assert "result" in func_response["response"], (
         "The reminder must ride alongside the tool result, not replace it"
     )
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_voice_failed_tool_execution_sends_failure_telemetry(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    page = web_test_fixture.page
+    base_url = web_test_fixture.base_url
+    await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
+    await _setup_mock_audio_apis(page)
+    await _setup_mock_token_endpoint(page, base_url)
+
+    async def reject_tool(route: Route) -> None:
+        await route.fulfill(
+            status=500,
+            content_type="application/json",
+            body='{"detail":"private failure detail"}',
+        )
+
+    telemetry_events: list[dict] = []
+
+    async def capture_voice_telemetry(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        if body.get("component_name") == "Voice.tools":
+            telemetry_events.append(body)
+        await route.fulfill(
+            status=200, content_type="application/json", body='{"status":"reported"}'
+        )
+
+    await page.route("**/api/tools/execute/**", reject_tool)
+    await page.route("**/api/errors/", capture_voice_telemetry)
+    await page.goto(f"{base_url}/voice")
+    await page.get_by_role("button", name="Start Call").click()
+    await page.wait_for_function(
+        "window.__TEST_TOOL_RESPONSES__ && window.__TEST_TOOL_RESPONSES__.length > 0",
+        timeout=15000,
+    )
+
+    failures = [
+        event["extra_data"]
+        for event in telemetry_events
+        if event["extra_data"]["event"] == "failed"
+    ]
+    assert len(failures) == 1
+    assert failures[0]["status_code"] == 500
+    assert failures[0]["tool_name"] == "list_notes"
+    assert "private failure detail" not in json.dumps(telemetry_events)
 
 
 @pytest.mark.playwright

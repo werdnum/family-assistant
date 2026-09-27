@@ -19,7 +19,9 @@ private setup data. Voice diagnostics use allowlisted error domains, numeric cod
 underlying-error depth. Close reasons are classified into fixed categories, retaining code and byte
 count but not raw text. Unknown reasons are explicitly unclassified. This may require another
 targeted investigation when Google returns an unfamiliar reason; it does not justify uploading
-arbitrary private data. No audio, transcripts, tool names/arguments or credentials are collected.
+arbitrary private data. Connection events collect no audio, transcripts, tool names/arguments or
+credentials. Tool events record bounded tool names, opaque call IDs, stage, outcome, and duration.
+They omit arguments, results, error text, audio, transcripts, and credentials.
 
 Delivery remains best-effort through the existing authenticated reporter and its bounded disk queue.
 Voice entry retries queued reports in addition to the existing launch retry. Backend intake allows

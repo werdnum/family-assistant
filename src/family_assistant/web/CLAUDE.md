@@ -49,18 +49,19 @@ Frontend clients POST to `POST /api/errors/`. The report's optional `severity` s
 
 - Absent or `"error"` → **error lane**: logged at `ERROR` and persisted to `error_logs` (the table
   the engineer profile reads via `read_error_logs` and a human reads via `GET /api/errors/`). The
-  web frontend never sets `severity`, so its reports — including React error-boundary catches that
-  use `error_type: "component_error"` — stay here.
+  web frontend's general error reporter never sets `severity`, so its reports — including React
+  error-boundary catches that use `error_type: "component_error"` — stay here.
 - `"info"` / `"warning"` / `"debug"` → **telemetry lane**: recorded in an in-memory ring buffer and
   logged below the `error_logs` threshold, so high-frequency breadcrumbs never drown genuine errors.
   The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync phases, transport
-  events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader gate) or the
-  engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart.
+  events) here. Web voice tool-stage breadcrumbs also use this lane. Read them via
+  `GET /api/errors/telemetry` (same diagnostics-reader gate) or the engineer-profile
+  `read_frontend_telemetry` tool. The buffer is dropped on restart.
 
 Routing is decided by `severity` alone — `error_type` has no effect on it. Both clients send
-`error_type: "component_error"`, but the web frontend never sets `severity` (so those land in the
-error lane) while the iOS client maps it to `"info"` (so those land in telemetry). Do not infer the
-lane from `error_type`.
+`error_type: "component_error"`. The web error client omits `severity` (error lane), while web voice
+tool events explicitly set `"info"` and the iOS client maps component breadcrumbs to `"info"`
+(telemetry lane). Do not infer the lane from `error_type`.
 
 See
 [docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md)
