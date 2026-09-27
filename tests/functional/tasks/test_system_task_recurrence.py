@@ -52,7 +52,33 @@ async def test_next_occurrence_returns_a_finished_row_to_the_queue(
 ) -> None:
     db_context = Database(engine=db_engine)
     await _enqueue_probe(db_context, scheduled_at=datetime.now(UTC))
-    await db_context.tasks.update_status(task_id=TASK_ID, status=finished_status)
+
+    now = datetime.now(UTC)
+    claimed = await db_context.tasks.dequeue(
+        worker_id="worker-1", task_types=["probe_cleanup"], current_time=now
+    )
+    assert claimed is not None
+    rescheduled = await db_context.tasks.reschedule_for_retry(
+        task_id=TASK_ID,
+        next_scheduled_at=now,
+        new_retry_count=2,
+        error="transient failure",
+    )
+    assert rescheduled
+    reclaimed = await db_context.tasks.dequeue(
+        worker_id="worker-1", task_types=["probe_cleanup"], current_time=now
+    )
+    assert reclaimed is not None
+
+    await db_context.tasks.update_status(
+        task_id=TASK_ID, status=finished_status, error="boom"
+    )
+    finished_row = await _row(db_context)
+    assert finished_row["status"] == finished_status
+    assert finished_row["retry_count"] == 2
+    assert finished_row["locked_by"] == "worker-1"
+    assert finished_row["locked_at"] is not None
+    assert finished_row["error"] == "boom"
 
     next_run = datetime.now(UTC) + timedelta(days=1)
     await _enqueue_probe(db_context, scheduled_at=next_run)
@@ -62,6 +88,14 @@ async def test_next_occurrence_returns_a_finished_row_to_the_queue(
     assert row["retry_count"] == 0
     assert row["locked_by"] is None
     assert row["locked_at"] is None
+    assert row["error"] is None
+    assert row["scheduled_at"].replace(tzinfo=UTC) == next_run
+
+    revived_claim = await db_context.tasks.dequeue(
+        worker_id="worker-2", task_types=["probe_cleanup"], current_time=next_run
+    )
+    assert revived_claim is not None
+    assert revived_claim["task_id"] == TASK_ID
 
 
 @pytest.mark.asyncio

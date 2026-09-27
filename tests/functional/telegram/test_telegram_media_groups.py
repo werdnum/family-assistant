@@ -4,6 +4,7 @@ This module tests that the TelegramChatInterface properly groups consecutive
 image attachments into Telegram media groups when sending multiple images.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,6 +17,7 @@ from family_assistant.telegram.interface import TelegramChatInterface
 @pytest.mark.asyncio
 async def test_multiple_images_sent_as_media_group(
     db_engine: "AsyncEngine",  # type: ignore[name-defined] # noqa: F821
+    tmp_path: Path,
 ) -> None:
     """Test that multiple consecutive image attachments are sent as a media group."""
     # Setup mock application and bot
@@ -34,7 +36,7 @@ async def test_multiple_images_sent_as_media_group(
     # Create attachment registry with mocked methods
 
     attachment_registry = AttachmentRegistry(
-        storage_path="/tmp/test_attachments", db_engine=db_engine
+        storage_path=str(tmp_path), db_engine=db_engine
     )
 
     # Create test image data
@@ -83,10 +85,10 @@ async def test_multiple_images_sent_as_media_group(
     )
 
     # Send the attachments
-    await chat_interface._send_attachments(
-        chat_id=123,
+    await chat_interface.send_message(
+        conversation_id="123",
+        text="here you go",
         attachment_ids=attachment_ids,
-        reply_to_msg_id=None,
     )
 
     # Verify send_media_group was called once with 3 images
@@ -103,6 +105,7 @@ async def test_multiple_images_sent_as_media_group(
 @pytest.mark.asyncio
 async def test_single_image_sent_individually(
     db_engine: "AsyncEngine",  # type: ignore[name-defined] # noqa: F821
+    tmp_path: Path,
 ) -> None:
     """Test that a single image is sent using send_photo, not as a media group."""
     # Setup mock application and bot
@@ -117,7 +120,7 @@ async def test_single_image_sent_individually(
     # Create attachment registry
 
     attachment_registry = AttachmentRegistry(
-        storage_path="/tmp/test_attachments", db_engine=db_engine
+        storage_path=str(tmp_path), db_engine=db_engine
     )
 
     # Create test image data
@@ -142,10 +145,10 @@ async def test_single_image_sent_individually(
     )
 
     # Send the attachment
-    await chat_interface._send_attachments(
-        chat_id=123,
+    await chat_interface.send_message(
+        conversation_id="123",
+        text="here you go",
         attachment_ids=attachment_ids,
-        reply_to_msg_id=None,
     )
 
     # Verify send_photo was called once
@@ -162,6 +165,7 @@ async def test_single_image_sent_individually(
 @pytest.mark.asyncio
 async def test_mixed_attachments_grouped_correctly(
     db_engine: "AsyncEngine",  # type: ignore[name-defined] # noqa: F821
+    tmp_path: Path,
 ) -> None:
     """Test that mixed image and document attachments are handled correctly.
 
@@ -181,7 +185,7 @@ async def test_mixed_attachments_grouped_correctly(
     # Create attachment registry
 
     attachment_registry = AttachmentRegistry(
-        storage_path="/tmp/test_attachments", db_engine=db_engine
+        storage_path=str(tmp_path), db_engine=db_engine
     )
 
     # Create test data
@@ -238,10 +242,10 @@ async def test_mixed_attachments_grouped_correctly(
     )
 
     # Send the attachments
-    await chat_interface._send_attachments(
-        chat_id=123,
+    await chat_interface.send_message(
+        conversation_id="123",
+        text="here you go",
         attachment_ids=attachment_ids,
-        reply_to_msg_id=None,
     )
 
     # Verify:
@@ -264,6 +268,7 @@ async def test_mixed_attachments_grouped_correctly(
 @pytest.mark.asyncio
 async def test_media_group_with_reply_to(
     db_engine: "AsyncEngine",  # type: ignore[name-defined] # noqa: F821
+    tmp_path: Path,
 ) -> None:
     """Test that media groups properly include reply_to_message_id."""
     # Setup mock application and bot
@@ -278,7 +283,7 @@ async def test_media_group_with_reply_to(
     # Create attachment registry
 
     attachment_registry = AttachmentRegistry(
-        storage_path="/tmp/test_attachments", db_engine=db_engine
+        storage_path=str(tmp_path), db_engine=db_engine
     )
 
     # Create test image data
@@ -312,10 +317,11 @@ async def test_media_group_with_reply_to(
     )
 
     # Send the attachments with reply_to
-    await chat_interface._send_attachments(
-        chat_id=123,
+    await chat_interface.send_message(
+        conversation_id="123",
+        text="here you go",
+        reply_to_interface_id="100",  # Replying to message 100
         attachment_ids=attachment_ids,
-        reply_to_msg_id=100,  # Replying to message 100
     )
 
     # Verify send_media_group was called with reply_to_message_id

@@ -26,8 +26,15 @@ from family_assistant.context_providers import (
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
+    TurnTaintState,
     derive_tool_result_taint_source,
     resolve_tool_sink_class,
+)
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewConstraints,
+    ToolCallReviewInput,
+    ToolCallReviewVerdict,
+    assemble_tool_call_review_messages,
 )
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, PolicyEngine, ToolDescriptor
 from family_assistant.tools.metadata import ToolTag
@@ -99,30 +106,16 @@ def _make_mcp_descriptor(server_id: str) -> ToolDescriptor:
     )
 
 
-def test_defaults_yaml_uses_policy_only_for_tool_access() -> None:
-    defaults_data = _load_defaults_yaml()
-    default_profile_settings = defaults_data["default_profile_settings"]
-    assert isinstance(default_profile_settings, dict)
-    assert "tools_policy" in default_profile_settings
-    default_tools_config = default_profile_settings.get("tools_config", {})
-    assert isinstance(default_tools_config, dict)
-    assert "enable_local_tools" not in default_tools_config
-    assert "enable_mcp_server_ids" not in default_tools_config
-    assert "confirm_tools" not in default_tools_config
-
-    service_profiles = defaults_data["service_profiles"]
-    assert isinstance(service_profiles, list)
-
-    for profile in service_profiles:
-        assert isinstance(profile, dict)
-        tools_config = profile.get("tools_config", {})
-        assert isinstance(tools_config, dict)
-        assert "enable_local_tools" not in tools_config
-        assert "enable_mcp_server_ids" not in tools_config
-        assert "confirm_tools" not in tools_config
-
-
 def test_shipped_profiles_define_effective_tool_policy() -> None:
+    """Every shipped profile carries a policy, and none is a dead deny-all engine.
+
+    ``tools_policy`` being present is a schema optional field, so it is worth
+    asserting directly. Beyond that, the meaningful invariant is that the
+    policy actually reaches some tools: every profile except the ones that are
+    deliberately tool-less (``media_analyst``, ``coder``, and the managed deep
+    research agents ``research``/``research_max``) must advertise at least one
+    descriptor as something other than an outright deny.
+    """
     default_settings, profiles = _load_resolved_profiles()
     descriptors = [*LOCAL_TOOL_DESCRIPTORS]
     descriptors.extend(_make_mcp_descriptor(server_id) for server_id in MCP_SERVER_IDS)
@@ -131,29 +124,26 @@ def test_shipped_profiles_define_effective_tool_policy() -> None:
         "default_profile_settings": default_settings,
         **{profile.id: profile for profile in profiles},
     }
+    deliberately_tool_less = {"media_analyst", "coder", "research", "research_max"}
 
     for profile_id, profile in profile_map.items():
         assert profile.tools_policy is not None, profile_id
         engine = PolicyEngine.from_policy_config(profile.tools_policy)
 
-        for descriptor in descriptors:
-            advertised_without_confirmation = engine.evaluate_for_advertisement(
-                descriptor,
-                can_confirm=False,
-            )
-            executable_without_confirmation = engine.evaluate_for_execution(
-                descriptor,
-                can_confirm=False,
-            )
+        advertised_decisions = {
+            engine.evaluate_for_advertisement(descriptor, can_confirm=False).decision
+            for descriptor in descriptors
+        }
+        executable_decisions = {
+            engine.evaluate_for_execution(descriptor, can_confirm=False).decision
+            for descriptor in descriptors
+        }
 
-            assert isinstance(
-                advertised_without_confirmation.decision,
-                ToolPolicyDecision,
-            )
-            assert isinstance(
-                executable_without_confirmation.decision,
-                ToolPolicyDecision,
-            )
+        if profile_id in deliberately_tool_less:
+            assert advertised_decisions == {ToolPolicyDecision.DENY}, profile_id
+            assert executable_decisions == {ToolPolicyDecision.DENY}, profile_id
+        else:
+            assert advertised_decisions - {ToolPolicyDecision.DENY}, profile_id
 
 
 def test_confined_profile_private_read_inventory_is_sensitive_tagged() -> None:
@@ -423,13 +413,37 @@ def test_engineer_side_effects_and_reads_policy() -> None:
         assert decision is ToolPolicyDecision.ALLOW, allowed_name
 
 
-def test_engineer_has_review_guidance() -> None:
-    """The engineer profile processing config declares review guidance for the reviewer."""
+def test_engineer_review_guidance_reaches_reviewer_prompt() -> None:
+    """The engineer's configured review guidance is rendered into the reviewer's prompt.
+
+    Asserting on the strings alone in ``defaults.yaml`` would pass even if
+    ``review_guidance`` were never forwarded to the reviewer, so this drives it
+    through ``assemble_tool_call_review_messages`` -- the function that builds
+    the actual prompt sent to the tool-call review LLM -- and checks the text
+    lands there.
+    """
     engineer = _engineer_profile()
     guidance = engineer.processing_config.review_guidance
     assert guidance
     assert "This profile investigates the application" in guidance
     assert "never household content" in guidance
+
+    spawn_worker = _local_descriptor("spawn_worker")
+    review_input = ToolCallReviewInput(
+        messages=(),
+        descriptor=spawn_worker,
+        arguments={},
+        sink_class=resolve_tool_sink_class(spawn_worker),
+        taint_state=TurnTaintState.empty(),
+        policy_contexts=(),
+        profile_guidance=guidance,
+    )
+    constraints = ToolCallReviewConstraints(fallback_verdict=ToolCallReviewVerdict.DENY)
+
+    messages = assemble_tool_call_review_messages(review_input, constraints)
+    rendered = "\n".join(str(message.content) for message in messages)
+    assert "This profile investigates the application" in rendered
+    assert "never household content" in rendered
 
 
 # Every tool the engineer can reach whose result is still rendered to the

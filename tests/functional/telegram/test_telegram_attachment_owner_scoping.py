@@ -3,9 +3,12 @@
 Delivering an owned (personal-data) attachment reads it back by ID from the
 registry. Without threading the requester through ``on_behalf_of_user_id`` the
 strict owner check would drop the attachment even when sending it back to its
-own requester. These tests exercise ``TelegramChatInterface._send_attachments``:
-with a matching ``on_behalf_of_user_id`` the owned attachment is delivered; with
-``None`` (no user context) it is skipped like any missing attachment.
+own requester. These tests exercise the full ``TelegramChatInterface.send_message``
+path (not the private ``_send_attachments`` helper) so that a regression in
+threading ``on_behalf_of_user_id`` from ``send_message`` into attachment
+delivery is caught: with a matching ``on_behalf_of_user_id`` the owned
+attachment is delivered; with ``None`` (no user context) it is skipped like any
+missing attachment.
 """
 
 from __future__ import annotations
@@ -56,14 +59,17 @@ async def test_owned_attachment_delivered_with_matching_actor(
     chat_interface = TelegramChatInterface(
         application=mock_app, attachment_registry=registry
     )
-    await chat_interface._send_attachments(
-        chat_id=123,
+    await chat_interface.send_message(
+        conversation_id="123",
+        text="report",
         attachment_ids=[attachment_id],
-        reply_to_msg_id=None,
         on_behalf_of_user_id=OWNER,
     )
 
-    mock_bot.send_document.assert_called_once()
+    mock_bot.send_document.assert_awaited_once()
+    _, kwargs = mock_bot.send_document.await_args
+    assert kwargs["chat_id"] == 123
+    assert kwargs["filename"] == "report.pdf"
 
 
 @pytest.mark.asyncio
@@ -83,11 +89,11 @@ async def test_owned_attachment_skipped_without_actor(
     )
     # No acting user: the owned attachment reads as not-found and is skipped
     # exactly like any missing attachment (graceful skip, no send).
-    await chat_interface._send_attachments(
-        chat_id=123,
+    await chat_interface.send_message(
+        conversation_id="123",
+        text="report",
         attachment_ids=[attachment_id],
-        reply_to_msg_id=None,
         on_behalf_of_user_id=None,
     )
 
-    mock_bot.send_document.assert_not_called()
+    mock_bot.send_document.assert_not_awaited()

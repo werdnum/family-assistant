@@ -22,6 +22,42 @@ logger = logging.getLogger(__name__)
 TELEGRAM_COMMAND_PATTERN = re.compile(r"^/[a-z0-9_]{1,32}$")
 
 
+def test_telegram_command_pattern_matches_documented_requirements() -> None:
+    """
+    Regression-guard the pattern used by test_slash_commands_meet_telegram_requirements.
+
+    That test checks real shipped `defaults.yaml` commands against
+    `TELEGRAM_COMMAND_PATTERN`, so a bug in the pattern itself would silently
+    make that check meaningless. This exercises the pattern directly against
+    known-valid and known-invalid examples covering the documented boundaries
+    (32-character limit, allowed character set, required leading slash).
+    """
+    valid_commands = [
+        "/a",
+        "/browse",
+        "/test_command",
+        "/command123",
+        "/" + "a" * 32,  # exactly at the 32-character limit
+    ]
+    invalid_commands = [
+        "/",  # empty after slash
+        "/" + "a" * 33,  # one character over the limit
+        "/Browse",  # uppercase
+        "/test-command",  # hyphen
+        "/test command",  # space
+        "browse",  # missing leading slash
+    ]
+
+    for command in valid_commands:
+        assert TELEGRAM_COMMAND_PATTERN.match(command), (
+            f"Expected {command!r} to match the Telegram command pattern"
+        )
+    for command in invalid_commands:
+        assert not TELEGRAM_COMMAND_PATTERN.match(command), (
+            f"Expected {command!r} to be rejected by the Telegram command pattern"
+        )
+
+
 def load_config() -> dict:
     """Load the defaults.yaml file from the project root."""
     config_path = Path(__file__).parent.parent.parent.parent / "defaults.yaml"
@@ -117,57 +153,3 @@ def test_slash_commands_meet_telegram_requirements() -> None:
 
     # Log success
     logger.info(f"All {len(all_commands)} slash commands are valid for Telegram")
-
-
-@pytest.mark.parametrize(
-    "command,should_be_valid,reason",
-    [
-        # Valid commands
-        ("/browse", True, "simple lowercase command"),
-        ("/research", True, "lowercase with multiple letters"),
-        ("/visualize", True, "longer lowercase command"),
-        ("/chart", True, "short lowercase command"),
-        ("/automate", True, "lowercase with 8 characters"),
-        ("/test_command", True, "command with underscore"),
-        ("/command123", True, "command with numbers"),
-        ("/a", True, "single character command"),
-        ("/a_b_c_1_2_3", True, "command with underscores and numbers"),
-        ("/very_long_command_name_here", True, "long but under 32 chars"),
-        # Invalid commands - too long (> 32 chars after /)
-        (
-            "/this_is_a_very_long_command_name_that_exceeds_the_limit",
-            False,
-            "exceeds 32 character limit",
-        ),
-        # Invalid commands - uppercase letters
-        ("/Browse", False, "contains uppercase letter"),
-        ("/RESEARCH", False, "all uppercase"),
-        ("/myCommand", False, "camelCase"),
-        # Invalid commands - special characters
-        ("/test-command", False, "contains hyphen"),
-        ("/test.command", False, "contains period"),
-        ("/test command", False, "contains space"),
-        ("/test@command", False, "contains at symbol"),
-        ("/test!", False, "contains exclamation"),
-        # Invalid commands - missing slash
-        ("browse", False, "missing forward slash"),
-        ("research", False, "missing forward slash"),
-        # Invalid commands - empty or just slash
-        ("/", False, "empty command after slash"),
-    ],
-)
-def test_individual_command_validation(
-    command: str, should_be_valid: bool, reason: str
-) -> None:
-    """
-    Test individual command validation against Telegram requirements.
-
-    This parametrized test verifies that the validation pattern correctly
-    identifies both valid and invalid commands.
-    """
-    is_valid = bool(TELEGRAM_COMMAND_PATTERN.match(command))
-
-    assert is_valid == should_be_valid, (
-        f"Command '{command}' validation failed: {reason}. "
-        f"Expected valid={should_be_valid}, got valid={is_valid}"
-    )

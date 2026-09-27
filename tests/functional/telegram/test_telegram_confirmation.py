@@ -4,15 +4,17 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
-from datetime import datetime
+from collections.abc import Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]  # No type stubs available
 from assertpy import assert_that, soft_assertions
-from telegram import Update
+from telegram import CallbackQuery, Chat, Message, Update, User
 
 # Import mock LLM helpers
 from family_assistant.config_models import AppConfig
@@ -40,6 +42,9 @@ from family_assistant.telegram.ui import (
 from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
 from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
+    ToolProviderComposite,
+    ToolProviderWrapper,
+    ToolsProvider,
     find_provider_by_type,
 )
 from family_assistant.tools.types import (
@@ -162,6 +167,7 @@ class RecordingTelegramBot:
         self.sent_messages: list[dict[str, object]] = []
         self.edited_texts: list[dict[str, object]] = []
         self.edited_markups: list[dict[str, object]] = []
+        self.answered_callback_query_ids: list[str] = []
 
     async def send_message(
         self,
@@ -200,6 +206,9 @@ class RecordingTelegramBot:
         text: str,
         parse_mode: str | None,
         reply_markup: object = None,
+        # python-telegram-bot's Message.edit_text shortcut always forwards
+        # (entities, timeouts, api_kwargs, ...), which this fake has no use for.
+        **_: object,
     ) -> None:
         self.edited_texts.append({
             "chat_id": chat_id,
@@ -209,6 +218,51 @@ class RecordingTelegramBot:
             "reply_markup": reply_markup,
         })
 
+    async def answer_callback_query(
+        self,
+        *,
+        callback_query_id: str,
+        # CallbackQuery.answer forwards timeouts and api_kwargs unconditionally.
+        **_: object,
+    ) -> bool:
+        self.answered_callback_query_ids.append(callback_query_id)
+        return True
+
+
+def _build_confirmation_callback_update(
+    *,
+    action: str,
+    request_id: str,
+    bot: RecordingTelegramBot,
+    chat_id: int = USER_CHAT_ID,
+    user_id: int = USER_ID,
+    message_id: int = 9001,
+    original_text: str = "Confirm test action",
+) -> Update:
+    """Build a real Update carrying a callback query bound to a fake bot.
+
+    Mirrors what pressing an inline "Confirm"/"Cancel" button sends to
+    confirmation_callback_handler, without a live Telegram mock server.
+    """
+    user = User(id=user_id, first_name="TestUser", is_bot=False)
+    chat = Chat(id=chat_id, type="private")
+    message = Message(
+        message_id=message_id,
+        date=datetime.now(UTC),
+        chat=chat,
+        text=original_text,
+    )
+    message.set_bot(cast("Any", bot))
+    query = CallbackQuery(
+        id=f"cbq_{uuid.uuid4().hex[:8]}",
+        from_user=user,
+        chat_instance="chat-instance",
+        message=message,
+        data=f"confirm:{request_id}:{action}",
+    )
+    query.set_bot(cast("Any", bot))
+    return Update(update_id=1, callback_query=query)
+
 
 @pytest.mark.asyncio
 async def test_non_durable_telegram_confirmation_uses_local_future_with_service() -> (
@@ -216,27 +270,40 @@ async def test_non_durable_telegram_confirmation_uses_local_future_with_service(
 ):
     """Non-durable Telegram confirmations should not be resolved through storage."""
     confirmation_service = RecordingConfirmationService()
+    bot = RecordingTelegramBot()
     manager = TelegramConfirmationUIManager(
-        application=cast("Any", None),
+        application=cast("Any", SimpleNamespace(bot=bot)),
         confirmation_service=cast("Any", confirmation_service),
     )
 
+    approve_request_id = str(uuid.uuid4())
     approve_future = asyncio.get_running_loop().create_future()
-    approve_pending = PendingTelegramConfirmation(
+    manager.pending_confirmations[approve_request_id] = PendingTelegramConfirmation(
         decision_future=approve_future,
         execution_future=None,
     )
-    await manager._approve_confirmation(str(uuid.uuid4()), USER_ID, approve_pending)
+    await manager.confirmation_callback_handler(
+        _build_confirmation_callback_update(
+            action="yes", request_id=approve_request_id, bot=bot
+        ),
+        cast("Any", None),
+    )
     approve_outcome = await approve_future
     assert approve_outcome.kind == "approved"
     assert confirmation_service.approve_calls == []
 
+    reject_request_id = str(uuid.uuid4())
     reject_future = asyncio.get_running_loop().create_future()
-    reject_pending = PendingTelegramConfirmation(
+    manager.pending_confirmations[reject_request_id] = PendingTelegramConfirmation(
         decision_future=reject_future,
         execution_future=None,
     )
-    await manager._reject_confirmation(str(uuid.uuid4()), USER_ID, reject_pending)
+    await manager.confirmation_callback_handler(
+        _build_confirmation_callback_update(
+            action="no", request_id=reject_request_id, bot=bot
+        ),
+        cast("Any", None),
+    )
     reject_outcome = await reject_future
     assert reject_outcome.kind == "rejected"
     assert confirmation_service.reject_calls == []
@@ -248,13 +315,15 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
     confirmation_service = RecordingConfirmationService()
     confirmation_waiters = ConfirmationResultWaiterRegistry()
     bot = RecordingTelegramBot()
+    confirmation_timeout = 1.0
     manager = TelegramConfirmationUIManager(
         application=cast("Any", SimpleNamespace(bot=bot)),
-        confirmation_timeout=0.2,
+        confirmation_timeout=confirmation_timeout,
         confirmation_service=cast("Any", confirmation_service),
         confirmation_result_waiters=confirmation_waiters,
     )
 
+    requested_at = time.monotonic()
     confirmation_task = asyncio.create_task(
         manager.request_confirmation(
             conversation_id=str(USER_CHAT_ID),
@@ -263,7 +332,7 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
             prompt_text="Confirm test action",
             tool_name="record_tool",
             tool_args={"value": "test"},
-            timeout=0.2,
+            timeout=confirmation_timeout,
             target_user_id=str(USER_ID),
             tool_call_id="call-id",
             source_message_internal_id=1,
@@ -277,12 +346,14 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
         timeout=2.0,
         description="durable Telegram confirmation to be pending",
     )
-    pending = manager.pending_confirmations[confirmation_service.created_request_id]
 
-    await manager._approve_confirmation(
-        confirmation_service.created_request_id,
-        USER_ID,
-        pending,
+    await manager.confirmation_callback_handler(
+        _build_confirmation_callback_update(
+            action="yes",
+            request_id=confirmation_service.created_request_id,
+            bot=bot,
+        ),
+        cast("Any", None),
     )
 
     assert confirmation_service.approve_calls == [
@@ -294,6 +365,15 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
         ),
         timeout=2.0,
         description="approved Telegram confirmation to leave pending state",
+    )
+
+    # Prove the timeout is actually disarmed rather than merely not yet due:
+    # wait past the original deadline before checking it never fired.
+    original_deadline = requested_at + confirmation_timeout
+    await wait_for_condition(
+        lambda: time.monotonic() >= original_deadline,
+        timeout=confirmation_timeout + 5.0,
+        description="original confirmation timeout window to elapse",
     )
     assert confirmation_service.expire_calls == 0
     assert not confirmation_task.done()
@@ -436,9 +516,12 @@ async def test_over_budget_prompt_fails_when_nothing_else_can_approve_it() -> No
 async def test_durable_telegram_confirmation_persists_taint_policy_context() -> None:
     confirmation_service = RecordingConfirmationService()
     confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
     manager = TelegramConfirmationUIManager(
-        application=cast("Any", SimpleNamespace(bot=RecordingTelegramBot())),
-        confirmation_timeout=0.2,
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        # The timeout is irrelevant to this test; keep it generous so the
+        # rejection below cannot race it.
+        confirmation_timeout=30.0,
         confirmation_service=cast("Any", confirmation_service),
         confirmation_result_waiters=confirmation_waiters,
     )
@@ -473,7 +556,7 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
             prompt_text="Confirm test action",
             tool_name="record_tool",
             tool_args={"value": "test"},
-            timeout=0.2,
+            timeout=30.0,
             target_user_id=str(USER_ID),
             tool_call_id="call-id",
             source_message_internal_id=1,
@@ -502,11 +585,14 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
         is review_authorization
     )
 
-    pending = manager.pending_confirmations[confirmation_service.created_request_id]
-    await manager._reject_confirmation(
-        confirmation_service.created_request_id,
-        USER_ID,
-        pending,
+    assert confirmation_service.created_request_id in manager.pending_confirmations
+    await manager.confirmation_callback_handler(
+        _build_confirmation_callback_update(
+            action="no",
+            request_id=confirmation_service.created_request_id,
+            bot=bot,
+        ),
+        cast("Any", None),
     )
     outcome = await confirmation_task
     assert outcome.kind == "rejected"
@@ -517,8 +603,9 @@ async def test_durable_telegram_confirmation_approval_uses_canonical_user_id() -
     """Telegram callback authorization should use the same canonical id as storage."""
     canonical_user_id = "andrew@example.com"
     confirmation_service = RecordingConfirmationService()
+    bot = RecordingTelegramBot()
     manager = TelegramConfirmationUIManager(
-        application=cast("Any", SimpleNamespace(bot=RecordingTelegramBot())),
+        application=cast("Any", SimpleNamespace(bot=bot)),
         confirmation_service=cast("Any", confirmation_service),
         user_identity_resolver=UserIdentityResolver(
             AppConfig.model_validate({
@@ -533,13 +620,13 @@ async def test_durable_telegram_confirmation_approval_uses_canonical_user_id() -
         ),
     )
 
-    await manager._approve_confirmation(
-        "confirm_test",
-        USER_ID,
-        PendingTelegramConfirmation(
-            decision_future=asyncio.get_running_loop().create_future(),
-            execution_future=None,
+    await manager.confirmation_callback_handler(
+        _build_confirmation_callback_update(
+            action="yes",
+            request_id="confirm_test",
+            bot=bot,
         ),
+        cast("Any", None),
     )
 
     assert confirmation_service.approve_calls == [
@@ -667,48 +754,85 @@ async def test_durable_telegram_external_approval_timeout_waits_for_execution() 
     assert outcome.result == "executed:external"
 
 
+def _replace_wrapped_provider(
+    root: ToolsProvider, old: ToolsProvider, new: ToolsProvider
+) -> bool:
+    """Swap `old` for `new` wherever it is wrapped inside `root`.
+
+    Walks wrapper and composite providers via their public surface
+    (`wrapped_provider` / `get_providers()`) rather than any provider's
+    private state. Returns whether a replacement was made.
+    """
+    if root is old:
+        return False
+    if isinstance(root, ToolProviderWrapper):
+        if root.wrapped_provider is old:
+            root.wrapped_provider = new  # type: ignore[misc]
+            return True
+        return _replace_wrapped_provider(root.wrapped_provider, old, new)
+    if isinstance(root, ToolProviderComposite):
+        return any(
+            _replace_wrapped_provider(sub, old, new) for sub in root.get_providers()
+        )
+    return False
+
+
 def _require_confirmation_for_test_tool(
     fix: TelegramHandlerTestFixture,
     tool_name: str,
-) -> None:
+) -> Callable[[], None]:
+    """Install a policy that requires confirmation for `tool_name`.
+
+    Builds a fresh PolicyEnforcingToolsProvider around the existing one's
+    wrapped provider and installs it via the public provider-wrapping
+    surface, instead of mutating the existing provider's private policy
+    state. Returns a callable that restores the original provider.
+    """
     processing_service = fix.processing_service
     assert processing_service is not None
-    provider = processing_service.tools_provider
-    policy_provider = find_provider_by_type(provider, PolicyEnforcingToolsProvider)
-    if policy_provider is not None:
-        provider = policy_provider
-
-    if hasattr(provider, "_tools_requiring_confirmation"):
-        provider._tools_requiring_confirmation.add(tool_name)  # type: ignore[attr-defined]
-        return
-
-    if hasattr(provider, "_policy_engine") and hasattr(
-        provider, "_tool_definitions_by_confirmation"
-    ):
-        provider_impl = cast("Any", provider)
-        provider_impl._policy_engine = PolicyEngine.from_policy_config(
-            ToolPolicyConfig.model_validate({
-                "default_decision": ToolPolicyDecision.DENY,
-                "rules": [
-                    {
-                        "match": {"names": ["*"]},
-                        "decision": ToolPolicyDecision.ALLOW,
-                        "priority": 10,
-                    },
-                    {
-                        "match": {"names": [tool_name]},
-                        "decision": ToolPolicyDecision.CONFIRM,
-                        "priority": 20,
-                    },
-                ],
-            })
-        )
-        provider_impl._tool_definitions_by_confirmation.clear()
-        return
-
-    raise AssertionError(
-        f"Unsupported tools provider for confirmation test: {provider!r}"
+    root_provider = processing_service.tools_provider
+    policy_provider = find_provider_by_type(root_provider, PolicyEnforcingToolsProvider)
+    assert policy_provider is not None, (
+        f"Expected a PolicyEnforcingToolsProvider in {root_provider!r}"
     )
+
+    confirming_policy_engine = PolicyEngine.from_policy_config(
+        ToolPolicyConfig.model_validate({
+            "default_decision": ToolPolicyDecision.ALLOW,
+            "rules": [
+                {
+                    "match": {"names": [tool_name]},
+                    "decision": ToolPolicyDecision.CONFIRM,
+                    "priority": 20,
+                },
+            ],
+        })
+    )
+    replacement_provider = PolicyEnforcingToolsProvider(
+        policy_provider.wrapped_provider,
+        confirming_policy_engine,
+        confirmation_timeout=policy_provider.confirmation_timeout,
+    )
+
+    if root_provider is policy_provider:
+        processing_service.tools_provider = replacement_provider
+
+        def _restore_root() -> None:
+            processing_service.tools_provider = policy_provider
+
+        return _restore_root
+
+    replaced = _replace_wrapped_provider(
+        root_provider, policy_provider, replacement_provider
+    )
+    assert replaced, (
+        f"Could not locate {policy_provider!r} inside {root_provider!r} to replace it"
+    )
+
+    def _restore_wrapped() -> None:
+        _replace_wrapped_provider(root_provider, replacement_provider, policy_provider)
+
+    return _restore_wrapped
 
 
 @pytest.mark.asyncio
@@ -1092,12 +1216,9 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
     )
 
     # --- 2. Make add_or_update_note require confirmation via policy ---
-    policy_provider = find_provider_by_type(
-        fix.tools_provider, PolicyEnforcingToolsProvider
+    restore_policy_provider = _require_confirmation_for_test_tool(
+        fix, TOOL_NAME_SENSITIVE
     )
-    assert policy_provider is not None
-    original_policy_engine = policy_provider._policy_engine
-    _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
 
     # --- 3. Mock LLM: first call returns a tool call, second returns text ---
     tool_call_id = f"call_keyboard_{uuid.uuid4()}"
@@ -1219,8 +1340,7 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         assert note.content == note_content
 
     finally:
-        policy_provider._policy_engine = original_policy_engine
-        policy_provider._tool_definitions_by_confirmation.clear()
+        restore_policy_provider()
         shutdown_event.set()
         wake_event.set()
         with contextlib.suppress(TimeoutError):

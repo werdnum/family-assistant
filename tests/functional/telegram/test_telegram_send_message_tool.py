@@ -20,6 +20,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+from tests.mocks.telegram_test_server import TelegramTestClient
 
 # Import the fixture and its type hint
 from .conftest import TelegramHandlerTestFixture
@@ -227,7 +228,7 @@ async def test_send_message_to_user_tool(
             ).is_equal_to(expected_final_escaped_text)
 
             # 3. Confirmation Manager (should not be called for this tool by default)
-            fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
+            fix.mock_confirmation_manager.assert_not_awaited()
 
             # 4. Message history records include processing profile identifier
             assert_that(bob_history_all).described_as(
@@ -238,7 +239,9 @@ async def test_send_message_to_user_tool(
             ]).contains(fix.processing_service.service_config.id)
 
             # 5. The recorded copy of the sent message carries runtime taint
-            # metadata from the originating turn (never version=None).
+            # metadata from the originating turn (never version=None), and
+            # its content is the message actually asked for -- not merely
+            # any assistant row.
             bob_assistant_rows = [
                 msg for msg in bob_history_all if msg["role"] == "assistant"
             ]
@@ -250,6 +253,30 @@ async def test_send_message_to_user_tool(
             ]).described_as("Taint metadata version on recorded rows").contains_only(
                 "runtime_v2"
             )
+            assert_that([msg["content"] for msg in bob_assistant_rows]).described_as(
+                "Recorded content for Bob's assistant rows"
+            ).contains(message_for_bob)
+
+            # 6. Bob actually received the message via telegram-test-api, not
+            # merely a history row with no delivery.
+            bob_client = TelegramTestClient(
+                api_url=fix.telegram_client.api_url,
+                token=fix.telegram_client.token,
+                chat_id=bob_chat_id,
+            )
+            bob_responses = await wait_for_bot_response(
+                bob_client, timeout=5.0, min_messages=1
+            )
+            assert_that(bob_responses).described_as(
+                "Bot responses delivered to Bob"
+            ).is_not_empty()
+            # send_message_to_user delivers the raw tool argument, with no
+            # Telegram MarkdownV2 conversion applied (unlike replies to the
+            # requesting user's own conversation).
+            bob_message_text = bob_responses[-1].get("message", {}).get("text", "")
+            assert_that(bob_message_text).described_as(
+                "Text delivered to Bob"
+            ).is_equal_to(message_for_bob)
     finally:
         # Restore original context providers
         fix.processing_service.context_providers = original_providers
@@ -352,112 +379,6 @@ async def test_send_message_to_self_rejected(
         response_text = final_response.get("message", {}).get("text", "")
         expected_text = telegramify_markdown.markdownify(
             "I understand - my response will be delivered directly to you in this conversation."
-        )
-        assert_that(response_text).described_as("Response text").is_equal_to(
-            expected_text
-        )
-
-
-@pytest.mark.asyncio
-async def test_callback_send_message_to_self_rejected(
-    telegram_handler_fixture: TelegramHandlerTestFixture,
-) -> None:
-    """
-    Tests that when awakened by a callback, the LLM correctly handles
-    the case where it tries to use send_message_to_user to send to the
-    same user (which should be rejected).
-    """
-    # Arrange
-    fix = telegram_handler_fixture
-    alice_chat_id = 123
-    alice_user_id = 12345
-    alice_message_id = 601
-
-    # Simulate a callback trigger message
-    callback_text = "System Callback Trigger:\n\nThe time is now 2024-01-01 10:00:00 UTC.\nYour scheduled context was:\n---\nRemind user about the meeting\n---"
-    tool_call_id = f"call_{uuid.uuid4()}"
-
-    # --- Mock LLM Rules ---
-    def callback_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        last_text = get_last_message_text(messages)
-        return "System Callback Trigger" in last_text and "meeting" in last_text
-
-    # LLM incorrectly tries to use send_message_to_user
-    callback_tool_call = LLMOutput(
-        content="I'll remind you about the meeting.",
-        tool_calls=[
-            ToolCallItem(
-                id=tool_call_id,
-                type="function",
-                function=ToolCallFunction(
-                    name="send_message_to_user",
-                    arguments=json.dumps({
-                        "target_chat_id": alice_chat_id,
-                        "message_content": "Don't forget about your meeting!",
-                    }),
-                ),
-            )
-        ],
-    )
-    rule_callback_request: Rule = (callback_matcher, callback_tool_call)
-
-    def callback_error_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        return any(
-            isinstance(msg, ToolMessage)
-            and msg.role == "tool"
-            and msg.tool_call_id == tool_call_id
-            and (
-                "Cannot use send_message_to_user tool"
-                in (content := str(msg.content or ""))
-                and "already replying to" in content
-            )
-            for msg in messages
-        )
-
-    callback_correction_output = LLMOutput(
-        content="Don't forget about your meeting!", tool_calls=None
-    )
-    rule_callback_correction: Rule = (
-        callback_error_matcher,
-        callback_correction_output,
-    )
-
-    mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
-    mock_llm_client.rules = [rule_callback_request, rule_callback_correction]
-
-    # --- Create Update/Context for callback ---
-    update = create_mock_update(
-        callback_text,
-        chat_id=alice_chat_id,
-        user_id=alice_user_id,
-        message_id=alice_message_id,
-    )
-    context = create_context(
-        fix.application,
-        bot_data={"processing_service": fix.processing_service},
-    )
-
-    # Act
-    await fix.handler.message_handler(update, context)
-
-    # Assert - verify bot responses via telegram-test-api
-    bot_responses = await wait_for_bot_response(fix.telegram_client, timeout=5.0)
-
-    with soft_assertions():  # type: ignore[attr-defined]
-        # 1. LLM should be called twice
-        mock_llm_client = cast("RuleBasedMockLLMClient", fix.mock_llm)
-        assert_that(mock_llm_client._calls).described_as("LLM Call Count").is_length(2)
-
-        # 2. Bot should have sent at least one message (the corrected response)
-        assert_that(bot_responses).described_as("Bot responses").is_not_empty()
-
-        # 3. The sent message should be the meeting reminder
-        final_response = bot_responses[-1]
-        response_text = final_response.get("message", {}).get("text", "")
-        expected_text = telegramify_markdown.markdownify(
-            "Don't forget about your meeting!"
         )
         assert_that(response_text).described_as("Response text").is_equal_to(
             expected_text

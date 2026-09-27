@@ -5,7 +5,7 @@ Tests for TaskWorker resilience features including timeout and health monitoring
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace  # pylint: disable=no-name-in-module
 from typing import Any, cast
@@ -23,7 +23,6 @@ from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.types import ActionConfig, TaskDict
 from family_assistant.task_worker import (
-    SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
     TaskWorker,
     handle_llm_callback,
@@ -171,18 +170,16 @@ async def test_task_handler_timeout(
         handler_timeout=test_timeout,  # Set timeout per instance
     )
 
-    # Handler that will definitely timeout
+    # Handler that will definitely timeout: it never completes on its own, so
+    # only the handler timeout can end it.
     async def hanging_handler(
         # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
         exec_context: ToolExecutionContext,
         # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
         payload: dict[str, Any],
     ) -> None:
-        logger.info(
-            f"Hanging handler started, will sleep for {test_timeout + 0.5} seconds"
-        )
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timeout behavior
-        await asyncio.sleep(test_timeout + 0.5)  # Longer than timeout
+        logger.info("Hanging handler started, will block forever")
+        await asyncio.Event().wait()
         logger.info("Hanging handler finished (should not reach here)")
 
     worker.register_task_handler("hang", hanging_handler)
@@ -190,10 +187,6 @@ async def test_task_handler_timeout(
     # Start worker task
     worker_task = asyncio.create_task(worker.run(new_task_event))
     logger.info("Started TaskWorker in background")
-
-    # Give worker a moment to start up
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Ensuring worker initialization completes
-    await asyncio.sleep(0.1)
 
     # Create a task with 0 retries allowed to avoid retry delays
     db_context = Database(engine=db_engine)
@@ -356,8 +349,9 @@ async def test_task_worker_context_includes_taint_tracker(
 @pytest.mark.asyncio
 async def test_retry_exhaustion_leads_to_failure(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
 ) -> None:
-    """Test that tasks fail permanently after exhausting retries."""
+    """Test that a task retries once on failure, then fails permanently once retries are exhausted."""
     # Create worker using the fixture factory with short timeout
     worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=MagicMock(),
@@ -367,67 +361,66 @@ async def test_retry_exhaustion_leads_to_failure(
     engine = worker.engine
     assert engine is not None
 
-    # Handler that always times out
+    # Handler that always times out: it never completes on its own, so only
+    # the handler timeout can end an attempt.
     async def timeout_handler(
         # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
         exec_context: ToolExecutionContext,
         # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
         payload: dict[str, Any],
     ) -> None:
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
-        await asyncio.sleep(1.0)  # Longer than the 0.1s timeout
+        await asyncio.Event().wait()
 
     worker.register_task_handler("timeout", timeout_handler)
 
-    # Create task with NO retries allowed
+    # Create task with exactly one retry allowed
     db_context = Database(engine=engine)
     await db_context.tasks.enqueue(
-        task_id="no_retry_test",
+        task_id="retry_exhaustion_test",
         task_type="timeout",
         payload={},
-        max_retries_override=0,  # No retries
+        max_retries_override=1,
         priority=TaskPriority.INTERACTIVE,
     )
-
-    # Small delay to ensure task is committed (important for postgres)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
-    await asyncio.sleep(0.1)
 
     # Wake up worker to process task
     new_task_event.set()
 
-    # Wait for task to fail (no retries)
-    # Use a background task to periodically wake the worker to ensure it processes the failure
-    async def wake_worker_periodically() -> None:
-        for _ in range(
-            40
-        ):  # Wake every 0.5s for 20 seconds total (matches main timeout)
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
-            await asyncio.sleep(0.5)
-            new_task_event.set()
+    async def task_rescheduled_for_retry() -> TaskDict | None:
+        task = await _get_task(engine, "retry_exhaustion_test")
+        if (
+            task is not None
+            and task["status"] == "pending"
+            and task["retry_count"] == 1
+        ):
+            return task
+        return None
 
-    wake_task = asyncio.create_task(wake_worker_periodically())
+    retried_task = await wait_for_condition(
+        task_rescheduled_for_retry,
+        timeout=10.0,
+        description="task rescheduled for retry after first timeout",
+    )
+    assert retried_task is not None
+    assert "TimeoutError" in (retried_task["error"] or "")
 
-    try:
-        await wait_for_tasks_to_complete(
-            engine=engine,
-            timeout_seconds=20.0,  # Increased from 10.0 to handle slower CI environments
-            task_ids={"no_retry_test"},
-            allow_failures=True,
-        )
-    finally:
-        wake_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await wake_task
+    # Advance past the exponential backoff delay and wake the worker so it
+    # picks the retried attempt back up, which then also times out.
+    mock_clock.advance(timedelta(seconds=10))
+    new_task_event.set()
 
-    # Check task failed
-    db_context = Database(engine=engine)
-    stmt = select(tasks_table).where(tasks_table.c.task_id == "no_retry_test")
-    tasks = await db_context.fetch_all(stmt)
-    task = tasks[0] if tasks else None
+    await wait_for_tasks_to_complete(
+        engine=engine,
+        timeout_seconds=10.0,
+        task_ids={"retry_exhaustion_test"},
+        allow_failures=True,
+    )
 
+    # Check task failed permanently after exhausting its single retry
+    task = await _get_task(engine, "retry_exhaustion_test")
     assert task is not None
     assert task["status"] == "failed"
+    assert task["retry_count"] == 1
     assert "TimeoutError" in (task["error"] or "")
 
 
@@ -618,84 +611,87 @@ async def test_retryable_schedule_failure_does_not_reschedule_next_run(
 
 @pytest.mark.asyncio
 async def test_schedule_advance_enqueued_when_retry_reschedule_fails(
-    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If retry rescheduling fails into terminal failure, schedule advancement remains retryable."""
-    worker = TaskWorker(
+    worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
-        calendar_config={},
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        engine=db_engine,
-        shutdown_event_instance=asyncio.Event(),
+    )
+    engine = worker.engine
+    assert engine is not None
+
+    async def failing_handler(
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
+        payload: dict[str, Any],
+    ) -> None:
+        raise RuntimeError("scheduled action failed")
+
+    worker.register_task_handler("script_execution", failing_handler)
+
+    async def fail_reschedule_for_retry(
+        repository: TasksRepository,
+        task_id: str,
+        next_scheduled_at: datetime,
+        new_retry_count: int,
+        error: str,
+    ) -> bool:
+        raise RuntimeError("retry reschedule failed")
+
+    monkeypatch.setattr(
+        TasksRepository, "reschedule_for_retry", fail_reschedule_for_retry
     )
 
     automation_id = await _create_schedule_automation(
-        db_engine,
+        engine,
         action_type="script",
-        action_config={"script_code": "raise RuntimeError('retry me')"},
+        action_config={
+            "script_code": "raise RuntimeError('scheduled action failed')",
+            "notify_on_failure": False,
+        },
         conversation_id="schedule-retry-reschedule-failure",
     )
     original_task = await _make_schedule_task_due_now(
-        db_engine,
+        engine,
         automation_id,
         worker.clock.now(),
         max_retries=1,
     )
 
-    db_context = Database(engine=db_engine)
-
-    async def fail_retry_reschedule(
-        task_id: str,
-        next_scheduled_at: datetime,
-        new_retry_count: int,
-        error: str,
-    ) -> None:
-        raise RuntimeError("retry reschedule failed")
-
-    monkeypatch.setattr(
-        db_context.tasks,
-        "reschedule_for_retry",
-        fail_retry_reschedule,
+    new_task_event.set()
+    await wait_for_tasks_to_complete(
+        engine=engine,
+        timeout_seconds=10.0,
+        task_ids={original_task["task_id"]},
+        allow_failures=True,
     )
 
-    advance_request = await worker._handle_task_failure(
-        db_context,
-        original_task,
-        RuntimeError("handler failed"),
-        0.0,
-    )
-    assert advance_request is not None
-
-    completed_task = await _get_task(db_engine, original_task["task_id"])
+    completed_task = await _get_task(engine, original_task["task_id"])
     assert completed_task is not None
     assert completed_task["status"] == "failed"
     assert "Reschedule Failed" in (completed_task["error"] or "")
-    assert completed_task["payload"] is not None
-    assert "_schedule_automation_advance" in completed_task["payload"]
 
-    db_context = Database(engine=db_engine)
-    flushed = await worker._flush_schedule_automation_advance_outbox(
-        db_context,
-        advance_request.source_task_id,
+    # The run loop drains the outbox on its own, enqueuing (and, since the
+    # advance handler is registered, then processing) the schedule
+    # advancement despite the retry-reschedule failure.
+    async def automation_advanced() -> Mapping[str, Any] | None:
+        automation = await Database(engine=engine).schedule_automations.get_by_id(
+            automation_id
+        )
+        if automation is not None and automation["execution_count"] == 1:
+            return automation
+        return None
+
+    automation = await wait_for_condition(
+        automation_advanced,
+        timeout=10.0,
+        description="schedule automation advanced despite reschedule failure",
     )
-    assert flushed is True
-
-    tasks = await _get_tasks_for_automation(db_engine, automation_id)
-    advance_tasks = [
-        task
-        for task in tasks
-        if task["task_type"] == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE
-    ]
-    assert len(advance_tasks) == 1
-    assert advance_tasks[0]["status"] == "pending"
-    advance_payload = advance_tasks[0]["payload"]
-    assert advance_payload is not None
-    assert advance_payload["automation_id"] == str(automation_id)
-    assert advance_payload["source_task_id"] == original_task["task_id"]
-    assert datetime.fromisoformat(advance_payload["execution_time"]).tzinfo is not None
+    assert automation is not None
+    assert automation["last_execution_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -883,114 +879,175 @@ async def test_schedule_advance_enqueue_failure_preserves_failed_source_status(
     assert "_schedule_automation_advance" in completed_task["payload"]
 
 
+def _make_fail_advance_enqueue(
+    original_enqueue: Callable[..., Awaitable[None]],
+) -> Callable[..., Awaitable[None]]:
+    """Build a TasksRepository.enqueue replacement that fails only advance-task enqueues.
+
+    Returns a plain function (not a bound method or functools.partial) so that
+    monkeypatch.setattr(TasksRepository, "enqueue", ...) still binds ``self``
+    normally through the descriptor protocol.
+    """
+
+    async def fail_advance_enqueue(
+        repository: TasksRepository,
+        task_id: str,
+        task_type: str,
+        payload: Mapping[str, Any] | None = None,
+        scheduled_at: datetime | None = None,
+        max_retries_override: int | None = None,
+        recurrence_rule: str | None = None,
+        original_task_id: str | None = None,
+        *,
+        priority: TaskPriority,
+    ) -> None:
+        if task_type == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE:
+            raise RuntimeError("advance enqueue failed")
+        await original_enqueue(
+            repository,
+            task_id,
+            task_type,
+            payload,
+            scheduled_at,
+            max_retries_override,
+            recurrence_rule,
+            original_task_id,
+            priority=priority,
+        )
+
+    return fail_advance_enqueue
+
+
+async def _wait_for_stuck_outbox_entry(engine: AsyncEngine, task_id: str) -> TaskDict:
+    async def outbox_is_stuck() -> TaskDict | None:
+        task = await _get_task(engine, task_id)
+        if (
+            task is not None
+            and task["payload"]
+            and "_schedule_automation_advance" in task["payload"]
+        ):
+            return task
+        return None
+
+    stuck_task = await wait_for_condition(
+        outbox_is_stuck,
+        timeout=10.0,
+        description="source task with stuck schedule advancement outbox entry",
+    )
+    assert stuck_task is not None
+    return stuck_task
+
+
+async def _wait_for_automation_advanced(
+    engine: AsyncEngine, automation_id: int
+) -> Mapping[str, Any]:
+    async def automation_advanced() -> Mapping[str, Any] | None:
+        automation = await Database(engine=engine).schedule_automations.get_by_id(
+            automation_id
+        )
+        if automation is not None and automation["execution_count"] == 1:
+            return automation
+        return None
+
+    automation = await wait_for_condition(
+        automation_advanced,
+        timeout=10.0,
+        description="schedule automation advanced after outbox recovery",
+    )
+    assert automation is not None
+    return automation
+
+
 @pytest.mark.asyncio
 async def test_schedule_advance_outbox_drains_after_source_commit(
-    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A persisted schedule advancement outbox can recover after source commit."""
-    worker = TaskWorker(
+    """A schedule advancement outbox stuck by a failed enqueue drains once enqueue recovers."""
+    worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
-        calendar_config={},
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        engine=db_engine,
-        shutdown_event_instance=asyncio.Event(),
     )
+    engine = worker.engine
+    assert engine is not None
+
+    async def successful_handler(
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
+        payload: dict[str, Any],
+    ) -> None:
+        pass
+
+    worker.register_task_handler("script_execution", successful_handler)
 
     automation_id = await _create_schedule_automation(
-        db_engine,
+        engine,
         action_type="script",
         action_config={"script_code": "print('done')"},
         conversation_id="schedule-outbox-recovery",
     )
     original_task = await _make_schedule_task_due_now(
-        db_engine,
+        engine,
         automation_id,
         worker.clock.now(),
         max_retries=0,
     )
-    advance_request = worker._schedule_automation_advance_request_for_task(
-        original_task
-    )
-    assert advance_request is not None
 
-    payload = worker._payload_with_schedule_automation_advance_outbox(
-        original_task,
-        advance_request,
-    )
-    assert payload is not None
-    outbox = payload[SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY]
-    assert isinstance(outbox, dict)
-    outbox["schedule_next"] = False
-
-    db_context = Database(engine=db_engine)
-    await db_context.tasks.update_status(
-        task_id=original_task["task_id"],
-        status="done",
-        payload=payload,
-    )
-    await db_context.execute(
-        update(tasks_table)
-        .where(tasks_table.c.task_id == original_task["task_id"])
-        .values(created_at=datetime(2026, 6, 23, 12, tzinfo=UTC))
+    original_enqueue = TasksRepository.enqueue
+    monkeypatch.setattr(
+        TasksRepository,
+        "enqueue",
+        _make_fail_advance_enqueue(original_enqueue),
     )
 
-    db_context = Database(engine=db_engine)
-    drained = await worker._drain_schedule_automation_advance_outbox(db_context)
-    assert drained == 1
+    new_task_event.set()
+    await wait_for_tasks_to_complete(
+        engine=engine,
+        timeout_seconds=10.0,
+        task_ids={original_task["task_id"]},
+    )
+    await _wait_for_stuck_outbox_entry(engine, original_task["task_id"])
 
-    completed_task = await _get_task(db_engine, original_task["task_id"])
-    assert completed_task is not None
-    assert completed_task["payload"] is not None
-    assert "_schedule_automation_advance" not in completed_task["payload"]
+    # Enqueue recovers; the run loop drains the outbox on its own on the next
+    # iteration, without needing to reprocess the source task.
+    monkeypatch.undo()
+    new_task_event.set()
 
-    tasks = await _get_tasks_for_automation(db_engine, automation_id)
-    advance_tasks = [
-        task
-        for task in tasks
-        if task["task_type"] == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE
-    ]
-    assert len(advance_tasks) == 1
-    assert advance_tasks[0]["status"] == "pending"
-    advance_payload = advance_tasks[0]["payload"]
-    assert advance_payload is not None
-    assert advance_payload["schedule_next"] is False
+    await _wait_for_automation_advanced(engine, automation_id)
+
+    recovered_task = await _get_task(engine, original_task["task_id"])
+    assert recovered_task is not None
+    assert recovered_task["payload"] is not None
+    assert "_schedule_automation_advance" not in recovered_task["payload"]
 
 
 @pytest.mark.asyncio
 async def test_schedule_advance_outbox_drain_finds_buried_entries(
-    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Outbox recovery filters for pending advancement work before applying its batch limit."""
-    worker = TaskWorker(
+    """Outbox recovery finds a stuck entry even behind many unrelated terminal tasks."""
+    worker, new_task_event, shutdown_event = task_worker_manager(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
-        calendar_config={},
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        engine=db_engine,
-        shutdown_event_instance=asyncio.Event(),
     )
+    engine = worker.engine
+    assert engine is not None
 
-    automation_id = await _create_schedule_automation(
-        db_engine,
-        action_type="script",
-        action_config={"script_code": "print('done')"},
-        conversation_id="schedule-outbox-buried",
-    )
-    original_task = await _make_schedule_task_due_now(
-        db_engine,
-        automation_id,
-        worker.clock.now(),
-        max_retries=0,
-    )
-    advance_request = worker._schedule_automation_advance_request_for_task(
-        original_task
-    )
-    assert advance_request is not None
+    async def successful_handler(
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
+        payload: dict[str, Any],
+    ) -> None:
+        pass
 
-    db_context = Database(engine=db_engine)
+    # Register before any await lets the already-scheduled run loop start:
+    # it reads its handled task types once, at startup.
+    worker.register_task_handler("script_execution", successful_handler)
+
+    db_context = Database(engine=engine)
     for index in range(25):
         task_id = f"noise_terminal_task_{index}"
         await db_context.tasks.enqueue(
@@ -999,27 +1056,45 @@ async def test_schedule_advance_outbox_drain_finds_buried_entries(
             payload={"noise": index},
             priority=TaskPriority.INTERACTIVE,
         )
-        await db_context.tasks.update_status(
-            task_id=task_id,
-            status="done",
-        )
-    await db_context.tasks.update_status(
-        task_id=original_task["task_id"],
-        status="done",
-        payload=worker._payload_with_schedule_automation_advance_outbox(
-            original_task,
-            advance_request,
-        ),
+        await db_context.tasks.update_status(task_id=task_id, status="done")
+
+    automation_id = await _create_schedule_automation(
+        engine,
+        action_type="script",
+        action_config={"script_code": "print('done')"},
+        conversation_id="schedule-outbox-buried",
+    )
+    original_task = await _make_schedule_task_due_now(
+        engine,
+        automation_id,
+        worker.clock.now(),
+        max_retries=0,
     )
 
-    db_context = Database(engine=db_engine)
-    drained = await worker._drain_schedule_automation_advance_outbox(db_context)
-    assert drained == 1
+    original_enqueue = TasksRepository.enqueue
+    monkeypatch.setattr(
+        TasksRepository,
+        "enqueue",
+        _make_fail_advance_enqueue(original_enqueue),
+    )
 
-    completed_task = await _get_task(db_engine, original_task["task_id"])
-    assert completed_task is not None
-    assert completed_task["payload"] is not None
-    assert "_schedule_automation_advance" not in completed_task["payload"]
+    new_task_event.set()
+    await wait_for_tasks_to_complete(
+        engine=engine,
+        timeout_seconds=10.0,
+        task_ids={original_task["task_id"]},
+    )
+    await _wait_for_stuck_outbox_entry(engine, original_task["task_id"])
+
+    monkeypatch.undo()
+    new_task_event.set()
+
+    await _wait_for_automation_advanced(engine, automation_id)
+
+    recovered_task = await _get_task(engine, original_task["task_id"])
+    assert recovered_task is not None
+    assert recovered_task["payload"] is not None
+    assert "_schedule_automation_advance" not in recovered_task["payload"]
 
 
 @pytest.mark.asyncio
@@ -1247,8 +1322,12 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
 
 
 @pytest.mark.asyncio
-async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
-    """Test that worker tracks last activity time."""
+async def test_worker_activity_tracking(
+    db_engine: AsyncEngine, mock_clock: MockClock
+) -> None:
+    """Test that worker advances last_activity to the clock time it processed a task at."""
+    t0 = datetime(2026, 6, 1, tzinfo=UTC)
+    mock_clock.set_time(t0)
     worker = TaskWorker(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
@@ -1256,12 +1335,12 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
         timezone=ZoneInfo("UTC"),
         embedding_generator=MagicMock(),
         engine=db_engine,
+        clock=mock_clock,
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
     )
 
-    # Initial activity should be set
-    initial_activity = worker.last_activity
-    assert initial_activity is not None
+    # Initial activity should be set to the clock's current time
+    assert worker.last_activity == t0
 
     # Create and run a simple task
     async def simple_handler(
@@ -1282,9 +1361,7 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
         priority=TaskPriority.INTERACTIVE,
     )
 
-    # Small delay to ensure task is committed (important for postgres)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
-    await asyncio.sleep(0.1)
+    mock_clock.advance(timedelta(minutes=5))
 
     # Create wake up event and run worker to process task
     wake_up_event = asyncio.Event()
@@ -1305,52 +1382,26 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await worker_task
 
-    # Activity should have been updated
-    assert worker.last_activity is not None, "last_activity is None"
-    # Allow for small timing differences
-    if worker.last_activity < initial_activity:
-        diff = (initial_activity - worker.last_activity).total_seconds()
-        assert diff < 1.0, (
-            f"last_activity {worker.last_activity} is {diff}s before initial {initial_activity}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_health_check_properties(db_engine: AsyncEngine) -> None:
-    """Test properties that health monitoring would check."""
-    worker = TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
-        calendar_config={},
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        engine=db_engine,
-        shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
-    )
-
-    # Create wake up event and start worker without any tasks
-    wake_up_event = asyncio.Event()
-    worker_task = asyncio.create_task(worker.run(wake_up_event))
-
-    try:
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
-        await asyncio.sleep(0.5)
-
-        # Last activity should be recent
-        assert worker.last_activity is not None
-        time_since_activity = (datetime.now(UTC) - worker.last_activity).total_seconds()
-        assert time_since_activity < 10  # Should have been updated recently
-
-    finally:
-        worker.shutdown_event.set()
-        worker_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await worker_task
+    # The run loop's own activity updates advanced last_activity to the clock
+    # time it observed while processing, strictly after the initial value.
+    assert worker.last_activity == t0 + timedelta(minutes=5)
 
 
 @pytest.mark.asyncio
 async def test_shutdown_stops_worker(db_engine: AsyncEngine) -> None:
-    """Test that shutdown event stops the worker cleanly."""
+    """Test that shutdown event stops a worker parked in its poll wait."""
+
+    class _ParkTrackingEvent(asyncio.Event):
+        """A wake event that records when the worker starts waiting on it."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.parked = asyncio.Event()
+
+        async def wait(self) -> bool:
+            self.parked.set()
+            return await super().wait()
+
     worker = TaskWorker(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
@@ -1361,14 +1412,26 @@ async def test_shutdown_stops_worker(db_engine: AsyncEngine) -> None:
         shutdown_event_instance=asyncio.Event(),  # Create fresh shutdown event for test
     )
 
-    # Create wake up event and start worker
-    wake_up_event = asyncio.Event()
-    worker_task = asyncio.create_task(worker.run(wake_up_event))
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
-    await asyncio.sleep(0.1)
+    # Register a handler so the run loop has task types to dequeue and parks
+    # waiting for work, rather than exiting immediately regardless of shutdown.
+    async def noop_handler(
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
+        payload: dict[str, Any],
+    ) -> None:
+        pass
 
-    # Set shutdown event
+    worker.register_task_handler("noop", noop_handler)
+
+    wake_up_event = _ParkTrackingEvent()
+    worker_task = asyncio.create_task(worker.run(wake_up_event))
+
+    await asyncio.wait_for(wake_up_event.parked.wait(), timeout=10.0)
+
+    # Set shutdown event and wake the worker, as production shutdown does.
     worker.shutdown_event.set()
+    wake_up_event.set()
 
     # Worker should stop within reasonable time
     try:

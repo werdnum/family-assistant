@@ -23,6 +23,49 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
+async def test_stale_task_cutoff_is_fifteen_minutes(db_engine: AsyncEngine) -> None:
+    """The dequeue stale cutoff protects a lock for 15 minutes, no longer.
+
+    Deterministic and worker-free: drives ``TaskRepository.dequeue`` directly
+    with fixed timestamps, so there is no polling loop whose timing could make
+    the negative assertion (task still locked) pass vacuously.
+    """
+    db_context = Database(engine=db_engine)
+    start_time = datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC)
+    await db_context.tasks.enqueue(
+        task_id="stale_cutoff_probe",
+        task_type="race_test",
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
+
+    claimed = await db_context.tasks.dequeue(
+        worker_id="worker_a",
+        task_types=["race_test"],
+        current_time=start_time,
+    )
+    assert claimed is not None
+    assert claimed["task_id"] == "stale_cutoff_probe"
+
+    still_locked = await db_context.tasks.dequeue(
+        worker_id="worker_b",
+        task_types=["race_test"],
+        current_time=start_time + timedelta(minutes=6),
+    )
+    assert still_locked is None, "Lock held for only 6 minutes must not be stolen"
+
+    now_stale = await db_context.tasks.dequeue(
+        worker_id="worker_b",
+        task_types=["race_test"],
+        current_time=start_time + timedelta(minutes=16),
+    )
+    assert now_stale is not None, (
+        "A lock held past the 15-minute cutoff must become reclaimable"
+    )
+    assert now_stale["task_id"] == "stale_cutoff_probe"
+
+
+@pytest.mark.asyncio
 async def test_stale_task_pickup_prevented_by_timeout_buffer(
     db_engine: AsyncEngine,
 ) -> None:
@@ -137,20 +180,26 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
     # With stale_timeout = 15 minutes (new value), the task should remain locked.
     clock_b.advance(timedelta(minutes=6))
 
-    # 3. Run Worker B.
+    # Prove the lock resists B's would-be claim deterministically, by driving
+    # the same dequeue B's loop would use directly rather than racing an
+    # in-process poll against a fixed sleep. A dequeue is exclusive, so calling
+    # it here does not create a false negative: only a genuinely stale lock
+    # would let this steal the task.
+    premature_claim = await db_context.tasks.dequeue(
+        worker_id="worker_b_probe",
+        task_types=["race_test"],
+        current_time=clock_b.now(),
+    )
+    assert premature_claim is None, (
+        "Task became stealable after only 6 minutes; stale task race condition detected."
+    )
+    assert execution_count == 0
+    logger.info("Worker B's dequeue correctly found no claimable task.")
+
+    # 3. Run Worker B, to verify the full worker loop also leaves the task alone.
     wake_event_b = asyncio.Event()
     wake_event_b.set()
     task_b = asyncio.create_task(worker_b.run(wake_event_b))
-
-    # Wait a bit to ensure B had time to check
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating wait for race condition check
-    await asyncio.sleep(1.0)
-
-    # execution_count should be 0 (A is waiting, B shouldn't have run)
-    assert execution_count == 0, (
-        "Worker B executed the task prematurely! Stale task race condition detected."
-    )
-    logger.info("Worker B did not execute the task (correct behavior).")
 
     # 4. Now signal Worker A to finish
     worker_a_event.set()
