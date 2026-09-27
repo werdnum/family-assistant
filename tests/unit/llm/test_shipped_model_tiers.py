@@ -260,7 +260,13 @@ def test_a_tiered_profile_gets_one_client_per_tier_it_may_run_on(
         eligibility,
     )
 
-    assert set(clients) == {"standard", "deep", "frontier"}
+    # The delegation presets are runnable too, so they get clients as well.
+    assert set(clients) == {
+        "standard",
+        "deep",
+        "frontier",
+        *eligibility.delegation_ids,
+    }
     assert isinstance(clients["frontier"], AnthropicClient)
     # The default tier's entry *is* the service's default client, not a second
     # client built the same way.

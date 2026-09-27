@@ -215,6 +215,33 @@ model_tiers:
           output_config:
             effort: "xhigh"
           max_tokens: 16000
+  # Exact-model presets. Each is one model with no fallback, so a delegation
+  # that names one gets that model's answer or a visible failure -- never
+  # another model's answer under its name. They are for a delegating model that
+  # wants a specific model on purpose, such as a "council" putting one question
+  # to several models and comparing: a profile admits them through
+  # `delegation_model_tiers`, which neither the Auto classifier nor the tier
+  # picker reads. The label is what the delegating model sees.
+  gpt_6_sol:
+    label: "GPT-6 Sol"
+    description: "OpenAI's strongest reasoning model."
+    chain:
+      - provider: "openai"
+        model: "gpt-6-sol"
+  claude_fable_5_1:
+    label: "Claude Fable 5.1"
+    # Rejects a forced tool choice, which attachment selection sends, so a
+    # request carrying attachments for it to pick from fails visibly here.
+    description: "Anthropic's strongest model, at its default effort."
+    chain:
+      - provider: "anthropic"
+        model: "claude-fable-5-1"
+  gemini_3_8_flash:
+    label: "Gemini 3.8 Flash"
+    description: "Google's fast model; the only one that reads audio and video."
+    chain:
+      - provider: "google"
+        model: "gemini-3.8-flash"
 
 # The Auto classifier: a cheap call before the turn that picks which of a
 # profile's `auto_model_tiers` the request deserves. It runs only for profiles
@@ -1046,6 +1073,10 @@ service_profiles:
     # deliberately absent: it is chosen when somebody decides this request is
     # worth the spend, not inferred.
     auto_model_tiers: ["standard", "deep"]
+    # Specific models another profile may ask for by name -- for comparing
+    # independent answers to one question. Auto never routes to these and the
+    # tier picker does not list them.
+    delegation_model_tiers: ["gpt_6_sol", "claude_fable_5_1", "gemini_3_8_flash"]
     auto_routing_guidance: |
       Prefer standard for routine conversation, retrieval and straightforward
       tool use. Choose deep where substantial ambiguity, multi-stage reasoning,

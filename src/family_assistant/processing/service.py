@@ -31,6 +31,7 @@ from family_assistant.llm.model_selection import (
     ModelTierClientMissing,
     ModelTierEligibility,
     ModelTierNotPermitted,
+    ModelTierOption,
     ResolvedModelSelection,
     resolve_model_selection,
     stamp_model_selection,
@@ -156,25 +157,37 @@ def _tool_row_attachment_ids(message: LLMMessage) -> set[str]:
 def _selectable_tier_lines(eligibility: ModelTierEligibility) -> list[str]:
     """Catalog lines naming the tiers a delegating model may ask a target for.
 
-    Only the automatic list is advertised: a tier the target admits from a user
-    but not from another profile would be a suggestion the model can only be
-    refused for taking. A target with nothing beyond its default gets no lines
-    at all, which is most of them.
+    Only what a delegating model is admitted to is advertised: a tier the
+    target admits from a user but not from another profile would be a
+    suggestion the model can only be refused for taking. Exact-model presets
+    are listed apart from capability tiers, because choosing one is choosing a
+    specific model rather than how much reasoning the request deserves. A
+    target with nothing beyond its default gets no lines at all, which is most
+    of them.
     """
-    options = [
+    tiers = [
         option
         for option in eligibility.auto_options
         if option.id != eligibility.default_tier
     ]
-    if not options:
-        return []
-    lines = ["  Optional `model_tier` values for this profile:"]
-    lines.extend(
-        f"  - {option.id} ({option.label})"
-        + (f": {option.description}" if option.description else "")
-        for option in options
-    )
+    tier_ids = {option.id for option in tiers} | {eligibility.default_tier}
+    presets = [option for option in eligibility.delegation if option.id not in tier_ids]
+    lines: list[str] = []
+    if tiers:
+        lines.append("  Optional `model_tier` values for this profile:")
+        lines.extend(_tier_option_line(option) for option in tiers)
+    if presets:
+        lines.append(
+            "  Specific models this profile can be run on (pass as `model_tier`):"
+        )
+        lines.extend(_tier_option_line(option) for option in presets)
     return lines
+
+
+def _tier_option_line(option: ModelTierOption) -> str:
+    return f"  - {option.id} ({option.label})" + (
+        f": {option.description}" if option.description else ""
+    )
 
 
 def _attachment_summary(

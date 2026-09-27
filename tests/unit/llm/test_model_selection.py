@@ -36,6 +36,10 @@ TIERS = {
     "frontier": ModelTierConfig(
         chain=[RetryModelConfig(provider="anthropic", model="claude-fable-5")],
     ),
+    "gpt_6_sol": ModelTierConfig(
+        label="GPT-6 Sol",
+        chain=[RetryModelConfig(provider="openai", model="gpt-6-sol")],
+    ),
 }
 
 
@@ -43,6 +47,7 @@ def _eligibility(
     default_tier: str | None = "standard",
     allowed: list[str] | None = None,
     auto: list[str] | None = None,
+    delegation: list[str] | None = None,
 ) -> ModelTierEligibility:
     profile = ServiceProfile(
         id="test_profile",
@@ -53,6 +58,7 @@ def _eligibility(
         ),
         allowed_model_tiers=allowed,
         auto_model_tiers=auto,
+        delegation_model_tiers=delegation,
     )
     return ModelTierEligibility.from_profile(profile, TIERS)
 
@@ -319,3 +325,73 @@ def test_the_automatic_options_are_the_selectable_ones_the_list_names() -> None:
     )
 
     assert [option.id for option in eligibility.auto_options] == ["standard", "deep"]
+
+
+def _preset_eligibility() -> ModelTierEligibility:
+    return _eligibility(
+        allowed=["standard", "deep"],
+        auto=["standard", "deep"],
+        delegation=["gpt_6_sol"],
+    )
+
+
+def test_a_delegating_model_may_name_a_delegation_preset() -> None:
+    resolved = resolve_model_selection(
+        _preset_eligibility(),
+        ModelSelectionRequest(tier="gpt_6_sol", source="model"),
+        profile_id="test_profile",
+    )
+
+    assert resolved.tier == "gpt_6_sol"
+    assert resolved.source == "model"
+
+
+def test_auto_never_routes_to_a_delegation_preset() -> None:
+    """Asking for one specific model is not a capability level Auto weighs."""
+    eligibility = _preset_eligibility()
+
+    assert [option.id for option in eligibility.auto_options] == ["standard", "deep"]
+    with pytest.raises(ModelTierNotPermitted):
+        resolve_model_selection(
+            eligibility,
+            ModelSelectionRequest(tier="gpt_6_sol", source="auto"),
+            profile_id="test_profile",
+        )
+
+
+def test_a_delegation_preset_stays_off_the_tier_picker_but_a_user_may_name_it() -> None:
+    """A model may not reach a tier a person would be refused."""
+    eligibility = _preset_eligibility()
+
+    assert eligibility.selectable_ids == ("standard", "deep")
+    resolved = resolve_model_selection(
+        eligibility,
+        ModelSelectionRequest(tier="gpt_6_sol", source="user"),
+        profile_id="test_profile",
+    )
+    assert resolved.tier == "gpt_6_sol"
+
+
+def test_a_delegating_model_is_refused_a_preset_the_profile_does_not_list() -> None:
+    with pytest.raises(ModelTierNotPermitted) as refusal:
+        resolve_model_selection(
+            _eligibility(allowed=["standard", "deep"], auto=["standard", "deep"]),
+            ModelSelectionRequest(tier="gpt_6_sol", source="model"),
+            profile_id="test_profile",
+        )
+    assert refusal.value.eligible_tiers == ("standard", "deep")
+
+
+def test_every_runnable_tier_is_listed_once() -> None:
+    """What gets a client built: the selectable tiers, then the presets."""
+    eligibility = _eligibility(
+        allowed=["standard", "deep"],
+        auto=["standard"],
+        delegation=["deep", "gpt_6_sol"],
+    )
+
+    assert [option.id for option in eligibility.runnable] == [
+        "standard",
+        "deep",
+        "gpt_6_sol",
+    ]

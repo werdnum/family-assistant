@@ -1718,7 +1718,7 @@ class Assistant:
             return llm_client, {}
 
         clients: dict[str, LLMInterface] = {}
-        for option in tier_eligibility.selectable:
+        for option in tier_eligibility.runnable:
             override = (
                 self.llm_client_overrides.get(f"{profile_id}@{option.id}")
                 or profile_override

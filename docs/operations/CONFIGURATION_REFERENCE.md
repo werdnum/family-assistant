@@ -915,7 +915,7 @@ by looking it up, so a collision means one of the two silently never runs — an
 it is always the configured one that loses. Compared case-insensitively, since Telegram treats
 `/Deep` and `/deep` as one command. Shipped: `/deep` and `/max`.
 
-#### Eligibility: `model_tier`, `allowed_model_tiers`, `auto_model_tiers`
+#### Eligibility: `model_tier`, `allowed_model_tiers`, `auto_model_tiers`, `delegation_model_tiers`
 
 - `processing_config.model_tier` — the tier the profile runs on when a request names none.
 - `allowed_model_tiers` (top level on the profile, beside `tools_policy`) — the tiers **a user** may
@@ -923,17 +923,27 @@ it is always the configured one that loses. Compared case-insensitively, since T
 - `auto_model_tiers` (likewise top level) — the subset **a model** may select without a
   confirmation: a `delegate_to_service` `model_tier` argument, and the Auto classifier. Omitted
   means "only its own `model_tier`".
+- `delegation_model_tiers` (likewise top level) — further tiers **a delegating model** may name for
+  the profile, which the Auto classifier never routes to and the intelligence control does not list.
+  This is where exact-model presets go: a tier holding one model and no fallback, so a delegation
+  that names it gets that model's answer or a visible failure, never another model's answer under
+  its name. It is what lets one profile put the same question to several specific models and compare
+  the answers. A person may also name a preset through the API, since a model may not reach what a
+  person would be refused, but no client lists them. Omitted means none.
 
-Both lists are replaced, never merged, when a profile or an operator overrides one, so they can only
+The lists are replaced, never merged, when a profile or an operator overrides one, so they can only
 narrow. Every name must exist in `model_tiers`; the profile's own `model_tier` must appear in
 `allowed_model_tiers`; `auto_model_tiers` may not reach past `allowed_model_tiers`, because
-automatic selection is the weaker authority of the two; and setting either on a profile with no
-`model_tier` is a startup error.
+automatic selection is the weaker authority of the two; and setting any of them on a profile with no
+`model_tier` is a startup error. Every tier in any of the lists gets a client built at startup.
 
 The distinction is who authorized the spend. An authenticated person choosing Max on their own
 request *is* the authorization. A model choosing it is not, which is why the shipped
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
-automatically.
+automatically. The shipped `default_assistant` also lists three presets in `delegation_model_tiers`
+— `gpt_6_sol`, `claude_fable_5_1` and `gemini_3_8_flash` — which, being listed there, a delegating
+model may name without a confirmation. Adding a preset is a `model_tiers` entry plus a name in that
+list.
 
 #### Selecting a tier per request
 
@@ -945,7 +955,9 @@ automatically.
   `default_model_tier` or gets one chosen for it. `model_selection` reports **effective** behaviour:
   a profile configured for Auto reads as `explicit` while `model_routing.mode` is `off` or `shadow`,
   because that is what its requests actually do.
-- **Delegation:** `model_tier` on `delegate_to_service`, bound by the *target's* `auto_model_tiers`.
+- **Delegation:** `model_tier` on `delegate_to_service`, bound by the *target's* `auto_model_tiers`
+  and `delegation_model_tiers`, which the delegating model sees listed beside the target in its
+  profile catalog. `get_delegation_status` and `list_delegations` report each run's `model_tier`.
   The resolved tier is persisted with the queued run and re-applied verbatim when a worker executes
   it, so a restart or a deployment cannot change the models of a run that was already authorized. A
   parent's tier never propagates: each delegation decides independently.

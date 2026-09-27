@@ -17,9 +17,12 @@ the supplied one.
 The two eligibility lists say who may ask for what. A user's explicit selection
 is authorized by ``allowed_model_tiers``: choosing to spend more on one's own
 request is the authorization. A model-composed request -- a
-``delegate_to_service`` ``model_tier`` argument, and Auto routing later -- is
-authorized by ``auto_model_tiers``, which is a subset. A profile that names an
-inline model instead of a tier admits no selection at all.
+``delegate_to_service`` ``model_tier`` argument, and Auto routing -- is
+authorized by ``auto_model_tiers``, which is a subset. A delegating model may
+also name a tier from ``delegation_model_tiers``: exact-model presets another
+profile asks for on purpose, which Auto never routes to and the tier picker
+does not list. A profile that names an inline model instead of a tier admits
+no selection at all.
 """
 
 from __future__ import annotations
@@ -52,10 +55,12 @@ type SelectionSource = Literal["user", "model", "default", "auto"]
 the routing classifier's, and ``"default"`` no selection at all -- the profile's
 configured tier.
 
-``"auto"`` and ``"model"`` are separate sources bounded by the same list: both
-are selections a model made rather than a person, but "the router chose Deep"
-and "another profile asked for Deep" are different things to see in a run
-record, and only one of them can be evaluated against a routing prompt."""
+``"auto"`` and ``"model"`` are separate sources: both are selections a model
+made rather than a person, but "the router chose Deep" and "another profile
+asked for Deep" are different things to see in a run record, and only one of
+them can be evaluated against a routing prompt. They are also bounded
+differently: a delegating model may additionally name the target's
+``delegation_model_tiers`` presets, which Auto never routes to."""
 
 _PERSISTABLE_SOURCES: frozenset[str] = frozenset(get_args(SelectionSource.__value__))
 """``SelectionSource``'s members, for validating a value read from storage.
@@ -150,10 +155,33 @@ class ModelTierEligibility:
     auto: frozenset[str] = frozenset()
     """Tiers a model may select without a confirmation. A subset of
     ``selectable``, enforced at startup."""
+    delegation: tuple[ModelTierOption, ...] = ()
+    """Tiers a delegating model may also name, in configured tier order.
+
+    Exact-model presets live here. They are kept out of ``selectable`` so the
+    tier picker does not list them, and out of ``auto`` so the classifier
+    never routes an ordinary turn to them: asking for one specific model is
+    something another profile does on purpose, not a capability level."""
 
     @property
     def selectable_ids(self) -> tuple[str, ...]:
         return tuple(option.id for option in self.selectable)
+
+    @property
+    def delegation_ids(self) -> tuple[str, ...]:
+        return tuple(option.id for option in self.delegation)
+
+    @property
+    def runnable(self) -> tuple[ModelTierOption, ...]:
+        """Every tier a run of this profile can land on, each once.
+
+        What the profile needs a client built for: a tier admitted from any
+        source, explicit or delegated, can serve a turn.
+        """
+        seen = set(self.selectable_ids)
+        return self.selectable + tuple(
+            option for option in self.delegation if option.id not in seen
+        )
 
     @property
     def auto_options(self) -> tuple[ModelTierOption, ...]:
@@ -199,10 +227,21 @@ class ModelTierEligibility:
             if tier_name in selectable_ids
         )
         auto = profile_conf.auto_model_tiers
+        delegation_ids = profile_conf.delegation_model_tiers or []
+        delegation = tuple(
+            ModelTierOption(
+                id=tier_name,
+                label=tier.label or tier_name,
+                description=tier.description,
+            )
+            for tier_name, tier in model_tiers.items()
+            if tier_name in delegation_ids
+        )
         return cls(
             default_tier=default_tier,
             selectable=selectable,
             auto=frozenset(auto if auto is not None else [default_tier]),
+            delegation=delegation,
         )
 
 
@@ -430,15 +469,29 @@ def _eligible_tiers(
 ) -> tuple[str, ...]:
     """The tiers a request from *source* may name."""
     if source == "user":
-        return eligibility.selectable_ids
-    if source in {"model", "auto"}:
-        # Auto and a delegation argument are both selections a model made, so
-        # both are bounded by the automatic list. Choosing Auto authorizes that
-        # range once; nothing inside it is confirmed again per turn.
+        # Delegation presets are admitted here too, unlisted: a tier another
+        # profile may ask for on its own is not one a person may be refused.
+        return _union(eligibility.selectable_ids, eligibility.delegation_ids)
+    if source == "model":
+        # A delegation argument is bounded by the automatic list plus the
+        # presets configured for delegation. Nothing inside that range is
+        # confirmed again per call.
+        return _union(
+            tuple(option.id for option in eligibility.auto_options),
+            eligibility.delegation_ids,
+        )
+    if source == "auto":
+        # Choosing Auto authorizes the automatic range once; it never reaches
+        # the delegation presets, which are not capability levels.
         return tuple(option.id for option in eligibility.auto_options)
     # A "default"-sourced request naming a tier is only coherent when it names
     # the default; anything else is a selection claiming to be no selection.
     return () if eligibility.default_tier is None else (eligibility.default_tier,)
+
+
+def _union(first: tuple[str, ...], second: tuple[str, ...]) -> tuple[str, ...]:
+    """*first* followed by whatever of *second* it lacks, order kept."""
+    return first + tuple(tier for tier in second if tier not in first)
 
 
 def _refusal_message(

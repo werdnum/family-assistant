@@ -556,7 +556,8 @@ async def test_async_delegate_to_service_persists_parent_taint_state(
 
 
 def _tiered_target(handler: AsyncMock) -> _Namespace:
-    """A delegation target admitting `deep` automatically but not `frontier`."""
+    """A delegation target admitting `deep` automatically but not `frontier`,
+    plus the `gpt_6_sol` preset for delegations only."""
     return _Namespace(
         service_config=_Namespace(
             id="target_profile",
@@ -569,6 +570,7 @@ def _tiered_target(handler: AsyncMock) -> _Namespace:
                     ModelTierOption(id="frontier", label="Max"),
                 ),
                 auto=frozenset({"standard", "deep"}),
+                delegation=(ModelTierOption(id="gpt_6_sol", label="GPT-6 Sol"),),
             ),
         ),
         handle_chat_interaction=handler,
@@ -632,6 +634,34 @@ async def test_delegating_at_an_automatically_admitted_tier_runs_on_it() -> None
     selection = await_args.kwargs["model_selection"]
     assert selection == ResolvedModelSelection(
         tier="deep", requested="deep", source="model"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delegating_at_a_delegation_preset_runs_on_it() -> None:
+    handler = AsyncMock(
+        return_value=ChatInteractionResult(
+            status=ChatInteractionStatus.SUCCESS, text_reply="delegated"
+        )
+    )
+    context = _delegating_context(
+        _tiered_target(handler),
+        db_context=_db_without_history(),
+        async_delegation_enabled=False,
+    )
+
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="what do you make of this?",
+        model_tier="gpt_6_sol",
+    )
+
+    assert result.text == "delegated"
+    await_args = handler.await_args
+    assert await_args is not None
+    assert await_args.kwargs["model_selection"] == ResolvedModelSelection(
+        tier="gpt_6_sol", requested="gpt_6_sol", source="model"
     )
 
 

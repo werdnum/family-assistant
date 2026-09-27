@@ -692,6 +692,9 @@ def _registry_with_profiles() -> Any:  # noqa: ANN401 - test stub registry
                             ),
                         ),
                         auto=frozenset({"standard", "deep"}),
+                        delegation=(
+                            ModelTierOption(id="gpt_6_sol", label="GPT-6 Sol"),
+                        ),
                     ),
                 )
             ),
@@ -736,6 +739,20 @@ def test_the_catalog_advertises_only_tiers_a_delegation_may_actually_ask_for() -
     # The target's own default needs no naming, and a pinned profile has none.
     assert "standard" not in rendered
     assert "model_tier" not in rendered.split("tiered_profile")[0]
+
+
+@pytest.mark.no_db
+def test_the_catalog_lists_delegation_presets_apart_from_tiers() -> None:
+    """Naming a specific model is a different choice from a capability level."""
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
+    rendered = service.render_available_service_profiles()
+
+    tiers_at = rendered.index("Optional `model_tier` values")
+    presets_at = rendered.index("Specific models this profile can be run on")
+    assert tiers_at < rendered.index("- deep (Deep)") < presets_at
+    assert rendered.index("- gpt_6_sol (GPT-6 Sol)") > presets_at
 
 
 @pytest.mark.no_db
