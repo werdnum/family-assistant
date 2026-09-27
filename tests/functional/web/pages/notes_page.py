@@ -1,6 +1,9 @@
 """Notes Page Object Model for Playwright tests."""
 
+import re
 from typing import Any
+
+from playwright.async_api import expect
 
 from .base_page import BasePage
 
@@ -36,6 +39,7 @@ class NotesPage(BasePage):
         expected_url = f"{self.base_url.rstrip('/')}/notes"
         if current_url != expected_url:
             await self.navigate_to_notes_list()
+        await self.page.locator("table tbody").wait_for(state="visible", timeout=10000)
 
     async def navigate_to_add_note(self) -> None:
         """Navigate to the add note form."""
@@ -174,7 +178,9 @@ class NotesPage(BasePage):
                         state="detached",
                         timeout=10000,
                     )
-                    break
+                    return
+                raise AssertionError(f"Delete button missing for note {title!r}")
+        raise AssertionError(f"Note row not found for deletion: {title!r}")
 
     async def search_notes(self, query: str) -> None:
         """Search for notes using the search input.
@@ -183,26 +189,23 @@ class NotesPage(BasePage):
             query: The search query
         """
         await self.ensure_on_notes_list()
-        search_input = await self.page.wait_for_selector(self.SEARCH_INPUT)
-        if search_input:
-            await search_input.fill(query)
-            # Trigger search by pressing Enter or waiting for debounce
-            await self.page.keyboard.press("Enter")
-            await self.wait_for_load(wait_for_app_ready=True)
-            # Wait for the table to be visible and stable after search
-            # This ensures React has finished re-rendering the filtered results
-            try:
-                await self.page.wait_for_selector(
-                    "tbody tr", state="visible", timeout=5000
-                )
-            except Exception:
-                # If no rows are visible, the search might have returned no results
-                # Check if the empty state message is present
-                await self.page.wait_for_selector(
-                    "td:has-text('No notes found'), td:has-text('No results')",
-                    state="visible",
-                    timeout=2000,
-                )
+        search_input = self.page.locator(self.SEARCH_INPUT)
+        await search_input.fill(query)
+        await expect(search_input).to_have_value(query)
+        await self.page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+        )
+        await self.page.wait_for_function(
+            """query => {
+                const rows = [...document.querySelectorAll('table tbody tr')];
+                if (!rows.length) return false;
+                const titles = rows.map(row => row.querySelector('td:first-child')?.textContent?.trim() ?? '');
+                const empty = titles.length === 1 && titles[0] === 'No notes found';
+                return empty || titles.every(title => title.toLowerCase().includes(query.toLowerCase()));
+            }""",
+            arg=query,
+            timeout=5000,
+        )
 
     async def get_note_count(self) -> int:
         """Get the count of notes displayed on the page.
@@ -213,6 +216,9 @@ class NotesPage(BasePage):
         await self.ensure_on_notes_list()
         # Wait for network to settle so the table reflects latest data
         await self.wait_for_load(wait_for_app_ready=True)
+        await self.page.locator(self.NOTE_ROW).first.wait_for(
+            state="visible", timeout=10000
+        )
         # Count table rows, excluding the "No notes found" row
         note_rows = await self.page.query_selector_all(self.NOTE_ROW)
         # Check if it's the empty state
@@ -234,28 +240,16 @@ class NotesPage(BasePage):
             True if the note is found, False otherwise
         """
         await self.ensure_on_notes_list()
-        # Wait for the table to be fully rendered
-        try:
-            await self.page.locator(self.NOTE_ROW).first.wait_for(
-                state="visible", timeout=10000
-            )
-        except Exception:
-            # If no rows visible, the list is empty
+        await self.page.locator(self.NOTE_ROW).first.wait_for(
+            state="visible", timeout=10000
+        )
+        note_cells = self.page.locator("tbody tr td:first-child").filter(
+            has_text=re.compile(rf"^\s*{re.escape(title)}\s*$")
+        )
+        if await note_cells.count() == 0:
+            await expect(note_cells).to_have_count(0)
             return False
-
-        try:
-            # Look for a table cell containing the exact title
-            # Use has-text for more flexible matching (handles whitespace better)
-            note_cell = self.page.locator(
-                f"tbody tr td:first-child:has-text('{title}')"
-            ).first
-            # Check if element is visible with a short timeout
-            await note_cell.wait_for(state="visible", timeout=2000)
-            # Verify exact match
-            text = await note_cell.text_content()
-            return text is not None and text.strip() == title
-        except Exception:
-            return False
+        return True
 
     async def get_all_note_titles(self) -> list[str]:
         """Get all note titles from the list page.
@@ -264,6 +258,9 @@ class NotesPage(BasePage):
             List of note titles
         """
         await self.ensure_on_notes_list()
+        await self.page.locator(self.NOTE_ROW).first.wait_for(
+            state="visible", timeout=10000
+        )
         # Get all first cells in table rows (which contain titles)
         title_elements = await self.page.query_selector_all("tbody tr td:first-child")
         titles = []
@@ -295,7 +292,9 @@ class NotesPage(BasePage):
                 if edit_links:
                     await edit_links[0].click()
                     await self.wait_for_load()
-                    break
+                    return
+                raise AssertionError(f"Edit link missing for note {title!r}")
+        raise AssertionError(f"Note row not found for editing: {title!r}")
 
     async def is_empty_state_visible(self) -> bool:
         """Check if the empty state message is visible.
@@ -324,10 +323,12 @@ class NotesPage(BasePage):
             self.INCLUDE_IN_PROMPT_CHECKBOX, state="attached", timeout=5000
         )
 
+        if title_input is None or content_textarea is None or checkbox is None:
+            raise AssertionError("Note edit form did not render")
         note_data = {
-            "title": await title_input.input_value() if title_input else "",
-            "content": await content_textarea.input_value() if content_textarea else "",
-            "include_in_prompt": await checkbox.is_checked() if checkbox else False,
+            "title": await title_input.input_value(),
+            "content": await content_textarea.input_value(),
+            "include_in_prompt": await checkbox.is_checked(),
         }
 
         return note_data

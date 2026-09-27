@@ -127,10 +127,12 @@ class BasePage:
             The text content of the element
         """
         element = await self.page.wait_for_selector(selector)
-        if element:
-            text = await element.text_content()
-            return text or ""
-        return ""
+        if element is None:
+            raise AssertionError(f"Element not found: {selector}")
+        text = await element.text_content()
+        if text is None:
+            raise AssertionError(f"Element has no text content: {selector}")
+        return text
 
     async def is_element_visible(self, selector: str) -> bool:
         """Check if an element is visible on the page.
@@ -141,11 +143,8 @@ class BasePage:
         Returns:
             True if the element is visible, False otherwise
         """
-        try:
-            await self.page.wait_for_selector(selector, timeout=5000, state="visible")
-            return True
-        except Exception:
-            return False
+        await self.wait_for_load()
+        return await self.page.locator(selector).is_visible()
 
     async def wait_for_success_message(self, message: str | None = None) -> None:
         """Wait for a success message to appear.
