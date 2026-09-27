@@ -342,12 +342,15 @@ async def test_large_binary_review_body_is_encoded_off_event_loop(
                 )
             )
             try:
-                assert await asyncio.to_thread(encoding_started.wait, 10)
+                encoding_started_in_time = await asyncio.to_thread(
+                    encoding_started.wait, 10
+                )
             finally:
                 release_encoding.set()
             with pytest.raises(KeychuteScriptError, match="held for inspection"):
                 await request_task
 
+    assert encoding_started_in_time
     assert released_by_event_loop == [True]
     authorize.assert_awaited_once()
     awaited = authorize.await_args

@@ -91,10 +91,18 @@ async def test_listener_test_matches_on_nested_dot_paths(
         },
         "old_state": "Away",
     }
+    alex_arrives_elsewhere: dict[str, object] = {
+        "entity_id": "person.alex",
+        "new_state": {
+            "state": "Away",
+            "attributes": {"friendly_name": "Alex", "latitude": 42.0},
+        },
+        "old_state": "Away",
+    }
 
     report = await _test_listener_against_events(
         db_engine,
-        [ALEX_ARRIVES_HOME, bob_arrives_home],
+        [ALEX_ARRIVES_HOME, bob_arrives_home, alex_arrives_elsewhere],
         {
             "old_state": "Away",
             "new_state.state": "Home",
@@ -103,10 +111,28 @@ async def test_listener_test_matches_on_nested_dot_paths(
         },
     )
 
-    assert report["total_tested"] == 2
+    assert report["total_tested"] == 3
     assert report["matched_count"] == 1
     assert report["matched_events"][0]["event_data"] == ALEX_ARRIVES_HOME
     assert report["analysis"] is None
+
+
+@pytest.mark.asyncio
+async def test_listener_test_matches_nested_old_state(
+    db_engine: AsyncEngine,
+) -> None:
+    event_data: dict[str, object] = {
+        "entity_id": "person.alex",
+        "old_state": {"state": "Away"},
+        "new_state": {"state": "Home"},
+    }
+    report = await _test_listener_against_events(
+        db_engine, [event_data], {"old_state.state": "Away"}
+    )
+
+    assert report["total_tested"] == 1
+    assert report["matched_count"] == 1
+    assert report["matched_events"][0]["event_data"] == event_data
 
 
 @pytest.mark.asyncio

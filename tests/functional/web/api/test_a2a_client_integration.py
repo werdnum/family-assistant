@@ -450,9 +450,11 @@ class TestA2AClientIntegration:
     ) -> None:
         """A message in one context is not part of another context's history."""
         api_mock_llm_client.default_response = MockLLMOutput(content="Response")
-        await a2a_client_wrapper.send_message(
+        first_task = await a2a_client_wrapper.send_message(
             [text_content("Hello alpha")], context_id="ctx-alpha"
         )
+        assert first_task.status.state == TaskState.completed
+        assert first_task.context_id == "ctx-alpha"
 
         task = await a2a_client_wrapper.send_message(
             [text_content("Hello beta")], context_id="ctx-beta"
@@ -554,7 +556,7 @@ class TestRemoteA2AServiceIntegration:
     ) -> None:
         """Each subconversation of one conversation gets its own remote context."""
         api_mock_llm_client.default_response = MockLLMOutput(content="OK")
-        await remote_service.handle_chat_interaction(
+        first_result = await remote_service.handle_chat_interaction(
             db_context=api_db_context,
             interface_type="test",
             conversation_id="conv-123",
@@ -563,6 +565,7 @@ class TestRemoteA2AServiceIntegration:
             user_name="test_user",
             subconversation_id=str(uuid.uuid4()),
         )
+        assert not first_result.has_error
 
         result = await remote_service.handle_chat_interaction(
             db_context=api_db_context,

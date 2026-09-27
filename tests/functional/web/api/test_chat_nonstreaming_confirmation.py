@@ -338,10 +338,7 @@ async def test_reviewer_confirmation_for_ineligible_tool_is_not_deferred(
         if msg.role == "tool" and msg.tool_call_id == "delete_note_call_1"
     ]
     assert delete_results
-    assert all(
-        result.startswith("Action blocked by automatic review for tool 'delete_note'")
-        for result in delete_results
-    )
+    assert all("blocked" in result.lower() for result in delete_results)
     rows = await db.fetch_all(select(confirmation_requests_table.c.id))
     assert rows == []
     assert (

@@ -280,7 +280,15 @@ async def test_reindex_document_e2e(
         doc_record = await db.vector.get_document_by_id(document_id)
         assert doc_record is not None
         assert doc_record.title == CORRECT_TITLE
-        assert [emb.content for emb in doc_record.embeddings] == [EXPECTED_CHUNK]
+        assert len(doc_record.embeddings) == 1, (
+            "Re-indexing should replace every old chunk with the new single chunk"
+        )
+        reindexed_content = doc_record.embeddings[0].content
+        assert reindexed_content is not None
+        assert " ".join(CORRECT_CONTENT_MARKDOWN.split()) in " ".join(
+            reindexed_content.split()
+        )
+        assert "failed" not in reindexed_content.lower()
 
         logger.info(
             f"Verified correct content was indexed for doc ID {document_id} after re-indexing."

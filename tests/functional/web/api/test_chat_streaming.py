@@ -611,6 +611,7 @@ async def test_streaming_continues_after_tool_execution_exception(
     app_fixture: FastAPI,
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
+    test_processing_service: ProcessingService,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config: ProcessingServiceConfig,
 ) -> None:
@@ -675,7 +676,7 @@ async def test_streaming_continues_after_tool_execution_exception(
             ),
         ),
         service_config=mock_processing_service_config,
-        context_providers=[],
+        context_providers=test_processing_service.context_providers,
     )
 
     response = await run_chat_turn_stream(
@@ -909,6 +910,7 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
     app_fixture: FastAPI,
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
+    test_processing_service: ProcessingService,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config: ProcessingServiceConfig,
     db_engine: AsyncEngine,
@@ -941,7 +943,10 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
         llm_client=mock_llm_client,
         tools_provider=test_tools_provider,
         service_config=mock_processing_service_config,
-        context_providers=[_TaintLookupFailsOnceProvider()],
+        context_providers=[
+            *test_processing_service.context_providers,
+            _TaintLookupFailsOnceProvider(),
+        ],
     )
 
     turn_id = str(uuid.uuid4())

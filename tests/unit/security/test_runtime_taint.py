@@ -3281,6 +3281,7 @@ def test_seen_keys_index_is_strictly_bounded() -> None:
     for i in range(added):
         state = state.add_source(source(i))
     assert state.distinct_source_count == added
+    assert len(state._seen_keys) == DEFAULT_MAX_SEEN_KEYS
 
     oldest_remembered = added - DEFAULT_MAX_SEEN_KEYS
     for i in (added - 1, oldest_remembered):

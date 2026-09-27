@@ -99,7 +99,7 @@ async def test_post_runs_to_completion_after_disconnect() -> None:
     middleware = CancelOnClientDisconnectMiddleware(spy)
     task = asyncio.create_task(middleware(_scope("POST"), receive, send))
 
-    await spy.started.wait()
+    await asyncio.wait_for(spy.started.wait(), timeout=5)
     # Bounded negative wait: a cancellable request is cut off as soon as the
     # middleware reads that disconnect, well inside this window.
     with contextlib.suppress(TimeoutError):
