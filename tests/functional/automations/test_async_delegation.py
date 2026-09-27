@@ -603,6 +603,9 @@ async def test_voice_delegation_delivers_direct_notice_without_waking_chat(
     assert any(
         not row["is_internal"]
         and "background delegation done" in (row["content"] or "")
+        and row["processing_profile_id"] == "source_profile"
+        and row["user_id"] == "async-delegation-user"
+        and row["subconversation_id"] is None
         for row in visible_rows
     )
     status = await get_delegation_status_tool(context, result.data["delegation_id"])

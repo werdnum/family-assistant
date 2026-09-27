@@ -3038,6 +3038,7 @@ class TaskWorker:
             interface_type=run["interface_type"],
             conversation_id=run["conversation_id"],
             timestamp=now,
+            processing_profile_id=run["source_profile_id"],
             user_id=run["user_id"],
             attachments=self._delegation_notification_attachments(run),
         )
@@ -3600,6 +3601,8 @@ class TaskWorker:
                 interface_type=interface_type,
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
+                processing_profile_id=run["source_profile_id"],
+                user_id=run["user_id"],
                 attachments=attachments,
                 interface_message_id=sent_message_id,
             )

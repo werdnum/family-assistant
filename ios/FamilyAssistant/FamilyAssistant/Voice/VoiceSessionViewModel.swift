@@ -592,7 +592,7 @@ final class VoiceSessionViewModel {
     /// a failure can't be shown inline — it is reported so the only copy of the
     /// transcript isn't lost without a trace.
     private func persistTranscriptIfNeeded() {
-        guard !didPersist, !transcript.isEmpty, let transcriptStore else { return }
+        guard !didPersist, (!transcript.isEmpty || !toolTranscriptEntries.isEmpty), let transcriptStore else { return }
         didPersist = true
         let completedCalls = Set(toolTranscriptEntries.filter { $0.speaker == .tool }.compactMap(\.toolCallID))
         let unfinishedResults = toolTranscriptEntries.filter {

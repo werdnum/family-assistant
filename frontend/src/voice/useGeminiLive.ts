@@ -143,6 +143,7 @@ export function useGeminiLive(): GeminiLiveState {
   // Store audio control functions in refs to avoid dependency issues with disconnect
   const stopCaptureRef = useRef<() => void>(() => {});
   const stopPlaybackRef = useRef<() => void>(() => {});
+  const disconnectRef = useRef<() => void>(() => {});
   const setDuckingRef = useRef<(isDucked: boolean) => void>(() => {});
 
   /**
@@ -512,6 +513,9 @@ export function useGeminiLive(): GeminiLiveState {
    */
   const handleSessionError = useCallback((err: Error) => {
     console.error('Gemini session error:', err);
+    if (sessionRef.current) {
+      disconnectRef.current();
+    }
     setError(err.message);
     setConnectionState('error');
   }, []);
@@ -520,11 +524,12 @@ export function useGeminiLive(): GeminiLiveState {
    * Handle session close (callback-based API).
    */
   const handleSessionClose = useCallback(() => {
-    // Session was closed, could be normal disconnect or unexpected close
-    if (connectionState === 'connected') {
-      console.warn('Gemini session closed unexpectedly');
+    if (!sessionRef.current) {
+      return;
     }
-  }, [connectionState]);
+    console.warn('Gemini session closed unexpectedly');
+    disconnectRef.current();
+  }, []);
 
   /**
    * Connect to Gemini Live API.
@@ -707,12 +712,13 @@ export function useGeminiLive(): GeminiLiveState {
         stopPlaybackRef.current();
         canSendRealtimeInputRef.current = false;
         if (sessionRef.current) {
+          const session = sessionRef.current;
+          sessionRef.current = null;
           try {
-            sessionRef.current.close();
+            session.close();
           } catch {
             // Ignore close errors during failed startup
           }
-          sessionRef.current = null;
         }
         setError(err instanceof Error ? err.message : 'Failed to connect');
         setConnectionState('error');
@@ -806,12 +812,13 @@ export function useGeminiLive(): GeminiLiveState {
     // Close session
     canSendRealtimeInputRef.current = false;
     if (sessionRef.current) {
+      const session = sessionRef.current;
+      sessionRef.current = null;
       try {
-        sessionRef.current.close();
+        session.close();
       } catch {
         // Ignore close errors
       }
-      sessionRef.current = null;
     }
 
     clientRef.current = null;
@@ -822,6 +829,7 @@ export function useGeminiLive(): GeminiLiveState {
     setSessionStartTime(null);
     setSessionDuration(0);
   }, []); // No dependencies - uses refs for stable behavior
+  disconnectRef.current = disconnect;
 
   // Cleanup on unmount
   useEffect(() => {
