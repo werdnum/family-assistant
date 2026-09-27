@@ -810,6 +810,9 @@ export function useGeminiLive(): GeminiLiveState {
           }
         })
         .catch((saveError) => {
+          if (savedConversationIdRef.current === conversationId) {
+            savedConversationIdRef.current = null;
+          }
           console.error('Error saving voice transcript:', saveError);
           setError('Could not save the voice transcript.');
         });
