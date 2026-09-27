@@ -841,6 +841,28 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(store.saved.first?.map(\.toolCallID), ["pending"])
     }
 
+    func testCompletedToolResultSurvivesPendingSecondCall() async throws {
+        toolExecutor.handler = { name, _ in
+            if name == "second" {
+                try await Task.sleep(for: .seconds(10))
+            }
+            return .object(["result": .string(name)])
+        }
+        let model = makeModel()
+        await model.start()
+        session.emit(.toolCall([
+            GeminiFunctionCall(id: "first", name: "first", args: .object([:])),
+            GeminiFunctionCall(id: "second", name: "second", args: .object([:])),
+        ]))
+        try await waitUntil { self.toolExecutor.conversationIDs.count == 2 }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.toolCall, .toolCall, .tool])
+        XCTAssertEqual(store.saved.first?.last?.toolCallID, "first")
+        XCTAssertEqual(store.saved.first?.last?.text, "{\"result\":\"first\"}")
+    }
+
     /// The saved transcript is filed under the profile the backend resolved, not
     /// the one that was asked for. History is read back filtered by profile, so a
     /// transcript saved under the wrong one is a conversation the assistant cannot

@@ -298,7 +298,8 @@ export function useGeminiLive(): GeminiLiveState {
    */
   const handleToolCalls = useCallback(
     async (toolCalls: GeminiToolCall[]) => {
-      if (!sessionRef.current) {
+      const session = sessionRef.current;
+      if (!session) {
         return;
       }
 
@@ -337,29 +338,26 @@ export function useGeminiLive(): GeminiLiveState {
 
       const responses: GeminiToolResponse[] = [];
       for (const toolCall of toolCalls) {
-        if (!sessionRef.current) {
+        if (sessionRef.current !== session) {
           break;
         }
-        responses.push(await executeToolCall(toolCall));
+        const response = await executeToolCall(toolCall);
+        responses.push(response);
+        transcriptsRef.current = transcriptsRef.current.map((entry) =>
+          entry.id === toolEntryIds[response.id]
+            ? {
+                ...entry,
+                toolStatus: response.response.error ? 'error' : 'complete',
+                toolResult: response.response.error || response.response.result,
+                toolCompletedAt: new Date(),
+              }
+            : entry
+        );
+        setTranscripts(transcriptsRef.current);
       }
 
-      // Update all transcript entries with results in a single state update
-      transcriptsRef.current = transcriptsRef.current.map((entry) => {
-        const response = responses.find((r) => toolEntryIds[r.id] === entry.id);
-        if (response) {
-          return {
-            ...entry,
-            toolStatus: response.response.error ? 'error' : 'complete',
-            toolResult: response.response.error || response.response.result,
-            toolCompletedAt: new Date(),
-          };
-        }
-        return entry;
-      });
-      setTranscripts(transcriptsRef.current);
-
       // Check if session was closed while awaiting tool calls
-      if (!sessionRef.current) {
+      if (sessionRef.current !== session) {
         return;
       }
 
@@ -395,7 +393,7 @@ export function useGeminiLive(): GeminiLiveState {
               : r.response,
         }));
 
-        await sessionRef.current.sendToolResponse({ functionResponses });
+        await session.sendToolResponse({ functionResponses });
         reportVoiceToolEvent('responses_sent', {
           attempt_id: attemptIdRef.current,
           conversation_id: conversationIdRef.current,

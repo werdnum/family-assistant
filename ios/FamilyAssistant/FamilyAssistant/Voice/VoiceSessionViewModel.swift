@@ -480,18 +480,16 @@ final class VoiceSessionViewModel {
                 let callStartedAt = ContinuousClock.now
                 let response = await self.toolRunner.run([call])[0]
                 responses.append(response)
+                self.toolTranscriptEntries.append(VoiceTranscriptEntry(
+                    speaker: .tool, text: response.response.jsonString,
+                    toolCallID: key, toolName: call.name
+                ))
                 self.recordToolEvent(
                     response.response["error"] == nil ? "tool_call_succeeded" : "tool_call_failed",
                     call: call,
                     callID: key,
                     fields: ["execution_ms": Self.milliseconds(since: callStartedAt)]
                 )
-            }
-            for ((call, response), key) in zip(zip(calls, responses), keys) {
-                self.toolTranscriptEntries.append(VoiceTranscriptEntry(
-                    speaker: .tool, text: response.response.jsonString,
-                    toolCallID: key, toolName: call.name
-                ))
             }
             guard !Task.isCancelled else { return }
             var fields = [

@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from playwright.async_api import Page, Route
+from playwright.async_api import Page, Request, Route
 
 from family_assistant.web.routers.gemini_live_api import (
     VOICE_SILENCE_REMINDER_AFTER_SECONDS,
@@ -363,6 +363,7 @@ window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData, callbacks) => {
 
     // Schedule a tool call message after a short delay
     setTimeout(() => {
+        if (window.__TEST_AUTO_TOOL_CALL__ === false) return;
         window.__TEST_PUSH_MESSAGE__({
             toolCall: {
                 functionCalls: [{
@@ -661,6 +662,64 @@ async def test_voice_end_saves_pending_tool_without_false_failure(
 
     assert isinstance(saved_body, dict)
     assert [turn["role"] for turn in saved_body["turns"]] == ["tool_call"]
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+async def test_voice_end_preserves_completed_result_in_pending_batch(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    page = web_test_fixture.page
+    await page.add_init_script("window.__TEST_AUTO_TOOL_CALL__ = false")
+    await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
+    await _setup_mock_audio_apis(page)
+    await _setup_mock_token_endpoint(page, web_test_fixture.base_url)
+    second_can_return = asyncio.Event()
+
+    async def execute_batch_tool(route: Route) -> None:
+        body = route.request.post_data_json
+        assert isinstance(body, dict)
+        if body["arguments"]["tag"] == "second":
+            await second_can_return.wait()
+        await route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "result": {"tag": body["arguments"]["tag"]},
+            }),
+        )
+
+    await page.route("**/api/tools/execute/**", execute_batch_tool)
+    await page.goto(f"{web_test_fixture.base_url}/voice")
+    await page.get_by_role("button", name="Start").click()
+    await page.wait_for_function("window.__TEST_PUSH_MESSAGE__ !== undefined")
+
+    def is_second_tool_request(request: Request) -> bool:
+        body = request.post_data_json
+        return (
+            "/api/tools/execute/" in request.url
+            and isinstance(body, dict)
+            and isinstance(body.get("arguments"), dict)
+            and body["arguments"].get("tag") == "second"
+        )
+
+    async with page.expect_request(is_second_tool_request):
+        await page.evaluate(
+            """window.__TEST_PUSH_MESSAGE__({toolCall: {functionCalls: [
+                {id: 'first', name: 'list_notes', args: {tag: 'first'}},
+                {id: 'second', name: 'list_notes', args: {tag: 'second'}}
+            ]}})"""
+        )
+    async with page.expect_request("**/api/v1/chat/voice-sessions") as save_request:
+        await page.get_by_role("button", name="End Call").click()
+    saved_body = (await save_request.value).post_data_json
+    second_can_return.set()
+    assert isinstance(saved_body, dict)
+    turns = saved_body["turns"]
+    assert [turn["role"] for turn in turns] == ["tool_call", "tool_call", "tool"]
+    assert turns[2]["tool_call_id"] == turns[0]["tool_call_id"]
+    assert json.loads(turns[2]["text"]) == {"tag": "first"}
 
 
 @pytest.mark.playwright
