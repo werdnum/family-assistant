@@ -1176,6 +1176,7 @@ class AnthropicClient(BaseLLMClient):
                     )
                 )
 
+        self._check_requested_tool_was_called(tool_choice, tool_calls)
         thinking_blocks = self._extract_thinking_blocks(response.content)
         telemetry.record_response_metadata(
             resolved_model=response.model,
@@ -1195,6 +1196,29 @@ class AnthropicClient(BaseLLMClient):
         telemetry.record_output(llm_output)
         telemetry.finish_success(asdict(llm_output))
         return llm_output
+
+    def _check_requested_tool_was_called(
+        self, tool_choice: str | None, tool_calls: list[ToolCallItem]
+    ) -> None:
+        """Fail a reply that ignored the tool the caller required.
+
+        The requirement goes out as an instruction rather than a forced
+        choice, so the API no longer guarantees it. Raising here keeps the
+        caller's contract and lets a retrying client hand the request to its
+        fallback instead of returning a reply the caller cannot use.
+        """
+        if tool_choice in {None, "none", "auto"}:
+            return
+        if tool_choice in {"required", "any"}:
+            if tool_calls:
+                return
+        elif any(call.function.name == tool_choice for call in tool_calls):
+            return
+        raise LLMProviderError(
+            f"Model did not call the required tool ({tool_choice}).",
+            provider="anthropic",
+            model=self.model,
+        )
 
     def _raise_mapped_error(self, e: Exception) -> NoReturn:
         """Map Anthropic SDK exceptions to our exception hierarchy."""

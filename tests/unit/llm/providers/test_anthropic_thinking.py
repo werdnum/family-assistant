@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.base import InvalidRequestError
+from family_assistant.llm.base import InvalidRequestError, LLMProviderError
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
@@ -497,3 +497,46 @@ async def test_structured_output_requests_its_tool_in_words() -> None:
         "text": "Respond by calling the `return_structured_response` tool.",
     }
     assert sent["thinking"] == {"type": "adaptive"}
+
+
+def _text_only_response() -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="The answer is 4.")],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        stop_reason="end_turn",
+        model="claude-sonnet-5",
+        id="msg_1",
+    )
+
+
+@pytest.mark.parametrize("tool_choice", ["required", "calc"])
+async def test_reply_ignoring_the_required_tool_is_a_provider_error(
+    tool_choice: str,
+) -> None:
+    """The instruction is not enforced by the API, so the client enforces it.
+
+    Raising lets a retrying client fall back instead of handing the caller a
+    reply without the tool call it required.
+    """
+    client = _shipped_client()
+    create = AsyncMock(return_value=_text_only_response())
+
+    with (
+        patch.object(client.client.messages, "create", new=create),
+        pytest.raises(LLMProviderError, match="did not call the required tool"),
+    ):
+        await client.generate_response(
+            [UserMessage(content="hi")], tools=_CALC_TOOL, tool_choice=tool_choice
+        )
+
+
+async def test_auto_reply_without_a_tool_call_is_fine() -> None:
+    client = _shipped_client()
+    create = AsyncMock(return_value=_text_only_response())
+
+    with patch.object(client.client.messages, "create", new=create):
+        output = await client.generate_response(
+            [UserMessage(content="hi")], tools=_CALC_TOOL, tool_choice="auto"
+        )
+
+    assert output.content == "The answer is 4."
