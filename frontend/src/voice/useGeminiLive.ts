@@ -783,7 +783,11 @@ export function useGeminiLive(): GeminiLiveState {
               turn,
               {
                 role: 'tool',
-                text: JSON.stringify(entry.toolResult ?? null),
+                text: JSON.stringify(
+                  entry.toolStatus === 'error'
+                    ? { error: entry.toolResult }
+                    : (entry.toolResult ?? null)
+                ),
                 timestamp: (entry.toolCompletedAt ?? new Date()).toISOString(),
                 tool_call_id: entry.id,
                 tool_name: entry.toolName || entry.text,

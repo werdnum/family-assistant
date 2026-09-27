@@ -552,8 +552,9 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_event", ["close", "error"])
+@pytest.mark.parametrize("tool_status", ["success", "failure"])
 async def test_voice_remote_termination_saves_tool_history(
-    web_test_fixture: WebTestFixture, terminal_event: str
+    web_test_fixture: WebTestFixture, terminal_event: str, tool_status: str
 ) -> None:
     page = web_test_fixture.page
     await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
@@ -562,9 +563,13 @@ async def test_voice_remote_termination_saves_tool_history(
 
     async def fulfil_tool_call(route: Route) -> None:
         await route.fulfill(
-            status=200,
+            status=200 if tool_status == "success" else 503,
             content_type="application/json",
-            body=json.dumps({"success": True, "result": {"notes": []}}),
+            body=json.dumps(
+                {"success": True, "result": {"notes": []}}
+                if tool_status == "success"
+                else {"detail": "Tool unavailable"}
+            ),
         )
 
     await page.route("**/api/tools/execute/**", fulfil_tool_call)
@@ -585,6 +590,11 @@ async def test_voice_remote_termination_saves_tool_history(
     saved_body = (await save_request.value).post_data_json
     assert isinstance(saved_body, dict)
     assert [turn["role"] for turn in saved_body["turns"]] == ["tool_call", "tool"]
+    saved_result = json.loads(saved_body["turns"][1]["text"])
+    if tool_status == "failure":
+        assert saved_result == {"error": "Tool unavailable"}
+    else:
+        assert saved_result == {"notes": []}
     assert await page.evaluate("window.__TEST_SESSION_CLOSED__") is True
 
 
