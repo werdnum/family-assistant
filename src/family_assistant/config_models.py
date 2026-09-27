@@ -82,6 +82,9 @@ from .tools.mcp_attachments import (
     MCPAttachmentMode,
     file_path_mode_is_supported,
 )
+from .tools.mcp_auth import (
+    MCPUserAuthConfig,  # noqa: TC001 - Pydantic evaluates this model at runtime
+)
 from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -1584,6 +1587,26 @@ class MCPServerConfig(BaseModel):
     # operator-chosen environment variable names -- so they are redacted
     # structurally by config_inspection instead.
     token: SecretStr | None = None
+    user_auth: MCPUserAuthConfig | None = None
+    tool_name_prefix: str = Field(default="", pattern=r"^[A-Za-z0-9_-]*$")
+
+    @model_validator(mode="after")
+    def validate_user_auth(self) -> MCPServerConfig:
+        """User credentials are exclusive with shared tokens and require HTTP."""
+        if self.user_auth is not None:
+            transport = str(
+                (self.__pydantic_extra__ or {}).get("transport", "stdio")
+            ).lower()
+            if self.token is not None or transport not in {
+                "sse",
+                "http",
+                "streamable_http",
+                "streamablehttp",
+            }:
+                raise ValueError(
+                    "user_auth requires an HTTP transport and cannot be combined with token"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_parameter_overrides(self) -> MCPServerConfig:

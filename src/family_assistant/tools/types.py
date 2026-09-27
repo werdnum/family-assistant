@@ -77,6 +77,7 @@ class CalendarConfig(TypedDict, total=False):
 class MCPServerStdIOConfig(TypedDict, total=False):
     """Configuration for a stdio-based MCP server."""
 
+    tool_name_prefix: str
     transport: Literal["stdio"]
     command: str
     args: list[str]
@@ -91,6 +92,8 @@ class MCPServerSSEConfig(TypedDict):
     transport: Literal["sse"]
     url: str
     token: NotRequired[str | None]
+    tool_name_prefix: NotRequired[str]
+    user_auth: NotRequired[dict[str, object] | None]
     tool_metadata: NotRequired[dict[str, list[str]]]
     parameter_overrides: NotRequired[dict[str, dict[str, object]]]
 
@@ -105,6 +108,8 @@ class MCPServerStreamableHTTPConfig(TypedDict):
     transport: Literal["streamable_http", "streamablehttp", "http"]
     url: str
     token: NotRequired[str | None]
+    tool_name_prefix: NotRequired[str]
+    user_auth: NotRequired[dict[str, object] | None]
     tool_metadata: NotRequired[dict[str, list[str]]]
     parameter_overrides: NotRequired[dict[str, dict[str, object]]]
 
@@ -118,6 +123,8 @@ class MCPServerGenericConfig(TypedDict, total=False):
     env: dict[str, str]
     url: str
     token: str
+    tool_name_prefix: str
+    user_auth: dict[str, object] | None
     tool_metadata: dict[str, list[str]]
     parameter_overrides: dict[str, dict[str, object]]
 
