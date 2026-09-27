@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -105,24 +106,33 @@ async def test_failed_server_is_not_retried_until_its_window_elapses() -> None:
     await provider._retry_disconnected_servers([SERVER_ID])
 
     assert connect.await_count == 1
-    assert provider._reconnect_backoff[SERVER_ID].attempts == 1
+    assert provider.get_server_statuses()[SERVER_ID]["reconnect_attempts"] == 1
 
 
 @pytest.mark.asyncio
-async def test_retry_resumes_once_the_backoff_window_expires() -> None:
+async def test_retry_resumes_once_the_backoff_window_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Once the window has passed the server is retried again, with a longer window."""
     provider = _provider(reconnect_backoff_base_seconds=600.0)
     connect = _connect_stub(provider, succeed=False)
     provider._server_statuses[SERVER_ID] = MCP_SERVER_STATUS_FAILED
     await provider._retry_disconnected_servers([SERVER_ID])
-    first_window = provider._reconnect_backoff[SERVER_ID].next_attempt_at
+    first_window = provider.get_server_statuses()[SERVER_ID][
+        "next_reconnect_in_seconds"
+    ]
+    assert first_window is not None
 
-    provider._reconnect_backoff[SERVER_ID].next_attempt_at = 0.0
+    future = time.monotonic() + first_window + 1.0
+    monkeypatch.setattr("family_assistant.tools.mcp.time.monotonic", lambda: future)
     await provider._retry_disconnected_servers([SERVER_ID])
 
     assert connect.await_count == 2
-    assert provider._reconnect_backoff[SERVER_ID].attempts == 2
-    assert provider._reconnect_backoff[SERVER_ID].next_attempt_at > first_window
+    status = provider.get_server_statuses()[SERVER_ID]
+    assert status["reconnect_attempts"] == 2
+    second_window = status["next_reconnect_in_seconds"]
+    assert second_window is not None
+    assert second_window > first_window
 
 
 @pytest.mark.asyncio
@@ -154,7 +164,7 @@ async def test_flapping_server_backs_off_despite_successful_reconnects() -> None
     await provider._run_health_checks()
 
     assert connect.await_count == 1
-    assert provider._reconnect_backoff[SERVER_ID].attempts == 1
+    assert provider.get_server_statuses()[SERVER_ID]["reconnect_attempts"] == 1
 
 
 @pytest.mark.asyncio
@@ -168,8 +178,9 @@ async def test_passing_health_check_clears_the_backoff() -> None:
 
     await provider._run_health_checks()
 
-    assert provider._reconnect_backoff[SERVER_ID].attempts == 0
-    assert provider._reconnect_backoff[SERVER_ID].next_attempt_at == 0.0
+    status = provider.get_server_statuses()[SERVER_ID]
+    assert status["reconnect_attempts"] == 0
+    assert status["next_reconnect_in_seconds"] is None
 
 
 @pytest.mark.asyncio
@@ -185,8 +196,9 @@ async def test_manual_reconnect_ignores_and_clears_the_backoff_window() -> None:
 
     assert reconnected is True
     assert recovered_connect.await_count == 1
-    assert provider._reconnect_backoff[SERVER_ID].attempts == 0
-    assert provider._reconnect_backoff[SERVER_ID].next_attempt_at == 0.0
+    status = provider.get_server_statuses()[SERVER_ID]
+    assert status["reconnect_attempts"] == 0
+    assert status["next_reconnect_in_seconds"] is None
 
 
 @pytest.mark.asyncio

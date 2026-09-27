@@ -73,13 +73,9 @@ def test_deployment_config_customizes_worker_schema_without_mutating_source(
 
 
 def test_deployment_document_inventory_customizes_documentation_schema(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     config = _load_defaults(tmp_path)
-    monkeypatch.setattr(
-        "family_assistant.services.effective_tool_registry._scan_user_docs",
-        lambda: ["calendar.md", "smart-home.md"],
-    )
 
     definitions = build_effective_local_tool_definitions(config)
     documentation_tool = _definition_by_name(
@@ -87,7 +83,9 @@ def test_deployment_document_inventory_customizes_documentation_schema(
     )
 
     description = documentation_tool["function"]["description"]  # type: ignore[index]
-    assert "calendar.md, smart-home.md" in description
+    assert "USER_GUIDE.md" in description
+    assert "calendar.md" in description
+    assert "{available_doc_files}" not in description
 
 
 def test_disabled_google_integration_removes_every_governed_tool(

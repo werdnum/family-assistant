@@ -2,7 +2,6 @@
 Tests that empty LLM responses (no content, no tool calls) trigger a retry.
 """
 
-import logging
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -56,9 +55,7 @@ def _make_service(llm_client: RuleBasedMockLLMClient) -> ProcessingService:
 
 
 @pytest.mark.asyncio
-async def test_empty_response_retries_and_succeeds(
-    db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
-) -> None:
+async def test_empty_response_retries_and_succeeds(db_engine: AsyncEngine) -> None:
     """When the LLM returns an empty response first, then a real response on retry,
     the final result should contain the real response content."""
     call_count = 0
@@ -73,29 +70,24 @@ async def test_empty_response_retries_and_succeeds(
     llm_client = RuleBasedMockLLMClient(rules=[(lambda _: True, response_generator)])
     service = _make_service(llm_client)
 
-    with caplog.at_level(logging.WARNING, logger="family_assistant.processing"):
-        db_context = Database(db_engine)
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test-conv-1",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id="msg-1",
-            user_name="TestUser",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="test-conv-1",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id="msg-1",
+        user_name="TestUser",
+    )
 
     assert result.text_reply == "Here is my response"
     assert call_count == 2
-    assert any(
-        "LLM returned empty response" in record.message
-        and "Re-prompting" in record.message
-        for record in caplog.records
-    )
+    assert len(llm_client.get_calls()) == 2
 
 
 @pytest.mark.asyncio
 async def test_empty_response_retry_exhausted_still_returns(
-    db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
+    db_engine: AsyncEngine,
 ) -> None:
     """When the LLM returns empty responses on both attempts, we still proceed
     (the response will be empty but no crash)."""
@@ -105,22 +97,16 @@ async def test_empty_response_retry_exhausted_still_returns(
     )
     service = _make_service(llm_client)
 
-    with caplog.at_level(logging.WARNING, logger="family_assistant.processing"):
-        db_context = Database(db_engine)
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="test-conv-2",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id="msg-2",
-            user_name="TestUser",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="test-conv-2",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id="msg-2",
+        user_name="TestUser",
+    )
 
     # Both attempts were empty; response should be None/empty
     assert not result.text_reply
-    warning_messages = [
-        r.message for r in caplog.records if "LLM returned empty response" in r.message
-    ]
-    assert len(warning_messages) == 2
-    assert any("Re-prompting" in m for m in warning_messages)
-    assert any("Proceeding with empty response" in m for m in warning_messages)
+    assert len(llm_client.get_calls()) == 2

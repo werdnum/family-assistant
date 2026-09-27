@@ -8,8 +8,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import update
 
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.task_worker import handle_worker_task_cleanup
 
 if TYPE_CHECKING:
@@ -51,6 +53,17 @@ def exec_context(db_context: Database) -> MinimalContext:
     )
 
 
+async def _backdate_task(db_context: Database, task_id: str, age: timedelta) -> None:
+    """Set a task's created_at to (now - age)."""
+    old_time = datetime.now(UTC) - age
+    stmt = (
+        update(worker_tasks_table)
+        .where(worker_tasks_table.c.task_id == task_id)
+        .values(created_at=old_time)
+    )
+    await db_context.execute(stmt)
+
+
 class TestWorkerTaskCleanup:
     """Tests for handle_worker_task_cleanup."""
 
@@ -58,8 +71,7 @@ class TestWorkerTaskCleanup:
     async def test_cleanup_database_records(
         self, exec_context: MinimalContext, db_context: Database
     ) -> None:
-        """Test that cleanup deletes old database records."""
-        # Create a task record in the database
+        """Test that cleanup deletes old terminal task records but keeps recent ones."""
         await db_context.worker_tasks.create_task(
             task_id="old-task-1",
             conversation_id="conv-1",
@@ -68,22 +80,62 @@ class TestWorkerTaskCleanup:
             model="claude-3",
             task_description="Old task 1",
         )
+        await db_context.worker_tasks.update_task_status(
+            task_id="old-task-1", status="success"
+        )
+        await _backdate_task(db_context, "old-task-1", timedelta(hours=72))
 
-        # Run cleanup with 24 hour retention
+        await db_context.worker_tasks.create_task(
+            task_id="recent-task-1",
+            conversation_id="conv-1",
+            interface_type="test",
+            user_name="test_user",
+            model="claude-3",
+            task_description="Recent task 1",
+        )
+        await db_context.worker_tasks.update_task_status(
+            task_id="recent-task-1", status="success"
+        )
+
         # MinimalContext is duck-type compatible with ToolExecutionContext for cleanup
         await handle_worker_task_cleanup(exec_context, {"retention_hours": 24})  # type: ignore[arg-type]  # MinimalContext duck-types ToolExecutionContext
 
-        # The task we just created is new, so it should still exist
-        task = await db_context.worker_tasks.get_task("old-task-1")
-        assert task is not None
+        assert await db_context.worker_tasks.get_task("old-task-1") is None
+        assert await db_context.worker_tasks.get_task("recent-task-1") is not None
 
     @pytest.mark.asyncio
     async def test_cleanup_uses_default_retention(
-        self, exec_context: MinimalContext
+        self, exec_context: MinimalContext, db_context: Database
     ) -> None:
-        """Test that cleanup uses default retention when not specified."""
-        # Should not raise - default is 48 hours
+        """Test that cleanup with no explicit retention falls back to 48 hours."""
+        await db_context.worker_tasks.create_task(
+            task_id="task-36h",
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Task within default retention",
+        )
+        await db_context.worker_tasks.update_task_status(
+            task_id="task-36h", status="success"
+        )
+        await _backdate_task(db_context, "task-36h", timedelta(hours=36))
+
+        await db_context.worker_tasks.create_task(
+            task_id="task-60h",
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Task past default retention",
+        )
+        await db_context.worker_tasks.update_task_status(
+            task_id="task-60h", status="success"
+        )
+        await _backdate_task(db_context, "task-60h", timedelta(hours=60))
+
+        # No retention_hours, no workspace_path, no processing_service:
+        # exercises the DB-only path with the 48h default.
         await handle_worker_task_cleanup(exec_context, {})  # type: ignore[arg-type]  # MinimalContext duck-types ToolExecutionContext
+
+        assert await db_context.worker_tasks.get_task("task-36h") is not None
+        assert await db_context.worker_tasks.get_task("task-60h") is None
 
     @pytest.mark.asyncio
     async def test_cleanup_task_directories(
@@ -129,12 +181,3 @@ class TestWorkerTaskCleanup:
 
         # Should not raise
         await handle_worker_task_cleanup(exec_context, payload)  # type: ignore[arg-type]  # MinimalContext duck-types ToolExecutionContext
-
-    @pytest.mark.asyncio
-    async def test_cleanup_without_workspace_path(
-        self, exec_context: MinimalContext
-    ) -> None:
-        """Test cleanup when no workspace path is provided."""
-        # No workspace path in payload, no processing_service
-        # Should just do database cleanup without filesystem cleanup
-        await handle_worker_task_cleanup(exec_context, {})  # type: ignore[arg-type]  # MinimalContext duck-types ToolExecutionContext

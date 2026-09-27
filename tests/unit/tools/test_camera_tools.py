@@ -631,13 +631,16 @@ async def test_scan_camera_frames_success(
     assert "matches_found" in data
     assert data["matches_found"] == 2  # First and third frames match
 
-    # Should have analysis results
+    # Should have analysis results for exactly the matching frames, in order
     assert "analysis_results" in data
-    assert len(data["analysis_results"]) == 2  # Only matching frames
+    assert [r["description"] for r in data["analysis_results"]] == [
+        "Person visible",
+        "Person walking",
+    ]
 
-    # Should have attachments for matching frames
+    # Should have attachments carrying the matching frames' own bytes, in order
     assert result.attachments is not None
-    assert len(result.attachments) == 2
+    assert [a.content for a in result.attachments] == [b"frame_0", b"frame_2"]
 
 
 @pytest.mark.asyncio
@@ -664,12 +667,32 @@ async def test_scan_camera_frames_no_filtering(
     data = result.get_data()
     assert isinstance(data, dict)
 
-    # Should have all frames in analysis results
-    assert len(data["analysis_results"]) == 5
+    # Should have all frames in analysis results, in order
+    assert [r["description"] for r in data["analysis_results"]] == [
+        "Person visible",
+        "Empty yard",
+        "Person walking",
+        "Empty",
+        "Empty",
+    ]
 
-    # Should have attachments for all frames
+    # Should have attachments for all frames, in order, each carrying its own
+    # bytes and a MATCH / no match label in the description
     assert result.attachments is not None
-    assert len(result.attachments) == 5
+    assert [a.content for a in result.attachments] == [
+        b"frame_0",
+        b"frame_1",
+        b"frame_2",
+        b"frame_3",
+        b"frame_4",
+    ]
+    assert [a.description for a in result.attachments] == [
+        "[2024-01-15T12:00:00+00:00] (MATCH) Person visible",
+        "[2024-01-15T12:15:00+00:00] (no match) Empty yard",
+        "[2024-01-15T12:30:00+00:00] (MATCH) Person walking",
+        "[2024-01-15T12:45:00+00:00] (no match) Empty",
+        "[2024-01-15T13:00:00+00:00] (no match) Empty",
+    ]
 
 
 @pytest.mark.asyncio

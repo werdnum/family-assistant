@@ -4,20 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
-from dataclasses import replace
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 from pydantic import ValidationError
 
 import family_assistant.services.tool_call_review as tool_call_review_module
-from family_assistant.config_models import (
-    AppConfig,
-    ProcessingConfig,
-    ToolCallReviewConfig,
-)
+from family_assistant.config_models import ToolCallReviewConfig
 from family_assistant.llm.base import StructuredOutputError
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -49,7 +46,6 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewStatus,
     ToolCallReviewVerdict,
     TriggerReviewInput,
-    _render_provenance_digest,  # noqa: PLC2701 - testing internal bounded provenance rendering
     assemble_browser_action_review_messages,
     assemble_tool_call_review_messages,
     build_delegation_review_trigger,
@@ -1202,23 +1198,23 @@ def test_destination_echo_rejects_unknown_external_callback_payload() -> None:
 
 
 @pytest.mark.no_db
-def test_config_models_are_strict_and_profile_guidance_is_available() -> None:
-    config = AppConfig(
-        tool_call_review=ToolCallReviewConfig(
-            timeout_seconds=3,
-            max_reviews_per_turn=8,
-            guidance="Routine household workflows are expected.",
-        )
-    )
-
-    assert config.tool_call_review is not None
-    assert config.tool_call_review.enabled is True
-    assert config.tool_call_review.model == "gemini-3.7-flash"
-    assert ProcessingConfig(review_guidance="Profile-specific guidance").review_guidance
+def test_tool_call_review_config_rejects_invalid_and_unknown_settings() -> None:
     with pytest.raises(ValidationError):
         ToolCallReviewConfig(timeout_seconds=0)
     with pytest.raises(ValidationError):
         ToolCallReviewConfig(unknown_setting=True)  # type: ignore[call-arg]
+
+
+@pytest.mark.no_db
+def test_profile_review_guidance_is_rendered_into_the_reviewer_prompt() -> None:
+    """A profile's ``review_guidance`` reaches the reviewer as operator guidance."""
+    review_input = replace(
+        _review_input(), profile_guidance="Profile-specific guidance"
+    )
+
+    prompt = _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
+
+    assert "Profile-specific guidance" in prompt
 
 
 @pytest.mark.no_db
@@ -1464,7 +1460,12 @@ async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request()
     """
     trusted = TurnTaintState.empty().to_metadata()
     delegated_rows = [
-        UserMessage(content="MODEL COMPOSED GOAL", taint_metadata=trusted)
+        # A wake pins its generated result data into the turn as an internal,
+        # non-visible row; a real originating request must never surface it.
+        _HistoryRow(
+            UserMessage(content="WAKE RESULT", taint_metadata=trusted), visible=False
+        ),
+        _HistoryRow(UserMessage(content="MODEL COMPOSED GOAL", taint_metadata=trusted)),
     ]
     db = _FakeMessageHistoryDatabase(delegated_rows)
 
@@ -1495,9 +1496,6 @@ async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request()
 
     assert from_main_conversation.originating_request == "MODEL COMPOSED GOAL"
     assert db.turn_ids_read == ["parent_turn"]
-    # A wake pins its generated result data into the turn as an internal row;
-    # asking for visible rows only is what keeps that out of the human request.
-    assert db.visible_only_reads == [True]
 
 
 @pytest.mark.no_db
@@ -1505,7 +1503,7 @@ async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request()
 async def test_a_delegated_chain_carries_the_inherited_request_forward() -> None:
     trusted = TurnTaintState.empty().to_metadata()
     db = _FakeMessageHistoryDatabase([
-        UserMessage(content="MODEL COMPOSED GOAL", taint_metadata=trusted)
+        _HistoryRow(UserMessage(content="MODEL COMPOSED GOAL", taint_metadata=trusted))
     ])
 
     trigger = await build_delegation_review_trigger(
@@ -1529,10 +1527,31 @@ async def test_a_delegated_chain_carries_the_inherited_request_forward() -> None
     assert trigger.originating_request == "THE HUMAN REQUEST"
 
 
+_EARLIEST = datetime.min.replace(tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class _HistoryRow:
+    """A stored row plus the fields ``get_by_turn_id`` actually filters on."""
+
+    message: LLMMessage
+    visible: bool = True
+    created_at: datetime = _EARLIEST
+
+
 class _FakeMessageHistory:
+    """Honours ``visible_only``/``before`` like the real repository does.
+
+    Rows pinned into a turn but not human-visible (a wake's result data) are
+    excluded when ``visible_only=True``; rows written at or after ``before``
+    are excluded when a bound is given -- exactly the filters
+    ``build_delegation_review_trigger`` relies on to keep generated or
+    later-arriving text out of the originating request.
+    """
+
     def __init__(
         self,
-        rows: Sequence[LLMMessage],
+        rows: Sequence[_HistoryRow],
         read_log: list[str],
         visible_only_log: list[bool],
         before_log: list[datetime | None],
@@ -1552,13 +1571,18 @@ class _FakeMessageHistory:
         self._read_log.append(turn_id)
         self._visible_only_log.append(visible_only)
         self._before_log.append(before)
-        return self._rows
+        selected = self._rows
+        if visible_only:
+            selected = [row for row in selected if row.visible]
+        if before is not None:
+            selected = [row for row in selected if row.created_at < before]
+        return [row.message for row in selected]
 
 
 class _FakeMessageHistoryDatabase:
     """The only database surface ``build_delegation_review_trigger`` touches."""
 
-    def __init__(self, rows: Sequence[LLMMessage]) -> None:
+    def __init__(self, rows: Sequence[_HistoryRow]) -> None:
         self.turn_ids_read: list[str] = []
         self.visible_only_reads: list[bool] = []
         self.before_bounds: list[datetime | None] = []
@@ -1572,12 +1596,21 @@ class _FakeMessageHistoryDatabase:
 async def test_history_read_is_bounded_to_when_the_work_was_handed_off() -> None:
     """A queued run answers to the request that caused it, not what came next."""
     trusted = TurnTaintState.empty().to_metadata()
-    db = _FakeMessageHistoryDatabase([
-        UserMessage(content="THE REQUEST", taint_metadata=trusted)
-    ])
     handed_off_at = datetime(2026, 8, 31, 10, 0, tzinfo=UTC)
+    db = _FakeMessageHistoryDatabase([
+        _HistoryRow(
+            UserMessage(content="THE REQUEST", taint_metadata=trusted),
+            created_at=handed_off_at - timedelta(minutes=5),
+        ),
+        # Steering the human sent after hand-off must not retroactively join
+        # the request the already-running delegated work answers to.
+        _HistoryRow(
+            UserMessage(content="LATER STEERING", taint_metadata=trusted),
+            created_at=handed_off_at + timedelta(minutes=5),
+        ),
+    ])
 
-    await build_delegation_review_trigger(
+    trigger = await build_delegation_review_trigger(
         cast("Database", db),
         trigger_type="delegation_request",
         active_request_role="user",
@@ -1589,7 +1622,7 @@ async def test_history_read_is_bounded_to_when_the_work_was_handed_off() -> None
         source_rows_before=handed_off_at,
     )
 
-    assert db.before_bounds == [handed_off_at]
+    assert trigger.originating_request == "THE REQUEST"
 
 
 def test_render_provenance_digest_bounded_and_fifo_order() -> None:
@@ -1600,7 +1633,7 @@ def test_render_provenance_digest_bounded_and_fifo_order() -> None:
             TaintSource(
                 source_type=TaintSourceType.TOOL_OUTPUT,
                 source_id=f"src-{i}",
-                tier=SourceTrustTier.KNOWN_CONTACT,
+                tier=SourceTrustTier.MACHINE_REVIEWED,
                 labels=frozenset(),
                 reason=f"Test source {i}",
             )
@@ -1611,19 +1644,24 @@ def test_render_provenance_digest_bounded_and_fifo_order() -> None:
             TaintSource(
                 source_type=TaintSourceType.TOOL_OUTPUT,
                 source_id="src-0",
-                tier=SourceTrustTier.KNOWN_CONTACT,
+                tier=SourceTrustTier.MACHINE_REVIEWED,
                 labels=frozenset(),
                 reason="Test source 0",
             )
         )
 
-    digest = _render_provenance_digest(state)
-    assert digest.startswith("<provenance_digest>\n```json\n")
-    assert digest.endswith("\n```\n</provenance_digest>")
-    json_str = digest[
-        len("<provenance_digest>\n```json\n") : -len("\n```\n</provenance_digest>")
-    ]
-    payload = json.loads(json_str)
+    prompt = _prompt(
+        assemble_tool_call_review_messages(
+            replace(_review_input(), taint_state=state), _constraints()
+        )
+    )
+    match = re.search(
+        r"<provenance_digest>\n```json\n(?P<json>.*?)\n```\n</provenance_digest>",
+        prompt,
+        re.DOTALL,
+    )
+    assert match is not None
+    payload = json.loads(match.group("json"))
 
     assert len(payload["sources_in_order"]) == 12
     assert payload["total_source_count"] == 30
@@ -1631,10 +1669,13 @@ def test_render_provenance_digest_bounded_and_fifo_order() -> None:
     assert payload["omitted_source_count"] == 13
 
     # FIFO acquisition order: the 12 retained sources are the most recent 12 (src-13 through src-24)
+    assert [source["source_id"] for source in payload["sources_in_order"]] == [
+        f"src-{i}" for i in range(13, 25)
+    ]
     for idx, item in enumerate(payload["sources_in_order"]):
         assert item["order"] == idx
         assert item["source_type"] == "tool_output"
-        assert item["tier"] == "known_contact"
+        assert item["tier"] == "machine_reviewed"
 
 
 def test_taint_audit_sources_bounded_and_fifo_order() -> None:

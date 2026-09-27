@@ -156,11 +156,8 @@ async def test_get_messages_after_filter_by_interface_type(
         conversation_id=conversation_id, after=cutoff, interface_type="web"
     )
 
-    # Should only return web messages (msg1 and msg3)
-    assert len(messages) == 2
-    # Note: get_messages_after returns LLMMessage objects without interface_type metadata.
-    # If we need to verify interface_type, we would need to use a method that returns
-    # dict rows with metadata.
+    # Should only return web messages (msg1 and msg3), in timestamp order
+    assert [m.content for m in messages] == ["Web message", "Web response"]
 
 
 @pytest.mark.asyncio

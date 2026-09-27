@@ -18,24 +18,37 @@ from mcp.types import CallToolResult, TextContent, Tool
 
 from family_assistant.config_models import MCPServerConfig as MCPServerConfigModel
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.security.taint import InMemoryTurnTaintTracker, SourceTrustTier
 from family_assistant.services.attachment_registry import (
     AttachmentMetadata,
     AttachmentRegistry,
 )
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider, infrastructure
+from family_assistant.storage.database import Database
+from family_assistant.tools import MCPServerConfig, MCPToolsProvider
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    TaintTrackingToolsProvider,
+)
 from family_assistant.tools.mcp_attachments import (
     AttachmentParameter,
     MCPAttachmentMode,
     materialised_attachment_arguments,
 )
-from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from mcp import ClientSession
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.storage.database import Database
+    from family_assistant.tools.metadata import ToolDescriptor
+    from family_assistant.tools.types import ToolDefinition
 
 # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
 type MCPArguments = dict[str, Any]
@@ -214,28 +227,21 @@ def test_a_parameter_the_server_does_not_have_is_ignored() -> None:
 async def test_advertised_definitions_translate_attachments_to_strings() -> None:
     """What reaches the LLM is a plain string parameter documented as a UUID."""
     provider = _provider({"meshy_image_to_3d": {"image_url": "data_uri"}})
-    definitions = provider._format_mcp_definitions_to_dicts([_image_tool()], SERVER_ID)
-    provider._register_server_tools(
-        SERVER_ID,
-        definitions,
-        provider._build_mcp_descriptors(
-            server_id=SERVER_ID,
-            definitions=definitions,
-            discovered_tools=[_image_tool()],
-        ),
-    )
-    provider._initialized = True
+    session, _ = _recording_session()
+    await _initialize_with_stub_transport(provider, [_image_tool()], session)
 
     advertised = await provider.get_tool_definitions()
 
     image_url = _properties(list(advertised), "meshy_image_to_3d")["image_url"]
     assert image_url["type"] == "string"
     assert "UUID" in image_url["description"]
-    # The provider's own copy keeps the internal type that execution needs.
-    assert (
-        _properties(provider._definitions, "meshy_image_to_3d")["image_url"]["type"]
-        == "attachment"
+    # The provider's own internal descriptor keeps the type execution needs.
+    descriptor = await provider.get_tool_descriptor("meshy_image_to_3d")
+    assert descriptor is not None
+    internal_parameters = cast(
+        "dict[str, Any]", descriptor.definition["function"]["parameters"]
     )
+    assert internal_parameters["properties"]["image_url"]["type"] == "attachment"
 
 
 @pytest.mark.asyncio
@@ -323,13 +329,16 @@ def test_an_unknown_mode_is_refused() -> None:
 
 def _execution_context(
     registry: AttachmentRegistry,
+    *,
+    taint_tracker: InMemoryTurnTaintTracker | None = None,
+    db_context: Database | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
         conversation_id="conv-1",
         user_name="Test User",
         turn_id=None,
-        db_context=cast("Database", None),
+        db_context=db_context if db_context is not None else cast("Database", None),
         processing_service=None,
         clock=None,
         home_assistant_client=None,
@@ -340,6 +349,10 @@ def _execution_context(
         api_backend=None,
         timezone=ZoneInfo("UTC"),
         user_id="user-1",
+        taint_tracker=taint_tracker,
+        taint_policy_snapshot=(
+            taint_tracker.snapshot() if taint_tracker is not None else None
+        ),
     )
 
 
@@ -378,23 +391,54 @@ def _recording_session() -> tuple[ClientSession, list[MCPArguments]]:
     return cast("ClientSession", SimpleNamespace(call_tool=call_tool)), calls
 
 
+async def _initialize_with_stub_transport(
+    provider: MCPToolsProvider,
+    tools: list[Tool],
+    session: ClientSession,
+) -> None:
+    """Reach the connected state through the real ``initialize()`` path.
+
+    Only the transport-level connection (``_connect_and_discover_mcp``) is
+    stubbed, so ``initialize()`` itself drives session bookkeeping,
+    registration and descriptor building exactly as it does against a real
+    server.
+    """
+
+    async def fake_connect_and_discover(
+        server_id: str,
+        # ast-grep-ignore: no-dict-any - Test configuration mirrors untyped MCP config
+        server_conf: Mapping[str, Any],
+    ) -> tuple[
+        ClientSession | None,
+        list[ToolDefinition],
+        list[ToolDescriptor],
+        dict[str, str],
+    ]:
+        del server_conf
+        definitions = provider._format_mcp_definitions_to_dicts(tools, server_id)
+        descriptors = provider._build_mcp_descriptors(
+            server_id=server_id, definitions=definitions, discovered_tools=tools
+        )
+        tool_map = {
+            cast("dict[str, Any]", definition)["function"]["name"]: server_id
+            for definition in definitions
+        }
+        return session, definitions, descriptors, tool_map
+
+    with mock.patch.object(
+        provider, "_connect_and_discover_mcp", new=fake_connect_and_discover
+    ):
+        await provider.initialize()
+
+
 async def _connected_provider(
     # ast-grep-ignore: no-dict-any - Test configuration mirrors untyped MCP config
     parameter_overrides: Mapping[str, Any],
     tools: list[Tool],
 ) -> tuple[MCPToolsProvider, list[MCPArguments]]:
     provider = _provider(parameter_overrides)
-    definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
-    provider._register_server_tools(
-        SERVER_ID,
-        definitions,
-        provider._build_mcp_descriptors(
-            server_id=SERVER_ID, definitions=definitions, discovered_tools=tools
-        ),
-    )
-    provider._initialized = True
     session, calls = _recording_session()
-    provider._sessions[SERVER_ID] = session
+    await _initialize_with_stub_transport(provider, tools, session)
     return provider, calls
 
 
@@ -460,16 +504,6 @@ async def test_a_file_path_is_still_readable_while_the_server_is_called() -> Non
     """The temp file outlives the call it was written for, and no longer."""
     attachment = _attachment()
     provider = _provider({"meshy_image_to_3d": {"image_url": "file_path"}})
-    tools = [_image_tool()]
-    definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
-    provider._register_server_tools(
-        SERVER_ID,
-        definitions,
-        provider._build_mcp_descriptors(
-            server_id=SERVER_ID, definitions=definitions, discovered_tools=tools
-        ),
-    )
-    provider._initialized = True
 
     seen: list[anyio.Path] = []
 
@@ -479,9 +513,8 @@ async def test_a_file_path_is_still_readable_while_the_server_is_called() -> Non
         seen.append(path)
         return CallToolResult(content=[TextContent(type="text", text="ok")])
 
-    provider._sessions[SERVER_ID] = cast(
-        "ClientSession", SimpleNamespace(call_tool=call_tool)
-    )
+    session = cast("ClientSession", SimpleNamespace(call_tool=call_tool))
+    await _initialize_with_stub_transport(provider, [_image_tool()], session)
 
     await provider.execute_tool(
         "meshy_image_to_3d",
@@ -517,16 +550,8 @@ def _optional_list_tool() -> Tool:
 async def test_an_optional_array_stays_a_satisfiable_schema() -> None:
     """A union-wrapped array must not end up advertised as a string AND an array."""
     provider = _provider({"meshy_multi_image_to_3d": {"image_urls": "data_uri"}})
-    tools = [_optional_list_tool()]
-    definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
-    provider._register_server_tools(
-        SERVER_ID,
-        definitions,
-        provider._build_mcp_descriptors(
-            server_id=SERVER_ID, definitions=definitions, discovered_tools=tools
-        ),
-    )
-    provider._initialized = True
+    session, _ = _recording_session()
+    await _initialize_with_stub_transport(provider, [_optional_list_tool()], session)
 
     advertised = _properties(
         list(await provider.get_tool_definitions()), "meshy_multi_image_to_3d"
@@ -874,16 +899,8 @@ async def test_the_server_description_does_not_reach_the_model() -> None:
     the schema it described.
     """
     provider = _provider({"meshy_image_to_3d": {"image_url": "data_uri"}})
-    tools = [_meshy_shaped_tool()]
-    definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
-    provider._register_server_tools(
-        SERVER_ID,
-        definitions,
-        provider._build_mcp_descriptors(
-            server_id=SERVER_ID, definitions=definitions, discovered_tools=tools
-        ),
-    )
-    provider._initialized = True
+    session, _ = _recording_session()
+    await _initialize_with_stub_transport(provider, [_meshy_shaped_tool()], session)
 
     advertised = _properties(
         list(await provider.get_tool_definitions()), "meshy_image_to_3d"
@@ -950,46 +967,147 @@ def test_a_file_path_mapping_is_still_refused_for_a_remote_server() -> None:
         })
 
 
-def test_a_resolved_attachment_still_yields_its_id_to_the_taint_gate() -> None:
-    """The policy gate runs before this provider, on whatever the caller passed.
+async def _no_op_tool(**_kwargs: object) -> ToolResult:
+    return ToolResult(text="ok")
+
+
+def _tool_registration(
+    name: str,
+    # ast-grep-ignore: no-dict-any - Tool schemas are untyped JSON
+    parameters: dict[str, Any],
+) -> ToolRegistration:
+    return ToolRegistration(
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": parameters,
+                },
+            },
+        ),
+        implementation=_no_op_tool,
+        metadata=make_local_tool_metadata([ToolTag.OUTPUT_TRUSTED]),
+    )
+
+
+def _taint_gate_provider() -> TaintTrackingToolsProvider:
+    """A provider whose gate merges argument taint the same way production does."""
+    return TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                _tool_registration(
+                    "scalar_attachment_tool",
+                    {
+                        "type": "object",
+                        "properties": {"image_url": {"type": "attachment"}},
+                    },
+                ),
+                _tool_registration(
+                    "array_attachment_tool",
+                    {
+                        "type": "object",
+                        "properties": {
+                            "image_urls": {
+                                "type": "array",
+                                "items": {"type": "attachment"},
+                            }
+                        },
+                    },
+                ),
+                _tool_registration(
+                    "plain_string_tool",
+                    {
+                        "type": "object",
+                        "properties": {"other": {"type": "string"}},
+                    },
+                ),
+            ]
+        )
+    )
+
+
+def _untrusted_attachment() -> ScriptAttachment:
+    """A ScriptAttachment whose stored provenance is untrusted."""
+    attachment = _attachment()
+    attachment._metadata.metadata = {"source_trust_tier": "unknown_external"}
+    return attachment
+
+
+def _registry_reporting(attachment: ScriptAttachment) -> AttachmentRegistry:
+    """A registry whose ``get_attachments`` reports the one attachment's metadata."""
+
+    async def get_attachments(
+        db_context: object, attachment_ids: list[str], *, acting_user_id: str | None
+    ) -> dict[str, AttachmentMetadata]:
+        return {
+            attachment_id: attachment._metadata
+            for attachment_id in attachment_ids
+            if attachment_id == attachment.get_id()
+        }
+
+    return cast("AttachmentRegistry", SimpleNamespace(get_attachments=get_attachments))
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_attachment_still_yields_its_id_to_the_taint_gate(
+    db_engine: AsyncEngine,
+) -> None:
+    """The taint gate runs on whatever the caller passed, before dispatch.
 
     A script resolves its own attachment arguments before dispatch, so the
-    argument reaching the collector is the object rather
-    than the id. Reading nothing off it would evaluate an externally
-    communicating call without the attachment's provenance.
+    argument reaching the gate is the object rather than the id. Reading
+    nothing off it would evaluate an externally communicating call without
+    the attachment's provenance.
     """
-    attachment = _attachment()
+    attachment = _untrusted_attachment()
+    provider = _taint_gate_provider()
+    registry = _registry_reporting(attachment)
+    db_context = Database(db_engine)
 
-    scalar = infrastructure._collect_attachment_argument_ids(
+    scalar_tracker = InMemoryTurnTaintTracker()
+    await provider.execute_tool(
+        "scalar_attachment_tool",
         {"image_url": attachment},
-        schema={
-            "type": "object",
-            "properties": {"image_url": {"type": "attachment"}},
-        },
+        _execution_context(
+            registry, taint_tracker=scalar_tracker, db_context=db_context
+        ),
     )
-    array = infrastructure._collect_attachment_argument_ids(
+    assert scalar_tracker.snapshot().max_tier == SourceTrustTier.UNKNOWN_EXTERNAL
+
+    array_tracker = InMemoryTurnTaintTracker()
+    await provider.execute_tool(
+        "array_attachment_tool",
         {"image_urls": [attachment]},
-        schema={
-            "type": "object",
-            "properties": {
-                "image_urls": {"type": "array", "items": {"type": "attachment"}}
-            },
-        },
+        _execution_context(
+            registry, taint_tracker=array_tracker, db_context=db_context
+        ),
+    )
+    assert array_tracker.snapshot().max_tier == SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_an_attachment_outside_an_attachment_slot_is_not_collected(
+    db_engine: AsyncEngine,
+) -> None:
+    """The parameter's declared slot decides; the object alone taints nothing."""
+    attachment = _untrusted_attachment()
+    provider = _taint_gate_provider()
+    tracker = InMemoryTurnTaintTracker()
+
+    await provider.execute_tool(
+        "plain_string_tool",
+        {"other": attachment},
+        _execution_context(
+            _registry_reporting(attachment),
+            taint_tracker=tracker,
+            db_context=Database(db_engine),
+        ),
     )
 
-    assert scalar == {attachment.get_id()}
-    assert array == {attachment.get_id()}
-
-
-def test_an_attachment_outside_an_attachment_slot_is_not_collected() -> None:
-    """The slot still decides; the object does not make any parameter one."""
-    assert (
-        infrastructure._collect_attachment_argument_ids(
-            {"other": _attachment()},
-            schema={"type": "object", "properties": {"other": {"type": "string"}}},
-        )
-        == set()
-    )
+    assert tracker.snapshot().max_tier == SourceTrustTier.TRUSTED_USER
 
 
 def test_a_dropped_parameter_is_not_advertised() -> None:

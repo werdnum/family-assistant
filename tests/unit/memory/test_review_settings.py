@@ -1,18 +1,18 @@
-"""The review timing settings, as configuration and as a recurrence rule.
+"""The review timing settings, as configuration.
 
 Slice 4 of docs/design/conversation-memory.md. The numbers themselves are a
 deployment's to change; what is pinned here is that the configuration reaches
-the value the predicate reads, that the shipped defaults are the ones the
-design names, and that the sweep interval is expressible as a recurrence the
-task worker can actually parse.
+the value the predicate reads, and that the shipped defaults are the ones the
+design names. `tests/functional/memory/test_shipped_defaults_startup.py`
+covers the sweep interval actually reaching the recurrence rule startup
+enqueues.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
-from dateutil import rrule
 
 from family_assistant.config_models import AppConfig, MemoryConfig
 from family_assistant.memory.review_settings import MemoryReviewSettings
@@ -66,16 +66,12 @@ def test_the_operator_overrides_reach_the_predicate_value() -> None:
 
 
 def test_the_memory_config_reaches_the_app_config() -> None:
-    config = AppConfig(memory_config=MemoryConfig(sweep_interval_minutes=11))
+    """Loaded from the dict shape an operator's YAML actually produces.
+
+    `AppConfig(memory_config=MemoryConfig(...))` would only restate that
+    pydantic stores a sub-model passed to its constructor; `model_validate`
+    over a plain dict is what config loading from YAML actually does.
+    """
+    config = AppConfig.model_validate({"memory_config": {"sweep_interval_minutes": 11}})
 
     assert config.memory_config.to_review_settings().sweep_interval_minutes == 11
-
-
-def test_the_sweep_interval_renders_a_recurrence_the_worker_can_parse() -> None:
-    """The worker resolves the next occurrence with `dateutil.rrule.rrulestr`."""
-    interval = MemoryConfig().sweep_interval_minutes
-    start = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
-
-    rule = rrule.rrulestr(f"FREQ=MINUTELY;INTERVAL={interval}", dtstart=start)
-
-    assert rule.after(start) == start + timedelta(minutes=interval)

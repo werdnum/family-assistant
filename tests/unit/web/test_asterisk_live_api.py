@@ -1,12 +1,11 @@
 import asyncio
 import struct
-import tempfile
 import wave
 from array import array
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,6 +17,7 @@ from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
+from family_assistant.web.models import GeminiLiveConfig, GeminiLiveGreetingConfig
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
 
 
@@ -71,21 +71,19 @@ class TestReceiveFromGemini:
     async def test_forwards_audio(
         self, handler: AsteriskLiveHandler, mock_websocket: AsyncMock
     ) -> None:
-        """Audio received from Gemini is correctly forwarded to Asterisk."""
+        """Audio received from Gemini is forwarded as the resampled output, not the raw input."""
         raw_audio = b"\x01\x02\x03\x04" * 100
+        resampled_audio = b"\x09\x08" * 160  # one full send frame (320 bytes)
         handler.gemini_session = _single_response_session(
             _make_gemini_response(raw_audio)
         )
         handler.gemini_to_asterisk_resampler = MagicMock()
-        handler.gemini_to_asterisk_resampler.resample.return_value = raw_audio
-        handler.optimal_frame_size = 10
+        handler.gemini_to_asterisk_resampler.resample.return_value = resampled_audio
 
         await handler._receive_from_gemini()
 
-        assert mock_websocket.send_bytes.called
-        sent_data = mock_websocket.send_bytes.call_args[0][0]
-        assert isinstance(sent_data, bytes)
-        assert len(sent_data) > 0
+        sent_data = b"".join(c[0][0] for c in mock_websocket.send_bytes.call_args_list)
+        assert sent_data == resampled_audio
 
     async def test_handles_invalid_format_gracefully(
         self, handler: AsteriskLiveHandler, mock_websocket: AsyncMock
@@ -165,7 +163,7 @@ class TestApplyDucking:
         output_samples = array("h")
         output_samples.frombytes(output)
 
-        assert all(-32768 <= s <= 32767 for s in output_samples)
+        assert list(output_samples) == [16383, -16384]
 
     def test_handles_odd_length(self, handler: AsteriskLiveHandler) -> None:
         handler.assistant_duck_gain = 0.5
@@ -208,20 +206,19 @@ class TestPrecannedGreeting:
         handler.send_frame_duration_ms = 0.0  # No pacing delay in tests
 
     async def test_sends_audio_to_websocket(
-        self, handler: AsteriskLiveHandler, mock_websocket: AsyncMock
+        self,
+        handler: AsteriskLiveHandler,
+        mock_websocket: AsyncMock,
+        mock_config: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Pre-canned greeting sends audio frames to WebSocket."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            resources_dir = Path(tmpdir)
-            _make_wav_file(resources_dir, rate=16000, num_frames=1600)
+        mock_config.greeting.wav_path = str(
+            _make_wav_file(tmp_path, rate=16000, num_frames=1600)
+        )
 
-            with patch(
-                "family_assistant.web.routers.asterisk_live_api.WEB_RESOURCES_DIR",
-                resources_dir,
-            ):
-                await handler._send_precanned_greeting()
+        await handler._send_precanned_greeting()
 
-        assert mock_websocket.send_bytes.called
         calls = mock_websocket.send_bytes.call_args_list
         # 1600 frames * 2 bytes = 3200 bytes total, frame_size = 640 -> 5 frames
         assert len(calls) == 5
@@ -233,19 +230,17 @@ class TestPrecannedGreeting:
     ) -> None:
         """Greeting sends audio using the actual greeting.wav resource."""
         greeting_path = WEB_RESOURCES_DIR / "greeting.wav"
-        if not greeting_path.exists():
-            pytest.skip("greeting.wav not found")
+        with wave.open(str(greeting_path), "rb") as wf:
+            total_bytes = wf.getnframes() * wf.getsampwidth()
 
         await handler._send_precanned_greeting()
 
-        assert mock_websocket.send_bytes.called
-        for call in mock_websocket.send_bytes.call_args_list:
-            assert isinstance(call[0][0], bytes)
-
-    async def test_not_sent_when_disabled(self, mock_config: MagicMock) -> None:
-        """No greeting is sent when greeting.enabled = False."""
-        mock_config.greeting.enabled = False
-        assert not mock_config.greeting.enabled
+        calls = mock_websocket.send_bytes.call_args_list
+        expected_frames = -(-total_bytes // handler.send_frame_size)  # ceil division
+        assert len(calls) == expected_frames
+        sent_data = b"".join(c[0][0] for c in calls)
+        assert len(sent_data) == total_bytes
+        assert all(len(c[0][0]) <= handler.send_frame_size for c in calls)
 
     async def test_resamples_when_rate_differs(
         self, handler: AsteriskLiveHandler, mock_websocket: AsyncMock
@@ -255,21 +250,27 @@ class TestPrecannedGreeting:
         handler.send_frame_size = 320  # 20ms at 8kHz
 
         greeting_path = WEB_RESOURCES_DIR / "greeting.wav"
-        if not greeting_path.exists():
-            pytest.skip("greeting.wav not found")
+        with wave.open(str(greeting_path), "rb") as wf:
+            original_bytes = wf.getnframes() * wf.getsampwidth()
 
         await handler._send_precanned_greeting()
-        assert mock_websocket.send_bytes.called
+
+        calls = mock_websocket.send_bytes.call_args_list
+        sent_bytes = sum(len(c[0][0]) for c in calls)
+        expected = original_bytes // 2
+        assert abs(sent_bytes - expected) < expected * 0.05
 
     async def test_handles_missing_file(
-        self, handler: AsteriskLiveHandler, mock_websocket: AsyncMock
+        self,
+        handler: AsteriskLiveHandler,
+        mock_websocket: AsyncMock,
+        mock_config: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Missing greeting.wav is handled gracefully."""
-        with patch(
-            "family_assistant.web.routers.asterisk_live_api.pathlib.Path.exists",
-            return_value=False,
-        ):
-            await handler._send_precanned_greeting()
+        mock_config.greeting.wav_path = str(tmp_path / "missing.wav")
+
+        await handler._send_precanned_greeting()
 
         assert not mock_websocket.send_bytes.called
 
@@ -296,18 +297,105 @@ class TestPreGeminiAudioBuffering:
     async def test_audio_not_buffered_after_gemini_connects(
         self, handler: AsteriskLiveHandler
     ) -> None:
-        """Audio goes directly to Gemini after session is established."""
+        """Audio goes directly to Gemini, as the sent audio blob, after session is established."""
         mock_session = AsyncMock()
         handler.gemini_session = mock_session
+        raw_audio = b"\x01\x02" * 100
 
-        await handler._handle_media_message(b"\x01\x02" * 100)
+        await handler._handle_media_message(raw_audio)
 
         assert len(handler._audio_buffer_pre_gemini) == 0
         mock_session.send_realtime_input.assert_called_once()
+        sent_blob = mock_session.send_realtime_input.call_args.kwargs["audio"]
+        assert sent_blob.data == raw_audio
+        assert sent_blob.mime_type == "audio/pcm;rate=16000"
 
-    async def test_buffer_starts_empty(self, handler: AsteriskLiveHandler) -> None:
-        """Pre-Gemini audio buffer is empty on init."""
-        assert len(handler._audio_buffer_pre_gemini) == 0
+
+class TestGeminiConnectFlow:
+    """Exercises handler.run() end-to-end against a fake Gemini client.
+
+    Covers behaviour that only happens inside the connect step of run() and
+    cannot be observed by calling handler methods directly: flushing
+    pre-buffered audio to the newly-connected session, and the greeting
+    being (or not being) played while connecting.
+    """
+
+    @staticmethod
+    def _make_fake_client(session: MagicMock) -> MagicMock:
+        connect_cm = AsyncMock()
+        connect_cm.__aenter__.return_value = session
+        connect_cm.__aexit__.return_value = None
+        client = MagicMock()
+        client.connect.return_value = connect_cm
+        return client
+
+    @staticmethod
+    def _make_session() -> MagicMock:
+        session = MagicMock()
+        session.send_realtime_input = AsyncMock()
+
+        async def empty_receive() -> AsyncIterator[None]:
+            for _ in ():
+                yield
+
+        session.receive.return_value = empty_receive()
+        return session
+
+    @staticmethod
+    def _connect_then_disconnect_messages() -> list[dict[str, object]]:
+        return [
+            {
+                "type": "websocket.receive",
+                "text": (
+                    "MEDIA_START connection_id:test format:slin16 "
+                    "optimal_frame_size:320"
+                ),
+            },
+            {"type": "websocket.disconnect"},
+        ]
+
+    async def test_buffered_audio_flushed_in_order_on_connect(
+        self, mock_websocket: AsyncMock
+    ) -> None:
+        """Audio buffered before Gemini connects is flushed to it, in order, on connect."""
+        session = self._make_session()
+        config = GeminiLiveConfig(greeting=GeminiLiveGreetingConfig(enabled=False))
+        handler = AsteriskLiveHandler(
+            websocket=mock_websocket,
+            client=self._make_fake_client(session),
+            gemini_live_config=config,
+        )
+        handler.database_engine = None
+        chunk1 = b"\x01\x02" * 100
+        chunk2 = b"\x03\x04" * 100
+        handler._audio_buffer_pre_gemini = [chunk1, chunk2]
+        mock_websocket.receive.side_effect = self._connect_then_disconnect_messages()
+
+        await handler.run()
+
+        sent_blobs = [
+            call.kwargs["audio"] for call in session.send_realtime_input.call_args_list
+        ]
+        assert [blob.data for blob in sent_blobs] == [chunk1, chunk2]
+        assert all(blob.mime_type == "audio/pcm;rate=16000" for blob in sent_blobs)
+
+    async def test_greeting_not_sent_when_disabled(
+        self, mock_websocket: AsyncMock
+    ) -> None:
+        """No greeting frames reach the websocket when greeting.enabled is False."""
+        session = self._make_session()
+        config = GeminiLiveConfig(greeting=GeminiLiveGreetingConfig(enabled=False))
+        handler = AsteriskLiveHandler(
+            websocket=mock_websocket,
+            client=self._make_fake_client(session),
+            gemini_live_config=config,
+        )
+        handler.database_engine = None
+        mock_websocket.receive.side_effect = self._connect_then_disconnect_messages()
+
+        await handler.run()
+
+        assert not mock_websocket.send_bytes.called
 
 
 class TestCallTranscriptSaving:
@@ -317,43 +405,52 @@ class TestCallTranscriptSaving:
     def _setup_transcript(self, handler: AsteriskLiveHandler) -> None:
         handler.extension = "100"
 
-    async def test_no_segments_no_db(self, handler: AsteriskLiveHandler) -> None:
-        """No segments and no database engine should be a no-op."""
-        handler.database_engine = None
+    async def test_no_segments_writes_no_note(
+        self, handler: AsteriskLiveHandler, db_engine: AsyncEngine
+    ) -> None:
+        """An empty call (no transcript segments) should not create any note."""
+        handler.database_engine = db_engine
         handler._transcript_segments = []
+
         await handler._save_call_transcript()
 
+        db = Database(db_engine)
+        notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
+        assert notes == []
+
     async def test_flushes_partial_caller_buffer(
-        self, handler: AsteriskLiveHandler
+        self, handler: AsteriskLiveHandler, db_engine: AsyncEngine
     ) -> None:
-        """Partial caller buffer should be flushed into segments before save check."""
-        handler.database_engine = None
+        """Partial caller buffer text should reach the saved transcript note."""
+        handler.database_engine = db_engine
         handler._caller_transcript_buf = ["Hello", " world"]
         handler._assistant_transcript_buf = []
         handler._transcript_segments = []
 
         await handler._save_call_transcript()
 
-        assert len(handler._transcript_segments) == 1
-        assert handler._transcript_segments[0][0] == "Caller"
-        assert handler._transcript_segments[0][1] == "Hello world"
         assert handler._caller_transcript_buf == []
+        db = Database(db_engine)
+        notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
+        assert len(notes) == 1
+        assert "Caller: Hello world" in notes[0].content
 
     async def test_flushes_partial_assistant_buffer(
-        self, handler: AsteriskLiveHandler
+        self, handler: AsteriskLiveHandler, db_engine: AsyncEngine
     ) -> None:
-        """Partial assistant buffer should be flushed into segments before save check."""
-        handler.database_engine = None
+        """Partial assistant buffer text should reach the saved transcript note."""
+        handler.database_engine = db_engine
         handler._caller_transcript_buf = []
         handler._assistant_transcript_buf = ["Good", "bye"]
         handler._transcript_segments = []
 
         await handler._save_call_transcript()
 
-        assert len(handler._transcript_segments) == 1
-        assert handler._transcript_segments[0][0] == "Assistant"
-        assert handler._transcript_segments[0][1] == "Goodbye"
         assert handler._assistant_transcript_buf == []
+        db = Database(db_engine)
+        notes = await db.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
+        assert len(notes) == 1
+        assert "Assistant: Goodbye" in notes[0].content
 
     async def test_formats_timestamps(
         self, handler: AsteriskLiveHandler, db_engine: AsyncEngine

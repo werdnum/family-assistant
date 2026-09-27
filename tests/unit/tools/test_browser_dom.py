@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 import pytest
 import toons
 
-from family_assistant.services.ucp import MerchantUCPProfile
+from family_assistant.services.ucp import MerchantUCPProfile, merchant_origin
 from family_assistant.tools import browser_dom
 from family_assistant.tools.browser_backend import (
     _coerce_load_state,  # noqa: PLC2701  # Testing private load-state narrowing helper
@@ -32,9 +33,11 @@ from family_assistant.tools.browser_dom import (
     _ucp_hint_on_url_change,  # noqa: PLC2701  # Testing private URL-change gating
     _validate_ref,  # noqa: PLC2701  # Testing private ref syntax check
 )
-from family_assistant.tools.browser_session import BrowserSession
+from family_assistant.tools.browser_session import BrowserSession, close_browser_session
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -95,13 +98,6 @@ class TestFormatToon:
         assert parsed["elements"] == 4
         assert len(parsed["roots"]) == 2
 
-    def test_renders_scalar_header_fields(self) -> None:
-        text = _format_toon(_sample_snapshot())
-        assert "url: " in text and "https://example.com/" in text
-        assert "title: Example" in text
-        assert "forms: 1" in text
-        assert "elements: 4" in text
-
     def test_renders_refs_and_roles_for_each_node(self) -> None:
         text = _format_toon(_sample_snapshot())
         # TOON renders nested dicts with `ref:`/`role:` keys — the LLM finds
@@ -122,20 +118,16 @@ class TestFormatToon:
         assert "About us" in text
         assert "example.com/about" in text
 
-    def test_query_filters_out_nonmatching_branches(self) -> None:
+    def test_query_keeps_only_matching_branches_and_their_ancestors(self) -> None:
         text = _format_toon(_sample_snapshot(), query="about")
         parsed = toons.loads(text)
         # Heading "Welcome" doesn't match "about", so only the form survives.
         roots = parsed["roots"]
         assert len(roots) == 1
         assert roots[0]["role"] == "form"
-
-    def test_query_keeps_ancestor_of_matching_descendant(self) -> None:
-        text = _format_toon(_sample_snapshot(), query="about")
-        parsed = toons.loads(text)
         # The form parent of e4 should survive the filter because its subtree
         # contains a matching link — otherwise refs would be orphaned.
-        form = parsed["roots"][0]
+        form = roots[0]
         assert form["ref"] == "e2"
         link = form["children"][0]
         assert link["ref"] == "e4"
@@ -296,16 +288,23 @@ class TestFormatUcpHint:
         assert "Capabilities: cart." in hint
 
 
+@pytest.fixture
+async def exec_context() -> AsyncIterator[ToolExecutionContext]:
+    """A context with a unique conversation id, whose browser session is closed
+    afterwards so per-origin UCP caches don't leak into other tests or reruns."""
+    context = cast(
+        "ToolExecutionContext",
+        SimpleNamespace(conversation_id=f"browser-dom-{uuid4()}"),
+    )
+    yield context
+    await close_browser_session(context)
+
+
 class TestProbeUcpSupport:
     """Per-session caching probe used by snapshot-returning browser tools."""
 
-    def _context(self, conversation_id: str) -> ToolExecutionContext:
-        return cast(
-            "ToolExecutionContext", SimpleNamespace(conversation_id=conversation_id)
-        )
-
     async def test_returns_hint_and_caches_result(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
         calls: list[str] = []
         timeouts: list[float | None] = []
@@ -322,10 +321,11 @@ class TestProbeUcpSupport:
             return _shopping_profile("https://shop.example.com")
 
         monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
-        context = self._context("probe-cache-test")
 
-        first = await _probe_ucp_support(context, "https://shop.example.com/products/x")
-        second = await _probe_ucp_support(context, "https://shop.example.com/cart")
+        first = await _probe_ucp_support(
+            exec_context, "https://shop.example.com/products/x"
+        )
+        second = await _probe_ucp_support(exec_context, "https://shop.example.com/cart")
 
         assert first is not None
         assert "ucp_add_to_cart" in first
@@ -336,7 +336,7 @@ class TestProbeUcpSupport:
         assert timeouts == [browser_dom.UCP_PROBE_TIMEOUT_SECONDS]
 
     async def test_returns_none_for_non_https_origin(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
         async def fail_discover(
             url: str,
@@ -348,13 +348,11 @@ class TestProbeUcpSupport:
             raise AssertionError("non-HTTPS origin must not be probed")
 
         monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fail_discover)
-        result = await _probe_ucp_support(
-            self._context("probe-http-test"), "http://shop.example.com"
-        )
+        result = await _probe_ucp_support(exec_context, "http://shop.example.com")
         assert result is None
 
     async def test_no_hint_when_only_untrusted_cross_host_endpoints(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
         async def fake_discover(
             url: str,
@@ -375,13 +373,11 @@ class TestProbeUcpSupport:
         # supports_shopping is True, but the only endpoint is neither same-origin,
         # same-site, nor a trusted platform suffix, so the shopping tools could
         # not use it — the model must not be told this origin is shoppable.
-        result = await _probe_ucp_support(
-            self._context("probe-cross-host-test"), "https://shop.example.com/"
-        )
+        result = await _probe_ucp_support(exec_context, "https://shop.example.com/")
         assert result is None
 
     async def test_caches_negative_result(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
         calls: list[str] = []
 
@@ -396,10 +392,11 @@ class TestProbeUcpSupport:
             return None
 
         monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
-        context = self._context("probe-negative-test")
 
-        first = await _probe_ucp_support(context, "https://plain.example.com/")
-        second = await _probe_ucp_support(context, "https://plain.example.com/page")
+        first = await _probe_ucp_support(exec_context, "https://plain.example.com/")
+        second = await _probe_ucp_support(
+            exec_context, "https://plain.example.com/page"
+        )
 
         assert first is None
         assert second is None
@@ -409,50 +406,61 @@ class TestProbeUcpSupport:
 class TestUcpHintOnUrlChange:
     """The hint is emitted only when the snapshot origin changes."""
 
-    def _context(self, conversation_id: str) -> ToolExecutionContext:
-        return cast(
-            "ToolExecutionContext", SimpleNamespace(conversation_id=conversation_id)
-        )
-
     async def test_emits_on_change_and_skips_same_origin(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
-        probed: list[str | None] = []
+        probed: list[str] = []
 
-        async def fake_probe(
-            _exec_context: ToolExecutionContext, current_url: str | None
-        ) -> str | None:
-            probed.append(current_url)
-            return "🛒 hint"
+        async def fake_discover(
+            url: str,
+            *,
+            client: object,
+            timeout: float | None = None,
+            trusted_suffixes: tuple[str, ...] = (),
+        ) -> MerchantUCPProfile | None:
+            probed.append(url)
+            return _shopping_profile(merchant_origin(url) or url)
 
-        monkeypatch.setattr(browser_dom, "_probe_ucp_support", fake_probe)
-        context = self._context("hint-change-test")
+        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
 
         # New origin -> probed and hint emitted.
-        first = await _ucp_hint_on_url_change(context, "https://shop.example.com/a")
+        first = await _ucp_hint_on_url_change(
+            exec_context, "https://shop.example.com/a"
+        )
         # Same origin -> no probe, no hint.
-        second = await _ucp_hint_on_url_change(context, "https://shop.example.com/b")
+        second = await _ucp_hint_on_url_change(
+            exec_context, "https://shop.example.com/b"
+        )
         # Different origin -> probed and hint emitted again.
-        third = await _ucp_hint_on_url_change(context, "https://other.example.com/")
+        third = await _ucp_hint_on_url_change(
+            exec_context, "https://other.example.com/"
+        )
 
-        assert first == "🛒 hint"
+        assert first is not None
+        assert "ucp_add_to_cart" in first
         assert second is None
-        assert third == "🛒 hint"
-        assert probed == ["https://shop.example.com/a", "https://other.example.com/"]
+        assert third is not None
+        assert "ucp_add_to_cart" in third
+        assert probed == ["https://shop.example.com", "https://other.example.com"]
 
     async def test_non_https_origin_never_probes(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exec_context: ToolExecutionContext
     ) -> None:
-        async def fail_probe(
-            _exec_context: ToolExecutionContext, _current_url: str | None
-        ) -> str | None:  # pragma: no cover - must not be called
+        async def fail_discover(
+            url: str,
+            *,
+            client: object,
+            timeout: float | None = None,
+            trusted_suffixes: tuple[str, ...] = (),
+        ) -> MerchantUCPProfile | None:  # pragma: no cover - must not be called
             raise AssertionError("non-HTTPS origin must not be probed")
 
-        monkeypatch.setattr(browser_dom, "_probe_ucp_support", fail_probe)
-        context = self._context("hint-http-test")
+        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fail_discover)
 
-        first = await _ucp_hint_on_url_change(context, "http://shop.example.com/")
-        second = await _ucp_hint_on_url_change(context, "http://shop.example.com/x")
+        first = await _ucp_hint_on_url_change(exec_context, "http://shop.example.com/")
+        second = await _ucp_hint_on_url_change(
+            exec_context, "http://shop.example.com/x"
+        )
 
         assert first is None
         assert second is None

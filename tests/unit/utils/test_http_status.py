@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from family_assistant.utils.http_status import (
-    RETRYABLE_4XX_STATUSES,
-    is_transient_http_status,
-)
+from family_assistant.utils.http_status import is_transient_http_status
 
 
-@pytest.mark.parametrize("status_code", sorted(RETRYABLE_4XX_STATUSES))
+@pytest.mark.parametrize("status_code", [408, 425, 429])
 def test_the_retryable_client_statuses_are_transient(status_code: int) -> None:
     assert is_transient_http_status(status_code) is True
 

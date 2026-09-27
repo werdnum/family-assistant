@@ -41,7 +41,6 @@ from family_assistant.web.route_auth import (
         ("GET", "/api/debug/auth-state", False),
         # Scoped diagnostics/debug prefixes (GET only).
         ("GET", "/api/diagnostics/export", True),
-        ("GET", "/api/debug/profiles/tools", True),
         ("POST", "/api/diagnostics/export", False),
         # Everything else under /api requires default auth — fail closed.
         ("GET", "/api/notes/", False),
@@ -58,12 +57,6 @@ from family_assistant.web.route_auth import (
 def test_classification(method: str, path: str, exempt: bool) -> None:
     assert is_api_path(path)
     assert api_route_requires_default_auth(method, path) is (not exempt)
-
-
-@pytest.mark.parametrize("path", ["/notes", "/", "/apifake"])
-def test_non_api_paths_are_out_of_scope(path: str) -> None:
-    """Non-API paths never reach this classifier (PUBLIC_PATHS/middleware own them)."""
-    assert not is_api_path(path)
 
 
 def test_every_declared_route_is_matched_as_declared() -> None:

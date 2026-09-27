@@ -58,9 +58,11 @@ def test_long_arguments_do_not_block_the_call() -> None:
     )
 
 
-def test_ordinary_arguments_do_not_block_the_call() -> None:
+def test_spawn_worker_with_non_list_context_paths_blocks_the_call() -> None:
     reason = confirmation_arguments_block_reason(
-        "execute_shell", {"command": "git log --oneline -5"}
+        "spawn_worker", {"context_paths": {"a": 1}}
     )
 
-    assert reason is None
+    assert reason is not None
+    assert "context_paths must be an array" in reason
+    assert "dict" in reason

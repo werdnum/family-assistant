@@ -62,22 +62,23 @@ class TestPruneMessagesForContext:
         assert tool_msg_2.content == "B" * 5000
 
     def test_preserves_system_prompt(self) -> None:
-        """System prompt is never pruned."""
-        messages: list[LLMMessage] = [
-            SystemMessage(content="Important system prompt"),
-            UserMessage(content="Question 1"),
-            AssistantMessage(content="Answer 1"),
-            UserMessage(content="Question 2"),
-            AssistantMessage(content="Answer 2"),
-        ]
+        """System prompt is never pruned, even when turn-dropping runs."""
+        messages: list[LLMMessage] = [SystemMessage(content="Important system prompt")]
+        for i in range(5):
+            messages.append(UserMessage(content=f"Question {i}"))
+            messages.append(AssistantMessage(content=f"Answer {i}"))
 
         pruned = prune_messages_for_context(messages)
+
         assert pruned[0].role == "system"
         assert isinstance(pruned[0], SystemMessage)
         assert pruned[0].content == "Important system prompt"
+        user_messages = [m for m in pruned if isinstance(m, UserMessage)]
+        assert not any("Question 0" in str(m.content) for m in user_messages)
 
     def test_drops_oldest_turns(self) -> None:
-        """When messages are very long, oldest turns get dropped."""
+        """When messages are very long, oldest turns get dropped and exactly
+        the newest min_turns are kept."""
         messages: list[LLMMessage] = [SystemMessage(content="System")]
         for i in range(10):
             messages.append(UserMessage(content=f"Question {i} " + "x" * 5000))
@@ -85,13 +86,16 @@ class TestPruneMessagesForContext:
 
         pruned = prune_messages_for_context(messages)
 
-        # System prompt preserved
         assert pruned[0].role == "system"
-        # Most recent turns preserved
-        assert any(
-            "Question 9" in str(m.content) for m in pruned if isinstance(m, UserMessage)
-        )
-        # Oldest turns dropped
+        assert isinstance(pruned[0], SystemMessage)
+        assert pruned[0].content == "System"
+
+        user_messages = [m for m in pruned if isinstance(m, UserMessage)]
+        assert len(user_messages) == 3
+        kept_questions = [str(m.content) for m in user_messages]
+        assert any("Question 7" in q for q in kept_questions)
+        assert any("Question 8" in q for q in kept_questions)
+        assert any("Question 9" in q for q in kept_questions)
         assert not any(
             "Question 0" in str(m.content) for m in pruned if isinstance(m, UserMessage)
         )
@@ -171,21 +175,6 @@ class TestPruneMessagesForContext:
         assert tool_msg_1.tool_call_id == "tc1"
         assert tool_msg_1.error_traceback == "some traceback"
 
-    def test_keeps_at_least_3_turns(self) -> None:
-        """Even with many turns, at least 3 are kept."""
-        messages: list[LLMMessage] = [SystemMessage(content="System")]
-        for i in range(20):
-            messages.append(UserMessage(content=f"Question {i} " + "x" * 5000))
-            messages.append(AssistantMessage(content=f"Answer {i} " + "y" * 5000))
-
-        pruned = prune_messages_for_context(messages)
-
-        user_messages = [m for m in pruned if isinstance(m, UserMessage)]
-        assert len(user_messages) >= 3
-        # Most recent 3 turns should be present
-        for i in range(17, 20):
-            assert any(f"Question {i}" in str(m.content) for m in user_messages)
-
     def test_trailing_user_message_preserves_recent_tool_results(self) -> None:
         """When the last message is a UserMessage, recent tool results are still preserved."""
         messages: list[LLMMessage] = [
@@ -223,19 +212,6 @@ class TestPruneMessagesForContext:
             m for m in pruned if isinstance(m, ToolMessage) and m.tool_call_id == "tc2"
         ][0]
         assert tool_msg_2.content == "B" * 5000
-
-    def test_no_tool_messages_still_works(self) -> None:
-        """Conversations without tool messages still prune by dropping old turns."""
-        messages: list[LLMMessage] = [SystemMessage(content="System")]
-        for i in range(10):
-            messages.append(UserMessage(content=f"Question {i} " + "x" * 5000))
-            messages.append(AssistantMessage(content=f"Answer {i} " + "y" * 5000))
-
-        pruned = prune_messages_for_context(messages)
-
-        assert pruned[0].role == "system"
-        user_messages = [m for m in pruned if isinstance(m, UserMessage)]
-        assert len(user_messages) >= 3
 
     def test_respects_custom_min_turns(self) -> None:
         """Custom min_turns keeps the requested number of latest turns."""

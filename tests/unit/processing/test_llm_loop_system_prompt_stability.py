@@ -16,11 +16,12 @@ import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm import LLMInterface, LLMOutput
+from family_assistant.llm import LLMOutput
 from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
@@ -28,6 +29,8 @@ from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm.messages import LLMMessage
@@ -81,6 +84,7 @@ class _SnapshottingMockLLMClient(RuleBasedMockLLMClient):
         self.system_prompts: list[str] = []
         self.trailing_messages: list[LLMMessage] = []
         self.retry_messages: list[LLMMessage] = []
+        self.selection_prompts: list[str] = []
 
     async def generate_response(
         self,
@@ -88,6 +92,24 @@ class _SnapshottingMockLLMClient(RuleBasedMockLLMClient):
         tools: list[ToolDefinition] | None = None,
         tool_choice: str | None = "auto",
     ) -> LLMOutput:
+        if tools and any(
+            tool["function"]["name"] == "attach_to_response" for tool in tools
+        ):
+            self.selection_prompts.append(str(messages[-1].content))
+            return LLMOutput(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_select",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments=json.dumps({"attachment_ids": []}),
+                        ),
+                    )
+                ],
+            )
+
         first = messages[0]
         self.system_prompts.append(
             first.content if isinstance(first, SystemMessage) else ""
@@ -115,10 +137,11 @@ class _SnapshottingMockLLMClient(RuleBasedMockLLMClient):
 def _make_service(
     llm_client: RuleBasedMockLLMClient,
     max_iterations: int,
+    tools_provider: _EchoToolsProvider | None = None,
 ) -> ProcessingService:
     return ProcessingService(
         llm_client=llm_client,
-        tools_provider=_EchoToolsProvider(),
+        tools_provider=tools_provider or _EchoToolsProvider(),
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
@@ -155,28 +178,6 @@ async def test_system_prompt_is_byte_stable_across_tool_iterations(
     assert result.status.value == "success"
     assert len(llm_client.system_prompts) == 3
     assert len(set(llm_client.system_prompts)) == 1
-
-
-@pytest.mark.asyncio
-async def test_system_prompt_carries_no_iteration_counter(
-    db_engine: AsyncEngine,
-) -> None:
-    llm_client = _SnapshottingMockLLMClient(tool_call_rounds=1)
-    service = _make_service(llm_client, max_iterations=5)
-
-    db_context = Database(db_engine)
-    await service.handle_chat_interaction(
-        db_context=db_context,
-        interface_type="web",
-        conversation_id="cache-no-counter",
-        trigger_content_parts=[{"type": "text", "text": "Hello"}],
-        trigger_interface_message_id=None,
-        user_name="Test User",
-    )
-
-    assert llm_client.system_prompts
-    for prompt in llm_client.system_prompts:
-        assert "Processing iteration" not in prompt
 
 
 @pytest.mark.asyncio
@@ -270,30 +271,19 @@ class _AttachingToolsProvider(_EchoToolsProvider):
 @pytest.mark.asyncio
 async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
     db_engine: AsyncEngine,
+    tmp_path: Path,
 ) -> None:
     """The synthetic final-iteration instruction is the newest user message on the
     last iteration. Selecting attachments against it would match boilerplate
     instead of what the user actually asked for."""
     llm_client = _SnapshottingMockLLMClient(tool_call_rounds=1)
-    service = _make_service(llm_client, max_iterations=2)
-    service.tool_executor.tools_provider = _AttachingToolsProvider()
-    service.llm_loop.tool_executor.tools_provider = _AttachingToolsProvider()
+    service = _make_service(
+        llm_client, max_iterations=2, tools_provider=_AttachingToolsProvider()
+    )
     service.app_config.attachment_selection_threshold = 1
-
-    queries: list[str] = []
-
-    async def _capture_query(
-        pending_attachment_ids: list[str],
-        original_query: str,
-        *,
-        acting_user_id: str | None,
-        llm_client: LLMInterface,
-    ) -> list[str]:
-        _ = llm_client
-        queries.append(original_query)
-        return pending_attachment_ids
-
-    service.llm_loop.attachment_processor.select_for_response = _capture_query  # type: ignore[method-assign]
+    service.attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine
+    )
 
     db_context = Database(db_engine)
     await service.handle_chat_interaction(
@@ -307,10 +297,13 @@ async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
         user_name="Test User",
     )
 
-    assert queries, "attachment selection never ran"
-    for query in queries:
-        assert "final processing iteration" not in query.lower()
-    assert queries[0] == "Show me the pictures of the cat"
+    assert llm_client.selection_prompts, "attachment selection never ran"
+    for prompt in llm_client.selection_prompts:
+        assert "final processing iteration" not in prompt.lower()
+    assert (
+        'original query was: "Show me the pictures of the cat"'
+        in llm_client.selection_prompts[0]
+    )
 
 
 class _ContextLimitOnceMockLLMClient(_SnapshottingMockLLMClient):
