@@ -775,9 +775,9 @@ def _delegation_reference_text(
     voice_session: bool = False,
 ) -> str:
     delivery = (
-        "When it finishes, this profile will process the result as a Chat follow-up "
-        "in this call's conversation. The live voice session will not resume "
-        "speaking automatically. Tell the user where to find the result. "
+        "When it finishes, the result will be delivered directly to this call's "
+        "Chat conversation. The live voice session will not resume speaking "
+        "automatically. Tell the user where to find the result. "
         if voice_session
         else "The result will wake this profile automatically when it finishes, "
         "and your follow-up response will be delivered to the conversation. "
@@ -1260,6 +1260,7 @@ async def _enqueue_delegation(
             "source_profile_id": source_service_id,
             "target_service_id": target_service_id,
             "interface_type": _delegation_interface_type(exec_context),
+            "origin_interface_type": exec_context.interface_type,
             "conversation_id": exec_context.conversation_id,
             "user_id": exec_context.user_id,
             "user_name": exec_context.user_name,
@@ -1416,9 +1417,11 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "your system prompt. Profile-to-profile delegation controls are enforced by the "
                 "tool policy engine.\n\n"
                 "Returns the delegated service's text response, or — when the work runs long — an "
-                "async reference ID. When you get a reference, the result wakes this profile "
-                "automatically once it finishes and your follow-up is delivered to the conversation, "
-                "so end your turn instead of polling get_delegation_status in a loop. Errors are "
+                "async reference ID. When you get a reference outside voice mode, the result "
+                "wakes this profile and your follow-up is delivered to the conversation. In "
+                "voice mode, the result is posted directly to the saved Chat conversation without "
+                "waking this profile. End your turn instead of polling get_delegation_status in "
+                "a loop. Errors are "
                 "returned as text (and, for failed async runs, a reference ID you can pass to "
                 "get_delegation_status for the full detail).\n\n"
                 "Each delegation starts a fresh, isolated conversation with the target profile. To "

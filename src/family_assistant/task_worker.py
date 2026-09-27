@@ -3628,6 +3628,8 @@ class TaskWorker:
         run: DelegationRunDict,
     ) -> ProcessingService | None:
         """Return the local profile that initiated a delegated run, if available."""
+        if run["origin_interface_type"] == "voice":
+            return None
         processing_service = exec_context.processing_service
         if processing_service is None:
             return None

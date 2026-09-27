@@ -541,11 +541,12 @@ def _tool_context(
 
 
 @pytest.mark.asyncio
-async def test_voice_delegation_uses_web_history_for_completion(
+async def test_voice_delegation_delivers_direct_notice_without_waking_chat(
     db_engine: AsyncEngine,
 ) -> None:
     target_service = FakeDelegatableService()
-    processing_service = _source_processing_service(target_service)
+    source_service = FakeWakeCapableSourceService(target_service)
+    processing_service = cast("ProcessingService", source_service)
     db_context = Database(engine=db_engine)
     context = _tool_context(db_context, processing_service, None)
     context.interface_type = "voice"
@@ -558,15 +559,55 @@ async def test_voice_delegation_uses_web_history_for_completion(
     )
     assert isinstance(result.data, dict)
     assert result.text is not None
-    assert "Chat follow-up" in result.text
+    assert "delivered directly" in result.text
     assert "live voice session will not resume" in result.text
     run = await db_context.delegation_runs.get_by_delegation_id(
         result.data["delegation_id"]
     )
     assert run is not None
     assert run["interface_type"] == "web"
+    assert run["origin_interface_type"] == "voice"
+    pending_status = await get_delegation_status_tool(
+        context, result.data["delegation_id"]
+    )
+    assert "Chat conversation" in (pending_status.text or "")
+
+    worker = TaskWorker(
+        processing_service=processing_service,
+        chat_interface=AsyncMock(spec=ChatInterface),
+        calendar_config={},
+        timezone=ZoneInfo("UTC"),
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+    )
+    await worker.handle_delegated_profile_run(
+        context,
+        {
+            "delegation_id": result.data["delegation_id"],
+            "interface_type": "web",
+            "conversation_id": context.conversation_id,
+            "user_name": TEST_USER_NAME,
+        },
+    )
+    assert source_service.wake_call_count == 0
+    completed = await db_context.delegation_runs.get_by_delegation_id(
+        result.data["delegation_id"]
+    )
+    assert completed is not None
+    assert completed["notified_at"] is not None
+    visible_rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == context.conversation_id,
+        )
+    )
+    assert any(
+        not row["is_internal"]
+        and "background delegation done" in (row["content"] or "")
+        for row in visible_rows
+    )
     status = await get_delegation_status_tool(context, result.data["delegation_id"])
-    assert "Chat conversation" in (status.text or "")
+    assert isinstance(status.data, dict)
+    assert status.data["status"] == "completed"
     listing = await list_delegations_tool(context)
     assert result.data["delegation_id"] in (listing.text or "")
 
