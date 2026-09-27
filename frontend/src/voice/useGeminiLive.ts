@@ -549,6 +549,7 @@ export function useGeminiLive(): GeminiLiveState {
         conversationIdRef.current = `web_conv_${crypto.randomUUID()}`;
         savedConversationIdRef.current = null;
         attemptIdRef.current = crypto.randomUUID();
+        const attemptId = attemptIdRef.current;
         setSessionDuration(0);
         lastTranscriptRef.current = null;
         toolProfileIdRef.current = profileId;
@@ -594,9 +595,21 @@ export function useGeminiLive(): GeminiLiveState {
 
         // Create callbacks object for the session
         const callbacks: GeminiLiveCallbacks = {
-          onMessage: handleSessionMessage,
-          onError: handleSessionError,
-          onClose: handleSessionClose,
+          onMessage: (message) => {
+            if (attemptIdRef.current === attemptId) {
+              handleSessionMessage(message);
+            }
+          },
+          onError: (error) => {
+            if (attemptIdRef.current === attemptId) {
+              handleSessionError(error);
+            }
+          },
+          onClose: () => {
+            if (attemptIdRef.current === attemptId) {
+              handleSessionClose();
+            }
+          },
         };
 
         let session: Session;
@@ -633,16 +646,16 @@ export function useGeminiLive(): GeminiLiveState {
               onopen: () => {
                 resolveOpen!();
               },
-              onmessage: handleSessionMessage,
+              onmessage: callbacks.onMessage,
               onerror: (e: ErrorEvent) => {
                 const error = new Error(e.message || 'WebSocket error');
                 rejectOpen!(error);
-                handleSessionError(error);
+                callbacks.onError(error);
               },
               onclose: (e: CloseEvent) => {
                 // Reject openPromise if connection closes before opening
                 rejectOpen!(new Error(e.reason || 'Connection closed before opening'));
-                handleSessionClose();
+                callbacks.onClose();
               },
             },
             config: {
@@ -744,48 +757,46 @@ export function useGeminiLive(): GeminiLiveState {
     const conversationId = conversationIdRef.current;
     if (conversationId && turns.length > 0 && savedConversationIdRef.current !== conversationId) {
       savedConversationIdRef.current = conversationId;
+      const body = JSON.stringify({
+        conversation_id: conversationId,
+        profile_id: toolProfileIdRef.current,
+        client_saved_at: new Date().toISOString(),
+        turns: turns
+          .map((entry) => ({
+            role: entry.role === 'tool' ? 'tool_call' : entry.role,
+            text: entry.role === 'tool' ? '' : entry.text,
+            timestamp: entry.timestamp.toISOString(),
+            ...(entry.role === 'tool'
+              ? {
+                  tool_call_id: entry.id,
+                  tool_name: entry.toolName || entry.text,
+                  tool_arguments: entry.toolArgs || {},
+                }
+              : {}),
+          }))
+          .flatMap((turn, index) => {
+            const entry = turns[index];
+            if (entry.role !== 'tool' || entry.toolStatus === 'running') {
+              return [turn];
+            }
+            return [
+              turn,
+              {
+                role: 'tool',
+                text: JSON.stringify(entry.toolResult ?? null),
+                timestamp: (entry.toolCompletedAt ?? new Date()).toISOString(),
+                tool_call_id: entry.id,
+                tool_name: entry.toolName || entry.text,
+              },
+            ];
+          })
+          .sort((a, b) => a.timestamp.localeCompare(b.timestamp)),
+      });
       void fetch('/api/v1/chat/voice-sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversation_id: conversationId,
-          profile_id: toolProfileIdRef.current,
-          client_saved_at: new Date().toISOString(),
-          turns: turns
-            .map((entry) => ({
-              role: entry.role === 'tool' ? 'tool_call' : entry.role,
-              text: entry.role === 'tool' ? '' : entry.text,
-              timestamp: entry.timestamp.toISOString(),
-              ...(entry.role === 'tool'
-                ? {
-                    tool_call_id: entry.id,
-                    tool_name: entry.toolName || entry.text,
-                    tool_arguments: entry.toolArgs || {},
-                  }
-                : {}),
-            }))
-            .flatMap((turn, index) => {
-              const entry = turns[index];
-              if (entry.role !== 'tool') {
-                return [turn];
-              }
-              return [
-                turn,
-                {
-                  role: 'tool',
-                  text: JSON.stringify(
-                    entry.toolStatus === 'running'
-                      ? { error: 'Voice session ended before the tool returned.' }
-                      : (entry.toolResult ?? null)
-                  ),
-                  timestamp: (entry.toolCompletedAt ?? new Date()).toISOString(),
-                  tool_call_id: entry.id,
-                  tool_name: entry.toolName || entry.text,
-                },
-              ];
-            })
-            .sort((a, b) => a.timestamp.localeCompare(b.timestamp)),
-        }),
+        keepalive: new TextEncoder().encode(body).length <= 60 * 1024,
+        body,
       })
         .then((response) => {
           if (!response.ok) {

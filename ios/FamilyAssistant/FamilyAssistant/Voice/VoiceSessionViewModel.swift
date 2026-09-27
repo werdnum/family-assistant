@@ -594,18 +594,7 @@ final class VoiceSessionViewModel {
     private func persistTranscriptIfNeeded() {
         guard !didPersist, (!transcript.isEmpty || !toolTranscriptEntries.isEmpty), let transcriptStore else { return }
         didPersist = true
-        let completedCalls = Set(toolTranscriptEntries.filter { $0.speaker == .tool }.compactMap(\.toolCallID))
-        let unfinishedResults = toolTranscriptEntries.filter {
-            $0.speaker == .toolCall && !completedCalls.contains($0.toolCallID ?? "")
-        }.map {
-            VoiceTranscriptEntry(
-                speaker: .tool,
-                text: "{\"error\":\"Voice session ended before the tool returned.\"}",
-                toolCallID: $0.toolCallID,
-                toolName: $0.toolName
-            )
-        }
-        let turns = (transcript.entries + toolTranscriptEntries + unfinishedResults)
+        let turns = (transcript.entries + toolTranscriptEntries)
             .sorted { $0.timestamp < $1.timestamp }
         let diagnostics = diagnostics
         let reportError = reportError

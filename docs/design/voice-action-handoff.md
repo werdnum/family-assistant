@@ -33,6 +33,12 @@ clock skew does not shift the whole transcript away from a handoff. Upload laten
 lines close to the handoff by a few seconds. The handoff remains in Chat if the final transcript
 upload fails.
 
+A tool still running when the call ends is saved as a pending call without a fabricated failure
+result. Its eventual execution outcome is available in client telemetry when the client remains
+alive. On web, the transcript upload uses a keepalive request when its payload fits the browser's
+keepalive size limit; a larger transcript uses a regular request and may be interrupted by page
+navigation.
+
 ## Delegated results
 
 Voice delegation waits briefly for a specialist result so a quick answer can return through the live
