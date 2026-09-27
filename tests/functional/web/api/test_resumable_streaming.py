@@ -185,11 +185,6 @@ async def test_tools_provider(
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,
-        calendar_config=cast(
-            # ast-grep-ignore: no-dict-any - CalendarConfig is a project-internal TypedDict but the test only needs the caldav field populated, so we cast a minimal dict to satisfy the type stub
-            "Any",
-            {"caldav": {"calendar_urls": ["http://test.com"]}},
-        ),
     )
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
     mock_mcp_provider.get_tool_definitions.return_value = []
@@ -430,7 +425,7 @@ async def test_post_turn_rejects_conversation_owned_by_another_user(
     # Seed a message owned by a *different* user directly in the DB.
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="victim's private message"),
+        UserMessage.from_trusted_user(content="victim's private message"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
@@ -499,14 +494,14 @@ async def test_stream_on_multi_owner_conversation_returns_404(
     conversation_id = f"conv_multi_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="from the caller"),
+        UserMessage.from_trusted_user(content="from the caller"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
         user_id="test_user",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="from another group member"),
+        UserMessage.from_trusted_user(content="from another group member"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
@@ -676,7 +671,7 @@ async def test_post_turn_rejects_turn_id_from_another_conversation(
     # The caller (test_user) already used this turn_id in another conversation.
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        message=UserMessage(content="original turn"),
+        message=UserMessage.from_trusted_user(content="original turn"),
         interface_type="web",
         conversation_id=other_conversation,
         interface_message_id=f"temp_{turn_id}",
@@ -1192,6 +1187,58 @@ async def test_send_message_idempotent_on_turn_id(
 # --------------------------------------------------------------------------- #
 
 
+async def test_conversation_list_filters_to_owned(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Findings #4/#5: GET /conversations is filtered to conversations the caller
+    solely (canonically) owns, so the History UI never lists a conversation it
+    then 404s on opening. A conversation owned only by another user is hidden; a
+    multi-owner conversation (which /stream refuses) is also hidden."""
+    owned = f"conv_owned_{uuid.uuid4().hex[:8]}"
+    foreign = f"conv_foreign_{uuid.uuid4().hex[:8]}"
+    multi = f"conv_multi_{uuid.uuid4().hex[:8]}"
+
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    await ctx.message_history.add_message(
+        UserMessage.from_trusted_user(content="mine"),
+        interface_type="web",
+        conversation_id=owned,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await ctx.message_history.add_message(
+        UserMessage.from_trusted_user(content="theirs"),
+        interface_type="web",
+        conversation_id=foreign,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
+    await ctx.message_history.add_message(
+        UserMessage.from_trusted_user(content="mine in group"),
+        interface_type="web",
+        conversation_id=multi,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await ctx.message_history.add_message(
+        UserMessage.from_trusted_user(content="theirs in group"),
+        interface_type="web",
+        conversation_id=multi,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
+
+    response = await test_client.get("/api/v1/chat/conversations")
+    assert response.status_code == 200, response.text
+    listed = {c["conversation_id"] for c in response.json()["conversations"]}
+    assert owned in listed
+    assert foreign not in listed
+    assert multi not in listed
+
+
 async def test_conversation_list_identity_maps_telegram_owner(
     app_fixture: FastAPI,
     test_client: AsyncClient,
@@ -1218,7 +1265,7 @@ async def test_conversation_list_identity_maps_telegram_owner(
     # Stored under the raw Telegram numeric id, which canonicalizes to
     # test_user via the resolver.
     await ctx.message_history.add_message(
-        UserMessage(content="from telegram"),
+        UserMessage.from_trusted_user(content="from telegram"),
         interface_type="telegram",
         conversation_id=telegram_conv,
         timestamp=datetime.now(UTC),
@@ -1266,7 +1313,7 @@ async def test_conversation_list_attributes_unnormalized_stored_owner_ids(
     await init_db(db_engine)
     await ctx.init_vector_db()
     await ctx.message_history.add_message(
-        UserMessage(content="stored before normalization"),
+        UserMessage.from_trusted_user(content="stored before normalization"),
         interface_type="web",
         conversation_id=padded_conv,
         timestamp=datetime.now(UTC),
@@ -1303,7 +1350,7 @@ async def _seed_owned_conversations(
     for index in range(count):
         conversation_id = f"{prefix}_{index}_{uuid.uuid4().hex[:8]}"
         await ctx.message_history.add_message(
-            UserMessage(content=f"message {index}"),
+            UserMessage.from_trusted_user(content=f"message {index}"),
             interface_type="web",
             conversation_id=conversation_id,
             # Distinct increasing timestamps give a deterministic order.
@@ -1359,7 +1406,7 @@ async def test_conversation_list_count_is_ownership_filtered(
     ctx = Database(engine=db_engine)
     for index in range(4):
         await ctx.message_history.add_message(
-            UserMessage(content="theirs"),
+            UserMessage.from_trusted_user(content="theirs"),
             interface_type="web",
             conversation_id=f"conv_foreign_{index}_{uuid.uuid4().hex[:8]}",
             timestamp=datetime.now(UTC) + timedelta(seconds=100 + index),
@@ -1391,7 +1438,7 @@ async def test_conversation_list_pagination_has_no_empty_nonfinal_pages(
     ctx = Database(engine=db_engine)
     for index in range(10):
         await ctx.message_history.add_message(
-            UserMessage(content="theirs"),
+            UserMessage.from_trusted_user(content="theirs"),
             interface_type="web",
             conversation_id=f"conv_other_{index}_{uuid.uuid4().hex[:8]}",
             timestamp=datetime.now(UTC) + timedelta(seconds=200 + index),
@@ -1425,14 +1472,14 @@ async def test_conversation_list_multi_owner_excluded_from_count(
     multi = f"conv_shared_{uuid.uuid4().hex[:8]}"
     ctx = Database(engine=db_engine)
     await ctx.message_history.add_message(
-        UserMessage(content="mine in group"),
+        UserMessage.from_trusted_user(content="mine in group"),
         interface_type="web",
         conversation_id=multi,
         timestamp=datetime.now(UTC) + timedelta(seconds=300),
         user_id="test_user",
     )
     await ctx.message_history.add_message(
-        UserMessage(content="theirs in group"),
+        UserMessage.from_trusted_user(content="theirs in group"),
         interface_type="web",
         conversation_id=multi,
         timestamp=datetime.now(UTC) + timedelta(seconds=301),

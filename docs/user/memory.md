@@ -27,8 +27,9 @@ It is looking for things that will still be true in a month:
 
 Most conversations produce nothing. That is the normal outcome, not a failure.
 
-You can still ask directly: "remember that Sam is allergic to peanuts" writes the entry there and
-then, without waiting for a review.
+You can still ask directly: "remember that Sam is allergic to peanuts" can write the entry there and
+then, without waiting for a review. If the assistant has read outside content in that conversation,
+it will tell you that the request can only be considered at the next review. Nothing is saved yet.
 
 ## What it never remembers
 
@@ -41,9 +42,10 @@ then, without waiting for a review.
 - Sensitive personal matters — health, money, relationships — that you did not ask it to keep. Ask,
   and it will keep them.
 
-It also never learns from a conversation that took in content from outside your household, such as a
-forwarded email or a web page it read, even if you said something worth keeping in the same breath.
-Say it again in an ordinary conversation and it will be kept.
+It can remember what a household member said even if the assistant also read a web page or email.
+The review leaves out replies and results that may contain outside content. If you refer to one of
+those — "remember the second hotel" — say the detail you want kept in your own words so the review
+has enough context. A forwarded email's own text is not kept as a household memory.
 
 ## Memory is shared with your household
 

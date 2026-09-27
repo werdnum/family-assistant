@@ -14,8 +14,8 @@ looked at twice:
 - ``applied`` -- the curator proposed edits and the apply path took them. The
   watermark moved inside that same transaction, not here.
 - ``no_changes`` -- the curator read the stretch and proposed nothing.
-- ``skipped`` -- the stretch was not read at all: it carries content from
-  outside the household, or nobody spoke in it.
+- ``skipped`` -- the stretch has no admissible message from a person, or
+  nobody spoke in it.
 - ``abandoned`` -- the review was given up on: two refused proposals, two
   revision conflicts, or a turn that failed on the task's last attempt.
 
@@ -42,13 +42,13 @@ from family_assistant.memory.transcript import (
     sender_labeller,
 )
 from family_assistant.observability.metrics import (
+    record_memory_review_excluded_rows,
     record_memory_review_outcome,
     record_memory_review_skip,
 )
 from family_assistant.processing.service import ProcessingService
 from family_assistant.security.taint import (
     TurnTaintState,
-    is_admissible_for_reuse,
     merge_history_taint,
 )
 from family_assistant.security.taint_audit import taint_audit_sources
@@ -190,11 +190,11 @@ async def run_memory_review(
         interface_type=interface_type,
         conversation_id=conversation_id,
     )
-    taint = _merged_chunk_taint(chunk.rows)
+    record_memory_review_excluded_rows(chunk.excluded_row_count)
 
-    if not is_admissible_for_reuse(taint.max_tier):
-        # Before any model call: the design's whole-stretch exclusion, and the
-        # loss it causes is measured from day one rather than estimated later.
+    if chunk.user_row_count > 0 and chunk.admissible_user_row_count == 0:
+        taint = _merged_chunk_taint(chunk.rows)
+        # With no admissible household message there is nothing to curate.
         await _record_taint_audit(
             exec_context,
             interface_type=interface_type,
@@ -229,6 +229,11 @@ async def run_memory_review(
         )
         return MemoryReviewResult.SKIPPED
 
+    taint = _merged_chunk_taint([
+        row
+        for row in chunk.rows
+        if int(row["internal_id"]) in chunk.rendered_message_ids
+    ])
     curator = _resolve_curator(exec_context, curator_profile_id)
     review = await _run_curator_attempts(
         exec_context,
@@ -431,6 +436,7 @@ def _fresh_review_context(
             conversation_id=conversation_id,
             first_internal_id=chunk.first_internal_id,
             last_internal_id=chunk.last_internal_id,
+            allowed_message_ids=chunk.rendered_message_ids,
         ),
         expected_revision=expected_revision,
         batch_id=str(uuid.uuid4()),

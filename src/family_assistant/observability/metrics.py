@@ -76,6 +76,7 @@ __all__ = [
     "record_llm_call",
     "record_memory_conversations_due",
     "record_memory_review_enqueued",
+    "record_memory_review_excluded_rows",
     "record_memory_review_outcome",
     "record_memory_review_skip",
     "record_model_routing",
@@ -374,6 +375,11 @@ MEMORY_SKIPPED_ROWS = Counter(
         "being lost over time, and a gauge would keep only the last skip."
     ),
     ("reason",),
+)
+
+MEMORY_REVIEW_EXCLUDED_ROWS = Counter(
+    "family_assistant_memory_review_excluded_rows",
+    "Rows omitted from curator transcripts because their own provenance is not reusable.",
 )
 
 MEMORY_SKIPPED_USER_CHARS = Counter(
@@ -691,6 +697,14 @@ def record_memory_review_skip(*, reason: str, rows: int, user_chars: int) -> Non
         MEMORY_SKIPPED_USER_CHARS.labels(reason).inc(user_chars)
     except Exception:
         logger.debug("Failed to record memory review skip metrics", exc_info=True)
+
+
+def record_memory_review_excluded_rows(count: int) -> None:
+    """Count covered rows omitted from a curator transcript."""
+    try:
+        MEMORY_REVIEW_EXCLUDED_ROWS.inc(count)
+    except Exception:
+        logger.debug("Failed to record memory excluded-row metric", exc_info=True)
 
 
 def record_task_queue_state(

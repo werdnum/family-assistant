@@ -1,10 +1,8 @@
-"""A stretch carrying content from outside the household is never reviewed.
+"""A stretch with no admissible household message is skipped and measured.
 
-Slice 5 of docs/design/conversation-memory.md, "Tainted stretches are skipped
-before the model call, and the loss is measured from day one". The skip is the
-conservative choice and its cost may be large -- a preference stated before a
-research turn goes with the research -- so what is proved here is both halves:
-that no model call happens, and that the loss is recorded rather than silent.
+External source rows are excluded from the curator transcript. When no person's
+message survives that filter, no model call happens and the lost stretch is
+recorded rather than silently discarded.
 """
 
 from __future__ import annotations
@@ -101,6 +99,7 @@ async def _skipped_review(
         turn_id="turn-1",
         said=SAID,
         replied="Here are three that fit.",
+        user_taint=_unknown_external().to_metadata(),
         assistant_taint=_unknown_external().to_metadata(),
     )
     result = await run_memory_review(
@@ -212,6 +211,37 @@ def _machine_reviewed() -> TurnTaintState:
             reason="Prompt-included note was admitted by review.",
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_external_assistant_rows_are_counted_as_excluded(
+    db_engine: AsyncEngine,
+) -> None:
+    limits = review_limits()
+    db = memory_db(db_engine, limits)
+    await enable_contribution(db)
+    await seed_turn(
+        db,
+        turn_id="turn-1",
+        said=SAID,
+        replied="Outside hotel details.",
+        assistant_taint=_unknown_external().to_metadata(),
+    )
+    counter = "family_assistant_memory_review_excluded_rows_total"
+    before = REGISTRY.get_sample_value(counter) or 0.0
+    service = curator_service(db_engine, curator_llm(CuratorScript()))
+
+    result = await run_memory_review(
+        _context(db, service),
+        interface_type=WEB,
+        conversation_id=CONVERSATION,
+        settings=SETTINGS,
+        configured_contributors={CONTRIBUTOR},
+        limits=limits,
+    )
+
+    assert result is MemoryReviewResult.APPLIED
+    assert (REGISTRY.get_sample_value(counter) or 0.0) - before == 1
 
 
 @pytest.mark.asyncio

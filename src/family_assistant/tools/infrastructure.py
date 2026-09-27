@@ -808,7 +808,6 @@ class LocalToolsProvider:
         # ast-grep-ignore: no-dict-any - Implementation map has heterogeneous callable types
         implementations: dict[str, Any] | None = None,  # dict[str, Callable]
         embedding_generator: EmbeddingGenerator | None = None,
-        calendar_config: CalendarConfig | None = None,
         registrations: Sequence[ToolRegistration] | None = None,
         descriptors: Sequence[ToolDescriptor] | None = None,
     ) -> None:
@@ -840,7 +839,6 @@ class LocalToolsProvider:
         for definition in self._definitions:
             check_parameter_schema(definition["function"].get("parameters", {}))
         self._embedding_generator = embedding_generator
-        self._calendar_config = calendar_config
         logger.info(
             f"LocalToolsProvider initialized with {len(self._definitions)} tools: {list(self._implementations.keys())}"
         )
@@ -1031,11 +1029,11 @@ class LocalToolsProvider:
                     )
                     return f"Error: Tool '{name}' cannot be executed because the embedding generator is missing."
             if needs_calendar_config:
-                if self._calendar_config:
-                    call_args["calendar_config"] = self._calendar_config
+                if context.calendar_config:
+                    call_args["calendar_config"] = context.calendar_config
                 else:
                     logger.error(
-                        f"Tool '{name}' requires a calendar_config, but none was provided to LocalToolsProvider."
+                        f"Tool '{name}' requires a calendar_config, but the execution context has none."
                     )
                     return f"Error: Tool '{name}' cannot be executed because the calendar_config is missing."
 
@@ -1091,10 +1089,6 @@ class LocalToolsProvider:
             logger.exception(f"Error executing local tool '{name}': {e}")
             # Re-raise or return formatted error string? Returning error string for now.
             return f"Error executing tool '{name}': {e}"
-
-    def get_calendar_config(self) -> CalendarConfig | None:
-        """Get the calendar configuration."""
-        return self._calendar_config
 
     async def close(self) -> None:
         """Local provider has no resources to clean up."""

@@ -51,7 +51,7 @@ async def _say(
 ) -> int:
     """Persist one row at ``minutes_ago`` before :data:`NOW`."""
     message = (
-        UserMessage(content="a thing was said")
+        UserMessage.from_trusted_user(content="a thing was said")
         if role == "user"
         else AssistantMessage(content="a thing was answered")
     )

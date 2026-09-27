@@ -111,9 +111,6 @@ async def test_tools_provider(
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,  # Not needed for add_note
-        calendar_config=cast(
-            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
-        ),
     )
     # Mock MCP provider as it's not the focus here
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
@@ -442,7 +439,7 @@ async def test_conversation_share_is_authenticated_read_only_and_revocable(
 ) -> None:
     conversation_id = str(uuid.uuid4())
     await db_context.message_history.add_message(
-        UserMessage(content="Please help me choose a gift"),
+        UserMessage.from_trusted_user(content="Please help me choose a gift"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),

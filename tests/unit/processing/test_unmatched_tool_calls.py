@@ -278,7 +278,7 @@ async def test_interrupted_tool_call_in_stored_history_is_repaired(
     interrupted_turn_at = service.clock.now() - timedelta(minutes=2)
     db_context = Database(engine=db_engine)
     stored: list[LLMMessage] = [
-        UserMessage(content="OCR these medical records"),
+        UserMessage.from_trusted_user(content="OCR these medical records"),
         AssistantMessage(content=None, tool_calls=[_tool_call("call_running")]),
     ]
     for index, message in enumerate(stored):

@@ -16,8 +16,8 @@ import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import tzinfo
-from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict
+from zoneinfo import ZoneInfo
 
 import pydantic_monty
 
@@ -75,6 +75,8 @@ class AttachmentResultWithText(TypedDict):
 
 
 logger = logging.getLogger(__name__)
+
+_MAX_SUSPENSIONS = 1_000_000
 
 
 class ScriptOutputBuffer:
@@ -286,64 +288,62 @@ class MontyEngine:
         ext_fn_impls, inputs = await self._build_execution_context_async(
             globals_dict, execution_context
         )
-        monty = pydantic_monty.Monty(
-            script,
-            inputs=list(inputs.keys()) if inputs else [],
-        )
-        limits = self._build_resource_limits()
         print_cb = self._create_print_callback(output_buffer)
-        loop = asyncio.get_running_loop()
 
-        progress = await loop.run_in_executor(
-            None,
-            partial(
-                monty.start,
+        # A pool per run costs a few milliseconds to spawn its worker, and keeps
+        # every run in a fresh process that is torn down with the run.
+        async with (
+            pydantic_monty.AsyncMonty(min_processes=1, max_processes=1) as pool,
+            pool.checkout(
+                limits=self._build_resource_limits(),
+                os_policy=self._build_os_policy(execution_context),
+            ) as session,
+        ):
+            progress = await session.feed_start(
+                script,
                 inputs=inputs or None,
-                limits=limits,
                 print_callback=print_cb,
-            ),
-        )
-
-        while not isinstance(progress, pydantic_monty.MontyComplete):
-            if not isinstance(progress, pydantic_monty.FunctionSnapshot):
-                raise ScriptExecutionError(
-                    f"Unexpected Monty progress type: {type(progress)}"
-                )
-            snapshot: pydantic_monty.FunctionSnapshot = progress
-            fn = ext_fn_impls.get(snapshot.function_name)
-
-            if fn is None:
-                name_error_result: pydantic_monty.ExternalResult = {
-                    "exception": NameError(
-                        f"name '{snapshot.function_name}' is not defined"
-                    )
-                }
-                progress = await loop.run_in_executor(
-                    None,
-                    partial(snapshot.resume, name_error_result),
-                )
-                continue
-
-            try:
-                if asyncio.iscoroutinefunction(fn):
-                    result = await fn(*snapshot.args, **snapshot.kwargs)
-                else:
-                    result = fn(*snapshot.args, **snapshot.kwargs)
-            except Exception as e:
-                exception_result: pydantic_monty.ExternalResult = {"exception": e}
-                progress = await loop.run_in_executor(
-                    None,
-                    partial(snapshot.resume, exception_result),
-                )
-            else:
-                return_result: pydantic_monty.ExternalResult = {"return_value": result}
-                progress = await loop.run_in_executor(
-                    None,
-                    partial(snapshot.resume, return_result),
-                )
+            )
+            while not isinstance(progress, pydantic_monty.MontyComplete):
+                progress = await self._answer_suspension(progress, ext_fn_impls)
 
         self._pending_wake_contexts = self._wake_llm_contexts.copy()
         return progress.output
+
+    @staticmethod
+    async def _answer_suspension(
+        progress: pydantic_monty.AsyncSnapshot,
+        ext_fn_impls: dict[str, Callable[..., Any]],
+    ) -> pydantic_monty.AsyncSnapshot:
+        """Run the host side of one suspension and resume the sandbox with its result.
+
+        Async implementations are awaited here rather than handed to the sandbox,
+        so scripts call tools as plain functions without ``await``.
+        """
+        if isinstance(progress, pydantic_monty.AsyncNameLookupSnapshot):
+            return await progress.resume()
+        if not isinstance(progress, pydantic_monty.AsyncFunctionSnapshot):
+            raise ScriptExecutionError(
+                f"Unexpected Monty progress type: {type(progress)}"
+            )
+        if progress.is_os_function:
+            return await progress.resume_not_handled()
+
+        fn = ext_fn_impls.get(str(progress.function_name))
+        if fn is None:
+            return await progress.resume({
+                "exception": NameError(
+                    f"name '{progress.function_name}' is not defined"
+                )
+            })
+
+        try:
+            result = fn(*progress.args, **progress.kwargs)
+            if asyncio.iscoroutine(result):
+                result = await result
+        except Exception as e:
+            return await progress.resume({"exception": e})
+        return await progress.resume({"return_value": result})
 
     async def _build_execution_context_async(
         self,
@@ -936,16 +936,29 @@ class MontyEngine:
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
         """Build Monty resource limits from config.
 
-        Monty supports additional resource limits beyond execution time:
-        max_memory, max_allocations, max_recursion_depth, gc_interval.
-        These are set to sensible defaults here. To expose them via config,
-        add fields to ScriptConfig or create a MontyConfig subclass.
+        The feed limit counts only time spent executing in the sandbox; the
+        wall-clock bound including host calls is the ``asyncio.wait_for`` in
+        ``evaluate_async``. Host calls are bounded by that same timeout rather
+        than by Monty's default cap of 1000 suspensions, which a script looping
+        over a few thousand items would otherwise hit.
         """
         return pydantic_monty.ResourceLimits(
-            max_duration_secs=self.config.max_execution_time,
+            max_feed_duration_secs=self.config.max_execution_time,
             max_memory=256 * 1024 * 1024,  # 256 MB
             max_recursion_depth=100,
+            max_suspensions=_MAX_SUSPENSIONS,
         )
+
+    def _build_os_policy(
+        self, execution_context: "ToolExecutionContext | None"
+    ) -> pydantic_monty.OSPolicy:
+        """Give naive ``datetime.now()`` in the sandbox the timezone the time API uses."""
+        tz = (
+            execution_context.timezone if execution_context is not None else None
+        ) or self.default_timezone
+        if isinstance(tz, ZoneInfo):
+            return pydantic_monty.OSPolicy(timezone=tz.key)
+        return pydantic_monty.OSPolicy()
 
     def _create_print_callback(
         self,

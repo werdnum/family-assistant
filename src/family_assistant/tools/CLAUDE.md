@@ -124,7 +124,9 @@ omissions when new infrastructure is added.
 
 `LocalToolsProvider` injects a parameter automatically when its name and annotation match:
 `exec_context: ToolExecutionContext`, `db_context: DatabaseContext`,
-`embedding_generator: EmbeddingGenerator`, or `calendar_config: dict[str, Any]`.
+`embedding_generator: EmbeddingGenerator`, or `calendar_config: dict[str, Any]`. The calendar config
+comes from `exec_context.calendar_config`, which the processing service sets to the profile's
+effective calendars; anything else that needs it (a confirmation renderer, say) reads it there too.
 
 ## Structured Data in Tool Results
 

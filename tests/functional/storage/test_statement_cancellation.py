@@ -65,7 +65,7 @@ async def test_repository_writes_report_a_state_change(
     begin_tracking()
 
     await db.message_history.add_message(
-        UserMessage(content="a write"),
+        UserMessage.from_trusted_user(content="a write"),
         interface_type="web",
         conversation_id="side_effect_conv",
         timestamp=datetime(2026, 4, 1, tzinfo=UTC),

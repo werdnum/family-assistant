@@ -7,24 +7,28 @@ import logging
 import os  # Import os for environment variable resolution
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
+    NotRequired,
     TypedDict,
     cast,
 )  # Added Tuple
+from urllib.parse import urljoin, urlsplit
 
 import anyio
+import httpx
 import jsonschema
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from mcp import ClientSession
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.sse
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.exceptions import McpError
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 from family_assistant.config_inspection import redact_sensitive_text
@@ -40,6 +44,11 @@ from family_assistant.tools.mcp_attachments import (
     normalise_attachment_arguments,
     normalize_parameter_overrides,
 )
+from family_assistant.tools.mcp_auth import (
+    MCPIdentityCheckConfig,
+    MCPUserAuthConfig,
+    MCPUserCredentialConfig,
+)
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     build_tool_descriptor,
@@ -52,6 +61,7 @@ from family_assistant.tools.metadata import (
 # Import the context from the new types file
 from .types import (
     MCPServerConfig,
+    MCPServerGenericConfig,
     ToolDefinition,
     ToolExecutionContext,
     ToolNotFoundError,
@@ -78,6 +88,9 @@ MCP_SERVER_STATUS_CANCELLED = "cancelled"
 # Reconnect pacing defaults. The first retry after a server drops is immediate
 # (the next health check cycle); each further attempt without the server being
 # seen healthy doubles the wait, up to half an hour.
+DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS = 30
+DEFAULT_TOOL_REFRESH_INTERVAL_SECONDS = 30 * 60.0  # 30 minutes
+
 DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS = 30.0
 DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS = 30 * 60.0
 
@@ -186,6 +199,7 @@ class MCPServerStatus(TypedDict):
     that. See the MCP section of ``docs/operations/CONFIGURATION_REFERENCE.md``.
     """
 
+    users: NotRequired[dict[str, str]]
     status: str
     transport: str
     command: str | None
@@ -210,11 +224,30 @@ class MCPToolsProvider:
         self,
         mcp_server_configs: Mapping[str, MCPServerConfig],
         initialization_timeout_seconds: int = 60,  # Default 1 minute
-        health_check_interval_seconds: int = 30,  # Default 30 seconds
+        health_check_interval_seconds: int = DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS,  # Default 30 seconds
         reconnect_backoff_base_seconds: float = DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS,
         reconnect_backoff_max_seconds: float = DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS,
+        tool_refresh_interval_seconds: float
+        | None = DEFAULT_TOOL_REFRESH_INTERVAL_SECONDS,
     ) -> None:
         self._mcp_server_configs = dict(mcp_server_configs)
+        self._user_identity: (
+            tuple[MCPUserCredentialConfig, MCPIdentityCheckConfig | None] | None
+        ) = None
+        self._session_instructions: dict[str, str] = {}
+        self._user_connections: dict[str, _UserMCPConnections] = {}
+        for server_id, config in self._mcp_server_configs.items():
+            if config.get("user_auth") is not None:
+                self._user_connections[server_id] = _UserMCPConnections(
+                    server_id,
+                    config,
+                    initialization_timeout_seconds=initialization_timeout_seconds,
+                    health_check_interval_seconds=health_check_interval_seconds,
+                    reconnect_backoff_base_seconds=reconnect_backoff_base_seconds,
+                    reconnect_backoff_max_seconds=reconnect_backoff_max_seconds,
+                    tool_refresh_interval_seconds=tool_refresh_interval_seconds,
+                )
+
         # Validated here so a malformed block fails at startup rather than at
         # the first tool call that would have used it.
         self._parameter_overrides: dict[
@@ -225,6 +258,7 @@ class MCPToolsProvider:
         }
         self._initialization_timeout_seconds = initialization_timeout_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
+        self._tool_refresh_interval_seconds = tool_refresh_interval_seconds
         self._reconnect_backoff_base_seconds = reconnect_backoff_base_seconds
         self._reconnect_backoff_max_seconds = reconnect_backoff_max_seconds
         self._reconnect_backoff: dict[str, _ReconnectBackoff] = {
@@ -241,12 +275,14 @@ class MCPToolsProvider:
             server_id: MCP_SERVER_STATUS_PENDING
             for server_id in self._mcp_server_configs
         }
+        self._last_tool_refresh_at: dict[str, float] = {}
         self._health_check_task: asyncio.Task | None = None
         self._health_check_enabled = True
         logger.info(
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. "
             f"Initialization timeout: {self._initialization_timeout_seconds}s. "
             f"Health check interval: {self._health_check_interval_seconds}s. "
+            f"Tool refresh interval: {self._tool_refresh_interval_seconds}s. "
             f"Reconnect backoff: {self._reconnect_backoff_base_seconds}s base, "
             f"{self._reconnect_backoff_max_seconds}s max. "
             f"Initialization pending."
@@ -270,6 +306,7 @@ class MCPToolsProvider:
         Designed to be called by engineer-profile diagnostic tools without
         requiring any further reconnection or I/O.
         """
+        self._sync_user_tools()
         # Invert the tool_map so we can list tools per-server without
         # touching internal storage in callers.
         tools_by_server: dict[str, list[str]] = {
@@ -307,6 +344,12 @@ class MCPToolsProvider:
                     else None
                 ),
             )
+        for server_id, connections in self._user_connections.items():
+            states = connections.statuses()
+            snapshot[server_id]["users"] = states
+            snapshot[server_id]["session_active"] = (
+                MCP_SERVER_STATUS_CONNECTED in states.values()
+            )
         return snapshot
 
     def _build_mcp_descriptors(
@@ -328,7 +371,8 @@ class MCPToolsProvider:
 
         for definition in definitions:
             tool_name = definition["function"]["name"]
-            discovered_tool = discovered_tools_by_name.get(tool_name)
+            remote_name = self._remote_tool_name(server_id, tool_name)
+            discovered_tool = discovered_tools_by_name.get(remote_name)
             annotations = getattr(discovered_tool, "annotations", None)
             annotation_tags = derive_mcp_annotation_tags(
                 read_only_hint=getattr(annotations, "readOnlyHint", None),
@@ -336,7 +380,7 @@ class MCPToolsProvider:
                 open_world_hint=getattr(annotations, "openWorldHint", None),
             )
             tags = resolve_mcp_tool_tags(
-                tool_name=tool_name,
+                tool_name=remote_name,
                 configured_tool_metadata=configured_tool_metadata,
                 annotation_tags=annotation_tags,
             )
@@ -426,6 +470,9 @@ class MCPToolsProvider:
         dict[str, str],
     ]:
         """Connects to a single MCP server, discovers tools, and returns results."""
+        if server_id in self._user_connections:
+            await self._user_connections[server_id].initialize()
+            return None, [], [], {}
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
         discovered_tools = []
         tool_map = {}
@@ -500,6 +547,8 @@ class MCPToolsProvider:
             list[ToolDescriptor],
             dict[str, str],
         ]:
+            if self._user_identity is not None:
+                await self._verify_user_identity(url, resolved_token_sse)
             # --- Transport and Session Creation ---
             if transport_type == "stdio":
                 if not command:
@@ -587,13 +636,17 @@ class MCPToolsProvider:
                 return None, [], [], {}
 
             # --- Initialize Session and Discover Tools (Common Logic) ---
-            await session.initialize()
+            initialization = await session.initialize()
+            self._session_instructions[server_id] = (
+                getattr(initialization, "instructions", None) or ""
+            )
             self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
             logger.info(
                 f"Initialized session with MCP server '{server_id}' ({transport_type}). Status: {self._server_statuses[server_id]}."
             )
 
             server_tools = await self._list_all_tools(session)
+            self._last_tool_refresh_at[server_id] = time.monotonic()
             logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
 
             # Format MCP tools to OpenAI dict format (sanitization moved to LLM layer)
@@ -635,6 +688,12 @@ class MCPToolsProvider:
             if server_id in self._connection_contexts:
                 await self._close_server_connections(server_id)
             return None, [], [], {}  # Return empty on failure
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                await exit_stack.aclose()
+            if server_id in self._connection_contexts:
+                await self._close_server_connections(server_id)
+            raise
 
     async def initialize(self) -> None:
         """Connects to configured MCP servers, fetches and sanitizes tool definitions."""
@@ -738,6 +797,11 @@ class MCPToolsProvider:
                 )
                 continue  # Skip processing this anomalous result item
 
+            if server_id in self._user_connections and not isinstance(
+                res_item, BaseException
+            ):
+                continue
+
             if isinstance(res_item, BaseException):
                 # This includes asyncio.CancelledError if a task was cancelled by the timeout
                 if isinstance(res_item, asyncio.CancelledError):
@@ -782,6 +846,7 @@ class MCPToolsProvider:
                         self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
 
         self._initialized = True
+        self._sync_user_tools()
         self._bump_descriptors_version()
         # Summarize outcomes based on statuses
         connected_count = sum(
@@ -812,12 +877,68 @@ class MCPToolsProvider:
             self._health_check_task = asyncio.create_task(self._health_check_loop())
             logger.info("Started MCP server health check task")
 
+    async def _verify_user_identity(self, url: str | None, token: str | None) -> None:
+        """Fail before MCP initialization if a user credential is absent or misbound."""
+        if not token or not url or self._user_identity is None:
+            raise ValueError(
+                "MCP user credential is missing; configure its token environment variable"
+            )
+        user, check = self._user_identity
+        if check is None:
+            return
+        endpoint = urljoin(url, check.path)
+        if urlsplit(endpoint).netloc != urlsplit(url).netloc:
+            raise ValueError("MCP identity check must use the server origin")
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            response = await client.get(
+                endpoint, headers={"Authorization": f"Bearer {token}"}
+            )
+        if response.status_code != 200:
+            raise ValueError(f"MCP identity check failed (HTTP {response.status_code})")
+        payload = response.json()
+        identity = payload.get("user") if isinstance(payload, dict) else None
+        if (
+            not isinstance(identity, dict)
+            or identity.get("id") != user.expected_user_id
+            or payload.get("agent") != check.expected_agent
+            or (check.require_write and payload.get("can_write") is not True)
+        ):
+            raise ValueError(
+                "MCP credential does not match the configured user, agent, or write capability"
+            )
+
+    def _sync_user_tools(self) -> None:
+        """Publish the common catalog without user-specific initialization instructions."""
+        for server_id, connections in self._user_connections.items():
+            descriptors = connections.descriptors()
+            previous = self._registered_descriptors(server_id)
+            prospective = self._prospective_registration(server_id, descriptors)
+            if {item.name: item for item in previous} != prospective:
+                self._unregister_server_tools(server_id)
+                self._register_server_tools(
+                    server_id, [item.definition for item in descriptors], descriptors
+                )
+                self._bump_descriptors_version()
+            states = connections.statuses().values()
+            self._server_statuses[server_id] = (
+                MCP_SERVER_STATUS_CONNECTED
+                if MCP_SERVER_STATUS_CONNECTED in states
+                else MCP_SERVER_STATUS_FAILED
+            )
+
+    def _remote_tool_name(self, server_id: str, name: str) -> str:
+        return name.removeprefix(
+            self._mcp_server_configs[server_id].get("tool_name_prefix", "")
+        )
+
     def _attachment_parameters_for_tool(
         self, server_id: str, tool_name: str
     ) -> dict[str, AttachmentParameter]:
         """Return the attachment parameters configured for one tool."""
         return attachment_parameters_only(
-            self._parameter_overrides.get(server_id, {}).get(tool_name, {})
+            self._parameter_overrides.get(server_id, {}).get(
+                self._remote_tool_name(server_id, tool_name), {}
+            )
         )
 
     def _format_mcp_definitions_to_dicts(
@@ -846,7 +967,10 @@ class MCPToolsProvider:
                     "type": "function",
                     "function": {
                         "name": (
-                            tool.name
+                            self._mcp_server_configs[server_id].get(
+                                "tool_name_prefix", ""
+                            )
+                            + tool.name
                         ),  # Assuming these attributes exist on MCP Tool object
                         "description": (
                             tool.description
@@ -893,6 +1017,7 @@ class MCPToolsProvider:
         """
         if not self._initialized:
             await self.initialize()
+        self._sync_user_tools()
         return translate_attachment_schemas_for_llm(self._definitions)
 
     @property
@@ -906,6 +1031,7 @@ class MCPToolsProvider:
         that is down at startup stays unadvertisable even after the health-check
         loop reconnects it.
         """
+        self._sync_user_tools()
         return self._descriptors_version
 
     def _bump_descriptors_version(self) -> None:
@@ -916,12 +1042,14 @@ class MCPToolsProvider:
         """Return descriptors for discovered MCP tools."""
         if not self._initialized:
             await self.initialize()
+        self._sync_user_tools()
         return list(self._descriptors)
 
     async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
         """Return a single MCP tool descriptor by name."""
         if not self._initialized:
             await self.initialize()
+        self._sync_user_tools()
         for descriptor in self._descriptors:
             if descriptor.name == name:
                 return descriptor
@@ -946,6 +1074,7 @@ class MCPToolsProvider:
                 server_id
                 for server_id, status in self._server_statuses.items()
                 if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
+                and server_id not in self._user_connections
             ]
 
             await self._run_health_checks()
@@ -968,29 +1097,116 @@ class MCPToolsProvider:
 
         logger.info("Health check loop stopped")
 
-    async def _run_health_checks(self) -> None:
+    async def _ping_session(self, session: ClientSession) -> None:
+        """Lightweight connection liveness check for an active MCP session."""
+        if hasattr(session, "send_ping") and callable(session.send_ping):
+            try:
+                await session.send_ping()
+                return
+            except McpError as exc:
+                # An McpError (e.g. MethodNotFound) confirms the server received
+                # the JSON-RPC ping and replied with a valid error response.
+                # The transport and server process are alive and responsive.
+                logger.debug(
+                    "MCP server returned McpError on ping (%s); server is alive", exc
+                )
+                return
+        if hasattr(session, "list_tools") and callable(session.list_tools):
+            await session.list_tools()
+
+    async def _refresh_server_tools_from_session(
+        self, server_id: str, session: ClientSession
+    ) -> None:
+        """Fetch tools from session and refresh registrations."""
+        try:
+            server_tools = await asyncio.wait_for(
+                self._list_all_tools(session), timeout=15.0
+            )
+        except TimeoutError:
+            logger.warning(f"Tool refresh timeout for server '{server_id}'")
+            return
+        except Exception as e:
+            logger.warning(f"Tool refresh failed for server '{server_id}': {e}")
+            if _is_connection_error(e):
+                if self._sessions.get(server_id) is not session:
+                    logger.info(
+                        f"Server '{server_id}' session changed during failed tool refresh; "
+                        "leaving replacement session intact"
+                    )
+                    return
+                logger.info(
+                    f"Detected connection issue for server '{server_id}' during tool refresh, dropping session"
+                )
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                await self._teardown_server(server_id)
+                await self._attempt_scheduled_reconnect(
+                    server_id, reason="tool refresh"
+                )
+            return
+
+        if self._sessions.get(server_id) is not session:
+            logger.info(
+                f"Server '{server_id}' session changed during tool refresh; "
+                "leaving replacement session intact"
+            )
+            return
+
+        self._last_tool_refresh_at[server_id] = time.monotonic()
+        try:
+            self._refresh_server_tools(server_id, server_tools)
+        except jsonschema.SchemaError as exc:
+            # The same defect that fails discovery at startup, arriving
+            # mid-life. The server's cached tools cannot stay callable
+            # against a schema nobody can check, and one bad server
+            # must not starve the checks and retries queued behind it.
+            logger.error(
+                "MCP server '%s' now reports a tool with an invalid "
+                "parameter schema (%s); dropping its tools until it "
+                "reports a checkable list",
+                server_id,
+                exc.message,
+            )
+            if self._sessions.get(server_id) is session:
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                await self._teardown_server(server_id)
+
+    async def _run_health_checks(self, *, force_tool_refresh: bool = False) -> None:
         """Ping every live session, reconnecting the ones that have died.
 
         A passing check is the only thing that clears a server's reconnect
         backoff: a successful reconnect proves the endpoint accepted one
         connection, whereas surviving a full interval proves it is usable.
+
+        Tool definitions are not re-listed on every health check cycle to
+        avoid memory accumulation and load on upstream MCP servers; instead,
+        health checks use a lightweight ping and tools are refreshed at a
+        relaxed interval (``_tool_refresh_interval_seconds``), on reconnect,
+        or on demand.
         """
+        for connections in self._user_connections.values():
+            await connections.check_health(force_tool_refresh=force_tool_refresh)
+        self._sync_user_tools()
         for server_id, session in list(self._sessions.items()):
             if not self._health_check_enabled:
                 return
 
             try:
-                # Simple health check - list tools to verify connection
+                # Lightweight health check - ping session to verify connection
                 # Using a short timeout to avoid blocking too long
-                server_tools = await asyncio.wait_for(
-                    self._list_all_tools(session), timeout=5.0
-                )
+                await asyncio.wait_for(self._ping_session(session), timeout=5.0)
             except TimeoutError:
                 logger.warning(f"Health check timeout for server '{server_id}'")
                 # Don't reconnect on timeout - server might just be slow
             except Exception as e:
                 logger.warning(f"Health check failed for server '{server_id}': {e}")
                 if not _is_connection_error(e):
+                    continue
+
+                if self._sessions.get(server_id) is not session:
+                    logger.info(
+                        f"Server '{server_id}' session changed during failed health check; "
+                        "leaving replacement session intact"
+                    )
                     continue
 
                 logger.info(
@@ -1004,24 +1220,19 @@ class MCPToolsProvider:
                     server_id, reason="health check"
                 )
             else:
+                if self._sessions.get(server_id) is not session:
+                    continue
                 logger.debug(f"Health check passed for server '{server_id}'")
                 self._reset_reconnect_backoff(server_id)
-                try:
-                    self._refresh_server_tools(server_id, server_tools)
-                except jsonschema.SchemaError as exc:
-                    # The same defect that fails discovery at startup, arriving
-                    # mid-life. The server's cached tools cannot stay callable
-                    # against a schema nobody can check, and one bad server
-                    # must not starve the checks and retries queued behind it.
-                    logger.error(
-                        "MCP server '%s' now reports a tool with an invalid "
-                        "parameter schema (%s); dropping its tools until it "
-                        "reports a checkable list",
-                        server_id,
-                        exc.message,
-                    )
-                    self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
-                    await self._teardown_server(server_id)
+
+                now = time.monotonic()
+                last_refresh = self._last_tool_refresh_at.get(server_id, 0.0)
+                should_refresh = force_tool_refresh or (
+                    self._tool_refresh_interval_seconds is not None
+                    and (now - last_refresh) >= self._tool_refresh_interval_seconds
+                )
+                if should_refresh:
+                    await self._refresh_server_tools_from_session(server_id, session)
 
     async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
         """Reconnect failed/cancelled servers whose backoff window has elapsed."""
@@ -1113,6 +1324,27 @@ class MCPToolsProvider:
         if reconnected:
             self._reset_reconnect_backoff(server_id)
         return reconnected
+
+    async def refresh_server_tools(self, server_id: str) -> bool:
+        """Public method to fetch and refresh tools on-demand for a single server.
+
+        Returns True if the refresh succeeded and the server remains connected.
+        """
+        if server_id in self._user_connections:
+            await self._user_connections[server_id].check_health(
+                force_tool_refresh=True
+            )
+            self._sync_user_tools()
+            return (
+                MCP_SERVER_STATUS_CONNECTED
+                in self._user_connections[server_id].statuses().values()
+            )
+        session = self._sessions.get(server_id)
+        if not session:
+            logger.warning(f"Cannot refresh tools for '{server_id}': no active session")
+            return False
+        await self._refresh_server_tools_from_session(server_id, session)
+        return self._server_statuses.get(server_id) == MCP_SERVER_STATUS_CONNECTED
 
     def _registered_descriptors(self, server_id: str) -> list[ToolDescriptor]:
         """Return the descriptors currently registered on behalf of a server."""
@@ -1234,6 +1466,7 @@ class MCPToolsProvider:
             try:
                 # Remove from sessions to prevent reuse during reconnection
                 self._sessions.pop(server_id)
+                self._last_tool_refresh_at.pop(server_id, None)
                 # Close the context managers for this server
                 await self._close_server_connections(server_id)
             except Exception as e:
@@ -1245,6 +1478,10 @@ class MCPToolsProvider:
 
     async def _reconnect_server(self, server_id: str) -> bool:
         """Attempts to reconnect a single MCP server."""
+        if server_id in self._user_connections:
+            result = await self._user_connections[server_id].reconnect()
+            self._sync_user_tools()
+            return result
         logger.info(f"Attempting to reconnect MCP server '{server_id}'...")
 
         # Get the server config
@@ -1298,10 +1535,15 @@ class MCPToolsProvider:
         if not self._initialized:
             await self.initialize()  # Ensure connections and mapping are ready
 
+        self._sync_user_tools()
         server_id = self._tool_map.get(name)
         if not server_id:
             raise ToolNotFoundError(f"MCP tool '{name}' not found in tool map.")
 
+        if server_id in self._user_connections:
+            return await self._user_connections[server_id].execute_tool(
+                name, arguments, context, call_id
+            )
         session = self._sessions.get(server_id)
         if not session:
             # This might happen if the server failed to connect during initialize
@@ -1381,7 +1623,7 @@ class MCPToolsProvider:
 
             async def call_tool_result(active_session: ClientSession) -> str:
                 mcp_result = await active_session.call_tool(
-                    name=name, arguments=arguments
+                    name=self._remote_tool_name(server_id, name), arguments=arguments
                 )
 
                 # Process MCP result content
@@ -1494,6 +1736,7 @@ class MCPToolsProvider:
         Returns:
             Dictionary mapping tool name to server ID
         """
+        self._sync_user_tools()
         return self._tool_map.copy()
 
     async def close(self) -> None:
@@ -1510,6 +1753,9 @@ class MCPToolsProvider:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._health_check_task
 
+        for connections in self._user_connections.values():
+            await connections.close()
+        self._session_instructions.clear()
         # Close all server connections
         for server_id in list(self._connection_contexts.keys()):
             await self._close_server_connections(server_id)
@@ -1521,3 +1767,217 @@ class MCPToolsProvider:
         self._bump_descriptors_version()
         self._initialized = False
         logger.info("MCPToolsProvider closed.")
+
+
+class _MCPConnectionLostError(Exception):
+    """The transport cancelled its owning task while a request was pending."""
+
+
+@dataclass
+class _UserMCPConnection:
+    """Own all transport contexts in one task, including reconnect and close.
+
+    The SDK uses AnyIO cancel scopes, which must be exited in the task that
+    entered them. A queue also serializes health work with this users calls.
+    """
+
+    provider: MCPToolsProvider
+    requests: asyncio.Queue[
+        tuple[Callable[[], Awaitable[object]], asyncio.Future[object]] | None
+    ] = field(default_factory=asyncio.Queue)
+    task: asyncio.Task[None] | None = None
+    stopping: bool = False
+
+    async def run[T](self, operation: Callable[[], Awaitable[T]]) -> T:
+        if self.task is not None and (self.task.done() or self.stopping):
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.task
+            self.task = None
+        if self.task is None:
+            self.stopping = False
+            self.task = asyncio.create_task(self._serve())
+        future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        await self.requests.put((operation, future))
+        return cast("T", await future)
+
+    async def _serve(self) -> None:
+        try:
+            while (request := await self.requests.get()) is not None:
+                operation, future = request
+                if future.cancelled():
+                    continue
+                try:
+                    result = await operation()
+                except asyncio.CancelledError:
+                    self.stopping = True
+                    if not future.done():
+                        future.set_exception(_MCPConnectionLostError())
+                    raise
+                except Exception as exc:
+                    if not future.done():
+                        future.set_exception(exc)
+                else:
+                    if not future.done():
+                        future.set_result(result)
+        finally:
+            self.stopping = True
+            for server_id in self.provider._server_statuses:
+                self.provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+            await self.provider.close()
+            while not self.requests.empty():
+                pending = self.requests.get_nowait()
+                if pending is not None and not pending[1].done():
+                    pending[1].set_exception(_MCPConnectionLostError())
+
+    async def close(self) -> None:
+        if self.task is not None:
+            if not self.task.done():
+                await self.requests.put(None)
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.task
+            self.task = None
+
+
+class _UserMCPConnections:
+    """One existing MCP lifecycle per user; the parent owns health scheduling.
+
+    Tool schemas must be common to all users. Only discovery metadata is shared;
+    execution always uses the provider selected by the trusted context user.
+    """
+
+    def __init__(
+        self,
+        server_id: str,
+        config: MCPServerConfig,
+        *,
+        initialization_timeout_seconds: int,
+        health_check_interval_seconds: int,
+        reconnect_backoff_base_seconds: float,
+        reconnect_backoff_max_seconds: float,
+        tool_refresh_interval_seconds: float | None,
+    ) -> None:
+        auth = MCPUserAuthConfig.model_validate(config.get("user_auth"))
+        if config.get("token") or config.get("transport", "stdio").lower() not in {
+            "sse",
+            *MCP_STREAMABLE_HTTP_TRANSPORTS,
+        }:
+            raise ValueError(
+                "user_auth requires HTTP and cannot be combined with token"
+            )
+        self.server_id = server_id
+        self.call_timeout_seconds = auth.call_timeout_seconds
+        self.connections: dict[str, _UserMCPConnection] = {}
+        for user_id, credential in auth.users.items():
+            child_config = cast("MCPServerGenericConfig", copy.deepcopy(config))
+            child_config.pop("user_auth", None)
+            child_config["token"] = f"${credential.token_env}"
+            provider = MCPToolsProvider(
+                {server_id: child_config},
+                initialization_timeout_seconds=initialization_timeout_seconds,
+                health_check_interval_seconds=health_check_interval_seconds,
+                reconnect_backoff_base_seconds=reconnect_backoff_base_seconds,
+                reconnect_backoff_max_seconds=reconnect_backoff_max_seconds,
+                tool_refresh_interval_seconds=tool_refresh_interval_seconds,
+            )
+            provider._user_identity = (credential, auth.identity_check)
+            self.connections[user_id] = _UserMCPConnection(provider)
+
+    async def initialize(self) -> None:
+        async def initialize_user(connection: _UserMCPConnection) -> None:
+            provider = connection.provider
+            provider._initialized = True
+            provider._health_check_enabled = True
+            async with asyncio.timeout(provider._initialization_timeout_seconds):
+                await provider._reconnect_server(self.server_id)
+
+        await asyncio.gather(
+            *(
+                item.run(lambda item=item: initialize_user(item))
+                for item in self.connections.values()
+            )
+        )
+
+    def statuses(self) -> dict[str, str]:
+        return {
+            user_id: item.provider._server_statuses[self.server_id]
+            for user_id, item in self.connections.items()
+        }
+
+    def descriptors(self) -> list[ToolDescriptor]:
+        for item in self.connections.values():
+            if self.server_id in item.provider._sessions:
+                return list(item.provider._descriptors)
+        return []
+
+    async def check_health(self, *, force_tool_refresh: bool) -> None:
+        async def check(provider: MCPToolsProvider) -> None:
+            provider._initialized = True
+            provider._health_check_enabled = True
+            failed = self.server_id not in provider._sessions
+            await provider._run_health_checks(force_tool_refresh=force_tool_refresh)
+            if failed:
+                await provider._retry_disconnected_servers([self.server_id])
+
+        await asyncio.gather(
+            *(
+                item.run(lambda item=item: check(item.provider))
+                for item in self.connections.values()
+            )
+        )
+
+    async def reconnect(self) -> bool:
+        results = await asyncio.gather(
+            *(
+                item.run(
+                    lambda item=item: item.provider.reconnect_server(self.server_id)
+                )
+                for item in self.connections.values()
+            )
+        )
+        return any(results)
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - MCP arguments are protocol-defined
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+    ) -> str:
+        if not context.user_id:
+            return f"Error: MCP server {self.server_id!r} requires an acting user."
+        connection = self.connections.get(context.user_id)
+        if connection is None:
+            return (
+                f"Error: No {self.server_id} connection configured for the acting user."
+            )
+
+        async def execute() -> str:
+            provider = connection.provider
+            provider._initialized = True
+            provider._health_check_enabled = True
+            try:
+                async with asyncio.timeout(self.call_timeout_seconds):
+                    if (
+                        self.server_id not in provider._sessions
+                        and not await provider._attempt_scheduled_reconnect(
+                            self.server_id, reason="user tool call"
+                        )
+                    ):
+                        return f"Error: Your {self.server_id} connection is unavailable. Check its credential and identity configuration."
+                    return await provider.execute_tool(
+                        name, arguments, context, call_id
+                    )
+            except TimeoutError:
+                provider._server_statuses[self.server_id] = MCP_SERVER_STATUS_FAILED
+                await provider._teardown_server(self.server_id)
+                return f"Error: Your {self.server_id} connection timed out. The operation may have completed; check its state before retrying."
+
+        try:
+            return await connection.run(execute)
+        except _MCPConnectionLostError:
+            return f"Error: Your {self.server_id} connection was closed. Check its credential and the operation state before retrying."
+
+    async def close(self) -> None:
+        for item in self.connections.values():
+            await item.close()

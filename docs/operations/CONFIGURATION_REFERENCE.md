@@ -2653,6 +2653,43 @@ Timeout for MCP server initialization.
 
 ______________________________________________________________________
 
+### mcp_health_check_interval_seconds
+
+Interval in seconds between lightweight ping-based MCP server health checks.
+
+| Property  | Value                                                                     |
+| --------- | ------------------------------------------------------------------------- |
+| YAML Path | `default_profile_settings.tools_config.mcp_health_check_interval_seconds` |
+| Required  | No                                                                        |
+| Default   | `30`                                                                      |
+| Sensitive | No                                                                        |
+| Example   | `60`                                                                      |
+
+Controls how frequently the assistant checks connection health for active MCP sessions. Health
+checks send a lightweight JSON-RPC ping to verify the server transport without polling full tool
+lists. If a server does not implement ping, it falls back to `list_tools`.
+
+______________________________________________________________________
+
+### mcp_tool_refresh_interval_seconds
+
+Interval in seconds between periodic background MCP tool list discovery refreshes.
+
+| Property  | Value                                                                     |
+| --------- | ------------------------------------------------------------------------- |
+| YAML Path | `default_profile_settings.tools_config.mcp_tool_refresh_interval_seconds` |
+| Required  | No                                                                        |
+| Default   | `1800` (30 minutes)                                                       |
+| Sensitive | No                                                                        |
+| Example   | `null` (disables periodic refresh)                                        |
+
+Decoupled from connection health checks to eliminate repeated full-schema transfers and prevent
+memory accumulation from servers with large schemas. Tool lists are always fetched at startup, upon
+reconnecting a dropped session, and on-demand via `refresh_server_tools()`. Set to `null` to disable
+periodic background discovery entirely.
+
+______________________________________________________________________
+
 ### TOOLS_REQUIRING_CONFIRMATION
 
 Comma-separated list of tools requiring user confirmation.
@@ -3735,3 +3772,50 @@ The following options can be passed as command-line arguments:
 | `--attachment-storage-path` | Override attachment storage path |
 
 CLI arguments have the highest priority and override all other configuration sources.
+
+### Per-user MCP credentials
+
+Use `user_auth` instead of `token` for an HTTP MCP server that acts for individual users. The keys
+under `users` must match the canonical IDs in FA’s `users` configuration. Secrets are read from the
+named environment variables only; do not put token values in this block.
+
+```yaml
+mcp_config:
+  mcpServers:
+    tuit:
+      transport: streamable_http
+      url: http://tuit.tuit.svc.cluster.local:8080/mcp
+      tool_name_prefix: tuit_
+      user_auth:
+        call_timeout_seconds: 60
+        identity_check:
+          path: /api/me
+          expected_agent: family-assistant
+          require_write: true
+        users:
+          alex@example.com:
+            token_env: TUIT_ALEX_TOKEN
+            expected_user_id: alex
+          sam@example.com:
+            token_env: TUIT_SAM_TOKEN
+            expected_user_id: sam
+```
+
+Each token is a Tuit agent token for the corresponding person, with agent name `family-assistant`.
+`identity_check` is optional for other MCP servers; when configured, its same-origin JSON endpoint
+must return `user.id`, `agent`, and `can_write`. The check runs before connecting and on reconnect.
+Missing or swapped credentials disable only that user’s connection. The server status diagnostic
+includes per-user connection states, never tokens.
+
+The common tool catalog is discovered using an available connection. Tool schemas and policy
+metadata must be identical for all users; initialization instructions remain session-specific. A
+missing connection never falls back to someone else. `user_auth` requires an HTTP transport and
+cannot be combined with a shared `token`. Calls default to a 60-second timeout.
+
+Supply environment variables using Kubernetes Secret references. Rotate the Secret and restart FA to
+load replacements. Enable the server in the desired profile’s `tools_policy` and optionally add it
+to `tools_config.on_demand_mcp_server_ids`. This does not enable notifications.
+
+`tool_name_prefix` optionally prefixes exposed tool names (for shared or per-user servers). For
+example, `tuit_` exposes `create_task` as `tuit_create_task`, while MCP calls and `tool_metadata` /
+`parameter_overrides` configuration use the original server tool name.

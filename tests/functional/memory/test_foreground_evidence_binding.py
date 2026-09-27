@@ -188,7 +188,7 @@ async def test_a_foreground_edit_may_not_cite_another_turn(
     """An id the model supplies is still held to the turn it is running in."""
     db = memory_db(db_engine, review_limits())
     elsewhere = await db.message_history.add_message(
-        UserMessage(content="something said in another turn"),
+        UserMessage.from_trusted_user(content="something said in another turn"),
         interface_type="web",
         conversation_id=CONVERSATION,
         timestamp=NOW,

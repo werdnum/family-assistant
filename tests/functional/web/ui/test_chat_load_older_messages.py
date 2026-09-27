@@ -35,7 +35,7 @@ async def _seed_history(db_engine: AsyncEngine, conversation_id: str) -> None:
     for index in range(HISTORY_ROWS):
         content = _history_text(index)
         message = (
-            UserMessage(content=content)
+            UserMessage.from_trusted_user(content=content)
             if index % 2 == 0
             else AssistantMessage(
                 content=content,

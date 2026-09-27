@@ -754,7 +754,20 @@ async def list_notes_tool(
                 reason=f"Listed note '{note.title}' carries stored provenance.",
             )
             if read_taint is not None:
-                merge_taint_state_into_tracker(exec_context.taint_tracker, read_taint)
+                exec_context.taint_tracker.add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.NOTE,
+                        source_id=note.title,
+                        tier=min(
+                            read_taint.max_tier, SourceTrustTier.RECOGNIZED_MACHINE
+                        ),
+                        labels=frozenset(note.visibility_labels),
+                        reason=(
+                            f"Listed note '{note.title}' exposes only its title and "
+                            "a bounded content preview."
+                        ),
+                    )
+                )
 
     # Return summary with attachment count
     return [

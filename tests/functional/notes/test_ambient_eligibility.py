@@ -171,7 +171,7 @@ async def test_unstamped_row_read_explicitly_raises_the_turn_to_unknown_external
     await list_notes_tool(tool_context(db, list_tracker))
 
     assert note_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
-    assert list_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert list_tracker.snapshot().max_tier is SourceTrustTier.RECOGNIZED_MACHINE
 
 
 @pytest.mark.asyncio

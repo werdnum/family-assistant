@@ -1500,6 +1500,7 @@ async def api_chat_create_turn(
             UserMessage(
                 content=payload.prompt,
                 taint_metadata=TurnTaintState.empty().to_metadata(),
+                authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
             ),
             interface_type=interface_type,
             conversation_id=conversation_id,
@@ -3238,7 +3239,10 @@ async def api_chat_save_voice_session(
     for index, turn in enumerate(payload.turns):
         if turn.role == "user":
             turn_id = str(uuid.uuid4())
-            message: UserMessage | AssistantMessage = UserMessage(content=turn.text)
+            message: UserMessage | AssistantMessage = UserMessage(
+                content=turn.text,
+                authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
         else:
             # Native voice replies may summarize tool output, but the transcript
             # payload does not carry the session's runtime tracker. Preserve the

@@ -36,7 +36,7 @@ async def _add_exchange(
     timestamp = BASE_TIME + timedelta(minutes=minutes)
     turn_id = f"{conversation_id}-{minutes}"
     await db.message_history.add_message(
-        UserMessage(content=user_text),
+        UserMessage.from_trusted_user(content=user_text),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=timestamp,

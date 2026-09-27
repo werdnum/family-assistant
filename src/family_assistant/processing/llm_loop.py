@@ -1139,6 +1139,7 @@ class LLMStreamingLoop:
                         UserMessage(
                             content=user_input.content,
                             taint_metadata=mid_turn_taint_metadata,
+                            authorship_taint_metadata=mid_turn_taint_metadata,
                         ),
                     )
 

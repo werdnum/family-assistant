@@ -49,7 +49,7 @@ async def _add_user_message(
 ) -> None:
     db = Database(engine=db_engine)
     await db.message_history.add_message(
-        message=UserMessage(content="please do the thing"),
+        message=UserMessage.from_trusted_user(content="please do the thing"),
         interface_type=interface_type,
         conversation_id=conversation_id,
         timestamp=SystemClock().now(),

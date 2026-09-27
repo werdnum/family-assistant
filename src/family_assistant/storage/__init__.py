@@ -26,6 +26,7 @@ from family_assistant.storage.base import (
     create_engine_with_sqlite_optimizations,
     metadata,
 )
+from family_assistant.storage.calendar_provenance import calendar_event_provenance_table
 
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
@@ -355,6 +356,7 @@ __all__ = [
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
+    "calendar_event_provenance_table",
     "confirmation_requests_table",
     "conversation_shares_table",
     "create_engine_with_sqlite_optimizations",

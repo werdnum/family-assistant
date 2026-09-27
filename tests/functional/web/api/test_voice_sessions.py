@@ -303,7 +303,7 @@ async def test_voice_handoff_refuses_foreign_conversation_and_invalid_url(
     foreign_id = f"web_conv_{uuid4()}"
     db = Database(db_engine)
     await db.message_history.add_message(
-        UserMessage(content="private"),
+        UserMessage.from_trusted_user(content="private"),
         interface_type="web",
         conversation_id=foreign_id,
         timestamp=datetime.now(UTC),
@@ -389,7 +389,7 @@ async def test_voice_session_rejects_foreign_conversation_id(
     foreign_conversation_id = "web_conv_owned_by_someone_else"
     db_context = Database(db_engine)
     await db_context.message_history.add_message(
-        UserMessage(content="not yours"),
+        UserMessage.from_trusted_user(content="not yours"),
         interface_type="web",
         conversation_id=foreign_conversation_id,
         timestamp=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),

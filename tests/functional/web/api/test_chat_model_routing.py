@@ -174,7 +174,7 @@ async def _add_history(
     """Put one earlier user message in the conversation the classifier reads."""
     db = Database(engine=db_engine)
     await db.message_history.add_message(
-        UserMessage(content=text),
+        UserMessage.from_trusted_user(content=text),
         interface_type=interface_type,
         conversation_id=conversation_id,
         timestamp=SystemClock().now() - age,

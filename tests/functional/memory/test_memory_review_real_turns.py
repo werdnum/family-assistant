@@ -2,9 +2,8 @@
 
 Every other test of the review seeds its source conversation through the
 message-history repository, which is fast to read but proves nothing about the
-provenance a *turn* actually records. The provenance rule -- "no memory is
-written from a turn whose recorded provenance is outside the trusted pole" --
-is only as good as the stamps real turns leave, so these tests produce the
+provenance a *turn* actually records. The authorship rule is only as good as
+the stamps real turns leave, so these tests produce the
 conversation the way production does: ``handle_chat_interaction`` on a real
 ``ProcessingService``, with a fake model and real tools.
 
@@ -12,10 +11,9 @@ What that pins, in the order the design's cases run:
 
 - a plain turn and a turn that calls a trusted-output tool leave a stretch the
   review reads;
-- a turn that called a tool tagged ``output_untrusted`` leaves one it skips;
-- and the rows carry first-hand stamps in every case, so the skip is decided by
-  what the turn recorded rather than by the read-time fallback for a row that
-  predates runtime taint tracking.
+- a turn that called a tool tagged ``output_untrusted`` contributes only the
+  household's own words to the review;
+- and the rows carry first-hand stamps in every case.
 """
 
 from __future__ import annotations
@@ -39,6 +37,8 @@ from family_assistant.memory.review import MemoryReviewResult, run_memory_review
 from family_assistant.memory.review_settings import MemoryReviewSettings
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.security.taint import (
+    SourceTrustTier,
+    TurnTaintState,
     is_externally_authored,
     merge_history_taint,
 )
@@ -131,6 +131,9 @@ def contributor_service(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.BLOCKED,
+        memory_read=True,
+        memory_contribute=True,
+        memory_contributing_interfaces=frozenset({"web", "telegram"}),
     )
     read_policy = NoteReadPolicy.for_profile(
         visibility_grants=None, required_labels=None, memory_read=True
@@ -312,15 +315,15 @@ async def test_a_turn_that_called_a_trusted_tool_is_still_reviewable(
 
 
 # ---------------------------------------------------------------------------
-# (c): a turn that read the open web is not
+# (c): a turn that read the open web retains its household-authored message
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a_turn_that_read_the_open_web_is_skipped(
+async def test_a_turn_that_read_the_open_web_curates_only_the_users_words(
     db_engine: AsyncEngine,
 ) -> None:
-    """The untrusted half of the same mechanism, from a real turn's own stamp."""
+    """The curator sees the household preference without the web result."""
     limits = review_limits()
     db = memory_db(db_engine, limits)
     await enable_contribution(db)
@@ -334,16 +337,72 @@ async def test_a_turn_that_read_the_open_web_is_skipped(
             ]
         ),
     )
-    await _say(assistant, db_engine, said="when is bin day?")
+    await _say(assistant, db_engine, said=SAID)
 
     curator_llm_client = curator_llm(CuratorScript())
     curator = curator_service(db_engine, curator_llm_client)
     result = await _review(db, curator, limits=limits)
 
-    assert result is MemoryReviewResult.SKIPPED
-    assert curator_llm_client.get_calls() == [], (
-        "the stretch must be excluded before anything reaches a model"
+    assert result is MemoryReviewResult.APPLIED
+    calls = curator_llm_client.get_calls()
+    assert calls
+    assert SAID in str(calls)
+    assert "Bin day is Tuesday" not in str(calls)
+    assert "Bin day has moved" not in str(calls)
+
+
+@pytest.mark.asyncio
+async def test_tainted_foreground_memory_request_defers_to_review(
+    db_engine: AsyncEngine,
+) -> None:
+    limits = review_limits()
+    db = memory_db(db_engine, limits)
+    await enable_contribution(db)
+    proposal = json.dumps({
+        "edits": [
+            {
+                "op": "add",
+                "note_title": "Transport",
+                "entry": SAID,
+            }
+        ]
+    })
+    assistant = contributor_service(
+        db_engine,
+        RuleBasedMockLLMClient(
+            rules=[
+                (_before_any_tool_ran, _calls("read_open_web")),
+                (
+                    lambda args: (
+                        sum(message.role == "tool" for message in args["messages"]) == 1
+                    ),
+                    _calls("propose_memory_edits", proposal),
+                ),
+                (
+                    lambda _args: True,
+                    LLMOutput(content="I will leave that for review."),
+                ),
+            ]
+        ),
     )
+    await _say(assistant, db_engine, said=f"remember that {SAID}")
+
+    tool_rows = [row for row in await _rows(db) if row["role"] == "tool"]
+    assert any(
+        "eligible for a later memory review" in str(row["content"]) for row in tool_rows
+    )
+    assert (
+        await db.notes.get_by_title("Transport", read_policy=CURATOR_READ_POLICY)
+        is None
+    )
+
+    curator = curator_service(
+        db_engine, curator_llm(CuratorScript(note_title="Transport"))
+    )
+    assert await _review(db, curator, limits=limits) is MemoryReviewResult.APPLIED
+    note = await db.notes.get_by_title("Transport", read_policy=CURATOR_READ_POLICY)
+    assert note is not None
+    assert "takes the tram" in strip_topic_index(note.content)
 
 
 # ---------------------------------------------------------------------------
@@ -393,3 +452,35 @@ async def test_every_row_a_real_turn_writes_carries_its_own_stamp(
         MagicMock(taint_metadata=row["taint_metadata"]) for row in rows
     ])
     assert not is_externally_authored(merged.max_tier)
+
+
+@pytest.mark.asyncio
+async def test_user_authorship_does_not_inherit_tainted_history(
+    db_engine: AsyncEngine,
+) -> None:
+    researched = contributor_service(
+        db_engine,
+        RuleBasedMockLLMClient(
+            rules=[
+                (_before_any_tool_ran, _calls("read_open_web")),
+                (lambda _a: True, LLMOutput(content="Outside result.")),
+            ]
+        ),
+    )
+    await _say(researched, db_engine, said="Find a hotel", message_id="first")
+    followed_up = contributor_service(
+        db_engine,
+        RuleBasedMockLLMClient(rules=[], default_response=LLMOutput(content="Noted.")),
+    )
+    await _say(followed_up, db_engine, said=SAID, message_id="second")
+
+    rows = await _rows(Database(engine=db_engine))
+    assert [row["role"] for row in rows[-2:]] == ["user", "assistant"]
+    assert (
+        TurnTaintState.from_metadata(rows[-2]["taint_metadata"]).max_tier
+        is SourceTrustTier.TRUSTED_USER
+    )
+    assert (
+        TurnTaintState.from_metadata(rows[-1]["taint_metadata"]).max_tier
+        is SourceTrustTier.UNKNOWN_EXTERNAL
+    )

@@ -1564,6 +1564,7 @@ class ProcessingService:
             trigger_message = UserMessage(
                 content=user_content_for_history,
                 taint_metadata=trigger_taint_metadata,
+                authorship_taint_metadata=trigger_taint_metadata,
             )
         # When the caller already persisted this turn's user message, reuse it
         # instead of inserting a duplicate. The web endpoint does this before

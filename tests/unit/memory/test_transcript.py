@@ -18,6 +18,13 @@ from family_assistant.memory.transcript import (
     render_stretch,
     sender_labeller,
 )
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintMetadata,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
@@ -38,6 +45,7 @@ def _row(
     is_internal: bool = False,
     tool_calls: list[ToolCallItem] | None = None,
     internal_id: int | None = None,
+    taint_metadata: TaintMetadata | None = None,
 ) -> MessageHistoryRow:
     """One deserialized message-history row, with only what the renderer reads."""
     if internal_id is None:
@@ -53,6 +61,7 @@ def _row(
         "user_id": user_id,
         "is_internal": is_internal,
         "tool_calls": tool_calls,
+        "taint_metadata": taint_metadata or TurnTaintState.empty().to_metadata(),
     }
     return cast("MessageHistoryRow", row)
 
@@ -99,9 +108,7 @@ def test_a_tool_result_body_is_never_shown_but_its_call_is_named() -> None:
 def test_a_tool_result_row_is_still_covered_by_the_chunk() -> None:
     """What the curator is shown is narrower than what the chunk covers.
 
-    The evidence scope and the merged taint are both about the coverage, so a
-    tool row that is not rendered must still move the watermark past itself and
-    contribute its provenance.
+    A tool row that is not rendered must still move the watermark past itself.
     """
     rows = [
         _row("user", "find us a hotel", internal_id=10),
@@ -114,6 +121,42 @@ def test_a_tool_result_row_is_still_covered_by_the_chunk() -> None:
 
     assert rendered.last_internal_id == 13
     assert len(rendered.rows) == 4
+
+
+def test_external_rows_are_covered_but_not_shown_or_citable() -> None:
+    external = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="web",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Read an outside page.",
+            )
+        )
+        .to_metadata()
+    )
+    rows = [
+        _row("user", "we prefer the tram", internal_id=20),
+        _row(
+            "assistant",
+            "the hotels are listed here",
+            internal_id=21,
+            taint_metadata=external,
+        ),
+        _row("tool", "outside result", internal_id=22, taint_metadata=external),
+        _row("assistant", "the second hotel", internal_id=23, taint_metadata=external),
+    ]
+
+    rendered = _render(rows)
+
+    assert rendered.text == "#20 2026-09-17 14:03 alice: we prefer the tram"
+    assert rendered.rendered_message_ids == frozenset({20})
+    assert rendered.excluded_row_count == 3
+    assert rendered.admissible_user_row_count == 1
+    assert rendered.last_internal_id == 23
 
 
 def test_an_unfinished_turn_ends_the_chunk_before_itself() -> None:

@@ -295,6 +295,7 @@ class ToolExecutor:
             allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,
             allow_wake_llm=self.config.allow_wake_llm,
             note_registry=self.config.note_registry,
+            calendar_config=self.config.calendar_config,
             taint_tracker=taint_tracker,
             taint_policy_snapshot=taint_policy_snapshot,
             tool_call_review_state=(

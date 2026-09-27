@@ -40,7 +40,9 @@ async def test_thread_history_includes_root_message(db_engine: AsyncEngine) -> N
     db = Database(engine=db_engine)
     # Create a root message (thread_root_id will be NULL initially)
     root_msg = await db.message_history.add_message(
-        message=UserMessage(content="Can you highlight the eagle statue?"),
+        message=UserMessage.from_trusted_user(
+            content="Can you highlight the eagle statue?"
+        ),
         interface_type="telegram",
         conversation_id="test_chat_123",
         interface_message_id="100",
@@ -133,7 +135,7 @@ async def test_thread_history_with_profile_filter(db_engine: AsyncEngine) -> Non
     db = Database(engine=db_engine)
     # Create root message with profile A
     root_msg = await db.message_history.add_message(
-        message=UserMessage(content="Test message"),
+        message=UserMessage.from_trusted_user(content="Test message"),
         interface_type="telegram",
         conversation_id="test_chat_456",
         interface_message_id="200",

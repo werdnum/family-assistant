@@ -177,7 +177,10 @@ async def execute_tool_api(
             raise HTTPException(status_code=404, detail="Voice conversation not found.")
         if not owner_ids:
             await db_context.message_history.add_message(
-                UserMessage(content=""),
+                UserMessage(
+                    content="",
+                    authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
                 interface_type="web",
                 conversation_id=voice_conversation_id,
                 timestamp=datetime.now(UTC),
@@ -221,6 +224,11 @@ async def execute_tool_api(
         timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
         tools_provider=selected_tools_provider,
+        calendar_config=(
+            processing_service.service_config.calendar_config
+            if processing_service
+            else None
+        ),
         processing_profile_id=(
             processing_service.service_config.id if processing_service else None
         ),

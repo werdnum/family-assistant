@@ -39,6 +39,11 @@ When the assistant shows your schedule, each event indicates which calendar it b
 brackets (e.g., `[Family]`, `[TripIt Trips]`, `[School]`). Searches query across all connected
 CalDAV calendars and iCal subscription feeds at once.
 
+An invitation or subscribed event can contain text written by someone outside your household. The
+assistant can tell you what it says, but may ask for confirmation before taking a sensitive action
+based on that text. Events you created yourself and unchanged events the assistant added are handled
+according to where their content came from.
+
 ## Adding events
 
 - "Add dentist appointment for June 5th at 10 AM."

@@ -22,7 +22,6 @@ from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
-from family_assistant.tools.mcp import MCPToolsProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,17 +51,18 @@ async def _holds_memory_tool(config: AppConfig, profile_id: str) -> bool:
         item for item in LOCAL_TOOL_REGISTRATIONS if item.name == MEMORY_TOOL
     )
     assistant = Assistant(config)
-    local_provider = LocalToolsProvider(registrations=[registration])
-    assistant._root_local_registrations = [registration]
-    assistant._root_mcp_provider = MCPToolsProvider(mcp_server_configs={})
     assistant.root_tools_provider = CompositeToolsProvider(
-        providers=[local_provider, assistant._root_mcp_provider]
+        providers=[LocalToolsProvider(registrations=[registration])]
     )
     provider, _ = await assistant._build_profile_tools_provider(
         profile, delegation_sink_classes={}, tool_call_reviewer=None
     )
     definitions = await provider.get_tool_definitions(can_confirm=False)
     return MEMORY_TOOL in {item["function"]["name"] for item in definitions}
+
+
+def test_the_memory_tool_is_registered() -> None:
+    assert any(item.name == MEMORY_TOOL for item in LOCAL_TOOL_REGISTRATIONS)
 
 
 @pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])

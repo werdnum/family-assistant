@@ -65,6 +65,10 @@ unauthenticated callers can post telemetry and logs quote external input.
 
 ## Deliberate simplifications
 
+- **Calendar authorship is conservative where a provider cannot prove it.** Accepted invitations and
+  subscribed events remain external even when they appear on a writable calendar. An operator-owned
+  CalDAV collection's event with no invitation metadata is treated as household authored; a
+  recurring occurrence whose unchanged write version cannot be proved stays external.
 - **A grading mistake on the clean side skips a review.** That is the cost of letting grading reduce
   friction at all. It is bounded by the unchanged fallback: only tools someone deliberately regraded
   can err clean, and each regrading is small enough to review on its own.

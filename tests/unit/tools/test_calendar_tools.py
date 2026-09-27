@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import caldav
@@ -63,12 +63,16 @@ async def _get_radicale_event_by_summary(
 
 
 def _create_mock_context() -> ToolExecutionContext:
+    db = MagicMock(spec=Database)
+    db.calendar_provenance.record = AsyncMock()
+    db.calendar_provenance.get_many = AsyncMock(return_value={})
+    db.calendar_provenance.known_event_uids = AsyncMock(return_value=set())
     return ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
         user_name="TestUser",
         turn_id="test_turn",
-        db_context=MagicMock(spec=Database),
+        db_context=db,
         processing_service=None,
         clock=None,
         home_assistant_client=None,
@@ -162,9 +166,9 @@ async def test_list_calendars_via_local_tools_provider() -> None:
     provider = LocalToolsProvider(
         definitions=CALENDAR_TOOLS_DEFINITION,
         implementations={"list_calendars": list_calendars_tool},
-        calendar_config=calendar_config,
     )
     ctx = _create_mock_context()
+    ctx.calendar_config = calendar_config
 
     result = await provider.execute_tool("list_calendars", {}, context=ctx)
     assert isinstance(result, str)
@@ -807,9 +811,7 @@ async def test_confirmation_renderers_resolve_calendar_id(
             ],
         }
     }
-    tools_provider = MagicMock(spec=LocalToolsProvider)
-    tools_provider.get_calendar_config.return_value = config
-    ctx.tools_provider = tools_provider
+    ctx.calendar_config = config
 
     async def fake_fetch_details(
         uid: str, calendar_url: str, **kwargs: object
@@ -876,18 +878,17 @@ async def test_confirmation_renderers_resolve_calendar_id(
     assert "Personal (personal)" in add_default_prompt
 
 
-def test_search_calendar_events_output_untrusted_taint() -> None:
+def test_search_calendar_events_uses_dynamic_event_taint() -> None:
     descriptor = next(
         d for d in LOCAL_TOOL_DESCRIPTORS if d.name == "search_calendar_events"
     )
-    assert ToolTag.OUTPUT_UNTRUSTED in descriptor.tags
-    assert ToolTag.OUTPUT_TRUSTED not in descriptor.tags
+    assert ToolTag.OUTPUT_TRUSTED in descriptor.tags
+    assert ToolTag.OUTPUT_UNTRUSTED not in descriptor.tags
 
     taint_source = derive_tool_result_taint_source(
         descriptor=descriptor, call_id="call_test"
     )
-    assert taint_source is not None
-    assert taint_source.source_id == "call_test"
+    assert taint_source is None
 
 
 async def test_resolve_target_caldav_url_conflict_rejection() -> None:

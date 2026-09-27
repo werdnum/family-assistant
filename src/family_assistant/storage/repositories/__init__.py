@@ -3,6 +3,7 @@
 from .a2a_tasks import A2ATasksRepository
 from .automations import AutomationsRepository
 from .base import BaseRepository
+from .calendar_provenance import CalendarProvenanceRepository
 from .confirmation_requests import ConfirmationRequestsRepository
 from .conversation_shares import ConversationSharesRepository
 from .delegation_runs import DelegationRunsRepository
@@ -28,6 +29,7 @@ __all__ = [
     "A2ATasksRepository",
     "AutomationsRepository",
     "BaseRepository",
+    "CalendarProvenanceRepository",
     "ConfirmationRequestsRepository",
     "ConversationSharesRepository",
     "DelegationRunsRepository",

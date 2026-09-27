@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.security.taint import (
     TaintMetadata,
+    TurnTaintState,
     floor_machine_authored_metadata,
 )
 from family_assistant.tools.types import (  # noqa: TC001  # Pydantic needs runtime import for field validation
@@ -263,6 +264,16 @@ class UserMessage(BaseModel):
     role: Literal["user"] = "user"
     content: str | list[ContentPart]
     taint_metadata: TaintMetadata | None = None
+    authorship_taint_metadata: TaintMetadata | None = Field(default=None, exclude=True)
+    """The trigger's own provenance when this message is persisted as a user row."""
+
+    @classmethod
+    def from_trusted_user(cls, *, content: str | list[ContentPart]) -> UserMessage:
+        """Build a message explicitly attributed to an authenticated household member."""
+        return cls(
+            content=content,
+            authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+        )
 
     # Optional: For provider-specific pre-converted format (e.g., Google GenAI)
     # Excluded from serialization as it's only used during provider conversion

@@ -900,7 +900,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "test_event_listener": _metadata(
         ToolTag.READ_ONLY,
@@ -1079,9 +1079,8 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
         ToolTag.SCHEDULING,
-        # OUTPUT_UNTRUSTED: queries both internal CalDAV calendars and external
-        # subscribed iCal feeds where event summaries may be externally authored.
-        ToolTag.OUTPUT_UNTRUSTED,
+        # The tool grades each returned event against its own provenance.
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "modify_calendar_event": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
@@ -1188,7 +1187,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "highlight_image": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     # The image backends take a prompt and a style; the endpoint is fixed at
     # construction and no argument selects a recipient. A fixed recipient is
@@ -1198,19 +1197,19 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "transform_image": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "create_vega_chart": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.DATA,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     # OUTPUT_TRUSTED: as for read_text_attachment, graded by the attachment read.
     "jq_query": _metadata(
@@ -1225,7 +1224,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     # Unlike the generation tools above, this one takes a URL: the model picks
     # the destination, so it is EXTERNAL_COMM and must stay that way.
@@ -1245,7 +1244,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "annotate_image": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     # Computer Use tools (Gemini 3.5 native action space)
     "click": _metadata(

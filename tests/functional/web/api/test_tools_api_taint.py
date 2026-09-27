@@ -95,7 +95,7 @@ class FailingTaintingDirectToolsProvider(TaintingDirectToolsProvider):
     ) -> ToolResult:
         await super().execute_tool(name, arguments, context, call_id)
         await context.db_context.message_history.add_message(
-            UserMessage(content="must roll back"),
+            UserMessage.from_trusted_user(content="must roll back"),
             interface_type="api",
             conversation_id="failed-direct-tool",
             timestamp=datetime.now(UTC),

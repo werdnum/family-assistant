@@ -117,7 +117,7 @@ dependencies = [
     # Media download support
     "yt-dlp>=2024.0.0",
     "pydantic-settings>=2.10.1",
-    "pydantic-monty>=0.0.17",
+    "pydantic-monty>=1.0.0",
     "anthropic>=0.40.0",
     "kubernetes-asyncio>=35.0.0",
     "cloudcoil-models-kubernetes>=1.32",

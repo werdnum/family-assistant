@@ -27,6 +27,7 @@ from family_assistant.services.deferred_tool_confirmation import (
 from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import (
+    CalendarConfig,
     ConfirmationOutcome,
     ToolAttachment,
     ToolResult,
@@ -91,6 +92,7 @@ class MinimalToolExecutorConfig:
     allow_wake_llm: bool = True
     memory_read: bool = False
     note_registry: NoteRegistry | None = None
+    calendar_config: CalendarConfig | None = None
 
 
 def make_tool_executor(

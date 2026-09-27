@@ -197,7 +197,7 @@ async def test_another_users_conversation_is_not_found(
 ) -> None:
     conversation_id = "mcp-belongs-to-someone-else"
     await api_db_context.message_history.add_message(
-        UserMessage(content="Private question."),
+        UserMessage.from_trusted_user(content="Private question."),
         interface_type="mcp",
         conversation_id=conversation_id,
         timestamp=datetime.now(UTC),
@@ -276,7 +276,7 @@ async def test_mcp_chat_interface_saves_into_the_mcp_partition(
     interface = WebChatInterface(db_engine, interface_type="mcp")
     db = Database(engine=db_engine)
     await db.message_history.add_message(
-        UserMessage(content="approve that"),
+        UserMessage.from_trusted_user(content="approve that"),
         interface_type="mcp",
         conversation_id="mcp-deferred",
         user_id="test_user",

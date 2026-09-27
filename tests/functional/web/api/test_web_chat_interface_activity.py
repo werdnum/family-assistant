@@ -40,7 +40,7 @@ async def test_send_message_pings_activity_for_conversation_owner(
     await init_db(db_engine)
     await ctx.init_vector_db()
     await ctx.message_history.add_message(
-        UserMessage(content="remind me later"),
+        UserMessage.from_trusted_user(content="remind me later"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=SystemClock().now(),
@@ -86,7 +86,7 @@ async def test_send_message_canonicalizes_alias_owner_for_activity(
     await ctx.init_vector_db()
     # Owner stored under the raw Telegram numeric id.
     await ctx.message_history.add_message(
-        UserMessage(content="set a reminder"),
+        UserMessage.from_trusted_user(content="set a reminder"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=SystemClock().now(),

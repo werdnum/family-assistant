@@ -10,7 +10,7 @@ that wiring end-to-end through the real ProcessingService and tool policy.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -69,8 +69,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.tools.types import CalendarConfig
-
 
 @pytest.fixture
 def mock_llm_client() -> RuleBasedMockLLMClient:
@@ -109,7 +107,6 @@ async def confirm_policy_tools_provider(
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,
-        calendar_config=cast("CalendarConfig", {}),
     )
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
     mock_mcp_provider.get_tool_definitions.return_value = []

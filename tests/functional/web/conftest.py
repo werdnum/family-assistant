@@ -1159,7 +1159,6 @@ async def api_test_tools_provider(
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,  # Not needed for add_note
-        calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
     )
     # Mock MCP provider as it's not the focus here
     mock_mcp_provider = AsyncMock(spec=MCPToolsProvider)
