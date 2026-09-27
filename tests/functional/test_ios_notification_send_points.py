@@ -131,7 +131,7 @@ async def test_pending_confirmation_notifies_target_user(
         notifier=notifier,
     )
 
-    await service.create_request(
+    request = await service.create_request(
         target_user_id="user-1",
         tool_name="calendar.create_event",
         tool_args={"title": "Flight"},
@@ -147,7 +147,7 @@ async def test_pending_confirmation_notifies_target_user(
     metadata = notifier.metadata[0]
     assert metadata is not None
     assert metadata.category == CONFIRMATION_CATEGORY
-    assert metadata.request_id is not None
+    assert metadata.request_id == request["id"]
 
 
 @pytest.mark.asyncio

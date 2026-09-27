@@ -662,6 +662,7 @@ describe('Web turn control (Stop / Steer)', () => {
     async () => {
       const enc2 = new TextEncoder();
       const turnIdRef = { current: 'mock-turn' };
+      const conversationIdRef = { current: '' };
       let turnsPosts = 0;
       let firstOpened = false;
       let resolveFirst: (c: ReadableStreamDefaultController<Uint8Array>) => void;
@@ -673,9 +674,10 @@ describe('Web turn control (Stop / Steer)', () => {
           turnsPosts += 1;
           const body = (await request.json()) as { turn_id: string; conversation_id?: string };
           turnIdRef.current = body.turn_id;
+          conversationIdRef.current = body.conversation_id || `web_conv_${Date.now()}`;
           return HttpResponse.json({
             turn_id: body.turn_id,
-            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            conversation_id: conversationIdRef.current,
             first_seq: 0,
           });
         }),
@@ -687,7 +689,14 @@ describe('Web turn control (Stop / Steer)', () => {
             accepted: true,
           });
         }),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          // A stray stream request from an earlier test is parked, so it can
+          // neither take the controllable first stream nor count as it.
+          if (String(params.conversationId) !== conversationIdRef.current) {
+            return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+              headers: { 'Content-Type': 'text/event-stream' },
+            });
+          }
           // The first turn is controllable; follow-up (recovery) turns
           // auto-complete so each queued recovery fires the next sequentially.
           if (!firstOpened) {
@@ -784,14 +793,17 @@ describe('Web turn control (Stop / Steer)', () => {
     const steerBodies: Array<{ conversation_id: string; prompt: string; input_id: string }> = [];
     const steeredTurnIds: string[] = [];
     const streamFromSeqs: Array<string | null> = [];
+    const conversationIdRef = { current: '' };
     let resolveController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
     const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
       resolveController = resolve;
     });
 
     server.use(
-      http.post('/api/v1/chat/turns', () =>
-        HttpResponse.json(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as { conversation_id?: string };
+        conversationIdRef.current = body.conversation_id ?? '';
+        return HttpResponse.json(
           {
             detail: {
               message: 'This conversation already has a running turn.',
@@ -800,8 +812,8 @@ describe('Web turn control (Stop / Steer)', () => {
             },
           },
           { status: 409 }
-        )
-      ),
+        );
+      }),
       http.post('/api/v1/chat/turns/:turnId/steer', async ({ request, params }) => {
         steeredTurnIds.push(String(params.turnId));
         steerBodies.push(
@@ -813,7 +825,14 @@ describe('Web turn control (Stop / Steer)', () => {
         );
         return HttpResponse.json({ accepted: true, queued_after_seq: queuedAfterSeq });
       }),
-      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request, params }) => {
+        // Only this test's conversation is followed; a stray stream request
+        // from an earlier test is parked rather than handed back.
+        if (String(params.conversationId) !== conversationIdRef.current) {
+          return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        }
         streamFromSeqs.push(new URL(request.url).searchParams.get('from_seq'));
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -996,6 +1015,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // awaiting-echo list only covers steers the composer sent — so the turn
       // has to end by resending it, or the send is silently lost.
       const kickoffPrompts: string[] = [];
+      const conversationIdRef = { current: '' };
       let turnsPosts = 0;
       let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
       const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
@@ -1011,6 +1031,7 @@ describe('Web turn control (Stop / Steer)', () => {
             prompt: string;
           };
           kickoffPrompts.push(body.prompt);
+          conversationIdRef.current = body.conversation_id ?? '';
           // Only the first send collides with the running turn; the recovery
           // kickoff finds the conversation free.
           if (turnsPosts === 1) {
@@ -1034,10 +1055,13 @@ describe('Web turn control (Stop / Steer)', () => {
         http.post('/api/v1/chat/turns/:turnId/steer', () =>
           HttpResponse.json({ accepted: true, queued_after_seq: 4 })
         ),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          const mine = String(params.conversationId) === conversationIdRef.current;
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
-              resolveAdopted(controller);
+              if (mine) {
+                resolveAdopted(controller);
+              }
             },
           });
           return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
@@ -1121,6 +1145,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // different: the backend only persists a steer once the loop drains it, so
       // an unconsumed one exists nowhere at all and dropping it loses the send.
       const kickoffPrompts: string[] = [];
+      const conversationIdRef = { current: '' };
       let turnsPosts = 0;
       let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
       const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
@@ -1136,6 +1161,7 @@ describe('Web turn control (Stop / Steer)', () => {
             prompt: string;
           };
           kickoffPrompts.push(body.prompt);
+          conversationIdRef.current = body.conversation_id ?? '';
           if (turnsPosts === 1) {
             return HttpResponse.json(
               {
@@ -1157,10 +1183,13 @@ describe('Web turn control (Stop / Steer)', () => {
         http.post('/api/v1/chat/turns/:turnId/steer', () =>
           HttpResponse.json({ accepted: true, queued_after_seq: 4 })
         ),
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          const mine = String(params.conversationId) === conversationIdRef.current;
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
-              resolveAdopted(controller);
+              if (mine) {
+                resolveAdopted(controller);
+              }
             },
           });
           return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
@@ -2035,9 +2064,13 @@ describe('Web turn control (Stop / Steer)', () => {
         // The adopted turn stays open, as it would while the cancel is still
         // being retried: a turn that ended first would clear the live identity
         // and leave nothing to retarget.
-        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          const mine = params.conversationId === 'web_conv_stopadopt';
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
+              if (!mine) {
+                return;
+              }
               controller.enqueue(sse('turn_started', { turn_id: 'running-turn-5', seq: 2 }));
               resolveStreamController(controller);
             },

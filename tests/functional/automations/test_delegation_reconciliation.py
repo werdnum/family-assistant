@@ -623,16 +623,20 @@ async def test_the_sweep_starts_reconciliation_without_multiplying_it(
 async def test_the_sweep_ignores_runs_with_nothing_to_re_read(
     db_engine: AsyncEngine,
 ) -> None:
-    """A run that never reached a provider is not reconciliation's business."""
+    """A run that never reached a provider is not reconciliation's business.
+
+    A refused submit fails the run for a reason that would otherwise earn it
+    another read, so the missing remote id is the only thing keeping it out.
+    """
     target = FakeObservableService([_observation(RemoteDisposition.PENDING)])
     worker, processing_service, chat_interface = _worker_for(db_engine, target)
     db_context = Database(engine=db_engine)
-    await _create_run(db_context, delegation_id="delegation_stranded")
+    await _create_run(db_context, delegation_id="delegation_never_submitted")
     await db_context.delegation_runs.mark_failed(
-        delegation_id="delegation_stranded",
-        error="The delegated run was interrupted.",
+        delegation_id="delegation_never_submitted",
+        error="The submit was refused.",
         completed_at=SystemClock().now(),
-        local_failure_kind="stranded",
+        local_failure_kind="transport",
     )
 
     await worker.handle_delegation_run_cleanup(
@@ -768,7 +772,11 @@ async def test_the_poll_path_records_what_it_saw(
     assert run is not None
     assert run["status"] == "awaiting_remote"
     assert run["remote_status"] == "pending"
-    assert run["remote_observation_json"] is not None
+    observation = run["remote_observation_json"]
+    assert observation is not None
+    assert observation["remote_task_id"] == REMOTE_TASK_ID
+    assert observation["disposition"] == "pending"
+    assert run["cancel_confirmed_at"] is None
 
 
 @pytest.mark.asyncio

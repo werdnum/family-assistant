@@ -1,7 +1,9 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../../test/mocks/localStorageMock';
+import { server } from '../../../test/setup.js';
 import { renderChatApp } from '../../../test/utils/renderChatApp';
 
 describe('ComposerAddAttachment', () => {
@@ -81,22 +83,37 @@ describe('AttachmentUI Loading States', () => {
     );
   }, 35000);
 
-  // The composer disables sending while an attachment reports itself pending an
-  // upload, so an attachment left in that state locks the composer: the file
-  // reads "Uploading..." forever and the message can never be sent.
-  it('leaves the composer able to send once a file is attached', async () => {
+  // A file waits in the composer until the message is sent, and is uploaded as
+  // part of that send, so the turn must carry the uploaded file's URL rather
+  // than the local file or nothing at all.
+  it('uploads an attached file and sends it with the message', async () => {
+    const turnRequests: unknown[] = [];
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        turnRequests.push(await request.clone().json());
+      })
+    );
     await renderChatApp({ waitForReady: true });
 
-    const fileInput = (await screen.findByTestId('file-input')) as HTMLInputElement;
-    fireEvent.change(fileInput, {
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'look at this' } });
+    fireEvent.change(await screen.findByTestId('file-input'), {
       target: { files: [new File(['test content'], 'test.png', { type: 'image/png' })] },
     });
-
-    // Wait for the file to reach the composer, so the assertions below can't
-    // pass before it is there to block anything.
     await screen.findByTestId('remove-attachment-button', {}, { timeout: 15000 });
 
-    expect(screen.queryByText('Uploading...')).not.toBeInTheDocument();
-    expect(screen.getByTestId('send-button')).toBeEnabled();
-  }, 20000);
+    const sendButton = screen.getByTestId('send-button');
+    expect(sendButton).toBeEnabled();
+    fireEvent.click(sendButton);
+
+    await waitFor(
+      () => {
+        expect(turnRequests).toHaveLength(1);
+      },
+      { timeout: 15000 }
+    );
+    expect(turnRequests[0]).toMatchObject({
+      prompt: 'look at this',
+      attachments: [{ name: 'test.png', content: '/api/attachments/server-uuid-456' }],
+    });
+  }, 35000);
 });

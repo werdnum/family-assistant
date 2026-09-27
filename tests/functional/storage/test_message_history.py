@@ -1,14 +1,10 @@
 """Functional tests for message history storage operations."""
 
-import json  # Import json for parsing SQLite results
 import logging
 import uuid
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import pytest_asyncio  # Need this for async fixtures
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.messages import (
@@ -22,15 +18,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
-
-# Import metadata to create tables
-from family_assistant.storage.base import (
-    create_engine_with_sqlite_optimizations,
-    metadata,
-)
-from family_assistant.storage.database import (
-    Database,
-)  # Need Database for fixture
+from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import (
     add_message_to_history,
     get_message_by_interface_id,
@@ -39,30 +27,11 @@ from family_assistant.storage.message_history import (
     get_recent_history,
     update_message_interface_id,
 )
-from tests.conftest import check_db_engine_invariants
-
-# Use an in-memory SQLite database for functional storage tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-
-@pytest_asyncio.fixture(scope="function")
-async def db_engine() -> AsyncGenerator[AsyncEngine]:
-    """Creates an in-memory SQLite engine and sets up the schema for each test function."""
-    engine = create_engine_with_sqlite_optimizations(TEST_DATABASE_URL, instrument=True)
-    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
-    async with engine.begin() as conn:
-        # Ensure tables are created - only creates if they don't exist
-        await conn.run_sync(metadata.create_all)
-
-    yield engine
-
-    await check_db_engine_invariants(engine, "test_message_history db_engine")
-    await engine.dispose()
 
 
 @pytest.fixture
 def db_context(db_engine: AsyncEngine) -> Database:
-    """Provides an *entered* Database instance for interacting with the test database."""
+    """Database handle over the backend-parameterized, migrated test engine."""
     return Database(engine=db_engine, base_delay=0.01)
 
 
@@ -125,62 +94,38 @@ async def test_add_message_stores_optional_fields(db_context: Database) -> None:
     assert tool_msg_result is not None
     tool_msg_internal_id = tool_msg_result
 
-    # Assert Assistant Message
-    # Use the yielded db_context directly
-    assistant_result = await db_context.fetch_one(
-        text("SELECT * FROM message_history WHERE internal_id = :id"),
-        {"id": assistant_msg_internal_id},  # Use the correct variable name
+    assistant_result = await db_context.message_history.get_row_by_internal_id(
+        assistant_msg_internal_id
     )
     assert assistant_result is not None
     assert assistant_result["turn_id"] == turn_id
     assert assistant_result["thread_root_id"] == thread_root_id
-
-    # Check JSON fields, parsing if necessary (for SQLite)
-    retrieved_tool_calls = assistant_result["tool_calls"]
-    if isinstance(retrieved_tool_calls, str):  # SQLite stores JSON as string
-        retrieved_tool_calls = json.loads(retrieved_tool_calls)
-    assert retrieved_tool_calls == tool_calls_data
-
-    retrieved_reasoning = assistant_result["reasoning_info"]
-    if isinstance(retrieved_reasoning, str):  # SQLite stores JSON as string
-        retrieved_reasoning = json.loads(retrieved_reasoning)
-    assert retrieved_reasoning == reasoning_data
-
-    assert (
-        assistant_result["tool_call_id"] is None
-    )  # Assistant doesn't have tool_call_id
+    assert assistant_result["tool_calls"] == tool_calls_data
+    assert assistant_result["reasoning_info"] == reasoning_data
+    assert assistant_result["tool_call_id"] is None
     assert assistant_result["error_traceback"] is None
 
-    # Assert Tool Message
-    # Use the yielded db_context directly
-    tool_result = await db_context.fetch_one(
-        text("SELECT * FROM message_history WHERE internal_id = :id"),
-        {"id": tool_msg_internal_id},  # Use the correct variable name
+    tool_result = await db_context.message_history.get_row_by_internal_id(
+        tool_msg_internal_id
     )
     assert tool_result is not None
     assert tool_result["turn_id"] == turn_id
     assert tool_result["thread_root_id"] == thread_root_id
     assert tool_result["tool_call_id"] == tool_call_id
     assert tool_result["error_traceback"] == error_trace
-    # Check JSON columns for None, handling SQLite's 'null' string
-    retrieved_tool_calls = tool_result["tool_calls"]
-    assert retrieved_tool_calls is None or retrieved_tool_calls == "null"
-
-    retrieved_reasoning = tool_result["reasoning_info"]
-    assert retrieved_reasoning is None or retrieved_reasoning == "null"
+    assert tool_result["tool_calls"] is None
+    assert tool_result["reasoning_info"] is None
 
 
 @pytest.mark.asyncio
-async def test_get_recent_history_retrieves_correct_messages(
+async def test_get_recent_history_returns_newest_messages_of_conversation_oldest_first(
     db_context: Database,
 ) -> None:
-    """Verify get_recent_history filters, limits, orders, and handles age correctly."""
-    # Arrange
+    """get_recent_history keeps the newest `limit` rows of one conversation, in order."""
     interface = "history_test"
     conv_id = str(uuid.uuid4())
     now = datetime.now(UTC)
 
-    # Add messages using the yielded context
     msg1_id_result = await add_message_to_history(
         db_context,
         interface_type=interface,
@@ -214,7 +159,7 @@ async def test_get_recent_history_retrieves_correct_messages(
         role="user",
         content="Recent 2",
     )
-    # Add a message for a different conversation
+    # Newest of all, so a missing conversation filter would displace msg2.
     await add_message_to_history(
         db_context,
         interface_type=interface,
@@ -227,27 +172,66 @@ async def test_get_recent_history_retrieves_correct_messages(
         content="Other convo",
     )
 
-    # Act: Get recent history with limit and age cutoff
     recent_messages = await get_recent_history(
-        db_context,  # Use the yielded context
+        db_context,
         interface_type=interface,
         conversation_id=conv_id,
         limit=2,
-        max_age=timedelta(minutes=5),  # Should exclude msg1
+        max_age=timedelta(hours=1),
     )
 
-    # Assert
-    assert len(recent_messages) == 2  # Limit respected
     assert msg1_id_result is not None
     assert msg2_id_result is not None
     assert msg3_id_result is not None
-    # Check chronological order (oldest first in the returned list)
-    assert recent_messages[0]["internal_id"] == msg2_id_result
-    assert recent_messages[1]["internal_id"] == msg3_id_result
-    assert recent_messages[0]["content"] == "Recent 1"
-    assert recent_messages[1]["content"] == "Recent 2"
-    # Verify msg1 (too old) and msg_other (different convo) are not included
-    assert all(msg["internal_id"] != msg1_id_result for msg in recent_messages)
+    assert [(m["internal_id"], m["content"]) for m in recent_messages] == [
+        (msg2_id_result, "Recent 1"),
+        (msg3_id_result, "Recent 2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_recent_history_excludes_messages_older_than_max_age(
+    db_context: Database,
+) -> None:
+    interface = "history_age_test"
+    conv_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+
+    await add_message_to_history(
+        db_context,
+        interface_type=interface,
+        conversation_id=conv_id,
+        interface_message_id="old",
+        turn_id=None,
+        thread_root_id=None,
+        timestamp=now - timedelta(hours=2),
+        role="user",
+        content="Too old",
+    )
+    recent_id = await add_message_to_history(
+        db_context,
+        interface_type=interface,
+        conversation_id=conv_id,
+        interface_message_id="recent",
+        turn_id=None,
+        thread_root_id=None,
+        timestamp=now - timedelta(minutes=1),
+        role="user",
+        content="Recent",
+    )
+
+    recent_messages = await get_recent_history(
+        db_context,
+        interface_type=interface,
+        conversation_id=conv_id,
+        limit=10,
+        max_age=timedelta(hours=1),
+    )
+
+    assert recent_id is not None
+    assert [(m["internal_id"], m["content"]) for m in recent_messages] == [
+        (recent_id, "Recent")
+    ]
 
 
 @pytest.mark.asyncio
@@ -420,13 +404,7 @@ async def test_update_message_interface_id_sets_id(db_context: Database) -> None
 
     # Assert
     assert update_successful is True
-    # Verify directly in the DB
-    result = await db_context.fetch_one(
-        text(
-            "SELECT interface_message_id FROM message_history WHERE internal_id = :id"
-        ),
-        {"id": internal_id},  # internal_id is the integer ID itself here
-    )
+    result = await db_context.message_history.get_row_by_internal_id(internal_id)
     assert result is not None
     assert result["interface_message_id"] == new_interface_id
 

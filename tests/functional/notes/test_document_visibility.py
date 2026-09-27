@@ -4,14 +4,12 @@ Verifies that visibility_labels propagated to the documents table are respected
 by vector search queries and get_full_document_content_tool.
 """
 
-import json
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
@@ -338,8 +336,7 @@ async def test_get_full_document_content_respects_visibility(
         api_backend=None,
     )
     result = await get_full_document_content_tool(ctx, doc_id)
-    assert isinstance(result, str)
-    assert "not found" not in result
+    assert result == "Top secret content"
 
 
 @pytest.mark.asyncio
@@ -377,40 +374,7 @@ async def test_get_full_document_content_no_grants_allows_all(
         api_backend=None,
     )
     result = await get_full_document_content_tool(ctx, doc_id)
-    assert isinstance(result, str)
-    assert "not found" not in result
-
-
-@pytest.mark.asyncio
-@pytest.mark.postgres
-async def test_document_stores_visibility_labels(
-    pg_vector_db_engine: AsyncEngine,
-) -> None:
-    """Verify visibility_labels are stored in the documents table."""
-    db = Database(engine=pg_vector_db_engine)
-    doc = MockDoc("note", "vis_test_1", "Vis Test", visibility_labels=["a", "b"])
-    doc_id = await add_document(db, doc)
-
-    row = await db.fetch_one(
-        text("SELECT visibility_labels FROM documents WHERE id = :id"),
-        {"id": doc_id},
-    )
-    assert row is not None
-    labels = json.loads(row["visibility_labels"])
-    assert sorted(labels) == ["a", "b"]
-
-    # Non-note document gets empty labels
-    db = Database(engine=pg_vector_db_engine)
-    doc2 = MockDoc("email", "email_test_1", "Email Doc", visibility_labels=None)
-    doc2_id = await add_document(db, doc2)
-
-    row2 = await db.fetch_one(
-        text("SELECT visibility_labels FROM documents WHERE id = :id"),
-        {"id": doc2_id},
-    )
-    assert row2 is not None
-    labels2 = json.loads(row2["visibility_labels"])
-    assert labels2 == []
+    assert result == "Admin-only content"
 
 
 # ---------------------------------------------------------------------------
@@ -545,33 +509,45 @@ async def test_full_content_refuses_a_memory_note_to_a_non_reading_profile(
 @pytest.mark.asyncio
 async def test_full_content_allows_a_memory_note_to_a_reading_profile(
     db_engine: AsyncEngine,
+    embedder: MockEmbeddingGenerator,
 ) -> None:
     db = Database(engine=db_engine)
-    doc_id = await add_document(
-        db, MockDoc("note", "mem_4", "Sam", visibility_labels=[MEMORY_LABEL])
+    doc_id = await _add_doc_with_embedding(
+        db,
+        MockDoc("note", "mem_4", "Sam", visibility_labels=[MEMORY_LABEL]),
+        embedder,
+        "sensitive",
+        "Sam content worth remembering",
     )
 
     result = await get_full_document_content_tool(
         _profile_context(db, grants=None, memory_read=True), doc_id
     )
 
-    assert isinstance(result, str)
-    assert "not found" not in result
+    assert result == "Sam content worth remembering"
 
 
 @pytest.mark.asyncio
 async def test_full_content_leaves_ordinary_documents_reachable(
     db_engine: AsyncEngine,
+    embedder: MockEmbeddingGenerator,
 ) -> None:
-    """The ceiling is one label, not a new floor under every read."""
+    """The ceiling is one label, not a new floor under every read.
+
+    The document is added with no labels at all, so this also covers an
+    unlabelled document being stored in a form the visibility check admits.
+    """
     db = Database(engine=db_engine)
-    doc_id = await add_document(
-        db, MockDoc("email", "ord_2", "Receipt", visibility_labels=None)
+    doc_id = await _add_doc_with_embedding(
+        db,
+        MockDoc("email", "ord_2", "Receipt", visibility_labels=None),
+        embedder,
+        "public",
+        "Receipt for the plumber",
     )
 
     result = await get_full_document_content_tool(
         _profile_context(db, grants=None, memory_read=False), doc_id
     )
 
-    assert isinstance(result, str)
-    assert "not found" not in result
+    assert result == "Receipt for the plumber"

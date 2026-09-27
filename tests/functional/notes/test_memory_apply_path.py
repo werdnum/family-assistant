@@ -803,39 +803,35 @@ async def test_a_stale_expected_revision_is_a_conflict(db_engine: AsyncEngine) -
 
 
 @pytest.mark.asyncio
-async def test_the_edit_model_cannot_ask_for_a_second_always_loaded_note(
+async def test_a_proposal_cannot_make_a_topic_note_always_loaded(
     db_engine: AsyncEngine,
 ) -> None:
+    """A writer asking for the prompt flag still gets an ordinary topic note."""
     db = _db(db_engine)
-    ids = await _seed_turn(db, count=1)
+    await _seed_turn(db, count=1)
 
-    # There is no field for it: an edit names a note and its entries, never the
-    # prompt flag or the core-note identity.
-    assert "include_in_prompt" not in MemoryEdit.model_fields
-    assert not any("prompt" in name for name in MemoryEdit.model_fields)
-
-    await _apply(
-        db,
-        [
-            MemoryEdit(
-                op=MemoryEditOp.ADD,
-                note_title="Routines",
-                entry="Bins go out on Tuesday.",
-                message_ids=[ids[0]],
-            )
+    result = await propose_memory_edits_tool(
+        _tool_context(db),
+        edits=[
+            {
+                "op": "add",
+                "note_title": "Routines",
+                "entry": "Bins go out on Tuesday.",
+                "include_in_prompt": True,
+            }
         ],
     )
 
+    assert "Applied" in result.get_text()
     topic = await db.notes.get_by_title(
         "Routines", read_policy=NoteReadPolicy.UNRESTRICTED
     )
-    core = await db.notes.get_by_title(
-        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
-    )
     assert topic is not None
     assert topic.include_in_prompt is False
-    assert core is not None
-    assert core.include_in_prompt is True
+    prompt_notes = await db.notes.get_prompt_notes(
+        read_policy=NoteReadPolicy.UNRESTRICTED
+    )
+    assert [note.title for note in prompt_notes] == [CORE_TITLE]
 
 
 # ---------------------------------------------------------------------------
@@ -1270,9 +1266,10 @@ async def test_the_tool_quotes_the_current_entries_on_a_target_text_miss(
 
 
 @pytest.mark.asyncio
-async def test_the_tool_uses_the_supplied_scope_and_revision(
+async def test_the_tool_admits_evidence_from_the_supplied_review_stretch(
     db_engine: AsyncEngine,
 ) -> None:
+    """The curator runs in a turn of its own, so only the stretch admits this id."""
     db = _db(db_engine)
     reviewed = await _seed_turn(db, turn_id="reviewed-turn", count=2)
     read_revision = await db.memory_store.get_revision()
@@ -1302,8 +1299,57 @@ async def test_the_tool_uses_the_supplied_scope_and_revision(
     )
 
     assert "Applied" in result.get_text()
+    assert f"Sam prefers the tram. (refs: #{reviewed[1]})" in await _entries(db, "Sam")
     rows = await db.memory_change_log.get_recent(10)
     assert rows[0].actor_kind == "curator"
+
+
+@pytest.mark.asyncio
+async def test_the_tool_holds_a_review_to_the_revision_it_read(
+    db_engine: AsyncEngine,
+) -> None:
+    db = _db(db_engine)
+    reviewed = await _seed_turn(db, turn_id="reviewed-turn", count=2)
+    stretch = EvidenceScope.for_stretch(
+        interface_type="web",
+        conversation_id=CONVERSATION,
+        first_internal_id=reviewed[0],
+        last_internal_id=reviewed[-1],
+    )
+    read_revision = await db.memory_store.get_revision()
+    # Memory changes after the review read the store and before it proposes.
+    await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Routines",
+                entry="Bins go out on Tuesday.",
+                message_ids=[reviewed[0]],
+            )
+        ],
+        evidence_scope=stretch,
+    )
+    review = _review_context(stretch, read_revision)
+
+    result = await propose_memory_edits_tool(
+        _tool_context(db, turn_id="curator-run", memory_review=review),
+        edits=[
+            {
+                "op": "add",
+                "note_title": "Sam",
+                "entry": "Sam prefers the tram.",
+                "message_ids": [reviewed[1]],
+            }
+        ],
+    )
+
+    assert "No memory edits were applied" in result.get_text()
+    assert review.progress.conflicted is True
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio

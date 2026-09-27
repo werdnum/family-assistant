@@ -11,9 +11,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
+    ScriptTimeoutError,
 )
 from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
 
@@ -53,7 +55,7 @@ class TestEngineIntegration:
         with pytest.raises(ScriptSyntaxError) as exc_info:
             await engine.evaluate_async("print('hello'")
 
-        assert isinstance(exc_info.value, ScriptSyntaxError)
+        assert "unexpected EOF" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_runtime_error_handling(self, engine_class: type) -> None:
@@ -65,18 +67,6 @@ class TestEngineIntegration:
 
         with pytest.raises(ScriptExecutionError):
             await engine.evaluate_async("undefined_variable")
-
-    @pytest.mark.asyncio
-    async def test_async_evaluation(self, engine_class: type) -> None:
-        """Test asynchronous script evaluation."""
-        engine = engine_class()
-
-        result = await engine.evaluate_async("10 + 20")
-        assert result == 30
-
-        globals_dict = {"x": 5, "y": 10}
-        result = await engine.evaluate_async("x * y", globals_dict)
-        assert result == 50
 
     @pytest.mark.asyncio
     async def test_captured_output_collects_print(self, engine_class: type) -> None:
@@ -92,11 +82,7 @@ print("world")
         result = await engine.evaluate_async(script, output_buffer=buffer)
 
         assert result == 42
-        output = buffer.getvalue()
-        assert "hello" in output
-        assert "world" in output
-        # Output preserves print order and line breaks.
-        assert output.index("hello") < output.index("world")
+        assert buffer.getvalue() == "hello\nworld\n"
 
     @pytest.mark.asyncio
     async def test_captured_output_empty_without_print(
@@ -170,10 +156,17 @@ while i < 5000:
         # Retained output stays close to the cap (marker adds a little).
         assert len(output) < 1024 + 64
 
-    @pytest.mark.skip(reason="PERMANENTLY DISABLED: Resource-intensive timeout test.")
     @pytest.mark.asyncio
-    async def test_async_timeout(self, engine_class: type) -> None:
-        """Test that long-running scripts timeout in async mode."""
+    async def test_script_exceeding_execution_time_times_out(
+        self, engine_class: type
+    ) -> None:
+        """A script running past max_execution_time raises ScriptTimeoutError."""
+        engine = engine_class(config=ScriptConfig(max_execution_time=0.3))
+
+        with pytest.raises(ScriptTimeoutError) as exc_info:
+            await engine.evaluate_async("while True:\n    pass")
+
+        assert exc_info.value.timeout_seconds == 0.3
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self, engine_class: type) -> None:
@@ -246,11 +239,30 @@ while i < 5000:
         assert await engine.evaluate_async("get_data()['status']", globals_dict) == "ok"
         assert await engine.evaluate_async("get_data()['count']", globals_dict) == 3
 
-    @pytest.mark.skip(
-        reason="PERMANENTLY DISABLED: Resource limit testing causes system crashes."
+    @pytest.mark.parametrize(
+        ("script", "expected_error"),
+        [
+            pytest.param(
+                "def f(n):\n    return f(n + 1)\nf(0)",
+                "RecursionError",
+                id="unbounded-recursion",
+            ),
+            pytest.param(
+                'x = "a" * (512 * 1024 * 1024)\nlen(x)',
+                "MemoryError",
+                id="oversized-allocation",
+            ),
+        ],
     )
-    def test_resource_limits(self, engine_class: type) -> None:
-        """Test resource limit configuration."""
+    @pytest.mark.asyncio
+    async def test_resource_limits_stop_runaway_scripts(
+        self, engine_class: type, script: str, expected_error: str
+    ) -> None:
+        """Runaway recursion and oversized allocations fail the script cleanly."""
+        engine = engine_class()
+
+        with pytest.raises(ScriptExecutionError, match=expected_error):
+            await engine.evaluate_async(script)
 
 
 class TestMontyEngineSpecific:
@@ -280,42 +292,31 @@ result
         assert result == "Hello, World!"
 
     @pytest.mark.asyncio
-    async def test_no_double_resume_on_function_exception(self) -> None:
+    async def test_no_double_resume_when_script_fails_after_external_call(
+        self,
+    ) -> None:
         """Regression: each snapshot must resume exactly once.
 
-        The old code had both the function call and progress.resume() in
-        the same try block. If resume(return_value=result) raised, the
-        except handler would call resume(exception=e) a second time on
-        the same already-resumed snapshot.
-
-        With the fix (try/except/else), resume() is outside the try so
-        its exceptions propagate without triggering a second resume.
-        We verify by counting function invocations: the script calls the
-        function once inside try/except; if double-resume occurred, Monty
-        would re-enter the function call site and invoke it again.
+        The bug had both the function call and progress.resume() in the same
+        try block. When resume(return_value=result) raised because the script
+        failed after the call returned, the except handler resumed the same
+        snapshot a second time, and its "Progress already resumed" error
+        replaced the script's own error.
         """
         engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
         call_count = 0
 
-        def counting_fn() -> None:
+        def returns_zero() -> int:
             nonlocal call_count
             call_count += 1
-            raise ValueError("function error")
+            return 0
 
-        script = """
-try:
-    counting_fn()
-    result = "should not reach"
-except ValueError:
-    result = "caught"
-result
-"""
-        result = await engine.evaluate_async(script, {"counting_fn": counting_fn})
-        assert result == "caught"
-        assert call_count == 1, (
-            f"Function was called {call_count} times; "
-            "expected exactly 1 (double-resume would invoke it again)"
-        )
+        with pytest.raises(ScriptExecutionError, match="ZeroDivisionError"):
+            await engine.evaluate_async(
+                "1 / returns_zero()", {"returns_zero": returns_zero}
+            )
+
+        assert call_count == 1
 
     @pytest.mark.asyncio
     async def test_exception_in_function_does_not_corrupt_state(self) -> None:
@@ -347,8 +348,11 @@ results
     async def test_async_function_exception_single_resume(self) -> None:
         """Test that async external functions that raise also get a single resume."""
         engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))
+        call_count = 0
 
         async def async_failing_fn() -> None:
+            nonlocal call_count
+            call_count += 1
             raise ValueError("async error")
 
         script = """
@@ -363,6 +367,7 @@ result
             script, {"async_failing_fn": async_failing_fn}
         )
         assert result == "async caught"
+        assert call_count == 1
 
     @pytest.mark.asyncio
     async def test_async_function_exception_state_consistency(self) -> None:

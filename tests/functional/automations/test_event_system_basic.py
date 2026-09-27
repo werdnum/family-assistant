@@ -334,7 +334,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
     # Assert
     data = json.loads(result)
     assert data["matched_count"] == 1
-    assert data["total_tested"] >= 2
+    assert data["total_tested"] == 3
     assert len(data["matched_events"]) == 1
     assert data["matched_events"][0]["event_data"]["entity_id"] == "person.alex"
     assert data["matched_events"][0]["event_data"]["new_state"]["state"] == "Home"

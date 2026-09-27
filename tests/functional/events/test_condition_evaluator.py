@@ -334,6 +334,8 @@ class TestEventConditionValidator:
         is_valid, error = await validator.validate_script(script)
         assert is_valid is False
         assert error is not None
+        assert error.startswith("Type error"), error
+        assert "definitely_not_a_real_function" in error
 
     @pytest.mark.asyncio
     async def test_validator_rejects_llm_call(

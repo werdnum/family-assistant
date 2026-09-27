@@ -12,9 +12,21 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
+
+# Script prelude: name_error(call) runs call() and returns the NameError message if
+# the name it calls was never injected into the script, or None if the call ran.
+_NAME_ERROR_PROBE = """
+def name_error(call):
+    try:
+        call()
+    except NameError as e:
+        return str(e)
+    return None
+"""
 
 
 class MockToolsProvider:
@@ -327,46 +339,55 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
         default_timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    # Test script that tries to call allowed and disallowed tools
-    script = """
-# This should work - echo is allowed
-result1 = echo(message="Allowed tool")
-
-# Store result
-allowed_result = result1
-
-# Try to get list of available tools
-available = tools_list()
-available  # Return the available tools
+    script = (
+        _NAME_ERROR_PROBE
+        + """
+{
+    "allowed": echo(message="Allowed tool"),
+    "denied": {
+        "add_numbers": name_error(lambda: add_numbers(a=1, b=2)),
+        "tool_add_numbers": name_error(lambda: tool_add_numbers(a=1, b=2)),
+        "greet_user": name_error(lambda: greet_user(name="Alice")),
+    },
+    "available": tools_list(),
+}
 """
+    )
 
-    # Execute the script
     result = await engine.evaluate_async(script, execution_context=context)
 
-    # Verify only echo was available
-    assert result == [
-        {
-            "name": "echo",
-            "description": "Echo back the input message",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "Message to echo",
-                    }
+    assert result == {
+        "allowed": "Echo: Allowed tool",
+        "denied": {
+            "add_numbers": "name 'add_numbers' is not defined",
+            "tool_add_numbers": "name 'tool_add_numbers' is not defined",
+            "greet_user": "name 'greet_user' is not defined",
+        },
+        "available": [
+            {
+                "name": "echo",
+                "description": "Echo back the input message",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "Message to echo",
+                        }
+                    },
+                    "required": ["message"],
                 },
-                "required": ["message"],
-            },
-        }
-    ]
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio
-async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> None:
-    """Test that direct tool calls validate parameters properly."""
+async def test_direct_callable_surfaces_tool_parameter_error(
+    db_engine: AsyncEngine,
+) -> None:
+    """A parameter error raised by the tool fails the script with the tool's message."""
 
-    # Create mock tools provider that validates parameters
     class ValidatingMockToolsProvider(MockToolsProvider):
         async def execute_tool(
             self,
@@ -410,23 +431,11 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
         tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
     )
 
-    # Test script that checks parameter validation
-    script = """
-# Call echo with proper parameters
-result1 = echo(message="Test message")
-
-# Call add_numbers with proper parameters
-result2 = add_numbers(a=1, b=2)
-
-results = [result1, result2]
-results  # Return the results
-"""
-
-    # Execute the script
-    result = await engine.evaluate_async(script, execution_context=context)
-
-    # Verify successful calls
-    assert result == ["Echo: Test message", "Result: 3"]
+    with pytest.raises(
+        ScriptExecutionError,
+        match=r"ValueError: Required parameter 'message' is missing",
+    ):
+        await engine.evaluate_async("echo()", execution_context=context)
 
 
 @pytest.mark.asyncio
@@ -476,7 +485,7 @@ all_tools = tools_list()
 results = {
     "old": old_result,
     "new": new_result,
-    "has_info": tool_info != None,
+    "info_name": tool_info["name"],
     "tool_count": len(all_tools)
 }
 results  # Return the results
@@ -488,7 +497,7 @@ results  # Return the results
     # Verify both APIs work
     assert result["old"] == "Echo: Old API"
     assert result["new"] == "Echo: New API"
-    assert result["has_info"] is True
+    assert result["info_name"] == "echo"
     assert result["tool_count"] == 3
 
 
@@ -525,33 +534,28 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
         default_timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    # Test script that checks if tools exist
-    script = """
-# Try to use tool functions to check if they exist
-echo_exists = False
-add_numbers_exists = False
-
-# Check tools list  
-available_tools = tools_list()
-
-# Just verify the tools list is empty
-# and trust that if no tools are in the list, the functions won't be created
-
-results = {
-    "echo_exists": echo_exists,
-    "add_numbers_exists": add_numbers_exists,
-    "tools_count": len(available_tools)
+    script = (
+        _NAME_ERROR_PROBE
+        + """
+{
+    "echo": name_error(lambda: echo(message="x")),
+    "tool_echo": name_error(lambda: tool_echo(message="x")),
+    "add_numbers": name_error(lambda: add_numbers(a=1, b=2)),
+    "tool_add_numbers": name_error(lambda: tool_add_numbers(a=1, b=2)),
+    "tools": tools_list(),
 }
-results  # Return the results
 """
+    )
 
-    # Execute the script
     result = await engine.evaluate_async(script, execution_context=context)
 
-    # Verify no tools are available
-    assert result["echo_exists"] is False
-    assert result["add_numbers_exists"] is False
-    assert result["tools_count"] == 0
+    assert result == {
+        "echo": "name 'echo' is not defined",
+        "tool_echo": "name 'tool_echo' is not defined",
+        "add_numbers": "name 'add_numbers' is not defined",
+        "tool_add_numbers": "name 'tool_add_numbers' is not defined",
+        "tools": [],
+    }
 
 
 class _InScriptProbeToolsProvider:

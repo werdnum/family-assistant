@@ -244,8 +244,8 @@ async def test_get_camera_snapshot_success(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    assert final_reply and "snapshot" in final_reply.lower(), (
-        f"Expected 'snapshot' not in reply: '{final_reply}'"
+    assert final_reply == final_llm_response.content, (
+        f"Tool result did not carry the snapshot attachment; reply was: '{final_reply}'"
     )
 
 

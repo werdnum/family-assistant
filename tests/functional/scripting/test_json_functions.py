@@ -2,6 +2,8 @@
 
 import pytest
 
+from family_assistant.scripting.errors import ScriptExecutionError
+
 
 class TestJSONFunctions:
     """Test JSON encode/decode functions in both engines."""
@@ -62,16 +64,14 @@ all(tests)
 
     @pytest.mark.asyncio
     async def test_json_decode_error_handling(self, engine_class: type) -> None:
-        """Test that json_decode handles invalid JSON gracefully."""
+        """Test that json_decode surfaces a JSONDecodeError for invalid JSON."""
         engine = engine_class()
 
         script = """
 json_decode("not valid json")
 """
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(ScriptExecutionError, match="JSONDecodeError"):
             await engine.evaluate_async(script)
-        error_msg = str(exc_info.value).lower()
-        assert "json" in error_msg or "expecting value" in error_msg
 
     @pytest.mark.asyncio
     async def test_json_decode_already_decoded_dict(self, engine_class: type) -> None:

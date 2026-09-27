@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -16,8 +15,13 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
-from family_assistant.storage.repositories.notes import NoteReadPolicy
+from family_assistant.storage.repositories.notes import (
+    NoteModel,
+    NoteReadPolicy,
+    NoteWritePolicy,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -36,7 +40,11 @@ from tests.mocks.mock_llm import (
     MatcherArgs,
     Rule,
     RuleBasedMockLLMClient,
+    extract_text_from_content,
     get_last_message_text,
+    get_message_content,
+    get_message_role,
+    last_real_message,
 )
 
 if TYPE_CHECKING:
@@ -48,6 +56,39 @@ logger = logging.getLogger(__name__)
 # Test configuration
 TEST_CHAT_ID = 12345
 TEST_USER_NAME = "NotesTestUser"
+
+
+async def seed_note(
+    db: Database, title: str, content: str, *, include_in_prompt: bool
+) -> None:
+    await db.notes.add_or_update(
+        title=title,
+        content=content,
+        include_in_prompt=include_in_prompt,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.internal(),
+    )
+
+
+async def read_note(db: Database, title: str) -> NoteModel | None:
+    return await db.notes.get_by_title(title, read_policy=NoteReadPolicy.UNRESTRICTED)
+
+
+def tool_result_capture() -> tuple[Rule, list[str]]:
+    """A rule that records each tool result the LLM is shown, and ends the turn."""
+    captured: list[str] = []
+
+    def newest_is_tool_result(kwargs: MatcherArgs) -> bool:
+        message = last_real_message(kwargs.get("messages", []))
+        return message is not None and get_message_role(message) == "tool"
+
+    def record(kwargs: MatcherArgs) -> MockLLMOutput:
+        message = last_real_message(kwargs["messages"])
+        assert message is not None
+        captured.append(extract_text_from_content(get_message_content(message)))
+        return MockLLMOutput(content="Done.")
+
+    return (newest_is_tool_result, record), captured
 
 
 async def create_processing_service(
@@ -155,26 +196,14 @@ async def test_add_note_with_include_in_prompt(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_001",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
-
     # Assert
-    assert error is None
-    assert final_text_reply is not None
+    assert result.error_traceback is None
+    assert result.text_reply is not None
 
-    # Verify note in database
-    async with db_engine.connect() as connection:
-        result = await connection.execute(
-            text(
-                "SELECT title, content, include_in_prompt FROM notes WHERE title = :title"
-            ),
-            {"title": note_title},
-        )
-        note_in_db = result.fetchone()
-
+    note_in_db = await read_note(db_context, note_title)
     assert note_in_db is not None
     assert note_in_db.content == note_content
-    assert note_in_db.include_in_prompt == 1  # SQLite returns 1 for True
+    assert note_in_db.include_in_prompt is True
 
 
 @pytest.mark.asyncio
@@ -184,16 +213,9 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
     note_title = f"Existing Note {uuid.uuid4()}"
     note_content = "Content of the existing note."
     tool_call_id = f"call_{uuid.uuid4()}"
-
-    # First add the note to the database
-    async with db_engine.connect() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
-            ),
-            {"title": note_title, "content": note_content, "include": True},
-        )
-        await connection.commit()
+    db_context = Database(engine=db_engine)
+    await seed_note(db_context, note_title, note_content, include_in_prompt=True)
+    capture_rule, tool_results = tool_result_capture()
 
     def get_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
@@ -220,11 +242,10 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        db_engine, [(get_note_matcher, get_note_response)]
+        db_engine, [capture_rule, (get_note_matcher, get_note_response)]
     )
 
     # Act
-    db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
         chat_interface=MagicMock(),
@@ -236,12 +257,15 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_002",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
 
     # Assert
-    assert error is None
-    assert final_text_reply is not None
+    assert result.error_traceback is None
+    assert len(tool_results) == 1
+    note_payload = json.loads(tool_results[0])
+    assert note_payload["exists"] is True
+    assert note_payload["title"] == note_title
+    assert note_payload["content"] == note_content
+    assert note_payload["include_in_prompt"] is True
 
 
 @pytest.mark.asyncio
@@ -250,6 +274,7 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
     # Arrange
     note_title = f"Nonexistent Note {uuid.uuid4()}"
     tool_call_id = f"call_{uuid.uuid4()}"
+    capture_rule, tool_results = tool_result_capture()
 
     def get_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
@@ -276,7 +301,7 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        db_engine, [(get_note_matcher, get_note_response)]
+        db_engine, [capture_rule, (get_note_matcher, get_note_response)]
     )
 
     # Act
@@ -292,12 +317,14 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_003",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
 
     # Assert
-    assert error is None
-    assert final_text_reply is not None
+    assert result.error_traceback is None
+    assert len(tool_results) == 1
+    note_payload = json.loads(tool_results[0])
+    assert note_payload["exists"] is False
+    assert note_payload["title"] == note_title
+    assert note_payload["content"] is None
 
 
 @pytest.mark.asyncio
@@ -310,17 +337,10 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
         (f"{base_title} 2", "Content 2", False),
         (f"{base_title} 3", "Content 3", True),
     ]
-
-    # Add test notes
-    async with db_engine.connect() as connection:
-        for title, content, include in notes_data:
-            await connection.execute(
-                text(
-                    "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
-                ),
-                {"title": title, "content": content, "include": include},
-            )
-        await connection.commit()
+    db_context = Database(engine=db_engine)
+    for title, content, include in notes_data:
+        await seed_note(db_context, title, content, include_in_prompt=include)
+    capture_rule, tool_results = tool_result_capture()
 
     tool_call_id = f"call_{uuid.uuid4()}"
 
@@ -345,11 +365,10 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        db_engine, [(list_notes_matcher, list_notes_response)]
+        db_engine, [capture_rule, (list_notes_matcher, list_notes_response)]
     )
 
     # Act
-    db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
         chat_interface=MagicMock(),
@@ -359,12 +378,16 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_004",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
 
     # Assert
-    assert error is None
-    assert final_text_reply is not None
+    assert result.error_traceback is None
+    assert len(tool_results) == 1
+    listed = {
+        entry["title"]: (entry["content_preview"], entry["include_in_prompt"])
+        for entry in json.loads(tool_results[0])
+    }
+    for title, content, include in notes_data:
+        assert listed.get(title) == (content, include)
 
 
 @pytest.mark.asyncio
@@ -372,21 +395,12 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
     """Test listing notes with include_in_prompt filter."""
     # Arrange
     base_title = f"Filter Test {uuid.uuid4()}"
-    notes_data = [
-        (f"{base_title} Included", "Content 1", True),
-        (f"{base_title} Excluded", "Content 2", False),
-    ]
-
-    # Add test notes
-    async with db_engine.connect() as connection:
-        for title, content, include in notes_data:
-            await connection.execute(
-                text(
-                    "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
-                ),
-                {"title": title, "content": content, "include": include},
-            )
-        await connection.commit()
+    included_title = f"{base_title} Included"
+    excluded_title = f"{base_title} Excluded"
+    db_context = Database(engine=db_engine)
+    await seed_note(db_context, included_title, "Content 1", include_in_prompt=True)
+    await seed_note(db_context, excluded_title, "Content 2", include_in_prompt=False)
+    capture_rule, tool_results = tool_result_capture()
 
     tool_call_id = f"call_{uuid.uuid4()}"
 
@@ -415,11 +429,10 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
     )
 
     processing_service = await create_processing_service(
-        db_engine, [(list_included_matcher, list_included_response)]
+        db_engine, [capture_rule, (list_included_matcher, list_included_response)]
     )
 
     # Act
-    db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
         chat_interface=MagicMock(),
@@ -431,12 +444,15 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_005",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
 
     # Assert
-    assert error is None
-    assert final_text_reply is not None
+    assert result.error_traceback is None
+    assert len(tool_results) == 1
+    listed = json.loads(tool_results[0])
+    listed_titles = {entry["title"] for entry in listed}
+    assert included_title in listed_titles
+    assert excluded_title not in listed_titles
+    assert all(entry["include_in_prompt"] is True for entry in listed)
 
 
 @pytest.mark.asyncio
@@ -445,16 +461,8 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
     # Arrange
     note_title = f"Delete Me {uuid.uuid4()}"
     note_content = "This note will be deleted."
-
-    # First add the note
-    async with db_engine.connect() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
-            ),
-            {"title": note_title, "content": note_content, "include": True},
-        )
-        await connection.commit()
+    db_context = Database(engine=db_engine)
+    await seed_note(db_context, note_title, note_content, include_in_prompt=True)
 
     tool_call_id = f"call_{uuid.uuid4()}"
 
@@ -487,7 +495,6 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
         chat_interface=MagicMock(),
@@ -499,22 +506,11 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_006",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
 
     # Assert
-    assert error is None
-    assert final_text_reply is not None
-
-    # Verify note was deleted
-    async with db_engine.connect() as connection:
-        result = await connection.execute(
-            text("SELECT COUNT(*) as count FROM notes WHERE title = :title"),
-            {"title": note_title},
-        )
-        count = result.scalar()
-
-    assert count == 0
+    assert result.error_traceback is None
+    assert result.text_reply is not None
+    assert await read_note(db_context, note_title) is None
 
 
 @pytest.mark.asyncio
@@ -524,16 +520,8 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
     note_title = f"Update Me {uuid.uuid4()}"
     original_content = "Original content."
     updated_content = "Updated content with new information."
-
-    # First add the note
-    async with db_engine.connect() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO notes (title, content, include_in_prompt) VALUES (:title, :content, :include)"
-            ),
-            {"title": note_title, "content": original_content, "include": True},
-        )
-        await connection.commit()
+    db_context = Database(engine=db_engine)
+    await seed_note(db_context, note_title, original_content, include_in_prompt=True)
 
     tool_call_id = f"call_{uuid.uuid4()}"
 
@@ -571,7 +559,6 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
         db_context=db_context,
         chat_interface=MagicMock(),
@@ -586,20 +573,11 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id="msg_007",
         user_name=TEST_USER_NAME,
     )
-    final_text_reply = result.text_reply
-    error = result.error_traceback
 
     # Assert
-    assert error is None
-    assert final_text_reply is not None
+    assert result.error_traceback is None
+    assert result.text_reply is not None
 
-    # Verify note was updated
-    async with db_engine.connect() as connection:
-        result = await connection.execute(
-            text("SELECT content FROM notes WHERE title = :title"),
-            {"title": note_title},
-        )
-        note_in_db = result.fetchone()
-
+    note_in_db = await read_note(db_context, note_title)
     assert note_in_db is not None
     assert note_in_db.content == updated_content

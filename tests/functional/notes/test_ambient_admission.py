@@ -662,32 +662,32 @@ async def test_a_clean_turn_associating_an_unlabelled_attachment_is_reviewed(
     db = Database(db_engine)
     registry = _registry(db_engine)
     # A pre-chokepoint attachment: registered with no envelope at all.
-    file_data = await registry._store_file_only(
-        file_content=b"legacy",
-        filename="legacy.txt",
-        content_type="text/plain",
-        media_limited=False,
-    )
+    attachment_id = "legacy-attachment"
     await registry.register_attachment(
         db_context=db,
-        attachment_id=file_data.attachment_id,
+        attachment_id=attachment_id,
         source_type="tool",
         source_id="legacy",
         mime_type="text/plain",
         description="Sender-controlled description",
         size=6,
-        content_url=file_data.content_url,
-        storage_path=file_data.storage_path,
     )
     reviewer = _Reviewer(ToolCallReviewVerdict.ALLOW)
     tracker = tracker_at(None)
 
     await _save(
         _context(db, tracker, _gate(ENFORCE, reviewer), registry=registry),
-        attachment_ids=[file_data.attachment_id],
+        attachment_ids=[attachment_id],
     )
 
     assert len(reviewer.inputs) == 1
+    assert reviewer.inputs[0].arguments["attachments"] == [
+        {
+            "attachment_id": attachment_id,
+            "description": "Sender-controlled description",
+            "mime_type": "text/plain",
+        }
+    ]
     assert reviewer.inputs[0].taint_state.max_tier is EXTERNAL
     # An explicit read of the same attachment still contributes nothing.
     assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER

@@ -79,8 +79,7 @@ add_or_update_note(
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     # Real tools provider with note tool
     local_provider = LocalToolsProvider(
@@ -118,8 +117,6 @@ add_or_update_note(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     # Step 3: Process event that triggers the script
     await processor.process_event(
@@ -225,8 +222,7 @@ async def test_script_execution_by_stored_name(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     local_provider = LocalToolsProvider(
         definitions=NOTE_TOOLS_DEFINITION,
@@ -261,8 +257,6 @@ async def test_script_execution_by_stored_name(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     # Step 3: Trigger the event
     await processor.process_event(
@@ -320,8 +314,7 @@ async def test_script_with_syntax_error_creates_no_note(
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     local_provider = LocalToolsProvider(
         definitions=NOTE_TOOLS_DEFINITION,
@@ -357,8 +350,6 @@ async def test_script_with_syntax_error_creates_no_note(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     # Step 3: Process event
     await processor.process_event(
@@ -434,8 +425,7 @@ add_or_update_note(
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     local_provider = LocalToolsProvider(
         definitions=NOTE_TOOLS_DEFINITION,
@@ -471,8 +461,6 @@ add_or_update_note(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     # Step 3: Process event
     await processor.process_event(
@@ -573,8 +561,7 @@ add_or_update_note(
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     local_provider = LocalToolsProvider(
         definitions=NOTE_TOOLS_DEFINITION,
@@ -611,8 +598,6 @@ add_or_update_note(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     # Step 4: Process event that triggers the script
     await processor.process_event(

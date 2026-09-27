@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import re
-import time
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, NamedTuple, cast
@@ -49,6 +48,7 @@ from family_assistant.tools.calendar import (
     search_calendar_events_tool,
 )
 from family_assistant.tools.types import CalendarConfig, ToolExecutionContext
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -195,41 +195,25 @@ async def wait_for_radicale_indexing(
     exec_context: ToolExecutionContext,
     calendar_config: "CalendarConfig",
     event_summary: str,
-    timeout_seconds: float = 5.0,
-) -> bool:
+) -> None:
+    """Wait until calendar search lists a newly created event.
+
+    Radicale does not always make an event searchable the moment it is
+    created, and duplicate detection finds earlier events through that search.
     """
-    Wait for Radicale to index a newly created event.
 
-    Radicale CalDAV server doesn't immediately make events searchable after creation.
-    This function polls the search functionality until the event appears or timeout.
-
-    Args:
-        exec_context: Tool execution context
-        calendar_config: Calendar configuration
-        event_summary: Summary of the event to wait for
-        timeout_seconds: Maximum time to wait in seconds (default: 5.0)
-
-    Returns:
-        True if event became searchable, False if timeout
-    """
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        # Try to search for the event
+    async def event_is_searchable() -> bool:
         search_result = await search_calendar_events_tool(
             exec_context=exec_context,
             calendar_config=calendar_config,
             search_text=event_summary,
         )
+        return event_summary in search_result
 
-        # Check if the exact event title appears in results
-        if event_summary in search_result:
-            return True
-
-        # Sleep briefly before retrying
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for calendar event to appear in search
-        await asyncio.sleep(0.1)
-
-    return False
+    await wait_for_condition(
+        event_is_searchable,
+        description=f"'{event_summary}' to become searchable in Radicale",
+    )
 
 
 @pytest.mark.asyncio
@@ -2060,13 +2044,11 @@ async def test_duplicate_detection_error_shown(
     # RADICALE WORKAROUND: Wait for first event to become searchable
     # Radicale CalDAV server doesn't immediately index events for search
     # Real CalDAV servers (iCloud, Google Calendar) don't need this
-    indexed = await wait_for_radicale_indexing(
+    await wait_for_radicale_indexing(
         exec_context=exec_context,
         calendar_config=test_calendar_config,
         event_summary="Doctor appointment",
-        timeout_seconds=5.0,
     )
-    assert indexed, "First event should become searchable within timeout"
 
     # Create second event with similar name at nearby time (15 min later)
     # This should be BLOCKED by duplicate detection
@@ -2076,7 +2058,7 @@ async def test_duplicate_detection_error_shown(
     event2_result = await add_calendar_event_tool(
         exec_context=exec_context,
         calendar_config=test_calendar_config,
-        summary="Doctor appt",  # Very similar to "Doctor appointment" (fuzzy similarity ~0.88)
+        summary="Doctor appt",  # Very similar to "Doctor appointment" (fuzzy similarity ~0.76)
         start_time=event2_start.isoformat(),
         end_time=event2_end.isoformat(),
     )
@@ -2287,13 +2269,11 @@ async def test_duplicate_detection_disabled(
 
     assert "OK. Event 'Doctor appointment' added" in event1_result
 
-    indexed = await wait_for_radicale_indexing(
+    await wait_for_radicale_indexing(
         exec_context=exec_context,
         calendar_config=test_calendar_config,
         event_summary="Doctor appointment",
-        timeout_seconds=5.0,
     )
-    assert indexed, "First event should become searchable within timeout"
 
     # The same near-duplicate that test_duplicate_detection_error_shown shows
     # is refused when detection is enabled.
@@ -2503,14 +2483,11 @@ async def test_duplicate_detection_exact_same_title(
     assert "OK. Event 'Team Meeting' added" in event1_result
     assert "Error:" not in event1_result
 
-    # Wait for indexing
-    indexed = await wait_for_radicale_indexing(
+    await wait_for_radicale_indexing(
         exec_context=exec_context,
         calendar_config=test_calendar_config,
         event_summary="Team Meeting",
-        timeout_seconds=10.0,
     )
-    assert indexed, "Radicale failed to index first event"
 
     # Try to create second event with EXACT SAME title at nearby time
     # This should be blocked by duplicate detection
