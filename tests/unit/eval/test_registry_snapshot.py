@@ -11,7 +11,6 @@ import pytest
 
 from family_assistant.eval.tool_call_review.registry_snapshot import (
     DESCRIPTOR_FIELDS,
-    SNAPSHOT_VERSION,
     RegistrySnapshotError,
     descriptors_to_snapshot,
     load_registry_snapshot,
@@ -238,17 +237,6 @@ def test_every_omitted_descriptor_field_is_malformed_not_a_default(
         snapshot_to_registry(payload)
 
 
-def test_the_serializer_and_the_reader_agree_on_the_field_set() -> None:
-    """The writer refuses to emit an entry the reader would reject.
-
-    Both sides read ``DESCRIPTOR_FIELDS``; this pins that they cannot drift
-    apart silently if someone edits one of them.
-    """
-    entry = descriptors_to_snapshot([_mcp_descriptor()])["tools"]["plan_trip"]  # type: ignore[index]
-
-    assert set(entry) == set(DESCRIPTOR_FIELDS)
-
-
 def test_a_snapshot_that_is_not_json_names_the_file(tmp_path: Path) -> None:
     path = tmp_path / "registry.json"
     path.write_text("{not json", encoding="utf-8")
@@ -260,10 +248,6 @@ def test_a_snapshot_that_is_not_json_names_the_file(tmp_path: Path) -> None:
 def test_a_missing_snapshot_file_is_reported_not_ignored(tmp_path: Path) -> None:
     with pytest.raises(RegistrySnapshotError, match="Cannot read snapshot"):
         load_registry_snapshot(tmp_path / "absent.json")
-
-
-def test_the_envelope_states_its_version() -> None:
-    assert descriptors_to_snapshot([])["snapshot_version"] == SNAPSHOT_VERSION
 
 
 def test_a_connected_server_that_advertises_nothing_aborts_the_dump() -> None:

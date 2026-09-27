@@ -96,6 +96,7 @@ async def test_cancel_worker_task_confirmation_shows_task_details(
         interface_type="test",
         task_description="Build the report generator",
     )
+    assert await db.worker_tasks.update_task_status("task-123", "running")
     await db.worker_tasks.create_task(
         task_id="task-other-conv",
         conversation_id="conv-2",
@@ -109,7 +110,7 @@ async def test_cancel_worker_task_confirmation_shows_task_details(
     )
 
     assert "task-123" in prompt
-    assert "pending" in prompt
+    assert "running" in prompt
     assert "Build the report generator" in prompt
     assert "Someone else's other task" not in prompt
 

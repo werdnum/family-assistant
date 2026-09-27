@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
@@ -27,10 +27,7 @@ from family_assistant.tools.metadata import (
     ToolRegistration,
     make_local_tool_metadata,
 )
-from family_assistant.tools.script_testing import (
-    ScriptTestingToolsProvider,
-    test_script_with_simulated_tools_tool,
-)
+from family_assistant.tools.script_testing import test_script_with_simulated_tools_tool
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
@@ -708,7 +705,9 @@ async def test_script_testing_serializes_non_json_passthrough_results_in_simulat
         exec_context: ToolExecutionContext,
     ) -> ToolResult:
         del exec_context
-        return ToolResult(data={"status": "ok"})
+        return ToolResult(
+            data={"captured_at": datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)}
+        )
 
     registrations_by_name = {
         registration.name: registration for registration in LOCAL_TOOL_REGISTRATIONS
@@ -751,45 +750,9 @@ async def test_script_testing_serializes_non_json_passthrough_results_in_simulat
         )
 
     fake_client = FakeStructuredClient(handler)
-    original_append_transcript = ScriptTestingToolsProvider._append_transcript
-
-    def patched_append_transcript(
-        self: ScriptTestingToolsProvider,
-        *,
-        tool_name: str,
-        mode: Literal["passthrough", "simulated"],
-        arguments: object,
-        result: str | ToolResult,
-        classification_reason: str,
-        historical_examples_used: int,
-    ) -> None:
-        original_append_transcript(
-            self,
-            tool_name=tool_name,
-            mode=mode,
-            arguments=cast("dict[str, Any]", arguments),
-            result=result,
-            classification_reason=classification_reason,
-            historical_examples_used=historical_examples_used,
-        )
-        if (
-            mode == "passthrough"
-            and self._transcript[-1].tool_name == "passthrough_snapshot"
-        ):
-            self._transcript[-1].result = {
-                "captured_at": datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
-            }
-
-    with (
-        patch(
-            "family_assistant.llm.one_shot.LLMClientFactory.create_client",
-            return_value=fake_client,
-        ),
-        patch.object(
-            ScriptTestingToolsProvider,
-            "_append_transcript",
-            patched_append_transcript,
-        ),
+    with patch(
+        "family_assistant.llm.one_shot.LLMClientFactory.create_client",
+        return_value=fake_client,
     ):
         result = await test_script_with_simulated_tools_tool(
             exec_context,

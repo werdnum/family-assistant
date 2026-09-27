@@ -26,17 +26,10 @@ class TestMultimodalFunctionResponses:
         """Create a GoogleGenAIClient instance for Gemini 3.0 (multimodal tool support)."""
         return GoogleGenAIClient(api_key="test_key", model="gemini-3.8-flash")
 
-    def test_supports_multimodal_tools(
-        self, client_v2: GoogleGenAIClient, client_v3: GoogleGenAIClient
-    ) -> None:
-        """Test detection of multimodal tool support based on model name."""
-        assert client_v2._supports_multimodal_tools() is False
-        assert client_v3._supports_multimodal_tools() is True
-
     def test_convert_tool_message_with_attachment_v2(
         self, client_v2: GoogleGenAIClient
     ) -> None:
-        """Test conversion of tool message with attachment for Gemini 2.0."""
+        """Gemini 2.0 receives the image after its text-only function response."""
         attachment = ToolAttachment(
             mime_type="image/png",
             content=b"fake_image_bytes",
@@ -49,9 +42,11 @@ class TestMultimodalFunctionResponses:
             _attachments=[attachment],
         )
 
-        contents = client_v2._convert_messages_to_genai_format([tool_msg])
+        contents = client_v2._convert_messages_to_genai_format(
+            client_v2._process_tool_messages([tool_msg])
+        )
 
-        assert len(contents) == 1
+        assert len(contents) == 2
         content = cast("types.Content", contents[0])
         assert content.role == "user"
         assert content.parts is not None
@@ -62,6 +57,15 @@ class TestMultimodalFunctionResponses:
         # Verify no multimodal parts are attached to function_response
         fr = part.function_response
         assert fr.parts is None or len(fr.parts) == 0
+
+        image_content = cast("types.Content", contents[1])
+        assert image_content.role == "user"
+        assert image_content.parts is not None
+        assert len(image_content.parts) == 2
+        image_part = cast("types.Part", image_content.parts[1])
+        assert image_part.inline_data is not None
+        assert image_part.inline_data.mime_type == "image/png"
+        assert image_part.inline_data.data == b"fake_image_bytes"
 
     def test_convert_tool_message_with_attachment_v3(
         self, client_v3: GoogleGenAIClient

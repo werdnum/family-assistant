@@ -58,13 +58,20 @@ class TestMockImageBackend:
         """Test image generation background colour reflects prompt keywords."""
         sunset_bytes = await mock_backend.generate_image("colorful sunset", "auto")
         sunset_img = Image.open(io.BytesIO(sunset_bytes)).convert("RGB")
-        assert sunset_img.getpixel((256, 400)) == (255, 200, 150)
 
         night_bytes = await mock_backend.generate_image(
             "a quiet scene at night", "auto"
         )
         night_img = Image.open(io.BytesIO(night_bytes)).convert("RGB")
-        assert night_img.getpixel((256, 400)) == (25, 25, 50)
+        sunset_background = sunset_img.getpixel((
+            sunset_img.width // 2,
+            sunset_img.height * 3 // 4,
+        ))
+        night_background = night_img.getpixel((
+            night_img.width // 2,
+            night_img.height * 3 // 4,
+        ))
+        assert sunset_background != night_background
 
     @pytest.mark.asyncio
     async def test_transform_image_basic(self, mock_backend: MockImageBackend) -> None:
@@ -89,14 +96,17 @@ class TestMockImageBackend:
         """Test grayscale transformation actually desaturates the image."""
         original_bytes = await mock_backend.generate_image("colorful sunset", "auto")
         original_img = Image.open(io.BytesIO(original_bytes)).convert("RGB")
-        assert original_img.getpixel((256, 400)) == (255, 200, 150)
+        sample = (original_img.width // 2, original_img.height * 3 // 4)
+        original_pixel = original_img.getpixel(sample)
+        assert isinstance(original_pixel, tuple)
+        assert len(set(original_pixel)) > 1
 
         transformed_bytes = await mock_backend.transform_image(
             original_bytes, "convert to black and white"
         )
         transformed_img = Image.open(io.BytesIO(transformed_bytes)).convert("RGB")
 
-        pixel = transformed_img.getpixel((256, 400))
+        pixel = transformed_img.getpixel(sample)
         assert isinstance(pixel, tuple)
         r, g, b = pixel
         assert r == g == b

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from datetime import UTC, datetime
+from collections.abc import Callable
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -20,18 +19,23 @@ import family_assistant.processing.service as proc_service_module
 import family_assistant.processing.tool_execution as proc_tool_module
 import family_assistant.task_worker as tw_module
 import family_assistant.telegram.handler as tg_module
-from family_assistant.config_models import ToolsConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.services.user_identity import UserIdentityResolver
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority
-from family_assistant.storage.types import TaskDict
+from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolNotFoundError
+from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
 
+    from sqlalchemy.ext.asyncio import AsyncEngine
     from telegram import Update
 
     from family_assistant.context_providers import ContextProvider
@@ -149,58 +153,12 @@ def _make_processing_service(
     )
 
 
-def _make_task_dict(
-    *,
-    task_id: str = "task_001",
-    task_type: str = "test_task",
-    payload: dict[str, str] | None = None,
-) -> TaskDict:
-    return TaskDict(
-        id=1,
-        task_id=task_id,
-        task_type=task_type,
-        payload=payload or {"user_name": "TestUser"},
-        scheduled_at=None,
-        created_at=datetime.now(UTC),
-        status="pending",
-        locked_by=None,
-        locked_at=None,
-        error=None,
-        retry_count=0,
-        max_retries=3,
-        recurrence_rule=None,
-        original_task_id=None,
-        priority=TaskPriority.INTERACTIVE,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Tests for context.aggregate span
 # ---------------------------------------------------------------------------
 
 
 class TestContextAggregateSpan:
-    @pytest.mark.asyncio
-    async def test_context_aggregate_creates_span(
-        self, processing_span_exporter: InMemorySpanExporter
-    ) -> None:
-        service = _make_processing_service(
-            context_providers=[
-                MockContextProvider(fragments=["fragment1", "fragment2"])
-            ]
-        )
-
-        result = await service.context_preparer.aggregate_context(acting_user_id=None)
-
-        assert "fragment1" in result
-        spans = processing_span_exporter.get_finished_spans()
-        agg_spans = [s for s in spans if s.name == "context.aggregate"]
-        assert len(agg_spans) == 1
-        span = agg_spans[0]
-        assert span.attributes is not None
-        assert span.attributes["context.provider_count"] == 1
-        assert span.attributes["context.fragments_count"] == 2
-
     @pytest.mark.asyncio
     async def test_context_aggregate_with_no_providers(
         self, processing_span_exporter: InMemorySpanExporter
@@ -523,6 +481,7 @@ class TestTelegramProcessBatchSpan:
         self, telegram_span_exporter: InMemorySpanExporter
     ) -> None:
         mock_user = MagicMock()
+        mock_user.id = 123
         mock_user.first_name = "Alice"
 
         mock_message = MagicMock()
@@ -536,27 +495,44 @@ class TestTelegramProcessBatchSpan:
         mock_update.effective_user = mock_user
         mock_update.message = mock_message
 
-        handler = MagicMock(spec=tg_module.TelegramUpdateHandler)
-        handler.debug_mode = False
-        handler.processing_service = AsyncMock()
-        handler.telegram_service = MagicMock()
-        handler.get_db_context_func = MagicMock()
-        handler.developer_chat_id = None
-        handler.confirmation_manager = MagicMock()
+        processing_service = MagicMock()
+        processing_service.service_config.id = "test-profile"
+        processing_service.handle_chat_interaction = AsyncMock(
+            return_value=ChatInteractionResult.success(text_reply="Hi Alice")
+        )
+        telegram_service = MagicMock()
+        telegram_service.fastapi_app = None
+        handler = tg_module.TelegramUpdateHandler(
+            telegram_service=telegram_service,
+            user_identity_resolver=UserIdentityResolver(
+                AppConfig.model_validate({
+                    "users": [
+                        {
+                            "id": "alice",
+                            "telegram": {"user_ids": [123]},
+                        }
+                    ]
+                })
+            ),
+            processing_service=processing_service,
+            database=MagicMock(),
+            message_batcher=None,
+            confirmation_manager=MagicMock(),
+        )
 
         batch: list[tuple[Update, list[AttachmentData] | None]] = [(mock_update, None)]
 
-        with (
-            patch.object(
-                tg_module.TelegramUpdateHandler,
-                "process_batch",
-                tg_module.TelegramUpdateHandler.process_batch,
-            ),
-            contextlib.suppress(Exception),
-        ):
-            await tg_module.TelegramUpdateHandler.process_batch(
-                handler, chat_id=123, batch=batch, context=MagicMock()
-            )
+        context = MagicMock()
+        context.bot.send_chat_action = AsyncMock()
+        context.bot.send_message = AsyncMock(return_value=MagicMock(message_id=43))
+        context.bot.send_rich_message = AsyncMock(return_value=MagicMock(message_id=43))
+        await handler.process_batch(chat_id=123, batch=batch, context=context)
+
+        processing_service.handle_chat_interaction.assert_awaited_once()
+        assert processing_service.handle_chat_interaction.await_args.kwargs[
+            "trigger_content_parts"
+        ] == [{"type": "text", "text": "hello"}]
+        context.bot.send_rich_message.assert_awaited_once()
 
         spans = telegram_span_exporter.get_finished_spans()
         tg_spans = [s for s in spans if s.name == "telegram.process_batch"]
@@ -634,55 +610,43 @@ class TestTelegramProcessBatchSpan:
 # ---------------------------------------------------------------------------
 
 
-def _make_task_worker_mock(
-    task_handlers: dict[str, object],
-) -> MagicMock:
-    worker = MagicMock(spec=tw_module.TaskWorker)
-    worker.worker_id = "test-worker"
-    worker.task_handlers = task_handlers
-    worker.processing_service = MagicMock()
-    worker.processing_service.home_assistant_client = None
-    worker.chat_interface = MagicMock()
-    worker.chat_interfaces = None
-    worker.event_sources = None
-    worker.calendar_config = {}
-    worker.timezone = ZoneInfo("UTC")
-    worker.embedding_generator = MagicMock()
-    worker.clock = MagicMock()
-    worker.clock.now.return_value = datetime.now(UTC)
-    worker.indexing_source = None
-    worker.confirmation_result_waiters = None
-    worker.handler_timeout = 300.0
-    worker._timeout_for_task_type = MagicMock(return_value=300.0)
-    worker._handle_recurrence = AsyncMock()
-    worker._handle_task_failure = AsyncMock()
-    worker._update_last_activity = MagicMock()
-    return worker
+WorkerFactory = Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]]
 
 
 class TestTaskProcessSpan:
     @pytest.mark.asyncio
     async def test_task_process_creates_span_on_success(
-        self, task_worker_span_exporter: InMemorySpanExporter
+        self,
+        task_worker_span_exporter: InMemorySpanExporter,
+        db_engine: AsyncEngine,
+        task_worker_manager: WorkerFactory,
     ) -> None:
-        handler_called = False
+        db = Database(db_engine)
+        worker, new_task_event, _ = task_worker_manager(
+            processing_service=MagicMock(), chat_interface=MagicMock()
+        )
+        handled = asyncio.Event()
 
         async def dummy_handler(exec_context: object, payload: object) -> None:
-            nonlocal handler_called
-            handler_called = True
+            handled.set()
 
-        worker = _make_task_worker_mock({"test_task": dummy_handler})
-        task = _make_task_dict(task_id="task_001", task_type="test_task")
-
-        db_context = AsyncMock()
-        db_context.tasks = AsyncMock()
-        wake_up_event = asyncio.Event()
-
-        await tw_module.TaskWorker._process_task(
-            worker, db_context, task, wake_up_event
+        worker.register_task_handler("test_task", dummy_handler)
+        await db.tasks.enqueue(
+            task_id="task_001", task_type="test_task", priority=TaskPriority.INTERACTIVE
         )
+        new_task_event.set()
+        await wait_for_tasks_to_complete(db_engine, task_ids={"task_001"})
 
-        assert handler_called
+        assert handled.is_set()
+        assert (await db.tasks.get_all(limit=1))[0]["status"] == "done"
+        await wait_for_condition(
+            lambda: any(
+                span.name == "task.process.test_task"
+                for span in task_worker_span_exporter.get_finished_spans()
+            ),
+            timeout=30.0,
+            description="completed task span",
+        )
         spans = task_worker_span_exporter.get_finished_spans()
         task_spans = [s for s in spans if s.name.startswith("task.process.")]
         assert len(task_spans) == 1
@@ -695,50 +659,65 @@ class TestTaskProcessSpan:
 
     @pytest.mark.asyncio
     async def test_task_process_no_span_when_no_handler(
-        self, task_worker_span_exporter: InMemorySpanExporter
+        self,
+        task_worker_span_exporter: InMemorySpanExporter,
+        db_engine: AsyncEngine,
+        task_worker_manager: WorkerFactory,
     ) -> None:
-        worker = MagicMock(spec=tw_module.TaskWorker)
-        worker.worker_id = "test-worker"
-        worker.task_handlers = {}
-
-        task = _make_task_dict(
-            task_id="task_002", task_type="unknown_type", payload=None
+        db = Database(db_engine)
+        worker, wake_up_event, _ = task_worker_manager(
+            processing_service=MagicMock(), chat_interface=MagicMock()
+        )
+        await db.tasks.enqueue(
+            task_id="task_002",
+            task_type="unknown_type",
+            priority=TaskPriority.INTERACTIVE,
         )
 
-        db_context = AsyncMock()
-        db_context.tasks = AsyncMock()
-        wake_up_event = asyncio.Event()
+        task = (await db.tasks.get_all(limit=1))[0]
+        await worker._process_task(db, task, wake_up_event)
 
-        await tw_module.TaskWorker._process_task(
-            worker, db_context, task, wake_up_event
-        )
-
+        assert (await db.tasks.get_all(limit=1))[0]["status"] == "failed"
         spans = task_worker_span_exporter.get_finished_spans()
         task_spans = [s for s in spans if s.name.startswith("task.process.")]
         assert len(task_spans) == 0
 
     @pytest.mark.asyncio
     async def test_task_process_sets_error_on_handler_exception(
-        self, task_worker_span_exporter: InMemorySpanExporter
+        self,
+        task_worker_span_exporter: InMemorySpanExporter,
+        db_engine: AsyncEngine,
+        task_worker_manager: WorkerFactory,
     ) -> None:
+        db = Database(db_engine)
+        worker, new_task_event, _ = task_worker_manager(
+            processing_service=MagicMock(), chat_interface=MagicMock()
+        )
+
         async def failing_handler(exec_context: object, payload: object) -> None:
             raise RuntimeError("handler exploded")
 
-        worker = _make_task_worker_mock({"fail_task": failing_handler})
-        task = _make_task_dict(
+        worker.register_task_handler("fail_task", failing_handler)
+        await db.tasks.enqueue(
             task_id="task_003",
             task_type="fail_task",
-            payload={"user_name": "FailUser"},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
+        )
+        new_task_event.set()
+        await wait_for_tasks_to_complete(
+            db_engine, task_ids={"task_003"}, allow_failures=True
         )
 
-        db_context = AsyncMock()
-        db_context.tasks = AsyncMock()
-        wake_up_event = asyncio.Event()
-
-        await tw_module.TaskWorker._process_task(
-            worker, db_context, task, wake_up_event
+        assert (await db.tasks.get_all(limit=1))[0]["status"] == "failed"
+        await wait_for_condition(
+            lambda: any(
+                span.name == "task.process.fail_task"
+                for span in task_worker_span_exporter.get_finished_spans()
+            ),
+            timeout=30.0,
+            description="failed task span",
         )
-
         spans = task_worker_span_exporter.get_finished_spans()
         task_spans = [s for s in spans if s.name.startswith("task.process.")]
         assert len(task_spans) == 1

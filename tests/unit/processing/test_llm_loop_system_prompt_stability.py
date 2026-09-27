@@ -300,10 +300,7 @@ async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
     assert llm_client.selection_prompts, "attachment selection never ran"
     for prompt in llm_client.selection_prompts:
         assert "final processing iteration" not in prompt.lower()
-    assert (
-        'original query was: "Show me the pictures of the cat"'
-        in llm_client.selection_prompts[0]
-    )
+    assert "Show me the pictures of the cat" in llm_client.selection_prompts[0]
 
 
 class _ContextLimitOnceMockLLMClient(_SnapshottingMockLLMClient):

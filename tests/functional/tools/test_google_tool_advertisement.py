@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.config_loader import load_config
-from family_assistant.services.google_provider import GoogleScope
 from family_assistant.services.oauth_integration_state import (
     OAuthIntegrationState,
     filter_oauth_tool_registrations,
@@ -199,14 +198,9 @@ async def test_scope_conditional_subset_gmail_only(tmp_path: Path) -> None:
         "gmail_get_attachment",
     })
     advertised = await _advertised_names(_enabled_state(gmail_only), engine)
-    assert advertised >= gmail_only
-    assert "drive_search" not in advertised
-    assert "drive_get_file" not in advertised
+    assert advertised & GOOGLE_TOOL_NAMES == gmail_only
 
 
-def test_google_scope_enum_matches_tool_names() -> None:
+def test_hardcoded_google_tool_names_match_scope_map() -> None:
     # Guard: the names this test hardcodes match the shipped scope map keys.
     assert frozenset(GOOGLE_TOOL_REQUIRED_SCOPES) == GOOGLE_TOOL_NAMES
-    assert GoogleScope.GMAIL_READONLY.value
-    assert GoogleScope.GMAIL_COMPOSE.value
-    assert GoogleScope.DRIVE_FILE.value

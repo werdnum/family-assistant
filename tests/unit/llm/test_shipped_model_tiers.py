@@ -154,22 +154,6 @@ def test_sol_reasoning_effort_still_comes_from_the_global_map(
     assert shipped_config.llm_parameters["gpt-6-sol"]["reasoning_effort"] == "high"
 
 
-def test_frontier_tier_is_a_single_fable_client_at_xhigh(
-    shipped_config: AppConfig,
-) -> None:
-    resolved = resolve_tier_client_config(
-        shipped_config.model_tiers["frontier"], shipped_config.llm_parameters
-    )
-
-    assert resolved["provider"] == "anthropic"
-    assert resolved["model"] == "claude-fable-5"
-    assert resolved["model_parameters"]["claude-fable-5"] == {
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "xhigh"},
-        "max_tokens": 16000,
-    }
-
-
 def test_frontier_thinking_config_reaches_the_anthropic_client(
     shipped_config: AppConfig,
 ) -> None:
@@ -185,9 +169,12 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
     client = LLMClientFactory.create_client({**resolved, "api_key": "test-key"})
 
     assert isinstance(client, AnthropicClient)
-    params = client._get_model_specific_params("claude-fable-5")
-    assert params["thinking"] == {"type": "adaptive"}
-    assert params["output_config"] == {"effort": "xhigh"}
+    assert client.model == "claude-fable-5"
+    assert client._get_model_specific_params(client.model) == {
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "xhigh"},
+        "max_tokens": 16000,
+    }
 
 
 def test_the_global_map_still_configures_nothing_for_fable(

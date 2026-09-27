@@ -307,3 +307,6 @@ async def test_reminder_after_completed_conversation(
     )
     assert "clobbered" not in history_text
     assert "Oh dear" not in history_text
+    assert "new content for the note" in history_text
+    assert "successfully updated your note" in history_text
+    assert "Reminder triggered" in history_text

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import shutil
+import sys
 import tempfile
 import uuid
 from types import SimpleNamespace
@@ -440,6 +441,52 @@ async def _connected_provider(
     session, calls = _recording_session()
     await _initialize_with_stub_transport(provider, tools, session)
     return provider, calls
+
+
+@pytest.mark.asyncio
+async def test_real_mcp_discovery_and_execution_apply_attachment_override() -> None:
+    """A connected server advertises a UUID while receiving attachment bytes."""
+    server_code = """
+from mcp.server.fastmcp import FastMCP
+
+server = FastMCP("attachment-test")
+
+@server.tool()
+def meshy_image_to_3d(image_url: str) -> str:
+    return image_url
+
+server.run(transport="stdio")
+"""
+    config = cast(
+        "MCPServerConfig",
+        {
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": ["-c", server_code],
+            "parameter_overrides": {"meshy_image_to_3d": {"image_url": "data_uri"}},
+        },
+    )
+    provider = MCPToolsProvider({SERVER_ID: config})
+    attachment = _attachment()
+
+    try:
+        await provider.initialize()
+        advertised = _properties(
+            list(await provider.get_tool_definitions()), "meshy_image_to_3d"
+        )["image_url"]
+        assert advertised["type"] == "string"
+        assert "UUID" in advertised["description"]
+
+        result = await provider.execute_tool(
+            "meshy_image_to_3d",
+            {"image_url": attachment.get_id()},
+            _execution_context(_registry_serving(attachment)),
+        )
+        assert result == (
+            "data:image/png;base64," + base64.b64encode(IMAGE_BYTES).decode("ascii")
+        )
+    finally:
+        await provider.close()
 
 
 @pytest.mark.asyncio

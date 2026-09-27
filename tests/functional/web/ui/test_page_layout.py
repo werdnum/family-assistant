@@ -1,288 +1,44 @@
 """Simplified tests for page layout and navigation components."""
 
 import pytest
+from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
 
 
-@pytest.mark.flaky(reruns=3, reruns_delay=1)
 @pytest.mark.playwright
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("menu_name", "link_name", "minimum_x"),
+    [("Data", "Notes", 10), ("Internal", "Tools", 100)],
+)
 async def test_navigation_dropdowns_open_and_position(
     web_test_fixture_readonly: WebTestFixture,
+    menu_name: str,
+    link_name: str,
+    minimum_x: int,
 ) -> None:
-    """Test that navigation dropdowns open and are positioned correctly to be usable.
-
-    This test handles the timing complexities of RadixUI NavigationMenu which uses
-    animations and asynchronous state updates. Marked as flaky due to inherent timing
-    sensitivity in RadixUI dropdown animations."""
+    """Each desktop dropdown opens on one click and places its link below."""
     page = web_test_fixture_readonly.page
-    base_url = web_test_fixture_readonly.base_url
+    await page.goto(f"{web_test_fixture_readonly.base_url}/notes")
 
-    # Navigate to notes page which has the full navigation menu
-    await page.goto(f"{base_url}/notes")
+    trigger = page.get_by_role("button", name=menu_name)
+    await expect(trigger).to_be_visible()
+    await trigger.click()
+    await expect(trigger).to_have_attribute("aria-expanded", "true")
 
-    # Wait for navigation to be rendered and interactive
-    await page.wait_for_selector(
-        "nav[data-orientation='horizontal']", state="visible", timeout=10000
-    )
+    link = page.get_by_role("link", name=link_name, exact=True)
+    await expect(link).to_be_in_viewport()
+    trigger_box = await trigger.bounding_box()
+    link_box = await link.bounding_box()
+    assert trigger_box is not None
+    assert link_box is not None
+    assert link_box["y"] > trigger_box["y"]
+    assert link_box["x"] > minimum_x
 
-    # Wait for navigation to be fully ready and interactive
-    await page.wait_for_function(
-        """() => {
-            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Data'));
-            if (!btn) return false;
-            const style = getComputedStyle(btn);
-            const rect = btn.getBoundingClientRect();
-            return style.visibility === 'visible' &&
-                   style.opacity === '1' &&
-                   rect.width > 0 &&
-                   rect.height > 0 &&
-                   !btn.disabled;
-        }""",
-        timeout=3000,
-    )
-
-    # Test Data dropdown
-    data_trigger = page.locator("button:has-text('Data')").first
-    await data_trigger.wait_for(state="visible", timeout=5000)
-
-    # Ensure the button is actually interactive before clicking
-    await page.wait_for_function(
-        """() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const btn = buttons.find(b => b.textContent?.includes('Data'));
-            if (!btn) return false;
-            const rect = btn.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }""",
-        timeout=5000,
-    )
-
-    # Click with retry logic in case of timing issues
-    for attempt in range(3):
-        try:
-            await data_trigger.click()
-
-            # Wait for dropdown to be fully open with content visible
-            await page.wait_for_function(
-                """() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const btn = buttons.find(b => b.textContent?.includes('Data'));
-                    if (!btn || btn.getAttribute('aria-expanded') !== 'true') return false;
-                    
-                    const links = Array.from(document.querySelectorAll('a'));
-                    const notesLink = links.find(a => a.textContent?.includes('Notes'));
-                    if (!notesLink) return false;
-                    
-                    const style = getComputedStyle(notesLink);
-                    const rect = notesLink.getBoundingClientRect();
-                    
-                    return style.visibility === 'visible' && 
-                           style.opacity === '1' &&
-                           rect.width > 0 && 
-                           rect.height > 0;
-                }""",
-                timeout=3000,
-            )
-            break
-        except Exception:
-            if attempt == 2:
-                raise
-            # Wait for dropdown to fully close before retry
-            await page.wait_for_function(
-                """() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const btn = buttons.find(b => b.textContent?.includes('Data'));
-                    if (!btn) return true;
-                    const expanded = btn.getAttribute('aria-expanded');
-                    return !expanded || expanded === 'false';
-                }""",
-                timeout=2000,
-            )
-
-    # Check that dropdown opened (button should be expanded)
-    is_expanded = await data_trigger.get_attribute("aria-expanded")
-    assert is_expanded == "true", "Data dropdown should be expanded after click"
-
-    # Ensure dropdown content is visible (look for Notes link)
-    notes_link = page.locator("a:has-text('Notes')")
-    await notes_link.wait_for(state="visible", timeout=2000)
-
-    # Get positions to verify reasonable positioning
-    trigger_box = await data_trigger.bounding_box()
-    notes_box = await notes_link.bounding_box()
-
-    assert trigger_box is not None, "Should be able to get trigger bounding box"
-    assert notes_box is not None, "Should be able to get dropdown content bounding box"
-
-    # The dropdown should appear below the trigger (reasonable Y positioning)
-    assert notes_box["y"] > trigger_box["y"], "Dropdown should appear below trigger"
-
-    # The dropdown should not be at the far left edge (x > 10px from left)
-    assert notes_box["x"] > 10, (
-        f"Dropdown should not be at far left edge, got x={notes_box['x']}"
-    )
-
-    # Close the Data dropdown by clicking outside
     await page.mouse.click(1, 1)
-
-    # Wait for the dropdown to fully close before proceeding
-    await page.wait_for_function(
-        """() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const btn = buttons.find(b => b.textContent?.includes('Data'));
-            return !btn || btn.getAttribute('aria-expanded') !== 'true';
-        }""",
-        timeout=3000,
-    )
-
-    # Wait for dropdown to be fully closed and animations complete
-    await page.wait_for_function(
-        """() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const dataBtn = buttons.find(b => b.textContent?.includes('Data'));
-            if (!dataBtn) return false;
-            // Check aria-expanded is false or not present
-            const expanded = dataBtn.getAttribute('aria-expanded');
-            // Also check that no dropdown content is visible
-            const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
-            const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' ||
-                                     dropdownContent.getAttribute('data-state') === 'closed';
-            return (!expanded || expanded === 'false') && isDropdownHidden;
-        }""",
-        timeout=3000,
-    )
-
-    # Wait for CSS transitions to complete by checking computed styles are stable
-    await page.wait_for_function(
-        """() => {
-            const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
-            if (!dropdownContent) return true;
-            // Check that opacity is 0 or element is not visible
-            const style = getComputedStyle(dropdownContent);
-            return style.opacity === '0' || style.display === 'none' || style.visibility === 'hidden';
-        }""",
-        timeout=1000,
-    )
-
-    # Test Internal dropdown with fresh state
-    internal_trigger = page.locator("button:has-text('Internal')").first
-    await internal_trigger.wait_for(state="visible", timeout=5000)
-
-    # Ensure the Internal button is interactive
-    await page.wait_for_function(
-        """() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const btn = buttons.find(b => b.textContent?.includes('Internal'));
-            if (!btn) return false;
-            const rect = btn.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }""",
-        timeout=5000,
-    )
-
-    # Click with retry logic
-    for attempt in range(3):
-        try:
-            await internal_trigger.click()
-
-            # Wait for dropdown content to be fully visible and properly positioned
-            # Use longer timeout (5s) to handle system load variations
-            await page.wait_for_function(
-                """() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const btn = buttons.find(b => b.textContent?.includes('Internal'));
-                    if (!btn || btn.getAttribute('aria-expanded') !== 'true') return false;
-
-                    const links = Array.from(document.querySelectorAll('a'));
-                    const toolsLink = links.find(a => a.textContent?.includes('Tools'));
-                    if (!toolsLink) return false;
-
-                    const rect = toolsLink.getBoundingClientRect();
-                    const style = getComputedStyle(toolsLink);
-                    const btnRect = btn.getBoundingClientRect();
-
-                    // Check that dropdown is visible and positioned correctly (not at far left)
-                    // The dropdown should be positioned relative to its trigger button
-                    const isPositionedCorrectly = rect.x > 100; // Should not be at far left edge
-
-                    return rect.width > 0 &&
-                           rect.height > 0 &&
-                           style.visibility === 'visible' &&
-                           style.opacity === '1' &&
-                           style.display !== 'none' &&
-                           isPositionedCorrectly;
-                }""",
-                timeout=5000,
-            )
-            break
-        except Exception:
-            if attempt == 2:
-                raise
-            # Click outside to reset state
-            await page.mouse.click(1, 1)
-            # Wait for dropdown to close and state to reset
-            await page.wait_for_function(
-                """() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const btn = buttons.find(b => b.textContent?.includes('Internal'));
-                    if (!btn) return true;
-                    const expanded = btn.getAttribute('aria-expanded');
-                    const dropdownContent = document.querySelector('[data-radix-navigation-menu-content]');
-                    const isDropdownHidden = !dropdownContent || dropdownContent.style.display === 'none' ||
-                                           dropdownContent.getAttribute('data-state') === 'closed';
-                    return (!expanded || expanded === 'false') && isDropdownHidden;
-                }""",
-                timeout=2000,
-            )
-            # Wait for state reset to complete - verify button is ready for interaction
-            await page.wait_for_function(
-                """() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const btn = buttons.find(b => b.textContent?.includes('Internal'));
-                    if (!btn) return false;
-                    const rect = btn.getBoundingClientRect();
-                    const style = getComputedStyle(btn);
-                    return rect.width > 0 && rect.height > 0 && !btn.disabled &&
-                           style.visibility === 'visible' && style.opacity === '1';
-                }""",
-                timeout=1000,
-            )
-
-    # Find the Tools link
-    tools_link = page.locator("a:has-text('Tools')")
-
-    # Wait for the Tools link to be visible (in case dropdown is still animating)
-    # Use longer timeout (5s) to handle system load variations
-    await tools_link.wait_for(state="visible", timeout=5000)
-
-    # The key test: Can we actually see the dropdown content?
-    is_tools_visible = await tools_link.is_visible()
-    assert is_tools_visible, "Tools link should be visible in Internal dropdown"
-
-    # Get positions to verify positioning
-    internal_trigger_box = await internal_trigger.bounding_box()
-    tools_box = await tools_link.bounding_box()
-
-    assert internal_trigger_box is not None, (
-        "Should be able to get Internal trigger bounding box"
-    )
-    assert tools_box is not None, "Should be able to get Tools link bounding box"
-
-    # The dropdown should appear below the trigger
-    assert tools_box["y"] > internal_trigger_box["y"], (
-        "Internal dropdown should appear below trigger"
-    )
-
-    # The dropdown should be positioned reasonably relative to its trigger
-    # (not at the far left edge of the viewport)
-    # Note: We compare against a fixed threshold rather than notes_box because
-    # notes_box was captured when the Data dropdown was open, and that dropdown
-    # is now closed, making its coordinates potentially stale/unreliable.
-    assert tools_box["x"] > 100, (
-        f"Internal dropdown should be positioned reasonably (got x={tools_box['x']})"
-    )
+    await expect(trigger).to_have_attribute("aria-expanded", "false")
+    await expect(link).to_be_hidden()
 
 
 @pytest.mark.playwright
@@ -367,96 +123,24 @@ async def test_navigation_responsive_behavior(
 async def test_navigation_hover_states(
     web_test_fixture_readonly: WebTestFixture,
 ) -> None:
-    """Test that navigation menu items have proper hover states."""
+    """Hovering a dropdown link changes its visible background before navigation."""
     page = web_test_fixture_readonly.page
-    base_url = web_test_fixture_readonly.base_url
+    await page.goto(f"{web_test_fixture_readonly.base_url}/notes")
 
-    await page.goto(f"{base_url}/notes")
-
-    # Wait for navigation
-    await page.wait_for_selector(
-        "nav[data-orientation='horizontal']", state="visible", timeout=10000
-    )
-
-    # Wait for navigation to be fully ready (animations complete)
-    await page.wait_for_function(
-        """() => {
-            const nav = document.querySelector("nav[data-orientation='horizontal']");
-            if (!nav) return false;
-            const style = getComputedStyle(nav);
-            // Also check that Internal button exists and is ready
-            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('Internal'));
-            if (!btn) return false;
-            const btnStyle = getComputedStyle(btn);
-            return style.visibility === 'visible' && 
-                   style.opacity === '1' &&
-                   btnStyle.visibility === 'visible' &&
-                   btnStyle.opacity === '1';
-        }""",
-        timeout=3000,
-    )
-
-    # Open Internal dropdown to test hover states
-    internal_trigger = page.locator("button:has-text('Internal')").first
-
-    # Ensure button is ready before clicking
-    await internal_trigger.wait_for(state="visible", timeout=5000)
-    await page.wait_for_function(
-        """() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const btn = buttons.find(b => b.textContent?.includes('Internal'));
-            if (!btn) return false;
-            const rect = btn.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }""",
-        timeout=5000,
-    )
-
+    internal_trigger = page.get_by_role("button", name="Internal")
     await internal_trigger.click()
+    await expect(internal_trigger).to_have_attribute("aria-expanded", "true")
+    tools_link = page.get_by_role("link", name="Tools", exact=True)
+    await expect(tools_link).to_be_visible()
 
-    # Wait for dropdown to fully open with animations complete
-    await page.wait_for_function(
-        """() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const btn = buttons.find(b => b.textContent?.includes('Internal'));
-            if (!btn || btn.getAttribute('aria-expanded') !== 'true') return false;
-            
-            const links = Array.from(document.querySelectorAll('a'));
-            const toolsLink = links.find(a => a.textContent?.includes('Tools'));
-            if (!toolsLink) return false;
-            
-            const style = getComputedStyle(toolsLink);
-            return style.visibility === 'visible' && style.opacity === '1';
-        }""",
-        timeout=5000,
+    background_before = await tools_link.evaluate(
+        "element => getComputedStyle(element).backgroundColor"
     )
-
-    # Find a dropdown menu item and test hover
-    tools_link = page.locator("a:has-text('Tools')")
-    await tools_link.wait_for(state="visible", timeout=2000)
-
-    # Hover over the tools link
     await tools_link.hover()
-    # Wait for hover state to be applied
     await page.wait_for_function(
-        """() => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const toolsLink = links.find(a => a.textContent?.includes('Tools'));
-            if (!toolsLink) return false;
-            // Check that the element is in hover state (usually has background change)
-            const rect = toolsLink.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }""",
-        timeout=1000,
+        "([element, before]) => getComputedStyle(element).backgroundColor !== before",
+        arg=[await tools_link.element_handle(), background_before],
     )
 
-    # Check that hover state applies (the link should be visible and clickable)
-    is_visible = await tools_link.is_visible()
-    assert is_visible, "Hovered menu item should remain visible"
-
-    # Verify click works
     await tools_link.click()
-
-    # Should navigate to tools page
-    await page.wait_for_url("**/tools")
-    assert "/tools" in page.url, "Should navigate to tools page on click"
+    await expect(page).to_have_url(f"{web_test_fixture_readonly.base_url}/tools")

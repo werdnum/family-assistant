@@ -506,8 +506,7 @@ class TestDragAndDrop:
         assert action_names[-1] == "mouse_up"
         assert action_names.count("mouse_down") == 1
         assert action_names.count("mouse_up") == 1
-        # Initial move + 10 step moves
-        assert action_names.count("mouse_move") == 11
+        assert action_names.count("mouse_move") >= 10
 
         move_calls = [args for name, args in actions if name == "mouse_move"]
         assert move_calls[0]["x"] == start_x

@@ -237,8 +237,11 @@ async def test_read_text_attachment_tool(
 
 
 @pytest.mark.asyncio
-async def test_script_attachment_read(db_engine: AsyncEngine, tmp_path: Path) -> None:
-    """Test reading attachment content from script."""
+@pytest.mark.parametrize("use_database_handle", [False, True])
+async def test_script_attachment_read(
+    db_engine: AsyncEngine, tmp_path: Path, use_database_handle: bool
+) -> None:
+    """A script can read an attachment registered with either database path."""
     storage_path = tmp_path / "attachments"
     storage_path.mkdir()
     attachment_registry = AttachmentRegistry(
@@ -255,6 +258,7 @@ async def test_script_attachment_read(db_engine: AsyncEngine, tmp_path: Path) ->
         tool_name="test",
         description="test",
         conversation_id="conv_script",
+        db_context=db if use_database_handle else None,
         taint_state=TurnTaintState.empty(),
     )
     att_id = reg_metadata.attachment_id
@@ -283,84 +287,6 @@ content
     result = await execute_script_tool(exec_ctx, script)
     assert result.text is not None
     assert text_content in result.text
-
-
-@pytest.mark.asyncio
-async def test_script_attachment_read_same_transaction(
-    db_engine: AsyncEngine, tmp_path: Path
-) -> None:
-    """
-    Test reading attachment from script when created in the same transaction.
-
-    This test exposes a transaction isolation bug: when an attachment is created
-    within a transaction (like during tool processing), and then a script tries
-    to read it using attachment_read(), the script opens a NEW database connection
-    that cannot see the uncommitted attachment.
-
-    This simulates what happens in production when:
-    1. A tool returns a large result
-    2. ProcessingService auto-converts it to an attachment (within the request transaction)
-    3. LLM calls execute_script with attachment_read() to process it
-    4. The script fails because it can't see the uncommitted attachment
-    """
-    storage_path = tmp_path / "attachments"
-    storage_path.mkdir()
-    attachment_registry = AttachmentRegistry(
-        storage_path=str(storage_path), db_engine=db_engine, config=None
-    )
-
-    db = Database(engine=db_engine)
-    # Create attachment WITHIN the transaction (passing db_context)
-    # This simulates what happens during tool processing
-    text_content = "Content created in same transaction"
-    reg_metadata = await attachment_registry.store_and_register_tool_attachment(
-        file_content=text_content.encode("utf-8"),
-        filename="same_txn.txt",
-        content_type="text/plain",
-        tool_name="test",
-        description="test",
-        conversation_id="conv_same_txn",
-        db_context=db,  # KEY: Use same transaction
-        taint_state=TurnTaintState.empty(),
-    )
-    att_id = reg_metadata.attachment_id
-
-    # Verify the attachment exists in this transaction
-    metadata = await attachment_registry.get_attachment(db, att_id, acting_user_id=None)
-    assert metadata is not None, "Attachment should exist in same transaction"
-
-    exec_ctx = ToolExecutionContext(
-        interface_type="test",
-        conversation_id="conv_same_txn",
-        user_name="test",
-        turn_id=None,
-        db_context=db,
-        processing_service=None,
-        clock=SystemClock(),
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=attachment_registry,
-        camera_backend=None,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
-    )
-
-    # Try to read the attachment from a script
-    # This should work but currently fails due to transaction isolation
-    script = f"""
-content = attachment_read('{att_id}')
-content
-"""
-    result = await execute_script_tool(exec_ctx, script)
-    assert result.text is not None
-
-    # The bug: attachment_read() opens a NEW connection that can't see
-    # the uncommitted attachment, so it returns None
-    assert "Content created in same transaction" in result.text, (
-        f"Script should be able to read attachment created in same transaction. "
-        f"Got: {result.text}"
-    )
 
 
 @pytest.mark.asyncio

@@ -935,21 +935,11 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
     wake_llm configs are not routed through the script validator, which would
     reject them for having no script fields."""
     db_ctx = Database(engine=db_engine)
-    exec_context = ToolExecutionContext(
-        interface_type="web",
+    exec_context = _exec_context_with_profile(
+        db_ctx,
         conversation_id="update_test_conv",
-        user_name="test_user",
-        turn_id="test_turn",
-        db_context=db_ctx,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        camera_backend=None,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
+        processing_profile_id="complex_tasks",
+        user_id="user-789",
     )
 
     # Create automation

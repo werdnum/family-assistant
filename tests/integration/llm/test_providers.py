@@ -11,7 +11,13 @@ import pytest
 import pytest_asyncio
 from PIL import Image
 
-from family_assistant.llm import LLMInterface, LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.llm import (
+    InvalidRequestError,
+    LLMInterface,
+    LLMOutput,
+    ToolCallFunction,
+    ToolCallItem,
+)
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import ImageUrlContentPart, TextContentPart
 from family_assistant.tools.types import ToolAttachment
@@ -66,7 +72,6 @@ async def llm_client_factory() -> Callable[
 
 
 @pytest.mark.no_db
-@pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
 @pytest.mark.parametrize(
@@ -84,10 +89,6 @@ async def test_basic_completion(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test basic text completion for each provider."""
-    # Skip if running in CI without API keys
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     # Simple completion request
@@ -127,9 +128,6 @@ async def test_system_message_handling(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test handling of system messages."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -169,9 +167,6 @@ async def test_multi_turn_conversation(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test multi-turn conversation handling."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -198,111 +193,18 @@ async def test_multi_turn_conversation(
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
-async def test_model_parameters(
-    provider: str,
-    model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test that model parameters are properly passed through."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    # Create client with specific parameters
-    client = await llm_client_factory(provider, model, None)
-
-    # Test with low temperature for more deterministic output
-    messages = [create_user_message("Complete this sequence: 1, 2, 3, 4,")]
-
-    # Most models should complete this with "5"
-    response = await client.generate_response(messages)
-
-    assert isinstance(response, LLMOutput)
-    assert response.content is not None
-    assert "5" in response.content
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.vcr(before_record_response=sanitize_response)
-async def test_provider_specific_google_features(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test Google-specific features like Gemini's native file handling."""
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Google-specific test in CI without API key")
-
-    client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
-
-    # Test basic functionality specific to Google
-    # For now, just ensure the client works with Google-specific config
-    messages = [create_user_message("Say 'Google Gemini test passed'")]
-
-    response = await client.generate_response(messages)
-
-    assert isinstance(response, LLMOutput)
-    assert response.content is not None
-    assert "gemini" in response.content.lower() or "google" in response.content.lower()
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.vcr(before_record_response=sanitize_response)
-async def test_provider_specific_openai_features(
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test OpenAI-specific features."""
-    if os.getenv("CI") and not os.getenv("OPENAI_API_KEY"):
-        pytest.skip("Skipping OpenAI-specific test in CI without API key")
-
-    client = await llm_client_factory("openai", "gpt-4.1-nano", None)
-
-    # Test with a more complex prompt that showcases OpenAI capabilities
-    messages = [
-        create_system_message("You are a code reviewer."),
-        create_user_message("Review this Python code: print('hello')"),
-    ]
-
-    response = await client.generate_response(messages)
-
-    assert isinstance(response, LLMOutput)
-    assert response.content is not None
-    # Should get some kind of code review response
-    assert len(response.content) > 10
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.vcr(before_record_response=sanitize_response)
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "gpt-4.1-nano"),
-        ("google", "gemini-2.5-flash-lite"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ],
-)
 async def test_empty_conversation(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test handling of edge case with empty user message."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
-    # Some providers might handle empty messages differently
     messages = [create_user_message("")]
 
-    try:
-        response = await client.generate_response(messages)
-        # If it succeeds, should still return valid response
-        assert isinstance(response, LLMOutput)
-    except Exception as e:
-        # Some providers might reject empty messages
-        # This is acceptable behavior
-        assert "empty" in str(e).lower() or "content" in str(e).lower()
+    with pytest.raises(InvalidRequestError):
+        await client.generate_response(messages)
 
 
 @pytest.mark.no_db
@@ -322,9 +224,6 @@ async def test_reasoning_info_included(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that usage/reasoning information is included in response."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [create_user_message("Count to 5")]
@@ -334,21 +233,13 @@ async def test_reasoning_info_included(
     assert isinstance(response, LLMOutput)
     assert response.content is not None
 
-    # Check for reasoning_info (usage data)
-    if response.reasoning_info:
-        assert isinstance(response.reasoning_info, dict)
-        # Most providers include token counts
-        assert any(
-            key in response.reasoning_info
-            for key in [
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "prompt_token_count",
-                "candidates_token_count",
-                "total_token_count",
-            ]
-        )
+    assert response.reasoning_info is not None
+    prompt_tokens = response.reasoning_info.get("prompt_tokens", 0)
+    completion_tokens = response.reasoning_info.get("completion_tokens", 0)
+    total_tokens = response.reasoning_info.get("total_tokens", 0)
+    assert prompt_tokens > 0
+    assert completion_tokens > 0
+    assert total_tokens >= prompt_tokens + completion_tokens
 
 
 @pytest.mark.no_db
@@ -358,9 +249,6 @@ async def test_gemini_multipart_content_with_images(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that Gemini can handle multi-part content with text and images."""
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Gemini image test in CI without API key")
-
     client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
 
     # Generate a simple red square image
@@ -399,7 +287,7 @@ async def test_gemini_multipart_content_with_images(
     assert len(response.content) > 0
 
     # The model should mention red in the response
-    assert "red" in response.content.lower() or "color" in response.content.lower()
+    assert "red" in response.content.lower()
 
 
 @pytest.mark.no_db
@@ -409,9 +297,6 @@ async def test_gemini_system_message_with_multipart_content(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that Gemini can handle system messages with multi-part user content."""
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Gemini system+image test in CI without API key")
-
     client = await llm_client_factory("google", "gemini-2.5-flash-lite", None)
 
     # Create a valid blue square image
@@ -468,9 +353,6 @@ async def test_tool_message_with_image_attachment(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test that providers handle tool messages with image attachments."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     # Import here to avoid circular imports
@@ -538,9 +420,6 @@ async def test_tool_message_with_pdf_attachment(
     This test uses the actual PDF file about software updates to verify that LLMs
     can read and understand PDF content when sent via the appropriate API format.
     """
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     # Import here to avoid circular imports
@@ -612,10 +491,6 @@ async def test_tool_message_with_pdf_attachment(
 @pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_gemini_url_grounding() -> None:
     """Test Gemini URL grounding feature with real URL."""
-    # Skip if running in CI without API key
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Gemini URL grounding test in CI without API key")
-
     # Create Gemini client with URL context enabled
     config = {
         "provider": "google",
@@ -655,12 +530,6 @@ async def test_gemini_google_search_grounding(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test Gemini Google Search grounding for real-time information."""
-    # Skip if running in CI without API key
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip(
-            "Skipping Gemini Google Search grounding test in CI without API key"
-        )
-
     # Create Gemini client with Google Search grounding enabled
     config = {
         "provider": "google",

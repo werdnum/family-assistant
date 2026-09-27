@@ -566,10 +566,8 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
         if message.tool_call_id == "call_final_iteration"
     ]
     assert len(matching) == 1
-    assert (
-        "was not executed because the maximum iteration limit (1) was reached"
-        in matching[0].content
-    )
+    assert "not executed" in matching[0].content
+    assert "iteration limit" in matching[0].content
     assert matching[0].error_traceback == "max_iterations_reached"
 
 

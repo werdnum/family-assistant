@@ -510,6 +510,8 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
         turn_id="turn-current-user",
     )
 
+    captured_query: VectorSearchQuery | None = None
+
     async def fake_query_vector_store(
         *,
         db_context: Database,
@@ -526,7 +528,9 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
         turn's content in the result, not merely as a different internal
         query shape.
         """
+        nonlocal captured_query
         _ = db_context, query_embedding
+        captured_query = query
         hits: list[dict[str, object]] = [
             {"source_id": "message_turn:turn-other-user"},
             {"source_id": "message_turn:turn-current-user"},
@@ -554,6 +558,12 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
     assert "error" not in data, data
     assert data["result_count"] == 1
     assert data["results"][0]["content"] == "The accessible passport note"
+    assert captured_query is not None
+    assert captured_query.limit == 1
+    assert {filter_.key for filter_ in captured_query.metadata_filters} == {
+        "interface_type",
+        "processing_profile_id",
+    }
 
 
 @pytest.mark.asyncio

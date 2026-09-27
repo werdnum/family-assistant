@@ -414,14 +414,7 @@ def test_engineer_side_effects_and_reads_policy() -> None:
 
 
 def test_engineer_review_guidance_reaches_reviewer_prompt() -> None:
-    """The engineer's configured review guidance is rendered into the reviewer's prompt.
-
-    Asserting on the strings alone in ``defaults.yaml`` would pass even if
-    ``review_guidance`` were never forwarded to the reviewer, so this drives it
-    through ``assemble_tool_call_review_messages`` -- the function that builds
-    the actual prompt sent to the tool-call review LLM -- and checks the text
-    lands there.
-    """
+    """Configured engineer guidance is included when assembling a reviewer prompt."""
     engineer = _engineer_profile()
     guidance = engineer.processing_config.review_guidance
     assert guidance

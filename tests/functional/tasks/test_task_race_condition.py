@@ -50,14 +50,14 @@ async def test_stale_task_cutoff_is_fifteen_minutes(db_engine: AsyncEngine) -> N
     still_locked = await db_context.tasks.dequeue(
         worker_id="worker_b",
         task_types=["race_test"],
-        current_time=start_time + timedelta(minutes=6),
+        current_time=start_time + timedelta(minutes=15) - timedelta(microseconds=1),
     )
-    assert still_locked is None, "Lock held for only 6 minutes must not be stolen"
+    assert still_locked is None, "Lock must remain held until the 15-minute cutoff"
 
     now_stale = await db_context.tasks.dequeue(
         worker_id="worker_b",
         task_types=["race_test"],
-        current_time=start_time + timedelta(minutes=16),
+        current_time=start_time + timedelta(minutes=15),
     )
     assert now_stale is not None, (
         "A lock held past the 15-minute cutoff must become reclaimable"

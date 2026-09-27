@@ -151,12 +151,15 @@ class TestBrowserSessionOperation:
         session = BrowserSession()
         recorder = _Recorder()
         gate = asyncio.Event()
+        entered = asyncio.Event()
 
         async def _gated_first() -> None:
             async with session.operation(_context(None, None)):
+                entered.set()
                 await gate.wait()
 
         first = asyncio.create_task(_gated_first())
+        await asyncio.wait_for(entered.wait(), timeout=2)
         second = asyncio.create_task(recorder.run(session, _context(None, None), "b"))
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(asyncio.shield(second), timeout=0.05)
@@ -164,6 +167,7 @@ class TestBrowserSessionOperation:
         gate.set()
         await asyncio.wait_for(asyncio.gather(first, second), timeout=2)
         assert recorder.entered == ["b"]
+        assert recorder.left == ["b"]
 
     async def test_a_sibling_that_never_ran_does_not_wedge_the_batch(self) -> None:
         """Denials and failures report completion, so the rest of the batch runs."""

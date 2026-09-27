@@ -210,12 +210,14 @@ async def test_get_conversations_pagination(
                 },
             )
             assert response.status_code == 200
+        pages = []
         # Get first page (limit 2)
         response = await client.get("/api/v1/chat/conversations?limit=2&offset=0")
         assert response.status_code == 200
         data = response.json()
         assert len(data["conversations"]) == 2
         assert data["count"] == 5
+        pages.extend(data["conversations"])
 
         # Get second page
         response = await client.get("/api/v1/chat/conversations?limit=2&offset=2")
@@ -223,6 +225,7 @@ async def test_get_conversations_pagination(
         data = response.json()
         assert len(data["conversations"]) == 2
         assert data["count"] == 5
+        pages.extend(data["conversations"])
 
         # Get third page
         response = await client.get("/api/v1/chat/conversations?limit=2&offset=4")
@@ -230,6 +233,16 @@ async def test_get_conversations_pagination(
         data = response.json()
         assert len(data["conversations"]) == 1
         assert data["count"] == 5
+        pages.extend(data["conversations"])
+
+        conversation_ids = [page["conversation_id"] for page in pages]
+        assert len(conversation_ids) == len(set(conversation_ids))
+        assert set(conversation_ids) == {f"test_conv_page_{i}" for i in range(5)}
+        assert pages == sorted(
+            pages,
+            key=lambda page: (page["last_timestamp"], page["conversation_id"]),
+            reverse=True,
+        )
 
 
 @pytest.mark.asyncio

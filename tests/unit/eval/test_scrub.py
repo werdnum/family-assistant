@@ -277,14 +277,25 @@ def test_pseudonymize_case_is_stable_and_preserves_id() -> None:
 
 def test_pseudonymize_case_replaces_explicit_literals() -> None:
     case = _conversation_case("case-lit")
+    payload = case.payload
+    assert isinstance(payload, ConversationPayload)
+    case = case.model_copy(
+        update={
+            "payload": payload.model_copy(
+                update={
+                    "arguments": {
+                        **payload.arguments,
+                        "message_content": "They live on Elm Street.",
+                    }
+                }
+            )
+        }
+    )
     pseudonymizer = Pseudonymizer(literals={"Elm Street": "<street>"})
-    # A literal appearing in content is replaced verbatim.
-    scrubbed = pseudonymizer.scrub_text("They live on Elm Street.")
-    assert "Elm Street" not in scrubbed
-    assert "<street>" in scrubbed
-    # And case-level pseudonymization still round-trips to a valid case.
     result = pseudonymizer.pseudonymize_case(case)
-    assert result.id == "case-lit"
+    result_payload = result.payload
+    assert isinstance(result_payload, ConversationPayload)
+    assert result_payload.arguments["message_content"] == "They live on <street>."
 
 
 def _case_with_argument_keys(keys: dict[str, object]) -> EvalCase:

@@ -1,9 +1,10 @@
 """Functional tests for Asterisk Live API."""
 
-import contextlib
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterator, Generator
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,12 @@ from starlette.websockets import WebSocketDisconnect
 
 from family_assistant.web.app_creator import app
 from tests.helpers import wait_for_condition
+
+
+def _read_call_trace(dump_dir: Path) -> list[dict[str, object]]:
+    trace_paths = list(dump_dir.glob("*/packet_trace.jsonl"))
+    assert len(trace_paths) == 1
+    return [json.loads(line) for line in trace_paths[0].read_text().splitlines()]
 
 
 @pytest.fixture
@@ -131,9 +138,11 @@ async def test_asterisk_connection_flow(
         # 3. Send HANGUP
         websocket.send_text("HANGUP")
 
-        # WebSocket should close
-        with contextlib.suppress(Exception):
-            websocket.receive_text()
+        while True:
+            message = websocket.receive()
+            if message["type"] == "websocket.close":
+                assert message["code"] == 1000
+                break
 
 
 @pytest.mark.no_db
@@ -321,12 +330,14 @@ async def test_asterisk_allows_all_when_no_auth_configured(
 async def test_asterisk_passes_extension_and_channel_to_handler(
     mock_gemini_client: tuple[MagicMock, MagicMock],
     asterisk_env_cleanup: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    """Extension and channel_id are passed to the handler."""
+    """The call trace identifies the caller and Asterisk channel."""
     mock_client_class, _mock_session = mock_gemini_client
-    # No auth required for this test
     os.environ.pop("ASTERISK_SECRET_TOKEN", None)
     os.environ.pop("ASTERISK_ALLOWED_EXTENSIONS", None)
+    monkeypatch.setenv("ASTERISK_LIVE_DUMP_DIR", str(tmp_path))
 
     with (
         TestClient(app) as client,
@@ -336,8 +347,15 @@ async def test_asterisk_passes_extension_and_channel_to_handler(
     ):
         websocket.send_text("MEDIA_START format:slin16")
         await wait_for_condition(lambda: mock_client_class.called)
-        # Connection should succeed - extension and channel_id are informational
-        assert mock_client_class.called
+
+    trace = await asyncio.to_thread(_read_call_trace, tmp_path)
+    assert any(
+        event["event"] == "websocket_accept"
+        and event["extension"] == "101"
+        and event["conversation_id"] == "SIP/101-00001"
+        for event in trace
+        if event.get("kind") == "lifecycle"
+    )
 
 
 @pytest.mark.no_db

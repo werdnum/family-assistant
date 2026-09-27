@@ -333,7 +333,7 @@ async def test_concurrent_calls_single_flight(db_context: Database) -> None:
         arrived += 1
         if arrived >= concurrency:
             all_arrived.set()
-        await all_arrived.wait()
+        await asyncio.wait_for(all_arrived.wait(), timeout=10)
         return result
 
     # Deliberate instance-level patch of a bound method to inject a test-only
@@ -346,10 +346,16 @@ async def test_concurrent_calls_single_flight(db_context: Database) -> None:
         )
         for _ in range(concurrency)
     ]
-    # Let the first refresh reach the transport, then release everyone.
-    await transport.started.wait()
-    gate.set()
-    tokens = await asyncio.gather(*tasks)
+    try:
+        # Let the first refresh reach the transport, then release everyone.
+        await asyncio.wait_for(transport.started.wait(), timeout=10)
+        gate.set()
+        tokens = await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+    finally:
+        gate.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     assert all(token == "access-single" for token in tokens)
     assert transport.calls == 1

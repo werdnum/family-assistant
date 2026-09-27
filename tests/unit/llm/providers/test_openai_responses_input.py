@@ -18,6 +18,11 @@ from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.tools.types import ToolAttachment
 
 
+@pytest.fixture(autouse=True)
+def _clear_openai_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+
 def test_responses_continuation_omits_response_status() -> None:
     """Completed response metadata must not be replayed as request input."""
     client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
@@ -352,17 +357,6 @@ def test_environment_base_url_also_counts_as_a_compatible_backend(
     assert client._uses_responses_api() is False
 
 
-def test_direct_openai_is_still_detected_without_a_base_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The common case must not be misclassified by the stricter check."""
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-
-    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
-
-    assert client._uses_responses_api() is True
-
-
 @pytest.mark.parametrize(
     "message,expected_type",
     [
@@ -532,11 +526,9 @@ def test_unreadable_media_without_an_id_asks_the_user_instead() -> None:
     assert "None" not in text
 
 
-def _injected_responses_parts(
-    mime_type: str, *, base_url: str | None = None
-) -> list[dict[str, object]]:
+def _injected_responses_parts(mime_type: str) -> list[dict[str, object]]:
     """Run an attachment through injection and the Responses conversion."""
-    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra", base_url=base_url)
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
     attachment = ToolAttachment(
         content=b"hello",
         mime_type=mime_type,
@@ -585,11 +577,22 @@ def test_injected_pdf_on_a_compatible_endpoint_stays_text() -> None:
     A `base_url` backend implements Chat Completions only. Sending it a PDF data
     URI as an image part would be a malformed request rather than a graceful one.
     """
-    parts = _injected_responses_parts(
-        "application/pdf", base_url="https://openrouter.ai/api/v1"
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-terra",
+        base_url="https://openrouter.ai/api/v1",
     )
+    attachment = ToolAttachment(
+        content=b"hello",
+        mime_type="application/pdf",
+        attachment_id="att-9",
+        description="a file",
+    )
+    message = client.create_attachment_injection(attachment)
+    serialized = client._to_chat_completions_message(message)
 
-    assert [part["type"] for part in parts] == ["input_text"]
-    text = parts[0]["text"]
-    assert isinstance(text, str)
-    assert "PDF Document" in text
+    assert client._uses_responses_api() is False
+    parts = serialized["content"]
+    assert isinstance(parts, list)
+    assert [part["type"] for part in parts] == ["text", "text"]
+    assert "PDF Document" in parts[1]["text"]

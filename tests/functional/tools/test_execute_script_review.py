@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import update
@@ -89,7 +90,6 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.scripting.apis.keychute import KeychuteScriptHttpClient
     from family_assistant.scripting.invocation import ScriptReviewContext
 
 
@@ -446,38 +446,61 @@ async def test_approved_program_covers_new_taint_and_ordinary_effects_once(
     assert context.taint_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
-async def _authorize_keychute(
-    client: KeychuteScriptHttpClient, secret_name: str, url: str
-) -> None:
-    # The broker round trip is faked; the runtime-taint gate in front of it is
-    # what these tests exercise.
-    await client._authorize_egress(
-        secret_name=secret_name,
-        url=url,
-        method="GET",
-        headers=None,
-        request_body=None,
-        reason="",
-        ttl_seconds=300,
-        max_uses=1,
-        approval_timeout_seconds=300,
-        request_timeout_seconds=120.0,
-    )
+def _keychute_broker_handler(
+    expected_host: str,
+    expected_path: str,
+    proxy_requests: list[httpx.Request],
+) -> httpx.MockTransport:
+    request_id = "11111111-1111-4111-8111-111111111111"
+    grant_id = "22222222-2222-4222-8222-222222222222"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "keychute.test"
+        assert request.headers["authorization"] == "Bearer test-token"
+        if request.url.path == "/v1/access-requests":
+            body = json.loads(request.content)
+            assert body["secret_name"] == "weather"
+            assert body["constraints"]["origins"] == [{"host": expected_host}]
+            assert body["constraints"]["path_prefixes"] == [expected_path]
+            return httpx.Response(
+                201, json={"request_id": request_id, "state": "pending"}
+            )
+        if request.url.path == f"/v1/access-requests/{request_id}/wait":
+            return httpx.Response(
+                200,
+                json={
+                    "request_id": request_id,
+                    "state": "approved",
+                    "grant_id": grant_id,
+                },
+            )
+        if request.url.path == f"/v1/grants/{grant_id}":
+            return httpx.Response(
+                200,
+                json={
+                    "grant_id": grant_id,
+                    "mechanism": "brokered",
+                    "constraints": {
+                        "origins": [{"host": expected_host}],
+                        "methods": ["GET"],
+                    },
+                    "revoked": False,
+                },
+            )
+        assert request.url.path == f"/v1/grants/{grant_id}/proxy{expected_path}"
+        proxy_requests.append(request)
+        return httpx.Response(200, content=b"ok")
+
+    return httpx.MockTransport(handler)
 
 
 @pytest.mark.asyncio
 async def test_approved_program_covers_keychute_named_sink_once(
     db_engine: AsyncEngine,
 ) -> None:
-    request_calls = 0
-
-    async def fake_request(
-        client: KeychuteScriptHttpClient, secret_name: str, url: str
-    ) -> dict[str, object]:
-        nonlocal request_calls
-        await _authorize_keychute(client, secret_name, url)
-        request_calls += 1
-        return {"status_code": 200, "headers": {}, "body": b"ok"}
+    proxy_requests: list[httpx.Request] = []
+    transport = _keychute_broker_handler("example.test", "/data", proxy_requests)
+    async_client_class = httpx.AsyncClient
 
     source = (
         'keychute_http_request("weather", "https://example.test/data")["status_code"]'
@@ -514,15 +537,28 @@ async def test_approved_program_covers_keychute_named_sink_once(
     )
 
     with patch(
-        "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
-        fake_request,
+        "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
+        side_effect=lambda **kwargs: async_client_class(transport=transport, **kwargs),
     ):
         result = await _execute_script(provider, context, script=source)
 
-    assert request_calls == 1
+    assert len(proxy_requests) == 1
     assert len(reviewer.calls) == 1
     assert isinstance(result, ToolResult)
     assert result.data == 200
+    events = await context.db_context.taint_audit_events.list_for_turn(
+        "script-review-turn"
+    )
+    assert (
+        len([
+            event
+            for event in events
+            if event["event_type"] == "policy_evaluation"
+            and event["tool_name"] == "keychute_http_request"
+            and event["sink_class"] == SinkClass.SANDBOX_NETWORK.value
+        ])
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -2081,15 +2117,9 @@ async def test_unclassified_tool_result_narrows_approval_for_external_destinatio
 async def test_model_result_ends_keychute_inheritance(
     db_engine: AsyncEngine,
 ) -> None:
-    request_calls = 0
-
-    async def fake_request(
-        client: KeychuteScriptHttpClient, secret_name: str, url: str
-    ) -> dict[str, object]:
-        nonlocal request_calls
-        await _authorize_keychute(client, secret_name, url)
-        request_calls += 1
-        return {"status_code": 200, "headers": {}, "body": b"ok"}
+    proxy_requests: list[httpx.Request] = []
+    transport = _keychute_broker_handler("attacker.test", "/collect", proxy_requests)
+    async_client_class = httpx.AsyncClient
 
     source = (
         'url = llm("Which endpoint?")\n'
@@ -2135,8 +2165,10 @@ async def test_model_result_ends_keychute_inheritance(
 
     with (
         patch(
-            "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
-            fake_request,
+            "family_assistant.scripting.apis.keychute.httpx.AsyncClient",
+            side_effect=lambda **kwargs: async_client_class(
+                transport=transport, **kwargs
+            ),
         ),
         patch(
             "family_assistant.llm.one_shot.LLMClientFactory.create_client",
@@ -2145,7 +2177,7 @@ async def test_model_result_ends_keychute_inheritance(
     ):
         await _execute_script(provider, context, script=source)
 
-    assert request_calls == 1
+    assert len(proxy_requests) == 1
     assert [call.review_input.descriptor.name for call in reviewer.calls] == [
         "execute_script",
         "keychute_http_request",

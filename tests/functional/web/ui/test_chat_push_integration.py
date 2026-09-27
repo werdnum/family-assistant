@@ -20,55 +20,23 @@ TEST_PRIVATE_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 TEST_CONTACT_EMAIL = "test@example.com"
 
 
-@pytest.mark.asyncio
-async def test_web_chat_interface_initialized_with_push_service(
-    db_engine: AsyncEngine,
-) -> None:
-    """Test that WebChatInterface can be initialized with push notification service."""
-    # Arrange
-    service = PushNotificationService(
-        vapid_private_key=TEST_PRIVATE_KEY,
-        vapid_contact_email=TEST_CONTACT_EMAIL,
-    )
-
-    # Act
-    chat_interface = WebChatInterface(
-        database_engine=db_engine,
-        notifier=service,
-    )
-
-    # Assert
-    assert chat_interface.notifier is service
-    assert chat_interface.notifier is not None
-    assert chat_interface.notifier.enabled
-
-
-@pytest.mark.asyncio
-async def test_web_chat_accepts_none_push_service(
-    db_engine: AsyncEngine,
-) -> None:
-    """Test that WebChatInterface accepts None for push service."""
-    # Act
-    chat_interface = WebChatInterface(
-        database_engine=db_engine,
-        notifier=None,
-    )
-
-    # Assert
-    assert chat_interface.notifier is None
-
-
+@pytest.mark.parametrize("with_push_service", [False, True])
 @pytest.mark.asyncio
 async def test_web_chat_message_saved_successfully(
     db_engine: AsyncEngine,
+    with_push_service: bool,
 ) -> None:
     """Test that WebChatInterface saves messages successfully regardless of push service."""
     # Arrange
     conversation_id = "test-conv-123"
     message_text = "Test message"
-    service = PushNotificationService(
-        vapid_private_key=TEST_PRIVATE_KEY,
-        vapid_contact_email=TEST_CONTACT_EMAIL,
+    service = (
+        PushNotificationService(
+            vapid_private_key=TEST_PRIVATE_KEY,
+            vapid_contact_email=TEST_CONTACT_EMAIL,
+        )
+        if with_push_service
+        else None
     )
 
     chat_interface = WebChatInterface(
@@ -103,7 +71,16 @@ async def test_web_chat_no_notification_when_disabled(
     db_engine: AsyncEngine,
 ) -> None:
     """Test that no notification is sent when service is disabled."""
-    # Arrange - service with no keys (disabled)
+    conversation_id = "test-disabled"
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        message=UserMessage(content="Hello, assistant"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now(),
+        user_id="test-user",
+    )
+
     disabled_service = PushNotificationService(
         vapid_private_key=None,
         vapid_contact_email=None,
@@ -125,7 +102,7 @@ async def test_web_chat_no_notification_when_disabled(
 
     # Act
     await chat_interface.send_message(
-        conversation_id="test-disabled",
+        conversation_id=conversation_id,
         text="No push for this",
     )
 
@@ -141,6 +118,14 @@ async def test_web_chat_handles_push_notification_error_gracefully(
     """Test that message delivery succeeds even if push notification fails."""
     # Arrange
     conversation_id = "test-conv-error"
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        message=UserMessage(content="Hello, assistant"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now(),
+        user_id="test-user",
+    )
 
     # Create service that will fail
     failing_service = PushNotificationService(
@@ -148,10 +133,14 @@ async def test_web_chat_handles_push_notification_error_gracefully(
         vapid_contact_email=TEST_CONTACT_EMAIL,
     )
 
+    send_called = False
+
     async def failing_send(  # pylint: disable=broad-exception-raised
         *args: Any,  # noqa: ANN401
         **kwargs: Any,  # noqa: ANN401
     ) -> NoReturn:
+        nonlocal send_called
+        send_called = True
         raise Exception("Push service is down!")
 
     failing_service.send_notification = failing_send  # type: ignore[assignment]
@@ -169,18 +158,26 @@ async def test_web_chat_handles_push_notification_error_gracefully(
         )
 
     # Assert
-    assert result is not None  # Message was saved despite push failure
+    assert result is not None
+    assert send_called
+    assert any(
+        record.levelno == logging.WARNING
+        and "Failed to send push notification" in record.message
+        for record in caplog.records
+    )
 
-    # Verify message in database - message saved even without user_id
-    db_context = Database(engine=db_engine)
     recent = await db_context.message_history.get_recent(
         interface_type="web",
         conversation_id=conversation_id,
         limit=10,
         max_age=timedelta(hours=1),
     )
-    assert len(recent) == 1
-    assert recent[0].content == "Message should still be saved"
+    assert len(recent) == 2
+    assert any(
+        message.role == "assistant"
+        and message.content == "Message should still be saved"
+        for message in recent
+    )
 
 
 @pytest.mark.asyncio
@@ -248,34 +245,3 @@ async def test_web_chat_sends_push_notification_with_user_message(
     assert send_notification_args["user_identifier"] == user_id
     assert send_notification_args["title"] == "New message"
     assert send_notification_args["body"] == assistant_text
-
-
-@pytest.mark.asyncio
-async def test_web_chat_without_push_service(
-    db_engine: AsyncEngine,
-) -> None:
-    """Test that WebChatInterface works correctly without push notification service."""
-    # Arrange
-    chat_interface = WebChatInterface(
-        database_engine=db_engine,
-        notifier=None,
-    )
-
-    # Act
-    result = await chat_interface.send_message(
-        conversation_id="no-service",
-        text="This works without push service",
-    )
-
-    # Assert
-    assert result is not None
-
-    # Verify message is saved
-    db_context = Database(engine=db_engine)
-    recent = await db_context.message_history.get_recent(
-        interface_type="web",
-        conversation_id="no-service",
-        limit=10,
-        max_age=timedelta(hours=1),
-    )
-    assert len(recent) == 1

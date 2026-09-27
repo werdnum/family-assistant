@@ -25,11 +25,6 @@ from family_assistant.tools.types import ToolAttachment
 class TestBaseLLMClient:
     """Test BaseLLMClient multimodal functionality"""
 
-    def test_supports_multimodal_tools_default(self) -> None:
-        """Test default multimodal support is False"""
-        client = BaseLLMClient()
-        assert client._supports_multimodal_tools() is False
-
     def test_create_attachment_injection_default(self) -> None:
         """Test default attachment injection"""
         client = BaseLLMClient()
@@ -130,11 +125,51 @@ class TestBaseLLMClient:
 class TestGoogleGenAIClient:
     """Test Google GenAI client multimodal handling"""
 
-    def test_supports_multimodal_tools(self) -> None:
-        """Test Gemini doesn't support multimodal tool responses"""
+    def test_older_model_injects_tool_attachment(self) -> None:
+        """Older Gemini models receive tool images in a following user message."""
         with patch("family_assistant.llm.providers.google_genai_client.genai"):
             client = GoogleGenAIClient(api_key="test", model="gemini-pro")
-            assert client._supports_multimodal_tools() is False
+
+        attachment = ToolAttachment(
+            mime_type="image/png", content=b"image bytes", description="Chart"
+        )
+        tool_message = ToolMessage(
+            tool_call_id="call_123",
+            content="Chart ready",
+            name="create_chart",
+            _attachments=[attachment],
+        )
+
+        result = client._process_tool_messages([tool_message])
+
+        assert len(result) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert result[0].tool_call_id == "call_123"
+        assert result[0].transient_attachments is None
+        assert isinstance(result[1], UserMessage)
+        assert result[1].parts is not None
+        assert result[1].parts[1].inline_data.mime_type == "image/png"
+        assert result[1].parts[1].inline_data.data == b"image bytes"
+
+    def test_gemini_3_keeps_tool_attachment_inline(self) -> None:
+        """Gemini 3 receives tool images with the tool response."""
+        with patch("family_assistant.llm.providers.google_genai_client.genai"):
+            client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
+
+        attachment = ToolAttachment(mime_type="image/png", content=b"image bytes")
+        tool_message = ToolMessage(
+            tool_call_id="call_123",
+            content="Chart ready",
+            name="create_chart",
+            _attachments=[attachment],
+        )
+
+        result = client._process_tool_messages([tool_message])
+
+        assert len(result) == 1
+        assert isinstance(result[0], ToolMessage)
+        assert result[0].content == "Chart ready"
+        assert result[0].transient_attachments == [attachment]
 
     def test_create_attachment_injection_image(self) -> None:
         """Test Gemini attachment injection for images"""
@@ -243,10 +278,29 @@ class TestGoogleGenAIClient:
 class TestOpenAIClient:
     """Test OpenAI client multimodal handling"""
 
-    def test_supports_multimodal_tools(self) -> None:
-        """Test OpenAI doesn't support multimodal tool responses"""
+    def test_process_tool_messages_injects_image_attachment(self) -> None:
+        """OpenAI receives a tool image in a following user message."""
         client = OpenAIClient(api_key="test", model="gpt-4")
-        assert client._supports_multimodal_tools() is False
+        attachment = ToolAttachment(mime_type="image/jpeg", content=b"image bytes")
+        tool_message = ToolMessage(
+            tool_call_id="call_123",
+            content="Image ready",
+            name="create_image",
+            _attachments=[attachment],
+        )
+
+        result = client._process_tool_messages([tool_message])
+
+        assert len(result) == 2
+        assert isinstance(result[0], ToolMessage)
+        assert result[0].tool_call_id == "call_123"
+        assert result[0].transient_attachments is None
+        assert isinstance(result[1], UserMessage)
+        assert isinstance(result[1].content, list)
+        assert result[1].content[1].type == "image_url"
+        image_url = result[1].content[1].image_url["url"]
+        assert image_url.startswith("data:image/jpeg;base64,")
+        assert base64.b64decode(image_url.split(",", 1)[1]) == b"image bytes"
 
     def test_create_attachment_injection_image(self) -> None:
         """Test OpenAI attachment injection for images"""
@@ -354,11 +408,6 @@ class TestOpenAIClient:
 
 class TestAnthropicClient:
     """Test AnthropicClient multimodal functionality"""
-
-    def test_supports_multimodal_tools(self) -> None:
-        """Test Anthropic supports multimodal tool responses"""
-        client = AnthropicClient(api_key="test", model="claude-3-sonnet-20240229")
-        assert client._supports_multimodal_tools() is True
 
     def test_process_tool_messages_with_image_attachment(self) -> None:
         """Test processing tool messages with image attachments"""

@@ -126,18 +126,28 @@ def test_expired_token_rejected(
     )
     assert isinstance(private_key, EllipticCurvePrivateKey)
     now = datetime.now(UTC)
-    token: str = pyjwt.encode(
-        {
-            "iss": jwt_tokens.JWT_ISSUER,
-            "aud": jwt_tokens.JWT_AUDIENCE,
-            "sub": "user@example.com",
-            "tid": 42,
-            "iat": now - timedelta(minutes=20),
-            "exp": now - timedelta(minutes=10),
-        },
+    claims = {
+        "iss": jwt_tokens.JWT_ISSUER,
+        "aud": jwt_tokens.JWT_AUDIENCE,
+        "sub": "user@example.com",
+        "tid": 42,
+        "iat": now - timedelta(minutes=20),
+        "exp": now - timedelta(minutes=10),
+    }
+    headers = {"kid": jwt_service.jwks_document()["keys"][0]["kid"]}
+    valid_token: str = pyjwt.encode(
+        {**claims, "exp": now + timedelta(minutes=10)},
         private_key,
         algorithm="ES256",
-        headers={"kid": jwt_service.jwks_document()["keys"][0]["kid"]},
+        headers=headers,
+    )
+    assert jwt_service.verify_access_token(valid_token) is not None
+
+    token: str = pyjwt.encode(
+        claims,
+        private_key,
+        algorithm="ES256",
+        headers=headers,
     )
     assert isinstance(token, str)
     assert jwt_service.verify_access_token(token) is None

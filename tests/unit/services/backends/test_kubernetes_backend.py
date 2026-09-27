@@ -170,6 +170,26 @@ class TestKubernetesBackendSpawnTask:
 class TestKubernetesBackendBuildJobManifest:
     """Tests for KubernetesBackend._build_job_manifest()."""
 
+    def test_build_manifest_without_config_uses_defaults(self) -> None:
+        """Default settings reach the Job that would be submitted."""
+        backend = KubernetesBackend()
+        manifest = backend._build_job_manifest(
+            job_name="ai-worker-task-123",
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+        assert manifest.metadata.namespace == "ml-bot"
+        assert manifest.spec.ttl_seconds_after_finished == 3600
+        pod_spec = manifest.spec.template.spec
+        assert pod_spec.service_account_name == "ai-worker"
+        assert pod_spec.runtime_class_name == "gvisor"
+        assert pod_spec.containers[0].image == "ghcr.io/werdnum/ai-coding-base:latest"
+
     def test_build_manifest_basic(self, backend: KubernetesBackend) -> None:
         """Test building basic job manifest."""
         manifest = backend._build_job_manifest(
@@ -672,7 +692,7 @@ class TestKubernetesBackendBuildJobManifest:
 
         container = manifest.spec.template.spec.containers[0]
         env_names = {e.name for e in container.env}
-        assert env_names == {
+        assert {
             "TASK_ID",
             "TASK_INPUT",
             "TASK_OUTPUT_DIR",
@@ -680,7 +700,8 @@ class TestKubernetesBackendBuildJobManifest:
             "AI_AGENT",
             "MAX_TURNS",
             "TASK_TIMEOUT_MINUTES",
-        }
+        } <= env_names
+        assert "MY_CUSTOM_VAR" not in env_names
 
 
 class TestKubernetesBackendGetTaskStatus:

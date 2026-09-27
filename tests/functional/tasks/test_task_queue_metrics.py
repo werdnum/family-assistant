@@ -83,6 +83,26 @@ async def test_a_task_that_ran_is_counted_as_completed(
     )
 
     await wait_for_tasks_to_complete(engine=db_engine, task_ids={task_type})
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": task_type,
+                    "priority": "interactive",
+                    "outcome": "completed",
+                },
+            )
+            == 1.0
+            and _sample(
+                "family_assistant_task_duration_seconds_count",
+                {"task_type": task_type, "priority": "interactive"},
+            )
+            == 1.0
+        ),
+        timeout=10.0,
+        description=f"completed task metrics for {task_type}",
+    )
 
     assert (
         _sample(
@@ -178,6 +198,21 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
     await wait_for_tasks_to_complete(
         engine=db_engine, task_ids={task_type}, allow_failures=True
     )
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": task_type,
+                    "priority": "interactive",
+                    "outcome": "failed",
+                },
+            )
+            == 1.0
+        ),
+        timeout=10.0,
+        description=f"failed task metric for {task_type}",
+    )
 
     assert (
         _sample(
@@ -237,6 +272,21 @@ async def test_a_task_rejected_before_its_handler_runs_is_counted_as_failed(
 
     await wait_for_tasks_to_complete(
         engine=db_engine, task_ids={task_id}, allow_failures=True
+    )
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": "llm_callback",
+                    "priority": "interactive",
+                    "outcome": "failed",
+                },
+            )
+            == failed_before + 1.0
+        ),
+        timeout=10.0,
+        description=f"rejected callback metric for {task_id}",
     )
 
     assert (

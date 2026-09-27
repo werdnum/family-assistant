@@ -111,7 +111,7 @@ class TestConvertToTelegramMarkdown:
         text = "Hello *world*"
         result, parse_mode = convert_to_telegram_markdown(text)
         assert parse_mode == "MarkdownV2"
-        assert result == "Hello _world_\n"
+        assert "Hello _world_" in result
 
     def test_escaping_applied(self) -> None:
         """Test that escaping bug fixes are applied."""

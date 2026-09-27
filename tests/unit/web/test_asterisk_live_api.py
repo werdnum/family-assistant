@@ -384,10 +384,11 @@ class TestGeminiConnectFlow:
     ) -> None:
         """No greeting frames reach the websocket when greeting.enabled is False."""
         session = self._make_session()
+        client = self._make_fake_client(session)
         config = GeminiLiveConfig(greeting=GeminiLiveGreetingConfig(enabled=False))
         handler = AsteriskLiveHandler(
             websocket=mock_websocket,
-            client=self._make_fake_client(session),
+            client=client,
             gemini_live_config=config,
         )
         handler.database_engine = None
@@ -395,6 +396,8 @@ class TestGeminiConnectFlow:
 
         await handler.run()
 
+        mock_websocket.send_text.assert_any_call("ANSWER")
+        client.connect.assert_called_once()
         assert not mock_websocket.send_bytes.called
 
 

@@ -1007,7 +1007,15 @@ async def test_schedule_advance_outbox_drains_after_source_commit(
         timeout_seconds=10.0,
         task_ids={original_task["task_id"]},
     )
-    await _wait_for_stuck_outbox_entry(engine, original_task["task_id"])
+    stuck_task = await _wait_for_stuck_outbox_entry(engine, original_task["task_id"])
+    assert stuck_task["payload"] is not None
+    outbox_payload = dict(stuck_task["payload"])
+    advance_request = dict(outbox_payload["_schedule_automation_advance"])
+    advance_request["schedule_next"] = False
+    outbox_payload["_schedule_automation_advance"] = advance_request
+    await Database(engine=engine).tasks.update_status(
+        task_id=original_task["task_id"], status="done", payload=outbox_payload
+    )
 
     # Enqueue recovers; the run loop drains the outbox on its own on the next
     # iteration, without needing to reprocess the source task.
@@ -1020,6 +1028,17 @@ async def test_schedule_advance_outbox_drains_after_source_commit(
     assert recovered_task is not None
     assert recovered_task["payload"] is not None
     assert "_schedule_automation_advance" not in recovered_task["payload"]
+
+    advance_tasks = [
+        task
+        for task in await _get_tasks_for_automation(engine, automation_id)
+        if task["task_type"] == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE
+    ]
+    assert len(advance_tasks) == 1
+    advance_payload = advance_tasks[0]["payload"]
+    assert advance_payload is not None
+    assert advance_payload["source_task_id"] == original_task["task_id"]
+    assert advance_payload["schedule_next"] is False
 
 
 @pytest.mark.asyncio

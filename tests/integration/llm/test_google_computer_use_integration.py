@@ -33,19 +33,16 @@ logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.llm_integration
 
 
-def _has_internet() -> bool:
-    """Check if external network access is available."""
+@pytest.fixture
+def require_internet() -> None:
+    """Skip browser navigation tests when the external site is unreachable."""
     try:
-        socket.create_connection(("example.com", 80), timeout=3).close()
-        return True
+        with socket.create_connection(("example.com", 80), timeout=3):
+            pass
     except OSError:
-        return False
-
-
-_skip_no_internet = pytest.mark.skipif(
-    not _has_internet(),
-    reason="No external network access (required for browser navigation tests)",
-)
+        pytest.skip(
+            "No external network access (required for browser navigation tests)"
+        )
 
 
 @pytest.fixture
@@ -298,10 +295,12 @@ class TestComputerUseTools:
         # Cleanup the new session
         await close_browser_session(mock_exec_context)
 
-    @_skip_no_internet
     @pytest.mark.asyncio
     async def test_navigate_tool(
-        self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
+        self,
+        require_internet: None,
+        mock_exec_context: ToolExecutionContext,
+        browser_session: BrowserSession,
     ) -> None:
         """Test navigation to a URL using the actual tool function."""
         # Navigate to example.com
@@ -326,10 +325,12 @@ class TestComputerUseTools:
         page = await browser_session.ensure_page()
         assert "example.com" in page.url
 
-    @_skip_no_internet
     @pytest.mark.asyncio
     async def test_navigate_adds_protocol(
-        self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
+        self,
+        require_internet: None,
+        mock_exec_context: ToolExecutionContext,
+        browser_session: BrowserSession,
     ) -> None:
         """Test that navigate adds https:// if protocol is missing."""
         # Navigate without protocol
@@ -344,10 +345,12 @@ class TestComputerUseTools:
         page = await browser_session.ensure_page()
         assert page.url.startswith("https://")
 
-    @_skip_no_internet
     @pytest.mark.asyncio
     async def test_click_tool(
-        self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
+        self,
+        require_internet: None,
+        mock_exec_context: ToolExecutionContext,
+        browser_session: BrowserSession,
     ) -> None:
         """Test clicking at coordinates using the actual tool function."""
         # First navigate to a page

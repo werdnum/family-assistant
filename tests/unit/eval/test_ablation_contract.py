@@ -127,22 +127,38 @@ def test_ablation_case_round_trips_with_metadata() -> None:
 
 
 @pytest.mark.parametrize(
-    "updates",
+    ("updates", "error"),
     [
-        {"matched_group": "group-1", "control_kind": None},
-        {"matched_group": None, "control_kind": "benign_twin"},
-        {"matched_group": None, "visibility": "full"},
-        {"matched_group": None, "source_group": "family-1"},
-        {"matched_group": "group-1", "visibility": "excerpt"},
-        {"matched_group": "group-1", "control_kind": "attack", "label": "benign"},
+        (
+            {"matched_group": "group-1", "control_kind": None},
+            "matched_group cases must declare",
+        ),
+        (
+            {"matched_group": None, "control_kind": "benign_twin"},
+            "require matched_group",
+        ),
+        (
+            {"matched_group": None, "control_kind": None, "visibility": "full"},
+            "visibility requires control_kind",
+        ),
+        (
+            {"matched_group": None, "control_kind": None, "visibility": None},
+            "source_group requires matched_group",
+        ),
+        ({"matched_group": "group-1", "visibility": "excerpt"}, "visibility"),
+        (
+            {"matched_group": "group-1", "control_kind": "attack", "label": "benign"},
+            "requires label",
+        ),
     ],
 )
 def test_partial_or_invalid_ablation_metadata_is_rejected(
     updates: dict[str, object],
+    error: str,
 ) -> None:
     values = _case(case_id="invalid").model_dump(mode="python")
     values.update(updates)
-    with pytest.raises((ValidationError, ValueError)):
+    with pytest.raises((ValidationError, ValueError), match=error):
         EvalCase.model_validate(values)
 
 
@@ -416,15 +432,6 @@ def test_legacy_case_without_ablation_metadata_remains_valid() -> None:
     assert case.control_kind is None
 
 
-def test_trial_carries_ablation_metadata() -> None:
-    trial = _trial(case=_case(case_id="carried"))
-
-    assert trial.source_group == "family-1"
-    assert trial.matched_group == "group-1"
-    assert trial.visibility == "hidden"
-    assert trial.control_kind == "attack"
-
-
 async def test_runner_carries_ablation_metadata_into_trial_records() -> None:
     class BrowserReviewer:
         async def review_browser_action(
@@ -447,6 +454,7 @@ async def test_runner_carries_ablation_metadata_into_trial_records() -> None:
         seeds=1,
     )
 
+    assert report.trials[0].source_group == case.source_group
     assert report.trials[0].matched_group == case.matched_group
     assert report.trials[0].visibility == case.visibility
     assert report.trials[0].control_kind == case.control_kind

@@ -140,27 +140,15 @@ def test_the_curator_holds_exactly_the_memory_tools(
     `global_tools_policy` is injected at the `profile` layer, which outranks the
     `defaults` layer a profile's own `tools_policy` occupies, so the three
     globally granted tools have to be withheld explicitly.
+
+    `search_documents` would expose the indexed corpus to an unattended turn.
+    `delete_note` is not confined as a write, so removals belong in the proposed
+    edit list instead.
     """
     assert _effective_tool_names(shipped_config, curator) == {
         "get_note",
         "propose_memory_edits",
     }
-
-
-def test_the_curator_reads_no_document_index_and_deletes_no_note(
-    shipped_config: AppConfig, curator: ServiceProfile
-) -> None:
-    """The two tools whose absence is a design decision, not an omission.
-
-    `search_documents` is the widest path from the indexed corpus into a turn
-    with no human in it. `delete_note` is not a write under the confinement
-    policy, so it would let the curator remove any note it can see; removals
-    are edits in the proposed list.
-    """
-    effective = _effective_tool_names(shipped_config, curator)
-
-    assert "search_documents" not in effective
-    assert "delete_note" not in effective
 
 
 def test_the_curator_receives_only_the_notes_context_provider(

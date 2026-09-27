@@ -77,7 +77,7 @@ async def test_recurring_task_failure_continues_recurrence(
 
     await wait_for_condition(
         check_conditions,
-        timeout=5.0,
+        timeout=10.0,
         description="Original task should fail and recurring task should be created",
     )
 

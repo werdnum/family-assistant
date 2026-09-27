@@ -493,6 +493,11 @@ async def test_add_calendar_event_targeting_succeeds_on_named_calendar(
             "password": passwd,
             "base_url": base_url,
             "calendar_urls": [
+                {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": f"{base_url}/missing-personal/",
+                },
                 {"id": "work", "name": "Work", "url": calendar_url},
             ],
         },
@@ -605,6 +610,11 @@ async def test_modify_calendar_event_targeting_succeeds_on_named_calendar(
             "password": passwd,
             "base_url": base_url,
             "calendar_urls": [
+                {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": f"{base_url}/missing-personal/",
+                },
                 {"id": "work", "name": "Work", "url": calendar_url},
             ],
         },
@@ -733,6 +743,11 @@ async def test_delete_calendar_event_targeting_succeeds_on_named_calendar(
             "password": passwd,
             "base_url": base_url,
             "calendar_urls": [
+                {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": f"{base_url}/missing-personal/",
+                },
                 {"id": "work", "name": "Work", "url": calendar_url},
             ],
         },
@@ -939,9 +954,17 @@ async def test_resolve_target_caldav_url_conflict_rejection() -> None:
 
 async def test_search_calendar_events_chronological_sorting(
     monkeypatch: pytest.MonkeyPatch,
+    radicale_server: tuple[str, str, str, str],
 ) -> None:
     ctx = _create_mock_context()
+    base_url, user, passwd, calendar_url = radicale_server
     config: CalendarConfig = {
+        "caldav": {
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [{"id": "work", "name": "Work", "url": calendar_url}],
+        },
         "ical": {
             "urls": [
                 {
@@ -957,6 +980,16 @@ async def test_search_calendar_events_chronological_sorting(
             ],
         },
     }
+    added = await add_calendar_event_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        summary="Latest CalDAV Event",
+        start_time="2026-05-01T16:00:00Z",
+        end_time="2026-05-01T17:00:00Z",
+        calendar_id="work",
+        bypass_duplicate_check=True,
+    )
+    assert "added to the calendar" in added
 
     # Feeds are registered later-first, but their events must still come out
     # sorted chronologically by start time, not by feed registration order.
@@ -992,7 +1025,7 @@ async def test_search_calendar_events_chronological_sorting(
     async def fake_get(
         self: httpx.AsyncClient, url: str, **kwargs: object
     ) -> httpx.Response:
-        return httpx.Response(200, text=feed_responses.get(url, ""))
+        return httpx.Response(200, text=feed_responses[url])
 
     monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
 
@@ -1007,6 +1040,8 @@ async def test_search_calendar_events_chronological_sorting(
     # across feeds, not by feed registration order.
     pos_earlier = result.find("Earlier Feed Event")
     pos_later = result.find("Later Feed Event")
+    pos_caldav = result.find("Latest CalDAV Event")
     assert pos_earlier != -1
     assert pos_later != -1
-    assert pos_earlier < pos_later
+    assert pos_caldav != -1
+    assert pos_earlier < pos_later < pos_caldav

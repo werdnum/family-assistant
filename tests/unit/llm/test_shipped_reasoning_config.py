@@ -23,6 +23,7 @@ def _client_for(config: AppConfig, model: str) -> OpenAIClient:
         "provider": "openai",
         "model": model,
         "api_key": "test-key",
+        "base_url": "https://api.openai.com/v1",
         "model_parameters": config.llm_parameters,
     })
     assert isinstance(client, OpenAIClient)
@@ -66,22 +67,6 @@ def _anthropic_client_for(config: AppConfig, model: str) -> AnthropicClient:
     })
     assert isinstance(client, AnthropicClient)
     return client
-
-
-def test_shipped_defaults_enable_adaptive_thinking_for_opus_5(
-    shipped_config: AppConfig,
-) -> None:
-    """The shipped Opus 5 recipe must carry thinking, in its generation's shape.
-
-    `enabled` + `budget_tokens` is what the previous generation took and is a 400
-    on this one, so the type is asserted rather than merely the presence of a
-    `thinking` key.
-    """
-    params = _anthropic_client_for(
-        shipped_config, "claude-opus-5"
-    )._get_model_specific_params("claude-opus-5")
-
-    assert params["thinking"] == {"type": "adaptive"}
 
 
 def test_shipped_opus_5_request_carries_thinking_and_survives_validation(

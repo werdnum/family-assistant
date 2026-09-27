@@ -498,6 +498,7 @@ async def test_script_attachment_composition_dict_format(
                             "type": "array",
                             "items": {"type": "attachment"},
                         },
+                        "debug": {"type": "boolean"},
                     },
                     "required": ["spec"],
                 },
@@ -536,41 +537,23 @@ async def test_script_attachment_composition_dict_format(
         api_backend=None,
     )
 
-    # Script that calls a tool returning ToolResult with attachments,
-    # then passes that result to create_vega_chart
-    # The tool result gets munged to a ScriptToolResult dict: {"text": "...", "attachments": [...]}
-    # This should fail with: 'dict' object has no attribute 'get_content_async'
+    # Pass the script-facing result of one tool to a second tool that reads its attachment.
     script = """
-# Call mock tool that returns ToolResult with attachments
-# This gets munged to a ScriptToolResult dict by ToolsAPI
 data_result = get_test_data()
-
-# Create Vega-Lite spec as JSON string
-spec_json = '{"$schema": "https://vega.github.io/schema/vega-lite/v5.json", "data": {"name": "data.json"}, "mark": "line", "encoding": {"x": {"field": "x", "type": "quantitative"}, "y": {"field": "y", "type": "quantitative"}}}'
-
-# Pass the ScriptToolResult dict to create_vega_chart
-# data_result is {"text": "Test data with 2 points", "attachments": [{"id": "..."}]}
-# This will fail because process_attachment_arguments doesn't handle ScriptToolResult dicts
+spec_json = '{"$schema": "https://vega.github.io/schema/vega-lite/v5.json", "data": {"name": "test_data.json"}, "mark": "line", "encoding": {"x": {"field": "x", "type": "quantitative"}, "y": {"field": "y", "type": "quantitative"}}}'
 chart = create_vega_chart(
     spec=spec_json,
-    data_attachments=[data_result]  # data_result is a ScriptToolResult dict!
+    data_attachments=[data_result],
+    debug=True
 )
 
 chart
 """
 
-    # Execute the script - should now work correctly with the fix
     result = await execute_script_tool(ctx, script)
 
-    # After fix: should succeed without errors
-    assert result.text is not None
-    # Should not have AttributeError
-    assert "AttributeError" not in result.text, f"Unexpected error: {result.text}"
-    assert "'dict' object has no attribute" not in result.text, (
-        f"Unexpected error: {result.text}"
-    )
-    # Should contain indication of success
-    assert "Error:" not in result.text or "Script result:" in result.text
+    assert isinstance(result.data, dict), result.text
+    assert result.data["data"]["values"] == [{"x": 1, "y": 2}, {"x": 2, "y": 4}]
 
 
 @pytest.mark.asyncio

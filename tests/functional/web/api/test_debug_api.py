@@ -15,6 +15,9 @@ from family_assistant.config_models import (
     ServiceProfile,
     ToolsConfig,
 )
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.openai_client import OpenAIClient
+from family_assistant.llm.retrying_client import RetryingLLMClient
 from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.policy import (
     PolicyRule,
@@ -261,49 +264,24 @@ async def test_dump_profiles_raw_format_is_compact(
 async def test_dump_profiles_includes_runtime_info(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """Runtime info is extracted using the same attribute shapes the real LLM clients use.
-
-    ``OpenAIClient`` / ``AnthropicClient`` expose ``self.model``, while
-    ``GoogleGenAIClient`` uses ``self.model_name`` with a leading ``models/``
-    prefix. The endpoint must surface the live model for all shapes and must
-    NOT re-emit a configured-only ``provider`` field (no concrete client
-    exposes one). This test uses small classes that mirror those real attribute
-    shapes to catch regressions where the endpoint reads from a
-    non-existent attribute.
-    """
-
-    class _OpenAILikeClient:
-        """Mirrors OpenAIClient/AnthropicClient — sets ``self.model``."""
-
-        def __init__(self) -> None:
-            self.model = "gpt-5-turbo"
-
-    class _GoogleLikeClient:
-        """Mirrors GoogleGenAIClient — sets ``self.model_name`` with ``models/`` prefix."""
-
-        def __init__(self) -> None:
-            self.model_name = "models/gemini-3.1-pro-preview"
+    """Runtime info exposes live models from concrete provider clients."""
 
     class _FakeContextProvider:
         name = "notes"
 
-    class _OpenAILocalService:
+    class _LocalService:
         kind = "local"
 
-        def __init__(self) -> None:
-            self.llm_client = _OpenAILikeClient()
-            self.context_providers = [_FakeContextProvider()]
+        def __init__(self, llm_client: OpenAIClient | GoogleGenAIClient) -> None:
+            self.llm_client = llm_client
+            self.context_providers: list[object] = [_FakeContextProvider()]
 
-    class _GoogleLocalService:
-        kind = "local"
-
-        def __init__(self) -> None:
-            self.llm_client = _GoogleLikeClient()
-            self.context_providers = [_FakeContextProvider()]
+    openai_client = OpenAIClient(api_key="test", model="gpt-5-turbo")
+    google_client = GoogleGenAIClient(api_key="test", model="gemini-3.1-pro-preview")
 
     registry = {
-        "trusted": _OpenAILocalService(),  # exercises the .model path
-        "readonly": _GoogleLocalService(),  # exercises the .model_name path
+        "trusted": _LocalService(openai_client),
+        "readonly": _LocalService(google_client),
     }
 
     original_config = _install_test_config(_make_sample_config())
@@ -317,117 +295,92 @@ async def test_dump_profiles_includes_runtime_info(
         assert trusted["runtime"]["kind"] == "local"
         assert trusted["runtime"]["llm_model"] == "gpt-5-turbo"
         assert trusted["runtime"]["llm_fallback_model"] is None
-        assert trusted["runtime"]["llm_client_class"] == "_OpenAILikeClient"
+        assert trusted["runtime"]["llm_client_class"] == "OpenAIClient"
         assert trusted["runtime"]["context_providers"] == ["notes"]
-        # provider should NOT be in runtime: no concrete client exposes it.
         assert "llm_provider" not in trusted["runtime"]
 
         readonly = next(p for p in data["profiles"] if p["id"] == "readonly")
-        # Google-like client: model_name with "models/" prefix is normalized.
         assert readonly["runtime"]["kind"] == "local"
         assert readonly["runtime"]["llm_model"] == "gemini-3.1-pro-preview"
         assert readonly["runtime"]["llm_fallback_model"] is None
-        assert readonly["runtime"]["llm_client_class"] == "_GoogleLikeClient"
+        assert readonly["runtime"]["llm_client_class"] == "GoogleGenAIClient"
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
+        await openai_client.close()
+        await google_client.close()
 
 
 @pytest.mark.asyncio
 async def test_dump_profiles_runtime_info_for_retrying_llm_client(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """RetryingLLMClient exposes model names on primary_model / fallback_model.
-
-    Profiles configured with ``processing_config.retry_config`` get their LLM
-    client wrapped by ``RetryingLLMClient`` in production (see ``assistant.py``).
-    That wrapper does not have ``model`` or ``model_name`` attributes; it stores
-    the active identifier on ``self.primary_model`` and the fallback on
-    ``self.fallback_model``. The endpoint must handle this wrapper shape or
-    ``/api/debug/profiles`` would emit ``"llm_model": null`` for any profile
-    using retry/fallback — a supported production configuration.
-    """
-
-    class _InnerClient:
-        """Stand-in for the primary/fallback provider client that RetryingLLMClient wraps."""
-
-    class _RetryingLikeClient:
-        """Mirrors RetryingLLMClient — wraps primary/fallback clients.
-
-        Sets ``fallback_client`` to a truthy object to signal that a fallback
-        is actually configured. ``RetryingLLMClient.__init__`` always sets
-        ``self.fallback_model`` to a default string, so the endpoint uses
-        ``fallback_client`` as the "fallback is wired" signal.
-        """
-
-        def __init__(self) -> None:
-            self.primary_client = _InnerClient()
-            self.primary_model = "anthropic/claude-sonnet-4-6"
-            self.fallback_client = _InnerClient()
-            self.fallback_model = "models/gemini-3.8-flash"
+    """The runtime dump identifies both models of a concrete retry client."""
 
     class _RetryingLocalService:
         kind = "local"
 
-        def __init__(self) -> None:
-            self.llm_client = _RetryingLikeClient()
+        def __init__(self, llm_client: RetryingLLMClient) -> None:
+            self.llm_client = llm_client
             self.context_providers: list[object] = []
 
+    primary_client = OpenAIClient(api_key="test", model="gpt-5-turbo")
+    fallback_client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
+    retrying_client = RetryingLLMClient(
+        primary_client=primary_client,
+        primary_model="gpt-5-turbo",
+        fallback_client=fallback_client,
+        fallback_model="models/gemini-3.8-flash",
+    )
     original_config = _install_test_config(_make_sample_config())
-    original_registry = _install_registry({"trusted": _RetryingLocalService()})
+    original_registry = _install_registry({
+        "trusted": _RetryingLocalService(retrying_client)
+    })
     try:
         response = await api_client.get("/api/debug/profiles")
         assert response.status_code == 200
         trusted = next(p for p in response.json()["profiles"] if p["id"] == "trusted")
         runtime = trusted["runtime"]
         assert runtime["kind"] == "local"
-        assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
+        assert runtime["llm_model"] == "gpt-5-turbo"
         # Fallback's "models/" prefix is normalized too.
         assert runtime["llm_fallback_model"] == "gemini-3.8-flash"
-        assert runtime["llm_client_class"] == "_RetryingLikeClient"
+        assert runtime["llm_client_class"] == "RetryingLLMClient"
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
+        await retrying_client.close()
 
 
 @pytest.mark.asyncio
 async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fallback(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """Primary-only retry_config profiles must not falsely advertise a fallback.
-
-    ``RetryingLLMClient.__init__`` always stores a default string on
-    ``self.fallback_model`` (currently ``"openai/gpt-5.6-terra"``) even when
-    ``fallback_client=None``, so a naive read of ``fallback_model`` would
-    misrepresent every primary-only retry profile as having a fallback.
-    """
-
-    class _PrimaryOnlyRetrying:
-        def __init__(self) -> None:
-            self.primary_client = object()
-            self.primary_model = "anthropic/claude-sonnet-4-6"
-            # Mirrors RetryingLLMClient: fallback_client=None but
-            # fallback_model retains its default string because of the
-            # ``fallback_model or "openai/gpt-5.6-terra"`` constructor logic.
-            self.fallback_client = None
-            self.fallback_model = "openai/gpt-5.6-terra"
+    """A concrete primary-only retry client does not advertise a fallback."""
 
     class _PrimaryOnlyService:
         kind = "local"
 
-        def __init__(self) -> None:
-            self.llm_client = _PrimaryOnlyRetrying()
+        def __init__(self, llm_client: RetryingLLMClient) -> None:
+            self.llm_client = llm_client
             self.context_providers: list[object] = []
 
+    primary_client = OpenAIClient(api_key="test", model="gpt-5-turbo")
+    retrying_client = RetryingLLMClient(
+        primary_client=primary_client,
+        primary_model="gpt-5-turbo",
+    )
     original_config = _install_test_config(_make_sample_config())
-    original_registry = _install_registry({"trusted": _PrimaryOnlyService()})
+    original_registry = _install_registry({
+        "trusted": _PrimaryOnlyService(retrying_client)
+    })
     try:
         response = await api_client.get("/api/debug/profiles")
         assert response.status_code == 200
         runtime = next(p for p in response.json()["profiles"] if p["id"] == "trusted")[
             "runtime"
         ]
-        assert runtime["llm_model"] == "anthropic/claude-sonnet-4-6"
+        assert runtime["llm_model"] == "gpt-5-turbo"
         assert runtime["llm_fallback_model"] is None
         # Sanity: the default fallback string must not leak into the response
         # anywhere, since no fallback_client is configured.
@@ -435,6 +388,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)
+        await retrying_client.close()
 
 
 @pytest.mark.asyncio

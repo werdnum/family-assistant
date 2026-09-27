@@ -1,71 +1,60 @@
-"""Test that Google GenAI client correctly emits tool_call events."""
+"""Test Google GenAI streamed tool call events."""
 
-import os
-from typing import TYPE_CHECKING
+from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock
 
 import pytest
+from google.genai import types
 
-from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
-
-if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolDefinition
 
 
 @pytest.mark.asyncio
-@pytest.mark.llm_integration
 async def test_tool_call_events_are_emitted() -> None:
-    """Test that tool_call events are emitted when LLM returns function calls."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        pytest.skip("GEMINI_API_KEY not set")
-
+    """A streamed SDK function call retains its name, arguments, and signature."""
     client = GoogleGenAIClient(
-        api_key=api_key,
+        api_key="test_key_for_unit_tests",
         model="gemini-3.8-flash",
     )
-
-    messages = [
-        SystemMessage(content="You are a helpful assistant."),
-        UserMessage(content="use Python to calculate 1+1"),
-    ]
-
-    tools: list[ToolDefinition] = [
-        {
-            "type": "function",
-            "function": {
-                "name": "execute_script",
-                "description": "Execute Python code",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "script": {
-                            "type": "string",
-                            "description": "Python code to execute",
-                        }
-                    },
-                    "required": ["script"],
-                },
-            },
-        }
-    ]
-
-    # Collect events
-    events = []
-    async for event in client.generate_response_stream(messages=messages, tools=tools):
-        events.append(event)
-        print(f"Event: {event.type}")
-        if event.type == "tool_call" and event.tool_call:
-            print(f"  Tool call: {event.tool_call.function.name}")
-
-    # Check that we got at least one tool_call event
-    tool_call_events = [e for e in events if e.type == "tool_call"]
-    assert len(tool_call_events) > 0, (
-        f"Expected tool_call events, got: {[e.type for e in events]}"
+    signature = b"signature_for_execute_script"
+    response = types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(
+                content=types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                name="execute_script",
+                                args={"script": "print(1 + 1)"},
+                            ),
+                            thought_signature=signature,
+                        )
+                    ],
+                )
+            )
+        ]
     )
 
-    # Check that the tool call has provider_metadata with thought_signature
-    tool_call_item = tool_call_events[0].tool_call
-    assert tool_call_item is not None, "tool_call should not be None"
-    assert tool_call_item.provider_metadata is not None
-    assert tool_call_item.provider_metadata.thought_signature is not None
+    async def stream() -> AsyncIterator[types.GenerateContentResponse]:
+        yield response
+
+    client.client.aio.models.generate_content_stream = AsyncMock(return_value=stream())
+
+    events = [
+        event
+        async for event in client.generate_response_stream(
+            messages=[UserMessage(content="Calculate 1+1")]
+        )
+    ]
+
+    tool_events = [event for event in events if event.type == "tool_call"]
+    assert len(tool_events) == 1
+    tool_call = tool_events[0].tool_call
+    assert tool_call is not None
+    assert tool_call.function.name == "execute_script"
+    assert tool_call.function.arguments == {"script": "print(1 + 1)"}
+    assert tool_call.provider_metadata is not None
+    assert tool_call.provider_metadata.thought_signature is not None
+    assert tool_call.provider_metadata.thought_signature.to_google_format() == signature
