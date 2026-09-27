@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from playwright.async_api import Page, Request, Response
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +144,12 @@ class BasePage:
         Returns:
             True if the element is visible, False otherwise
         """
-        await self.wait_for_load()
-        return await self.page.locator(selector).is_visible()
+        visible_match = self.page.locator(f"{selector} >> visible=true").first
+        try:
+            await visible_match.wait_for(state="visible", timeout=5000)
+        except PlaywrightTimeoutError:
+            return False
+        return True
 
     async def wait_for_success_message(self, message: str | None = None) -> None:
         """Wait for a success message to appear.

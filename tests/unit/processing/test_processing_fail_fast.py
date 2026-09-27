@@ -410,7 +410,9 @@ async def test_steer_echo_is_published_only_after_it_is_persisted(
     ],
 )
 async def test_done_event_attachment_type_reflects_mime_type(
-    mime_type: str | None, expected_display_type: str
+    mime_type: str | None,
+    expected_display_type: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The display type on the stream's done event, not the private helper that fills it in."""
 
@@ -442,21 +444,25 @@ async def test_done_event_attachment_type_reflects_mime_type(
             yield LLMStreamEvent(type="done", metadata={})
 
     service = _make_service(llm_client=cast("Any", SingleToolThenContentLLM()))
-    service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
-        return_value=ToolExecutionResult(
-            stream_event=LLMStreamEvent(
-                type="tool_result",
-                tool_call_id="call-1",
-                tool_result="ok",
-            ),
-            llm_message=ToolMessage(
-                tool_call_id="call-1",
-                content="ok",
-                name="example_tool",
-            ),
-            auto_attachment_ids=["att-1"],
-            explicit_attachment_ids=None,
-        )
+    monkeypatch.setattr(
+        service.tool_executor,
+        "execute",
+        AsyncMock(
+            return_value=ToolExecutionResult(
+                stream_event=LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id="call-1",
+                    tool_result="ok",
+                ),
+                llm_message=ToolMessage(
+                    tool_call_id="call-1",
+                    content="ok",
+                    name="example_tool",
+                ),
+                auto_attachment_ids=["att-1"],
+                explicit_attachment_ids=None,
+            )
+        ),
     )
     mock_registry = AsyncMock()
     mock_registry.get_attachment.return_value = MagicMock(
@@ -512,6 +518,7 @@ def test_tool_execution_result_applies_attachment_updates_consistently() -> None
 @pytest.mark.asyncio
 async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tool_call = ToolCallItem(
         id="call_final_iteration",
@@ -533,7 +540,7 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
             "tool_executor.execute must not run a call skipped by the iteration limit"
         )
 
-    service.tool_executor.execute = recording_execute  # type: ignore[method-assign]
+    monkeypatch.setattr(service.tool_executor, "execute", recording_execute)
 
     db_context = Database(db_engine)
     result = await service.handle_chat_interaction(
