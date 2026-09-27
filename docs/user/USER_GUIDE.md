@@ -21,6 +21,7 @@ just the part you need.
 
 | Guide                                                | Covers                                                                   |
 | ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| [household-tasks.md](household-tasks.md)             | Capturing and managing household tasks in Tuit                           |
 | [notes-and-skills.md](notes-and-skills.md)           | Saving facts as notes, and teaching the assistant reusable skills        |
 | [memory.md](memory.md)                               | What it remembers about your household on its own, and how to forget     |
 | [calendar.md](calendar.md)                           | Adding, finding, changing, and deleting calendar events, incl. Google    |
