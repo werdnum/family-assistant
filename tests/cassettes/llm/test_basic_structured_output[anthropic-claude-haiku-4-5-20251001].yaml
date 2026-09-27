@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"max_tokens":8192,"messages":[{"role":"user","content":"What is 2 + 2? Provide the expression, result, and a brief explanation."}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"tool","name":"return_structured_response"},"tools":[{"name":"return_structured_response","description":"Return the final response as a structured JSON object.","input_schema":{"description":"Math calculation result.","properties":{"explanation":{"title":"Explanation","type":"string"},"expression":{"title":"Expression","type":"string"},"result":{"title":"Result","type":"integer"}},"required":["expression","result","explanation"],"title":"MathResult","type":"object"}}]}'
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":[{"type":"text","text":"What is 2 + 2? Provide the expression, result, and a brief explanation."},{"type":"text","text":"Respond by calling the `return_structured_response` tool."}]}],"model":"claude-haiku-4-5-20251001","tool_choice":{"type":"auto"},"tools":[{"name":"return_structured_response","description":"Return the final response as a structured JSON object.","input_schema":{"description":"Math calculation result.","properties":{"explanation":{"title":"Explanation","type":"string"},"expression":{"title":"Expression","type":"string"},"result":{"title":"Result","type":"integer"}},"required":["expression","result","explanation"],"title":"MathResult","type":"object"}}]}'
       headers:
         accept:
           - application/json

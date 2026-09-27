@@ -281,7 +281,11 @@ async def test_nonstreaming_thinking_budget_error_keeps_invalid_request_type() -
 
 
 async def test_streaming_thinking_budget_error_is_typed_invalid_request() -> None:
-    """Stream error metadata maps the same local config failure correctly."""
+    """A stream that fails before any output raises the same typed error.
+
+    Raised rather than yielded as an error event, so a retrying client can
+    still hand the request to its fallback.
+    """
     client = AnthropicClient(
         api_key="test-key",
         model="claude-sonnet-4-6",
@@ -292,17 +296,11 @@ async def test_streaming_thinking_budget_error_is_typed_invalid_request() -> Non
         },
     )
 
-    events = [
-        event
-        async for event in client.generate_response_stream([
+    with pytest.raises(InvalidRequestError, match="must be less than max_tokens"):
+        async for _event in client.generate_response_stream([
             UserMessage(content="Think carefully")
-        ])
-    ]
-
-    assert len(events) == 1
-    assert events[0].type == "error"
-    assert events[0].metadata is not None
-    assert events[0].metadata.get("error_type") == "invalid_request"
+        ]):
+            pass
 
 
 class _FakeAnthropicStream:
@@ -397,14 +395,20 @@ def _shipped_client() -> AnthropicClient:
     )
 
 
-@pytest.mark.parametrize("tool_choice", ["required", "calc"])
-def test_forced_tool_choice_drops_thinking(tool_choice: str) -> None:
-    """Anthropic rejects thinking combined with a forced tool choice.
+@pytest.mark.parametrize(
+    ("tool_choice", "instruction"),
+    [
+        ("required", "Respond by calling one of the available tools."),
+        ("calc", "Respond by calling the `calc` tool."),
+    ],
+)
+def test_forced_tool_choice_is_requested_in_words(
+    tool_choice: str, instruction: str
+) -> None:
+    """A forced choice goes out as `auto` plus an instruction, keeping thinking.
 
-    `llm_parameters` is keyed by model, not by call path, so a model configured
-    for thinking carries it into requests that force a tool — where the reasoning
-    could not be used anyway. Covers both spellings of forcing: `any` (from
-    "required") and a named tool.
+    Opus 5.5 and Fable 5.1 reject a forced `any`/`tool` choice outright, and
+    every generation rejects one alongside thinking, so neither is ever sent.
     """
     params = _shipped_client()._build_request_params(
         api_messages=[{"role": "user", "content": "hi"}],
@@ -413,11 +417,34 @@ def test_forced_tool_choice_drops_thinking(tool_choice: str) -> None:
         tool_choice=tool_choice,
     )
 
-    assert params["tool_choice"]["type"] in {"any", "tool"}
-    assert "thinking" not in params
-    assert "output_config" not in params
-    # Only the incompatible keys go; the token ceiling the model needs stays.
-    assert params["max_tokens"] == 16000
+    assert params["tool_choice"] == {"type": "auto"}
+    assert params["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "text", "text": instruction},
+            ],
+        }
+    ]
+    assert params["thinking"] == {"type": "adaptive"}
+    assert params["output_config"] == {"effort": "high"}
+
+
+def test_tool_instruction_follows_tool_results_in_the_last_turn() -> None:
+    """After a tool round the last user turn is a list of blocks; it is extended."""
+    tool_result = {"type": "tool_result", "tool_use_id": "t1", "content": "4"}
+    params = _shipped_client()._build_request_params(
+        api_messages=[{"role": "user", "content": [tool_result]}],
+        system_blocks=None,
+        tools=_CALC_TOOL,
+        tool_choice="calc",
+    )
+
+    assert params["messages"][-1]["content"] == [
+        tool_result,
+        {"type": "text", "text": "Respond by calling the `calc` tool."},
+    ]
 
 
 def test_auto_tool_choice_keeps_thinking() -> None:
@@ -434,8 +461,8 @@ def test_auto_tool_choice_keeps_thinking() -> None:
     assert params["output_config"] == {"effort": "high"}
 
 
-async def test_structured_output_request_omits_thinking() -> None:
-    """`generate_structured` forces its output tool, so it can never send thinking.
+async def test_structured_output_requests_its_tool_in_words() -> None:
+    """`generate_structured` asks for its output tool rather than forcing it.
 
     Asserted on the request the client actually builds rather than on the helper,
     because this path assembles its params inline instead of going through
@@ -464,6 +491,9 @@ async def test_structured_output_request_omits_thinking() -> None:
 
     assert create.await_args is not None
     sent = create.await_args.kwargs
-    assert sent["tool_choice"]["type"] == "tool"
-    assert "thinking" not in sent
-    assert "output_config" not in sent
+    assert sent["tool_choice"] == {"type": "auto"}
+    assert sent["messages"][-1]["content"][-1] == {
+        "type": "text",
+        "text": "Respond by calling the `return_structured_response` tool.",
+    }
+    assert sent["thinking"] == {"type": "adaptive"}

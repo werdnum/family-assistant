@@ -80,8 +80,8 @@ async def test_openai_generate_json_uses_native_json_mode() -> None:
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
-async def test_anthropic_generate_structured_uses_forced_tool_schema() -> None:
-    """Anthropic structured output should use forced native tool use."""
+async def test_anthropic_generate_structured_uses_native_tool_schema() -> None:
+    """Anthropic structured output asks for its native output tool."""
     client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
     response = MagicMock()
     response.content = [
@@ -106,16 +106,13 @@ async def test_anthropic_generate_structured_uses_forced_tool_schema() -> None:
     assert mock_create.await_args is not None
     tools = mock_create.await_args.kwargs["tools"]
     assert tools[0]["name"] == "return_structured_response"
-    assert mock_create.await_args.kwargs["tool_choice"] == {
-        "type": "tool",
-        "name": "return_structured_response",
-    }
+    assert mock_create.await_args.kwargs["tool_choice"] == {"type": "auto"}
 
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
-async def test_anthropic_generate_json_uses_forced_object_tool() -> None:
-    """Anthropic JSON output should use forced native tool use."""
+async def test_anthropic_generate_json_uses_native_object_tool() -> None:
+    """Anthropic JSON output asks for its native object tool."""
     client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")
     response = MagicMock()
     response.content = [

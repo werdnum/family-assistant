@@ -29,7 +29,6 @@ from anthropic.types import (
     DocumentBlockParam,
     ImageBlockParam,
     TextBlockParam,
-    ToolChoiceParam,
     ToolParam,
     ToolResultBlockParam,
     ToolUseBlockParam,
@@ -408,12 +407,12 @@ class AnthropicClient(BaseLLMClient):
             "input_schema": input_schema,
         }
 
-    def _extract_forced_tool_input(
+    def _extract_native_tool_input(
         self,
         response: Any,  # noqa: ANN401 - Anthropic SDK content block union
         tool_name: str,
     ) -> dict[str, object]:
-        """Extract the input object from a forced tool-use response."""
+        """Extract the input object from a native output tool-use response."""
         for block in response.content:
             if block.type == "tool_use" and block.name == tool_name:
                 if isinstance(block.input, dict):
@@ -490,7 +489,7 @@ class AnthropicClient(BaseLLMClient):
         description: str,
         input_schema: dict[str, object],
     ) -> dict[str, object]:
-        """Request and extract one forced native-output tool call.
+        """Request and extract one native-output tool call.
 
         Instrumented per attempt rather than per ``generate_structured`` call:
         a schema-validation retry is a second billed request, and rolling the
@@ -503,7 +502,9 @@ class AnthropicClient(BaseLLMClient):
         # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
         params: dict[str, Any] = {
             "model": self.model,
-            "messages": api_messages,
+            "messages": self._request_tool_by_instruction(
+                api_messages, f"Respond by calling the `{tool_name}` tool."
+            ),
             "max_tokens": 8192,
             "tools": [
                 self._create_native_output_tool(
@@ -512,11 +513,11 @@ class AnthropicClient(BaseLLMClient):
                     input_schema=input_schema,
                 )
             ],
-            "tool_choice": {"type": "tool", "name": tool_name},
+            "tool_choice": {"type": "auto"},
             **self.default_kwargs,
             **self._get_model_specific_params(self.model),
         }
-        self._strip_thinking_for_forced_tool_choice(params)
+        self._validate_thinking_params(params)
         if system_blocks:
             params["system"] = system_blocks
 
@@ -527,7 +528,7 @@ class AnthropicClient(BaseLLMClient):
             system="anthropic",
             requested_model=self.model,
             messages=attempt_messages,
-            # The forced output tool goes in as a schema, not as a tool: it
+            # The output tool goes in as a schema, not as a tool: it
             # shapes the reply rather than offering the model something to
             # call, and counting it would make tool_count mean two things.
             tools=None,
@@ -552,7 +553,7 @@ class AnthropicClient(BaseLLMClient):
         # Outside the instrumented block: the request itself succeeded and was
         # billed, so a schema that fails to parse is the caller's retry to
         # count, not this call's failure.
-        return self._extract_forced_tool_input(response, tool_name)
+        return self._extract_native_tool_input(response, tool_name)
 
     @staticmethod
     def _record_structured_response(
@@ -633,20 +634,6 @@ class AnthropicClient(BaseLLMClient):
                 ),
             })
         return anthropic_tools
-
-    @staticmethod
-    def _convert_tool_choice_to_anthropic(
-        tool_choice: str | None,
-    ) -> ToolChoiceParam | None:
-        """Convert tool_choice string to Anthropic format."""
-        if tool_choice is None or tool_choice == "none":
-            return None
-        if tool_choice == "auto":
-            return {"type": "auto"}
-        if tool_choice in {"required", "any"}:
-            return {"type": "any"}
-        # Specific tool name
-        return {"type": "tool", "name": tool_choice}
 
     def _convert_messages_to_anthropic_format(
         self,
@@ -1040,45 +1027,48 @@ class AnthropicClient(BaseLLMClient):
 
         if tools:
             params["tools"] = self._convert_tools_to_anthropic_format(tools)
-            anthropic_tool_choice = self._convert_tool_choice_to_anthropic(tool_choice)
-            if anthropic_tool_choice:
-                params["tool_choice"] = anthropic_tool_choice
-                if self._forces_a_tool(anthropic_tool_choice):
-                    self._strip_thinking_for_forced_tool_choice(params)
+            if tool_choice is not None and tool_choice != "none":
+                params["tool_choice"] = {"type": "auto"}
+                if tool_choice in {"required", "any"}:
+                    params["messages"] = self._request_tool_by_instruction(
+                        api_messages,
+                        "Respond by calling one of the available tools.",
+                    )
+                elif tool_choice != "auto":
+                    params["messages"] = self._request_tool_by_instruction(
+                        api_messages, f"Respond by calling the `{tool_choice}` tool."
+                    )
 
         return params
 
     @staticmethod
-    def _strip_thinking_for_forced_tool_choice(
-        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
-        params: dict[str, Any],
-    ) -> None:
-        """Drop thinking parameters from a request that forces a tool choice.
+    def _request_tool_by_instruction(
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
+        api_messages: list[dict[str, Any]],
+        instruction: str,
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
+    ) -> list[dict[str, Any]]:
+        """Ask for a tool call in the final user turn instead of forcing one.
 
-        Anthropic rejects thinking combined with a forced ``tool`` or ``any``
-        choice. ``llm_parameters`` is keyed by model rather than by call path, so
-        a model configured for thinking carries it into every request -- including
-        structured output and ``generate_json``, which force a specific tool and
-        therefore cannot use the reasoning anyway.
-
-        Removed rather than set to a disabled value on purpose: an explicit
-        ``thinking: {"type": "disabled"}`` is itself a 400 on some generations
-        (claude-fable-5), so the only portable way to turn it off is to say
-        nothing. Mutates in place, and is a no-op for a model without thinking
-        configured.
+        Current Anthropic models (Opus 5.5, Fable 5.1) reject a forced ``any``
+        or ``tool`` choice with a 400, and every generation rejects one combined
+        with thinking. Requesting the call in words works on all of them and
+        keeps thinking on, so a forced choice is never sent: the request goes
+        out as ``auto`` with this instruction closing the last user turn.
+        Callers already treat a reply without the expected tool call as a
+        failed attempt. Returns a new list; the input is not mutated.
         """
-        for key in ("thinking", "output_config"):
-            if params.pop(key, None) is not None:
-                logger.debug(
-                    "Dropped '%s' from a forced-tool-choice request; Anthropic "
-                    "rejects thinking with a forced tool choice.",
-                    key,
-                )
-
-    @staticmethod
-    def _forces_a_tool(tool_choice: "ToolChoiceParam | None") -> bool:
-        """Whether this choice compels the model to call a tool."""
-        return tool_choice is not None and tool_choice.get("type") in {"any", "tool"}
+        if not api_messages or api_messages[-1].get("role") != "user":
+            return [*api_messages, {"role": "user", "content": instruction}]
+        last = api_messages[-1]
+        content = last["content"]
+        blocks = (
+            [{"type": "text", "text": content}]
+            if isinstance(content, str)
+            else list(content)
+        )
+        blocks.append({"type": "text", "text": instruction})
+        return [*api_messages[:-1], {**last, "content": blocks}]
 
     def _validate_thinking_params(
         self,
@@ -1522,11 +1512,20 @@ class AnthropicClient(BaseLLMClient):
                 yield LLMStreamEvent(type="done", metadata=metadata)
 
             events = stream_events()
+            content_yielded = False
             try:
                 async for stream_event in events:
                     yield stream_event
+                    if stream_event.type in {"content", "tool_call", "thinking"}:
+                        content_yielded = True
             except Exception as e:
                 telemetry.finish_error(e)
+
+                # Nothing has reached the caller yet, so the request can still
+                # be retried or handed to a fallback: raise the typed error for
+                # RetryingLLMClient rather than ending the stream with it.
+                if not content_yielded:
+                    self._raise_mapped_error(e)
 
                 error_message = str(e)
                 error_type = "unknown"

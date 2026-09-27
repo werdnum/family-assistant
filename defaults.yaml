@@ -113,12 +113,11 @@ llm_parameters:
   # the three call sites are non-streaming and the SDK refuses non-streaming
   # requests it estimates will exceed its HTTP timeout.
   #
-  # llm_parameters is keyed by model rather than by call path, so this reaches
-  # requests that force a tool choice -- structured output and generate_json --
-  # which the API rejects outright when thinking is set, not merely charges for.
-  # The client drops thinking from those requests rather than sending an explicit
-  # disabled value, which is itself a 400 on some generations; see
-  # _strip_thinking_for_forced_tool_choice. Nothing to configure here.
+  # llm_parameters is keyed by model rather than by call path, so this also
+  # reaches structured output and generate_json. Those need a specific tool
+  # called, and the client asks for it in words instead of forcing the tool
+  # choice (which the API rejects alongside thinking), so thinking stays on
+  # there too. Nothing to configure here.
   "claude-opus-5":
     thinking:
       type: "adaptive"
@@ -130,13 +129,11 @@ llm_parameters:
   # matter here. Its effort default is `medium`, one step below Opus 5's, so
   # `high` is restated for this model rather than left to the inherited entry
   # -- it has to survive someone lowering Opus 5's effort. And thinking cannot
-  # be disabled at all, which the client never does: forced-tool-choice
-  # requests drop the thinking keys rather than send a disabled value.
+  # be disabled at all, which the client never tries to do.
   #
-  # Like Fable 5.1, it rejects a forced tool choice (`required` or a named
-  # tool) with a 400. Attachment selection and structured output send one, so
-  # on this tier those calls fail on Opus and land on the Sol fallback, which
-  # accepts them.
+  # Like Fable 5.1, it rejects a forced tool choice. The client never sends
+  # one to Anthropic: calls that need a particular tool (attachment selection,
+  # structured output) ask for it with an instruction closing the last turn.
   "claude-opus-5-5":
     thinking:
       type: "adaptive"
@@ -198,9 +195,7 @@ model_tiers:
     chain:
       # Opus 5.5's thinking and effort, and Sol's reasoning_effort, come from
       # the global llm_parameters entries above. Sol is a different provider on
-      # purpose: it covers an Anthropic outage, and it accepts the forced tool
-      # choice Opus 5.5 rejects, so attachment selection and structured output
-      # on this tier still complete through the fallback.
+      # purpose, so an Anthropic outage still has somewhere to go.
       - provider: "anthropic"
         model: "claude-opus-5-5"
       - provider: "openai"

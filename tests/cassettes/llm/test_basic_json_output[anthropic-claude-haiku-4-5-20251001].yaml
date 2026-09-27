@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"max_tokens":8192,"messages":[{"role":"user","content":"What is 2 + 2? Respond with a JSON object containing ''expression'', ''result'', and ''explanation''."}],"model":"claude-haiku-4-5-20251001","system":"You must respond with a valid JSON object. The required fields and structure are defined by the conversation. Do not omit requested keys.","tool_choice":{"type":"tool","name":"return_json_object"},"tools":[{"name":"return_json_object","description":"Return the final response as a JSON object.","input_schema":{"type":"object","additionalProperties":true}}]}'
+      body: '{"max_tokens":8192,"messages":[{"role":"user","content":[{"type":"text","text":"What is 2 + 2? Respond with a JSON object containing ''expression'', ''result'', and ''explanation''."},{"type":"text","text":"Respond by calling the `return_json_object` tool."}]}],"model":"claude-haiku-4-5-20251001","system":"You must respond with a valid JSON object. The required fields and structure are defined by the conversation. Do not omit requested keys.","tool_choice":{"type":"auto"},"tools":[{"name":"return_json_object","description":"Return the final response as a JSON object.","input_schema":{"type":"object","additionalProperties":true}}]}'
       headers:
         accept:
           - application/json
