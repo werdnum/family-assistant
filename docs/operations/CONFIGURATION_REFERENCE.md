@@ -925,11 +925,12 @@ it is always the configured one that loses. Compared case-insensitively, since T
   means "only its own `model_tier`".
 - `delegation_model_tiers` (likewise top level) — further tiers **a delegating model** may name for
   the profile, which the Auto classifier never routes to and the intelligence control does not list.
-  This is where exact-model presets go: a tier holding one model and no fallback, so a delegation
-  that names it gets that model's answer or a visible failure, never another model's answer under
-  its name. It is what lets one profile put the same question to several specific models and compare
-  the answers. A person may also name a preset through the API, since a model may not reach what a
-  person would be refused, but no client lists them. Omitted means none.
+  This is where exact-model presets go: a tier holding one model and no fallback (startup refuses
+  one with a fallback), so a delegation that names it gets that model's answer or a visible failure,
+  never another model's answer under its name. It is what lets one profile put the same question to
+  several specific models and compare the answers. A person may also name a preset through the API,
+  since a model may not reach what a person would be refused, but no client lists them. Omitted
+  means none.
 
 The lists are replaced, never merged, when a profile or an operator overrides one, so they can only
 narrow. Every name must exist in `model_tiers`; the profile's own `model_tier` must appear in

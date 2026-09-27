@@ -205,6 +205,19 @@ def validate_profile_model_tier(
     ):
         _reject_interactions_agent_tier(profile_id, selectable, model_tiers[selectable])
 
+    # A delegation preset promises "this model's answer or a visible failure",
+    # which a fallback entry would quietly break: the answer would come from
+    # the fallback while the run still names the preset.
+    for preset in delegation or ():
+        if len(model_tiers[preset].chain) != 1:
+            msg = (
+                f"Profile '{profile_id}' lists model tier '{preset}' in "
+                "delegation_model_tiers, but its chain has a fallback. A "
+                "delegation preset names exactly one model, so a delegation "
+                "asking for it is never answered by another."
+            )
+            raise ValueError(msg)
+
     if allowed is not None and tier_name not in allowed:
         msg = (
             f"Profile '{profile_id}' has model_tier '{tier_name}', which is "

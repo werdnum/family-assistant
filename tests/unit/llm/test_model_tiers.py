@@ -390,6 +390,26 @@ def test_delegation_model_tiers_need_not_be_in_the_allowed_list() -> None:
     assert validate_profile_model_tier(profile, TIERS) is TIERS["standard"]
 
 
+def test_a_delegation_preset_with_a_fallback_is_rejected() -> None:
+    """A preset's answer must come from the model it names, never a stand-in."""
+    tiers = {
+        **TIERS,
+        "deep_with_fallback": ModelTierConfig(
+            chain=[
+                RetryModelConfig(provider="openai", model="gpt-5.6-sol"),
+                RetryModelConfig(provider="anthropic", model="claude-fable-5"),
+            ]
+        ),
+    }
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        delegation_model_tiers=["deep_with_fallback"],
+    )
+
+    with pytest.raises(ValueError, match="'deep_with_fallback'.*has a fallback"):
+        validate_profile_model_tier(profile, tiers)
+
+
 def test_tier_on_a_remote_a2a_profile_is_rejected() -> None:
     profile = _profile(
         ProcessingConfig(model_tier="standard"),
