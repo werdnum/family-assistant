@@ -102,10 +102,13 @@ def test_record_round_trips_through_storage() -> None:
     assert restored == record
 
 
-def test_record_round_trips_through_json_text() -> None:
+def test_a_record_without_gate_provenance_round_trips_through_json_text() -> None:
     record = stamp_definition(content={"code": "x"}, taint_state=TurnTaintState.empty())
 
-    assert definition_record_from_row(json.dumps(record.to_dict())) == record
+    restored = definition_record_from_row(json.dumps(record.to_dict()))
+
+    assert record.gate is None
+    assert restored == record
 
 
 def test_record_matches_only_the_content_it_describes() -> None:
@@ -227,13 +230,6 @@ def test_gate_provenance_round_trips_for_audit() -> None:
 
     assert restored is not None
     assert restored.gate == gate
-
-
-def test_a_record_without_gate_provenance_is_readable() -> None:
-    record = stamp_definition(content={"code": "x"}, taint_state=TurnTaintState.empty())
-
-    assert definition_record_from_row(record.to_dict()) == record
-    assert record.gate is None
 
 
 def test_withholding_a_cure_does_not_rewrite_who_decided() -> None:

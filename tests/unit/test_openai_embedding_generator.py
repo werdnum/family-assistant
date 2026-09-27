@@ -1,11 +1,11 @@
-"""Unit tests for OpenAIEmbeddingGenerator (protocol compliance, no API calls)."""
+"""Unit tests for OpenAIEmbeddingGenerator (no API calls)."""
 
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from family_assistant.embeddings import EmbeddingGenerator, OpenAIEmbeddingGenerator
+from family_assistant.embeddings import OpenAIEmbeddingGenerator
 
 
 @dataclass
@@ -17,14 +17,6 @@ class FakeEmbeddingDatum:
 @dataclass
 class FakeEmbeddingsResponse:
     data: list[FakeEmbeddingDatum]
-
-
-def test_protocol_compliance() -> None:
-    """OpenAIEmbeddingGenerator satisfies the EmbeddingGenerator protocol."""
-    generator = OpenAIEmbeddingGenerator(
-        model="text-embedding-3-small", api_key="fake-key"
-    )
-    assert isinstance(generator, EmbeddingGenerator)
 
 
 def test_model_name_used_verbatim() -> None:

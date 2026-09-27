@@ -368,6 +368,9 @@ async def test_document_indexing_and_query_e2e(
         )
 
         # --- Act: Wait for Indexing Task Completion ---
+        # The API does not signal this worker's event; wake it rather than
+        # waiting out its polling interval.
+        test_new_task_event.set()
         logger.info(f"Waiting for task {indexing_task_id} to complete...")
         await wait_for_tasks_to_complete(
             pg_vector_db_engine,

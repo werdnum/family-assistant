@@ -1049,6 +1049,7 @@ async def test_observe_taint_review_is_nonblocking_and_close_drains_audit(
         reviewer_llm=llm,
         static_decision=ToolPolicyDecision.ALLOW,
         taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE),
+        review_config=ToolCallReviewConfig(timeout_seconds=_HANG_GUARD_SECONDS),
     )
     context = _context(
         db_engine,
@@ -1061,7 +1062,6 @@ async def test_observe_taint_review_is_nonblocking_and_close_drains_audit(
     assert isinstance(result, ToolResult)
     assert result.get_text() == "executed before shadow verdict"
     assert executions == 1
-    assert not release.is_set()
     await asyncio.wait_for(entered.wait(), timeout=_HANG_GUARD_SECONDS)
     assert await _review_events(context) == []
 

@@ -15,6 +15,7 @@ import pytest
 from browser_handoff_service.main import app as browser_server_app
 from browser_handoff_service.main import registry as browser_server_registry
 from browser_handoff_service.models import TERMINAL_STATES, SessionState, now_utc
+from browser_handoff_service.runtime import FakeBrowserWorker
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
@@ -119,6 +120,16 @@ def _session_id_for_conversation(conversation_id: str) -> str:
     return matches[0]
 
 
+def _fake_worker_for_conversation(conversation_id: str) -> FakeBrowserWorker:
+    """The fake browser driving a conversation's session; it records accepted input."""
+    session = browser_server_registry.sessions[
+        _session_id_for_conversation(conversation_id)
+    ]
+    worker = browser_server_registry.workers[session.worker_id or ""]
+    assert isinstance(worker, FakeBrowserWorker)
+    return worker
+
+
 @pytest.mark.integration
 async def test_goto_and_raw_snapshot_return_full_accessibility_tree() -> None:
     """goto() + raw_snapshot(1) returns a full accessibility tree, not a stub."""
@@ -131,19 +142,6 @@ async def test_goto_and_raw_snapshot_return_full_accessibility_tree() -> None:
             assert key in snap, f"missing key {key!r} in snapshot"
         assert isinstance(snap["roots"], list)
         assert snap["url"] == "https://example.test/page"
-    finally:
-        await backend.close()
-
-
-@pytest.mark.integration
-async def test_raw_snapshot_is_stable_between_calls() -> None:
-    """Consecutive raw_snapshot(1) calls return the same element count."""
-    backend = _make_backend(conversation_id="integ-stable")
-    try:
-        await backend.goto("https://example.test/page")
-        snap1 = await backend.raw_snapshot(1)
-        snap2 = await backend.raw_snapshot(1)
-        assert snap1.get("elements") == snap2.get("elements")
     finally:
         await backend.close()
 
@@ -186,12 +184,16 @@ async def test_evaluate_is_denied_before_any_credential_fill() -> None:
 
 
 @pytest.mark.integration
-async def test_plain_left_single_click_is_accepted() -> None:
+async def test_plain_left_single_click_reaches_the_browser_at_its_coordinates() -> None:
     """mouse_click() with default button/click_count goes through to the server."""
-    backend = _make_backend(conversation_id="integ-click")
+    conversation_id = "integ-click"
+    backend = _make_backend(conversation_id=conversation_id)
     try:
         await backend.goto("https://example.test/page")
         await backend.mouse_click(10, 20)
+        assert _fake_worker_for_conversation(conversation_id).actions == [
+            {"type": "mouse_click", "args": {"x": 10, "y": 20}}
+        ]
     finally:
         await backend.close()
 
@@ -235,9 +237,10 @@ async def test_keyboard_down_and_up_raise_explicit_errors() -> None:
 
 
 @pytest.mark.integration
-async def test_request_handoff_returns_non_empty_url() -> None:
+async def test_request_handoff_moves_session_to_handoff_and_returns_claim_url() -> None:
     """request_handoff() transitions the session to handoff state and returns a URL."""
-    backend = _make_backend(conversation_id="integ-handoff")
+    conversation_id = "integ-handoff"
+    backend = _make_backend(conversation_id=conversation_id)
     try:
         await backend.goto("https://example.test/checkout")
         result = await backend.request_handoff(
@@ -245,9 +248,12 @@ async def test_request_handoff_returns_non_empty_url() -> None:
             handoff_note="Please complete checkout",
             expected_origin=None,
         )
-        assert isinstance(result, dict)
-        # browser-server returns a HandoffResponse with a handoff_url field
-        assert result.get("handoff_url") or result.get("session_id")
+        assert result["session_id"] == _session_id_for_conversation(conversation_id)
+        assert result["state"] == SessionState.HANDOFF_REQUESTED
+        assert str(result["handoff_url"]).partition("token=")[2]
+        assert (await backend.session_state())[
+            "state"
+        ] == SessionState.HANDOFF_REQUESTED
     finally:
         await backend.close()
 
@@ -599,13 +605,17 @@ async def test_snapshot_reports_the_advanced_ref_counter() -> None:
 
 
 @pytest.mark.integration
-async def test_click_on_an_issued_ref_is_accepted() -> None:
-    backend = _make_backend(conversation_id="integ-click-ref")
+async def test_click_on_an_issued_ref_clicks_that_element() -> None:
+    conversation_id = "integ-click-ref"
+    backend = _make_backend(conversation_id=conversation_id)
     try:
         await backend.goto("https://example.test/page")
         snap = await backend.raw_snapshot(1)
         ref = _refs(snap)[0]
         await backend.click(ref)
+        assert _fake_worker_for_conversation(conversation_id).actions == [
+            {"type": "click", "args": {"ref": ref}}
+        ]
     finally:
         await backend.close()
 

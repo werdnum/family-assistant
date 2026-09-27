@@ -237,10 +237,9 @@ def test_a_clean_member_does_not_inherit_a_siblings_attestation() -> None:
         CONTENT,
     )
 
-    combined = clean.combine(attested)
-
-    assert combined.resolved
-    assert combined.disposition is not CreationDisposition.HUMAN_CONFIRMED
+    for combined in (clean.combine(attested), attested.combine(clean)):
+        assert combined.resolved
+        assert combined.disposition is CreationDisposition.CLEAN
 
 
 def test_an_unresolved_member_governs_the_whole_closure() -> None:

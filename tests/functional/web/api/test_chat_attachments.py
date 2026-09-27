@@ -2,11 +2,12 @@
 
 import base64
 import io
+import itertools
 import json
 from datetime import UTC, datetime
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -17,37 +18,69 @@ from family_assistant.llm import (
     ToolCallItem,
     UserMessage,
 )
-from family_assistant.llm.messages import MessageAttachmentMetadata
+from family_assistant.llm.messages import (
+    ImageUrlContentPart,
+    MessageAttachmentMetadata,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from tests.functional.web.conftest import run_chat_turn_stream
 from tests.mocks.mock_llm import (
+    MatcherArgs,
     RuleBasedMockLLMClient,
     extract_text_from_content,
     get_message_content,
 )
 
 
+def _png_bytes(color: str, size: int) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (size, size), color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _images_sent_to_model(args: MatcherArgs) -> set[tuple[str, bytes]]:
+    """Every inline image the model was given, as (data URI header, decoded bytes)."""
+    images: set[tuple[str, bytes]] = set()
+    for msg in args["messages"]:
+        content = get_message_content(msg)
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if isinstance(part, ImageUrlContentPart):
+                header, _, data = part.image_url["url"].partition(",")
+                images.add((header, base64.b64decode(data)))
+    return images
+
+
+def _streamed_text(response: Response) -> str:
+    return "".join(
+        json.loads(data_line.removeprefix("data: "))["content"]
+        for event_line, data_line in itertools.pairwise(response.text.splitlines())
+        if event_line == "event: text"
+    )
+
+
+def _turn_end_statuses(response: Response) -> list[str]:
+    return [
+        json.loads(data_line.removeprefix("data: "))["status"]
+        for event_line, data_line in itertools.pairwise(response.text.splitlines())
+        if event_line == "event: turn_ended"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_chat_api_with_image_attachment(
     api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test sending image attachments via chat API."""
-
-    # Configure mock LLM to respond to image content
-    def image_matcher(args: dict) -> bool:
-        messages = args.get("messages", [])
-        for msg in messages:
-            content = msg.content or []
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
-                        return True
-        return False
+    """An uploaded image reaches the model inline, byte for byte."""
+    image_bytes = _png_bytes("blue", 100)
 
     api_mock_llm_client.rules = [
         (
-            image_matcher,
+            lambda args: (
+                _images_sent_to_model(args) == {("data:image/png;base64", image_bytes)}
+            ),
             LLMOutput(
                 content="I can see an image in your message! It appears to be a test image."
             ),
@@ -58,14 +91,7 @@ async def test_chat_api_with_image_attachment(
         content="I received your message but no image was detected."
     )
 
-    # Create a test image and convert to base64
-    img = Image.new("RGB", (100, 100), color="blue")
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-
-    # Convert to base64 data URL
-    image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    image_data = base64.b64encode(image_bytes).decode("utf-8")
     base64_url = f"data:image/png;base64,{image_data}"
 
     # Prepare API request with attachment
@@ -84,37 +110,29 @@ async def test_chat_api_with_image_attachment(
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
-
-    # Parse streaming response
-    content = response.content.decode("utf-8")
-    lines = content.strip().split("\n")
-
-    # Look for text content in the stream
-    text_content = ""
-    for line in lines:
-        if line.startswith("data: "):
-            try:
-                data = json.loads(line[6:])  # Remove 'data: ' prefix
-                if "content" in data:
-                    text_content += data["content"]
-            except json.JSONDecodeError:
-                continue
-
-    # Verify response mentions image detection
-    assert "image" in text_content.lower()
+    assert _streamed_text(response) == (
+        "I can see an image in your message! It appears to be a test image."
+    )
 
 
 @pytest.mark.asyncio
-async def test_chat_api_attachment_validation_size(
+async def test_chat_api_forwards_a_large_image_under_the_media_limit_in_full(
     api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test attachment size validation in API."""
+    """A 15MB image is accepted, reaches the model untruncated, and the turn completes."""
+    large_data = b"x" * (15 * 1024 * 1024)
 
+    api_mock_llm_client.rules = [
+        (
+            lambda args: (
+                _images_sent_to_model(args) == {("data:image/png;base64", large_data)}
+            ),
+            LLMOutput(content="Received the large image."),
+        )
+    ]
     api_mock_llm_client.default_response = LLMOutput(content="Default response")
 
-    # Create a large base64 string to simulate oversized image
-    large_data = "x" * (15 * 1024 * 1024)  # 15MB of data
-    large_base64 = base64.b64encode(large_data.encode()).decode()
+    large_base64 = base64.b64encode(large_data).decode()
     base64_url = f"data:image/png;base64,{large_base64}"
 
     payload = {
@@ -124,77 +142,52 @@ async def test_chat_api_attachment_validation_size(
         ],
     }
 
-    # API should handle this gracefully without crashing
     response = await run_chat_turn_stream(api_test_client, payload)
 
-    # Should still return 200 (validation happens on frontend)
     assert response.status_code == 200
+    assert _turn_end_statuses(response) == ["complete"]
+    assert _streamed_text(response) == "Received the large image."
 
 
 @pytest.mark.asyncio
 async def test_chat_api_multiple_attachments(
     api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
-    """Test sending multiple attachments via API."""
-
-    def multi_image_matcher(args: dict) -> bool:
-        # After the refactor to typed messages, user messages from history
-        # only contain text content (images are stored as attachment metadata).
-        # Just match any request with the specific prompt text.
-        messages = args.get("messages", [])
-
-        for msg in messages:
-            content = get_message_content(msg)
-            text = extract_text_from_content(content)
-            if "compare these images" in text.lower():
-                return True
-        return False
+    """Every image in a multi-attachment turn reaches the model."""
+    red_png = _png_bytes("red", 50)
+    green_png = _png_bytes("green", 50)
 
     api_mock_llm_client.rules = [
         (
-            multi_image_matcher,
+            lambda args: (
+                _images_sent_to_model(args)
+                == {
+                    ("data:image/png;base64", red_png),
+                    ("data:image/png;base64", green_png),
+                }
+            ),
             LLMOutput(content="I can see multiple images in your message!"),
         )
     ]
+    api_mock_llm_client.default_response = LLMOutput(
+        content="Some of the images were missing."
+    )
 
-    # Create two test images
-    attachments = []
-    for i, color in enumerate(["red", "green"]):
-        img = Image.new("RGB", (50, 50), color=color)
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        buffer.seek(0)
-
-        image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        base64_url = f"data:image/png;base64,{image_data}"
-
-        attachments.append({
+    attachments = [
+        {
             "type": "image",
-            "content": base64_url,
+            "content": f"data:image/png;base64,{base64.b64encode(png).decode()}",
             "name": f"test_image_{i}.png",
-        })
+        }
+        for i, png in enumerate([red_png, green_png])
+    ]
 
     payload = {"prompt": "Compare these images", "attachments": attachments}
 
     response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
-
-    # Parse streaming response
-    content = response.content.decode("utf-8")
-    lines = content.strip().split("\n")
-
-    text_content = ""
-    for line in lines:
-        if line.startswith("data: "):
-            try:
-                data = json.loads(line[6:])
-                if "content" in data:
-                    text_content += data["content"]
-            except json.JSONDecodeError:
-                continue
-
-    assert "multiple" in text_content.lower() or "images" in text_content.lower()
+    assert _streamed_text(response) == "I can see multiple images in your message!"
 
 
 @pytest.mark.asyncio
@@ -331,12 +324,7 @@ async def test_chat_api_accepts_native_ios_uploaded_attachment_reference_and_loa
     )
 
     assert response.status_code == 200
-    streamed_text = ""
-    for line in response.content.decode("utf-8").splitlines():
-        if line.startswith("data: "):
-            data = json.loads(line.removeprefix("data: "))
-            streamed_text += data.get("content", "")
-    assert streamed_text == "I received the uploaded markdown document."
+    assert _streamed_text(response) == "I received the uploaded markdown document."
 
     history_response = await api_test_client.get(
         f"/api/v1/chat/conversations/{conversation_id}/messages"
@@ -407,12 +395,7 @@ async def test_chat_api_passes_through_an_attachment_of_an_unrecognised_type(
     )
 
     assert response.status_code == 200
-    streamed_text = ""
-    for line in response.content.decode("utf-8").splitlines():
-        if line.startswith("data: "):
-            data = json.loads(line.removeprefix("data: "))
-            streamed_text += data.get("content", "")
-    assert streamed_text == "I can see the 3D model."
+    assert _streamed_text(response) == "I can see the 3D model."
 
 
 @pytest.mark.asyncio
@@ -433,10 +416,7 @@ async def test_chat_api_no_attachments(
     response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
-
-    # Verify normal response
-    content = response.content.decode("utf-8")
-    assert "Hello" in content
+    assert _streamed_text(response) == "Hello! How can I help you?"
 
 
 @pytest.mark.asyncio
@@ -457,9 +437,7 @@ async def test_chat_api_empty_attachments_array(
     response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
-
-    content = response.content.decode("utf-8")
-    assert "Response" in content
+    assert _streamed_text(response) == "Response without attachments"
 
 
 @pytest.mark.asyncio
@@ -477,9 +455,7 @@ async def test_chat_api_null_attachments(
     response = await run_chat_turn_stream(api_test_client, payload)
 
     assert response.status_code == 200
-
-    content = response.content.decode("utf-8")
-    assert "Response" in content
+    assert _streamed_text(response) == "Response with null attachments"
 
 
 @pytest.mark.asyncio
@@ -873,12 +849,6 @@ async def test_response_attachment_is_recorded_once_when_more_tools_follow(
     assert len(rows_with_attachment) == 1
     # The row that ends the turn, not the one that went on to call another tool.
     assert rows_with_attachment[0]["tool_calls"] is None
-
-
-# Note: Removed test_chat_api_trigger_content_structure as it was testing internal
-# implementation details rather than API behavior. The structure of messages sent
-# to the LLM is an internal concern and the actual API functionality is tested
-# by the other attachment tests.
 
 
 @pytest.mark.asyncio

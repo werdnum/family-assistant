@@ -384,6 +384,11 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
     _assert_specialist_saw_attachment_once(specialized_llm_client, other_attachment_id)
 
 
+# Load-sensitive: under heavy CI load (SQLite, full parallel suite) the result
+# has occasionally come back without the delegated attachments. Root cause is
+# still open in https://github.com/werdnum/family-assistant/issues/966; the
+# inline-completion assertion below says which way a failure went.
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_delegate_to_service_propagates_generated_attachments(
     db_engine: AsyncEngine,

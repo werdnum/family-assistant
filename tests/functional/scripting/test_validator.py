@@ -1,6 +1,8 @@
 """Tests for the script validator (static type checking)."""
 
+import ast
 import inspect
+from collections.abc import Callable
 
 import pytest
 
@@ -12,6 +14,68 @@ from family_assistant.scripting.validator import (
     ValidationResult,
     generate_prefix_code,
 )
+
+DURATION_CONSTANTS = [
+    "NANOSECOND",
+    "MICROSECOND",
+    "MILLISECOND",
+    "SECOND",
+    "MINUTE",
+    "HOUR",
+    "DAY",
+    "WEEK",
+]
+
+TOOLS_API_SCRIPTS = ["tools_list()", 'tools_execute("search_notes")']
+ATTACHMENT_API_SCRIPTS = [
+    'attachment_get("id")',
+    'attachment_create("content", "notes.txt")',
+]
+
+
+def _stub_functions(prefix_code: str) -> dict[str, ast.FunctionDef]:
+    tree = ast.parse(prefix_code)
+    return {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+
+def _stub_parameters(func: ast.FunctionDef) -> list[tuple[str, str, bool]]:
+    """Return (name, kind, has_default) for each stub parameter, in order."""
+    args = func.args
+    positional = [*args.posonlyargs, *args.args]
+    first_with_default = len(positional) - len(args.defaults)
+    params = [
+        (
+            arg.arg,
+            inspect.Parameter.POSITIONAL_ONLY.name
+            if index < len(args.posonlyargs)
+            else inspect.Parameter.POSITIONAL_OR_KEYWORD.name,
+            index >= first_with_default,
+        )
+        for index, arg in enumerate(positional)
+    ]
+    if args.vararg:
+        params.append((args.vararg.arg, inspect.Parameter.VAR_POSITIONAL.name, False))
+    params.extend(
+        (arg.arg, inspect.Parameter.KEYWORD_ONLY.name, default is not None)
+        for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+    )
+    if args.kwarg:
+        params.append((args.kwarg.arg, inspect.Parameter.VAR_KEYWORD.name, False))
+    return params
+
+
+def _runtime_parameters(func: Callable[..., object]) -> list[tuple[str, str, bool]]:
+    """Return (name, kind, has_default) for each script-visible runtime parameter.
+
+    Underscore-prefixed parameters (e.g. ``_default_tz``) are runtime-internal
+    wiring: MontyEngine binds them before scripts see the function, so they are
+    intentionally absent from the stub.
+    """
+    return [
+        (param.name, param.kind.name, param.default is not inspect.Parameter.empty)
+        for param in inspect.signature(func).parameters.values()
+        if not param.name.startswith("_")
+    ]
 
 
 class TestScriptValidatorSyntax:
@@ -63,10 +127,13 @@ class TestScriptValidatorTypeChecking:
         result = v.validate("t = time_now()\ntime_year(t)")
         assert result.is_valid
 
-    def test_json_api_is_known(self) -> None:
+    @pytest.mark.parametrize(
+        "script", ['json_encode({"key": "value"})', 'json_decode("[1, 2]")']
+    )
+    def test_json_api_is_known(self, script: str) -> None:
         v = ScriptValidator()
-        result = v.validate('json_encode({"key": "value"})')
-        assert result.is_valid
+        result = v.validate(script)
+        assert result.is_valid, result.error_message
 
     def test_llm_api_is_known(self) -> None:
         v = ScriptValidator()
@@ -78,15 +145,11 @@ class TestScriptValidatorTypeChecking:
         result = v.validate('wake_llm("hello")')
         assert result.is_valid
 
-    def test_attachment_api_is_known(self) -> None:
+    @pytest.mark.parametrize("name", DURATION_CONSTANTS)
+    def test_duration_constants_are_known(self, name: str) -> None:
         v = ScriptValidator()
-        result = v.validate('attachment_get("some-id")')
-        assert result.is_valid
-
-    def test_duration_constants_are_known(self) -> None:
-        v = ScriptValidator()
-        result = v.validate("t = time_now()\ntime_add(t, 5 * MINUTE)")
-        assert result.is_valid
+        result = v.validate(f"t = time_now()\ntime_add(t, 5 * {name})")
+        assert result.is_valid, result.error_message
 
     def test_print_is_known(self) -> None:
         v = ScriptValidator()
@@ -180,6 +243,14 @@ class TestScriptValidatorWithTools:
         result = v.validate('tool_search_notes(query="TODO")')
         assert result.is_valid
 
+    def test_tool_argument_of_wrong_type_is_error(
+        self, sample_tool_definitions: list
+    ) -> None:
+        v = ScriptValidator(tool_definitions=sample_tool_definitions)
+        result = v.validate("search_notes(query=123)")
+        assert not result.is_valid
+        assert any("search_notes" in d.message for d in result.errors)
+
     def test_multi_tool_script(self, sample_tool_definitions: list) -> None:
         v = ScriptValidator(tool_definitions=sample_tool_definitions)
         script = """
@@ -189,39 +260,58 @@ add_or_update_note(title="Summary", content="Found notes")
         result = v.validate(script)
         assert result.is_valid
 
-    def test_tools_meta_api_is_known(self, sample_tool_definitions: list) -> None:
-        v = ScriptValidator(tool_definitions=sample_tool_definitions)
-        result = v.validate("tools_list()")
-        assert result.is_valid
-
 
 class TestScriptValidatorConfig:
     """Test configuration options."""
 
-    def test_disable_time_api(self) -> None:
+    @pytest.mark.parametrize("script", ["time_now()", "5 * MINUTE"])
+    def test_disable_time_api(self, script: str) -> None:
         config = ScriptConfig(enable_time_api=False)
         v = ScriptValidator(config=config)
-        result = v.validate("time_now()")
+        result = v.validate(script)
         assert not result.is_valid
 
-    def test_disable_llm_api(self) -> None:
+    @pytest.mark.parametrize("script", ['llm("hi")', 'llm_json("hi")'])
+    def test_disable_llm_api(self, script: str) -> None:
         config = ScriptConfig(enable_llm_api=False)
         v = ScriptValidator(config=config)
-        result = v.validate('llm("hi")')
+        result = v.validate(script)
         assert not result.is_valid
 
-    def test_disable_json_api(self) -> None:
+    @pytest.mark.parametrize("script", ['json_encode({"a": 1})', 'json_decode("1")'])
+    def test_disable_json_api(self, script: str) -> None:
         config = ScriptConfig(enable_json_api=False)
         v = ScriptValidator(config=config)
-        result = v.validate('json_encode({"a": 1})')
+        result = v.validate(script)
         assert not result.is_valid
 
-    def test_apis_independent(self) -> None:
+    @pytest.mark.parametrize(
+        ("config", "other_apis_script"),
+        [
+            pytest.param(
+                ScriptConfig(enable_time_api=False),
+                'llm("hi")\njson_encode({"a": 1})',
+                id="time-disabled",
+            ),
+            pytest.param(
+                ScriptConfig(enable_llm_api=False),
+                'time_now()\njson_encode({"a": 1})',
+                id="llm-disabled",
+            ),
+            pytest.param(
+                ScriptConfig(enable_json_api=False),
+                'time_now()\nllm("hi")',
+                id="json-disabled",
+            ),
+        ],
+    )
+    def test_apis_independent(
+        self, config: ScriptConfig, other_apis_script: str
+    ) -> None:
         """Disabling one API does not disable the others."""
-        config = ScriptConfig(enable_llm_api=False)
         v = ScriptValidator(config=config)
-        assert v.validate("time_now()").is_valid
-        assert v.validate('json_encode({"a": 1})').is_valid
+        result = v.validate(other_apis_script)
+        assert result.is_valid, result.error_message
 
     def test_all_apis_disabled_still_has_wake_llm(self) -> None:
         config = ScriptConfig(
@@ -233,181 +323,83 @@ class TestScriptValidatorConfig:
         result = v.validate('wake_llm("hello")')
         assert result.is_valid
 
-    def test_exclude_tools_api(self) -> None:
+    @pytest.mark.parametrize("script", TOOLS_API_SCRIPTS)
+    def test_exclude_tools_api(self, script: str) -> None:
         v = ScriptValidator()
-        result = v.validate("tools_list()", include_tools_api=False)
+        result = v.validate(script, include_tools_api=False)
         assert not result.is_valid
 
-    def test_include_tools_api_by_default(self) -> None:
+    @pytest.mark.parametrize("script", TOOLS_API_SCRIPTS)
+    def test_include_tools_api_by_default(self, script: str) -> None:
         v = ScriptValidator()
-        result = v.validate("tools_list()")
-        assert result.is_valid
+        result = v.validate(script)
+        assert result.is_valid, result.error_message
 
-    def test_exclude_attachment_api(self) -> None:
+    @pytest.mark.parametrize("script", ATTACHMENT_API_SCRIPTS)
+    def test_exclude_attachment_api(self, script: str) -> None:
         v = ScriptValidator()
-        result = v.validate('attachment_get("id")', include_attachment_api=False)
+        result = v.validate(script, include_attachment_api=False)
         assert not result.is_valid
 
-    def test_include_attachment_api_by_default(self) -> None:
+    @pytest.mark.parametrize("script", ATTACHMENT_API_SCRIPTS)
+    def test_include_attachment_api_by_default(self, script: str) -> None:
         v = ScriptValidator()
-        result = v.validate('attachment_get("id")')
-        assert result.is_valid
+        result = v.validate(script)
+        assert result.is_valid, result.error_message
 
     def test_exclude_both_tools_and_attachment_api(self) -> None:
         v = ScriptValidator()
         result = v.validate(
-            "time_now()",
+            'time_now()\nllm("hi")',
             include_tools_api=False,
             include_attachment_api=False,
         )
-        assert result.is_valid
+        assert result.is_valid, result.error_message
 
 
 class TestValidationResult:
     """Test ValidationResult structure."""
 
-    def test_valid_result_has_no_errors(self) -> None:
-        r = ValidationResult(is_valid=True, diagnostics=[])
-        assert r.is_valid
-        assert r.error_message is None
-        assert r.errors == []
-
-    def test_error_message_joins_errors(self) -> None:
-        r = ValidationResult(
+    @pytest.fixture
+    def mixed_result(self) -> ValidationResult:
+        return ValidationResult(
             is_valid=False,
             diagnostics=[
                 ValidationDiagnostic(message="error one", line=1, severity="error"),
+                ValidationDiagnostic(
+                    message="just a warning", line=2, severity="warning"
+                ),
                 ValidationDiagnostic(message="error two", line=3, severity="error"),
             ],
         )
-        assert not r.is_valid
-        msg = r.error_message
-        assert msg is not None
-        assert "error one" in msg
-        assert "error two" in msg
 
+    def test_errors_excludes_warnings(self, mixed_result: ValidationResult) -> None:
+        assert [d.message for d in mixed_result.errors] == ["error one", "error two"]
 
-class TestGeneratePrefixCode:
-    """Test stub generation."""
-
-    def test_includes_api_stubs(self) -> None:
-        code = generate_prefix_code()
-        assert "def time_now(" in code
-        assert "def json_encode(" in code
-        assert "def llm(" in code
-        assert "def wake_llm(" in code
-        assert "MINUTE: float" in code
-
-    def test_includes_tool_stubs(self) -> None:
-        tool_defs = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "my_tool",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "arg1": {"type": "string"},
-                        },
-                        "required": ["arg1"],
-                    },
-                },
-            },
-        ]
-        code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "def my_tool(" in code
-        assert "def tool_my_tool(" in code
-        assert "arg1: str" in code
-
-    def test_includes_input_variables(self) -> None:
-        code = generate_prefix_code(input_names=["x", "y"])
-        assert "x: Any" in code
-        assert "y: Any" in code
-
-    def test_no_time_api_when_disabled(self) -> None:
-        code = generate_prefix_code(include_time_api=False)
-        assert "time_now" not in code
-        assert "MINUTE: float" not in code
-
-    def test_no_llm_api_when_disabled(self) -> None:
-        code = generate_prefix_code(include_llm_api=False)
-        assert "def llm(" not in code
-        assert "def llm_json(" not in code
-        # Time/JSON still present
-        assert "def time_now(" in code
-        assert "def json_encode(" in code
-
-    def test_no_json_api_when_disabled(self) -> None:
-        code = generate_prefix_code(include_json_api=False)
-        assert "def json_encode(" not in code
-        assert "def json_decode(" not in code
-        # Time/LLM still present
-        assert "def time_now(" in code
-        assert "def llm(" in code
-
-    def test_no_tools_api_when_excluded(self) -> None:
-        code = generate_prefix_code(include_tools_api=False)
-        assert "def tools_list(" not in code
-        assert "def tools_execute(" not in code
-        assert "def time_now(" in code
-
-    def test_no_attachment_api_when_excluded(self) -> None:
-        code = generate_prefix_code(include_attachment_api=False)
-        assert "def attachment_get(" not in code
-        assert "def attachment_create(" not in code
-        assert "def time_now(" in code
-
-    def test_both_apis_excluded_still_has_core(self) -> None:
-        code = generate_prefix_code(
-            include_tools_api=False, include_attachment_api=False
+    def test_error_message_joins_only_errors(
+        self, mixed_result: ValidationResult
+    ) -> None:
+        assert (
+            mixed_result.error_message
+            == "error at line 1: error one; error at line 3: error two"
         )
-        assert "def time_now(" in code
-        assert "def llm(" in code
-        assert "def tools_list(" not in code
-        assert "def attachment_get(" not in code
+
+    def test_error_message_is_none_when_only_warnings(self) -> None:
+        r = ValidationResult(
+            is_valid=True,
+            diagnostics=[
+                ValidationDiagnostic(message="just a warning", severity="warning")
+            ],
+        )
+        assert r.error_message is None
 
 
 class TestIdentifierValidation:
     """Test handling of invalid Python identifiers in tool/input names."""
 
-    def test_tool_with_hyphenated_name_is_skipped(self) -> None:
-        tool_defs = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search-notes",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-        ]
-        code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "search-notes" not in code
-
-    def test_tool_with_keyword_param_falls_back_to_kwargs(self) -> None:
-        tool_defs = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "my_tool",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"class": {"type": "string"}},
-                        "required": ["class"],
-                    },
-                },
-            },
-        ]
-        code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "def my_tool(**kwargs: Any)" in code
-
-    def test_invalid_input_name_is_skipped(self) -> None:
-        code = generate_prefix_code(input_names=["valid_name", "invalid-name", "class"])
-        assert "valid_name: Any" in code
-        assert "invalid-name" not in code
-        assert "class:" not in code
-
-    def test_tool_required_params_before_optional(self) -> None:
-        tool_defs = [
+    @pytest.fixture
+    def optional_listed_first_tool(self) -> list:
+        return [
             {
                 "type": "function",
                 "function": {
@@ -423,10 +415,66 @@ class TestIdentifierValidation:
                 },
             },
         ]
-        code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "def my_tool(required_param: str, *, optional_first: str = ...)" in code
 
-    def test_json_schema_list_type(self) -> None:
+    @pytest.mark.parametrize("script", ["search()", "tool_search()"])
+    def test_tool_with_hyphenated_name_declares_no_function(self, script: str) -> None:
+        """A partially parsed ``def search-notes()`` stub must not declare ``search``."""
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search-notes",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ]
+        v = ScriptValidator(tool_definitions=tool_defs)
+        result = v.validate(script)
+        assert not result.is_valid
+
+    def test_tool_with_keyword_param_accepts_all_keyword_arguments(self) -> None:
+        tool_defs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "my_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "class": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["class"],
+                    },
+                },
+            },
+        ]
+        v = ScriptValidator(tool_definitions=tool_defs)
+        result = v.validate('my_tool(limit=5, **{"class": "x"})')
+        assert result.is_valid, result.error_message
+
+    @pytest.mark.parametrize("bad_name", ["invalid-name", "class"])
+    def test_invalid_input_name_is_rejected(self, bad_name: str) -> None:
+        v = ScriptValidator()
+        result = v.validate("valid_name", input_names=["valid_name", bad_name])
+        assert not result.is_valid
+        assert bad_name in (result.error_message or "")
+
+    def test_tool_required_params_before_optional(
+        self, optional_listed_first_tool: list
+    ) -> None:
+        v = ScriptValidator(tool_definitions=optional_listed_first_tool)
+        result = v.validate('my_tool("a", optional_first="b")')
+        assert result.is_valid, result.error_message
+
+    def test_tool_optional_params_are_keyword_only(
+        self, optional_listed_first_tool: list
+    ) -> None:
+        v = ScriptValidator(tool_definitions=optional_listed_first_tool)
+        result = v.validate('my_tool("a", "b")')
+        assert not result.is_valid
+
+    def test_json_schema_list_type_accepts_each_member(self) -> None:
         tool_defs = [
             {
                 "type": "function",
@@ -441,8 +489,9 @@ class TestIdentifierValidation:
                 },
             },
         ]
-        code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "str | Any" in code
+        v = ScriptValidator(tool_definitions=tool_defs)
+        result = v.validate('nullable_tool(value=None)\nnullable_tool(value="s")')
+        assert result.is_valid, result.error_message
 
     def test_tool_with_valid_name_and_params_works(self) -> None:
         tool_defs = [
@@ -480,32 +529,16 @@ class TestIdentifierValidation:
         result = v.validate('search_notes("TODO")')
         assert result.is_valid
 
-    def test_tool_optional_params_are_keyword_only(self) -> None:
-        tool_defs = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "my_tool",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "required_arg": {"type": "string"},
-                            "optional_arg": {"type": "string"},
-                        },
-                        "required": ["required_arg"],
-                    },
-                },
-            },
-        ]
-        v = ScriptValidator(tool_definitions=tool_defs)
-        # Positional required arg works
-        result = v.validate('my_tool("hello")')
-        assert result.is_valid
-        # Optional arg as keyword works
-        result = v.validate('my_tool("hello", optional_arg="world")')
-        assert result.is_valid
-
-    def test_tool_required_params_ordered_by_required_list(self) -> None:
+    @pytest.mark.parametrize(
+        ("script", "expected_valid"),
+        [
+            pytest.param('ordered_tool(1, "x")', True, id="required-list-order"),
+            pytest.param('ordered_tool("x", 1)', False, id="property-order"),
+        ],
+    )
+    def test_tool_required_params_ordered_by_required_list(
+        self, script: str, expected_valid: bool
+    ) -> None:
         tool_defs = [
             {
                 "type": "function",
@@ -522,18 +555,18 @@ class TestIdentifierValidation:
                 },
             },
         ]
-        code = generate_prefix_code(tool_definitions=tool_defs)
-        assert "def ordered_tool(a_param: int, b_param: str)" in code
+        v = ScriptValidator(tool_definitions=tool_defs)
+        result = v.validate(script)
+        assert result.is_valid is expected_valid, result.error_message
 
 
 class TestStubSignaturesMatchRuntime:
     """Verify that validator stubs match actual runtime API signatures.
 
     These tests catch signature drift between the validator stubs
-    (in validator.py) and the actual runtime implementations. Each
-    test calls a function with the real parameter names from the
-    runtime API — if the validator stub has different param names,
-    the script will fail validation.
+    (in validator.py) and the actual runtime implementations: a stub that
+    diverges makes the validator reject scripts that would run, or accept
+    scripts that would fail.
     """
 
     # Mapping of runtime API functions to example call scripts.
@@ -593,71 +626,37 @@ class TestStubSignaturesMatchRuntime:
         result = v.validate(call_script)
         assert result.is_valid, f"{func_name}: {result.error_message}"
 
-    def test_all_time_api_functions_have_stubs(self) -> None:
-        """Every function registered in MontyEngine._add_time_api must have a stub."""
-        prefix = generate_prefix_code()
-        # Get all public functions from time_api module
-        api_functions = [
-            name
-            for name, obj in inspect.getmembers(time_api, inspect.isfunction)
-            if not name.startswith("_") and obj.__module__ == time_api.__name__
-        ]
-        missing = [fn for fn in api_functions if f"def {fn}(" not in prefix]
-        assert not missing, f"Missing stubs for time API functions: {missing}"
+    def test_time_api_stubs_match_runtime_signatures(self) -> None:
+        """The time API stubs declare exactly the runtime functions and parameters.
 
-    def test_all_time_api_param_names_match(self) -> None:
-        """Stub param names must match actual runtime function param names.
-
-        Underscore-prefixed parameters (e.g. ``_default_tz``) are treated as
-        runtime-internal wiring - MontyEngine binds them before scripts see
-        the function, so they are intentionally absent from the stub.
+        Each parameter is compared by name, position, kind and whether it has a
+        default, so missing, extra, renamed, reordered or wrongly-required
+        parameters all fail.
         """
-        prefix = generate_prefix_code()
-        api_functions = {
-            name: obj
-            for name, obj in inspect.getmembers(time_api, inspect.isfunction)
-            if not name.startswith("_") and obj.__module__ == time_api.__name__
-        }
-        mismatches: list[str] = []
-        for name, fn in api_functions.items():
-            sig = inspect.signature(fn)
-            real_params = [
-                p.name
-                for p in sig.parameters.values()
-                if p.name != "self" and not p.name.startswith("_")
-            ]
-            # Extract the stub line for this function
-            stub_line = ""
-            for line in prefix.splitlines():
-                if f"def {name}(" in line:
-                    stub_line = line
-                    break
-            if not stub_line:
-                mismatches.append(f"{name}: no stub found")
-                continue
-            for param in real_params:
-                if param not in stub_line:
-                    mismatches.append(
-                        f"{name}: param '{param}' not in stub: {stub_line.strip()}"
-                    )
-        assert not mismatches, "Stub/runtime param mismatches:\n" + "\n".join(
-            mismatches
+        stubs = _stub_functions(generate_prefix_code())
+        stubs_without_time_api = _stub_functions(
+            generate_prefix_code(include_time_api=False)
         )
+        stub_signatures = {
+            name: _stub_parameters(func)
+            for name, func in stubs.items()
+            if name not in stubs_without_time_api
+        }
+        runtime_signatures = {
+            name: _runtime_parameters(func)
+            for name, func in inspect.getmembers(time_api, inspect.isfunction)
+            if not name.startswith("_") and func.__module__ == time_api.__name__
+        }
+        assert stub_signatures == runtime_signatures
 
-    def test_duration_constants_are_floats(self) -> None:
-        """Duration constants in the runtime are floats (seconds), stubs should match."""
-        prefix = generate_prefix_code()
-        for name in [
-            "NANOSECOND",
-            "MICROSECOND",
-            "MILLISECOND",
-            "SECOND",
-            "MINUTE",
-            "HOUR",
-            "DAY",
-            "WEEK",
-        ]:
-            assert f"{name}: float" in prefix, f"{name} should be typed as float"
+    @pytest.mark.parametrize("name", ["NANOSECOND", "MICROSECOND", "MILLISECOND"])
+    def test_fractional_duration_constants_are_not_typed_as_int(
+        self, name: str
+    ) -> None:
+        assert isinstance(getattr(time_api, name), float)
+        v = ScriptValidator()
+        result = v.validate(f"x: int = {name}")
+        assert not result.is_valid
 
     def test_json_api_validates(self) -> None:
         v = ScriptValidator()
@@ -677,9 +676,4 @@ class TestStubSignaturesMatchRuntime:
     def test_attachment_api_validates(self) -> None:
         v = ScriptValidator()
         result = v.validate('attachment_get(attachment_id="abc")')
-        assert result.is_valid, result.error_message
-
-    def test_tools_meta_api_validates(self) -> None:
-        v = ScriptValidator()
-        result = v.validate("tools_list()")
         assert result.is_valid, result.error_message

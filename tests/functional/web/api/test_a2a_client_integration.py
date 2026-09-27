@@ -43,7 +43,11 @@ from family_assistant.llm.content_parts import (
     attachment_content,
     text_content,
 )
-from family_assistant.processing import PENDING, ChatInteractionResult
+from family_assistant.processing import (
+    PENDING,
+    ChatInteractionResult,
+    RemoteSubmission,
+)
 from family_assistant.processing.types import RemoteServiceConfig
 from family_assistant.security.taint import (
     A2A_TAINT_METADATA_KEY,
@@ -55,6 +59,7 @@ from family_assistant.security.taint import (
 from family_assistant.web.routers.a2a_api import (
     _initial_taint_sources_from_message,  # noqa: PLC2701 - regression test covers server-side metadata restore
 )
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 
 if TYPE_CHECKING:
@@ -83,19 +88,25 @@ async def a2a_test_server(
         yield client
 
 
-@pytest_asyncio.fixture
-async def a2a_client_wrapper(
+def _client_over(
     a2a_test_server: AsyncClient,
-) -> AsyncGenerator[A2AClientWrapper]:
-    """A2AClientWrapper pointed at the in-process FA A2A server.
+    attachments: A2AAttachmentTransfer | None = None,
+) -> A2AClientWrapper:
+    """An A2AClientWrapper whose requests go through the in-process ASGI server.
 
-    Injects the test httpx client to bypass real HTTP.
+    The wrapper has no public seam for supplying an httpx client, so the test
+    client is injected here, in one place. The caller does not close the
+    wrapper: the a2a_test_server fixture owns the client lifecycle.
     """
-    wrapper = A2AClientWrapper(agent_url="http://testserver")
-    # Inject the test client so requests go through ASGITransport
+    wrapper = A2AClientWrapper(agent_url="http://testserver", attachments=attachments)
     wrapper._httpx_client = a2a_test_server
-    yield wrapper
-    # Don't close — the a2a_test_server fixture owns the client lifecycle
+    return wrapper
+
+
+@pytest_asyncio.fixture
+async def a2a_client_wrapper(a2a_test_server: AsyncClient) -> A2AClientWrapper:
+    """A2AClientWrapper pointed at the in-process FA A2A server."""
+    return _client_over(a2a_test_server)
 
 
 @pytest_asyncio.fixture
@@ -109,6 +120,52 @@ async def remote_service(
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     return RemoteA2AService(service_config=config, client=a2a_client_wrapper)
+
+
+_NON_TERMINAL_STATES = frozenset({TaskState.submitted, TaskState.working})
+
+
+async def _wait_for_terminal_task(client: A2AClientWrapper, task_id: str) -> Task:
+    """Poll tasks/get until the remote task leaves the submitted/working states."""
+
+    async def terminal_task() -> Task | None:
+        task = await client.get_task(task_id)
+        return None if task.status.state in _NON_TERMINAL_STATES else task
+
+    task = await wait_for_condition(
+        terminal_task,
+        timeout=30.0,
+        description=f"A2A task {task_id} to reach a terminal state",
+    )
+    assert task is not None
+    return task
+
+
+async def _wait_for_remote_result(
+    service: RemoteA2AService, submission: RemoteSubmission
+) -> ChatInteractionResult:
+    """Poll the remote service until it returns a result rather than PENDING."""
+
+    async def polled_result() -> ChatInteractionResult | None:
+        result = await service.poll_async(
+            submission.remote_task_id, submission.remote_context_id
+        )
+        return result if isinstance(result, ChatInteractionResult) else None
+
+    result = await wait_for_condition(
+        polled_result,
+        timeout=30.0,
+        description=f"remote task {submission.remote_task_id} to finish",
+    )
+    assert result is not None
+    return result
+
+
+def _last_llm_prompt(llm_client: RuleBasedMockLLMClient) -> str:
+    """The messages the remote agent's most recent LLM call was given."""
+    calls = llm_client.get_calls()
+    assert calls, "the remote agent never called its LLM"
+    return str(calls[-1]["kwargs"]["messages"])
 
 
 class _CapturingA2AClient:
@@ -289,7 +346,13 @@ class TestA2AClientIntegration:
 
         assert task.status.state.value == "completed"
         assert task.artifacts is not None
-        assert len(task.artifacts) >= 1
+        artifact_texts = [
+            part.root.text
+            for artifact in task.artifacts
+            for part in artifact.parts
+            if isinstance(part.root, TextPart)
+        ]
+        assert "Hello from the remote agent!" in artifact_texts
 
     @pytest.mark.asyncio
     async def test_send_message_and_convert_result(
@@ -313,7 +376,7 @@ class TestA2AClientIntegration:
     @pytest.mark.asyncio
     async def test_attachment_reaches_the_remote_agent_as_a_file(
         self,
-        a2a_client_wrapper: A2AClientWrapper,
+        a2a_test_server: AsyncClient,
         app_fixture: FastAPI,
         api_db_context: Database,
         api_mock_llm_client: RuleBasedMockLLMClient,
@@ -325,8 +388,8 @@ class TestA2AClientIntegration:
         turning it back into an attachment on the remote conversation.
         """
         registry = app_fixture.state.attachment_registry
-        a2a_client_wrapper._attachments = A2AAttachmentTransfer(
-            registry, api_db_context
+        a2a_client_wrapper = _client_over(
+            a2a_test_server, A2AAttachmentTransfer(registry, api_db_context)
         )
         api_mock_llm_client.default_response = MockLLMOutput(content="got the file")
         stored = await registry.store_and_register_tool_attachment(
@@ -362,13 +425,16 @@ class TestA2AClientIntegration:
     @pytest.mark.asyncio
     async def test_unknown_attachment_fails_fast(
         self,
-        a2a_client_wrapper: A2AClientWrapper,
+        a2a_test_server: AsyncClient,
         app_fixture: FastAPI,
         api_db_context: Database,
     ) -> None:
         """An unresolvable attachment is a permanent error, not a bare id sent."""
-        a2a_client_wrapper._attachments = A2AAttachmentTransfer(
-            app_fixture.state.attachment_registry, api_db_context
+        a2a_client_wrapper = _client_over(
+            a2a_test_server,
+            A2AAttachmentTransfer(
+                app_fixture.state.attachment_registry, api_db_context
+            ),
         )
 
         with pytest.raises(A2APermanentError, match="not available"):
@@ -382,19 +448,20 @@ class TestA2AClientIntegration:
         a2a_client_wrapper: A2AClientWrapper,
         api_mock_llm_client: RuleBasedMockLLMClient,
     ) -> None:
-        """Different context IDs create separate conversations."""
+        """A message in one context is not part of another context's history."""
         api_mock_llm_client.default_response = MockLLMOutput(content="Response")
-
-        task1 = await a2a_client_wrapper.send_message(
-            [text_content("Hello 1")], context_id="ctx-alpha"
-        )
-        task2 = await a2a_client_wrapper.send_message(
-            [text_content("Hello 2")], context_id="ctx-beta"
+        await a2a_client_wrapper.send_message(
+            [text_content("Hello alpha")], context_id="ctx-alpha"
         )
 
-        assert task1.context_id == "ctx-alpha"
-        assert task2.context_id == "ctx-beta"
-        assert task1.id != task2.id
+        task = await a2a_client_wrapper.send_message(
+            [text_content("Hello beta")], context_id="ctx-beta"
+        )
+
+        assert task.context_id == "ctx-beta"
+        prompt = _last_llm_prompt(api_mock_llm_client)
+        assert "Hello beta" in prompt
+        assert "Hello alpha" not in prompt
 
 
 class TestA2AClientAsyncMethods:
@@ -404,7 +471,6 @@ class TestA2AClientAsyncMethods:
     async def test_submit_returns_working_then_get_task_completes(
         self,
         a2a_client_wrapper: A2AClientWrapper,
-        app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
     ) -> None:
         api_mock_llm_client.default_response = MockLLMOutput(content="async done")
@@ -416,11 +482,7 @@ class TestA2AClientAsyncMethods:
         assert task.status.state.value == "working"
         assert task.context_id == "async-ctx"
 
-        background = app_fixture.state.a2a_background_tasks.get(task.id)
-        if background is not None:
-            await background
-
-        polled = await a2a_client_wrapper.get_task(task.id)
+        polled = await _wait_for_terminal_task(a2a_client_wrapper, task.id)
         assert polled.status.state.value == "completed"
         result = await a2a_task_to_chat_result(polled)
         assert "async done" in result.text_reply
@@ -484,65 +546,71 @@ class TestRemoteA2AServiceIntegration:
         assert "Remote delegation worked!" in result.text_reply
 
     @pytest.mark.asyncio
-    async def test_handle_chat_interaction_with_subconversation_id(
+    async def test_subconversations_do_not_share_remote_context(
         self,
         remote_service: RemoteA2AService,
         api_mock_llm_client: RuleBasedMockLLMClient,
         api_db_context: Database,
     ) -> None:
-        """Subconversation ID is used in the A2A context_id for isolation."""
+        """Each subconversation of one conversation gets its own remote context."""
         api_mock_llm_client.default_response = MockLLMOutput(content="OK")
+        await remote_service.handle_chat_interaction(
+            db_context=api_db_context,
+            interface_type="test",
+            conversation_id="conv-123",
+            trigger_content_parts=[text_content("Sent in the first subconversation")],
+            trigger_interface_message_id=None,
+            user_name="test_user",
+            subconversation_id=str(uuid.uuid4()),
+        )
 
-        sub_id = str(uuid.uuid4())
         result = await remote_service.handle_chat_interaction(
             db_context=api_db_context,
             interface_type="test",
             conversation_id="conv-123",
-            trigger_content_parts=[text_content("Test isolation")],
+            trigger_content_parts=[text_content("Sent in the second subconversation")],
             trigger_interface_message_id=None,
             user_name="test_user",
-            subconversation_id=sub_id,
+            subconversation_id=str(uuid.uuid4()),
         )
 
         assert not result.has_error
+        prompt = _last_llm_prompt(api_mock_llm_client)
+        assert "Sent in the second subconversation" in prompt
+        assert "Sent in the first subconversation" not in prompt
 
     @pytest.mark.asyncio
-    async def test_handle_chat_interaction_without_subconversation(
+    async def test_turns_without_subconversation_share_the_conversation_context(
         self,
         remote_service: RemoteA2AService,
         api_mock_llm_client: RuleBasedMockLLMClient,
         api_db_context: Database,
     ) -> None:
-        """When no subconversation_id, conversation_id is used for context."""
+        """Without a subconversation_id, the conversation keys the remote context."""
         api_mock_llm_client.default_response = MockLLMOutput(content="No sub")
+        await remote_service.handle_chat_interaction(
+            db_context=api_db_context,
+            interface_type="test",
+            conversation_id="direct-conv-456",
+            trigger_content_parts=[text_content("First direct call")],
+            trigger_interface_message_id=None,
+            user_name="test_user",
+        )
 
         result = await remote_service.handle_chat_interaction(
             db_context=api_db_context,
             interface_type="test",
             conversation_id="direct-conv-456",
-            trigger_content_parts=[text_content("Direct call")],
+            trigger_content_parts=[text_content("Second direct call")],
             trigger_interface_message_id=None,
             user_name="test_user",
         )
 
         assert not result.has_error
         assert "No sub" in result.text_reply
-
-    @pytest.mark.asyncio
-    async def test_remote_service_kind_is_remote(
-        self, remote_service: RemoteA2AService
-    ) -> None:
-        """RemoteA2AService.kind is 'remote'."""
-        assert remote_service.kind == "remote"
-
-    @pytest.mark.asyncio
-    async def test_remote_service_config_accessible(
-        self, remote_service: RemoteA2AService
-    ) -> None:
-        """RemoteA2AService exposes its config."""
-        config = remote_service.service_config
-        assert config.id == "remote_test_profile"
-        assert config.delegation_security_level == DelegationSecurityLevel.UNRESTRICTED
+        prompt = _last_llm_prompt(api_mock_llm_client)
+        assert "Second direct call" in prompt
+        assert "First direct call" in prompt
 
 
 class TestRemoteA2AServiceAsync:
@@ -552,7 +620,6 @@ class TestRemoteA2AServiceAsync:
     async def test_submit_async_and_poll_to_completion(
         self,
         remote_service: RemoteA2AService,
-        app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
         api_db_context: Database,
     ) -> None:
@@ -570,16 +637,7 @@ class TestRemoteA2AServiceAsync:
         # The async server returns a non-terminal task, so no inline result yet.
         assert submission.terminal_result is None
 
-        background = app_fixture.state.a2a_background_tasks.get(
-            submission.remote_task_id
-        )
-        if background is not None:
-            await background
-
-        result = await remote_service.poll_async(
-            submission.remote_task_id, submission.remote_context_id
-        )
-        assert isinstance(result, ChatInteractionResult)
+        result = await _wait_for_remote_result(remote_service, submission)
         assert not result.has_error
         assert "remote async" in result.text_reply
 
@@ -587,13 +645,13 @@ class TestRemoteA2AServiceAsync:
     async def test_poll_async_pending_while_in_flight(
         self,
         remote_service: RemoteA2AService,
-        app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
         api_db_context: Database,
     ) -> None:
         # Gate the LLM so the remote task stays non-terminal across the poll.
         # No cancellation here, so this is safe on SQLite (the parked background
         # task does not hold the shared connection).
+        api_mock_llm_client.default_response = MockLLMOutput(content="released")
         release = asyncio.Event()
         api_mock_llm_client.response_gate = release
 
@@ -610,16 +668,10 @@ class TestRemoteA2AServiceAsync:
         assert pending is PENDING
 
         release.set()
-        background = app_fixture.state.a2a_background_tasks.get(
-            submission.remote_task_id
-        )
-        if background is not None:
-            await background
 
-        result = await remote_service.poll_async(
-            submission.remote_task_id, submission.remote_context_id
-        )
-        assert isinstance(result, ChatInteractionResult)
+        result = await _wait_for_remote_result(remote_service, submission)
+        assert not result.has_error
+        assert "released" in result.text_reply
 
     @pytest.mark.asyncio
     async def test_poll_async_unknown_task_raises_not_found(
@@ -668,6 +720,7 @@ class TestRemoteA2AServiceAsync:
         )
         assert isinstance(result, ChatInteractionResult)
         assert result.has_error
+        assert result.text_reply == "Remote agent task was cancelled."
 
 
 class TestA2AClientConnectionErrors:

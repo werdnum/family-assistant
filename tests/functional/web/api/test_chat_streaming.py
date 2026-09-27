@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
     CalendarContextProvider,
+    ContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
 )
@@ -29,6 +30,7 @@ from family_assistant.llm import (
 )
 from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TaintSource
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
@@ -45,6 +47,11 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     ToolPolicyDecision,
     ToolsProvider,
+)
+from family_assistant.tools.types import (
+    ToolDefinition,
+    ToolExecutionContext,
+    ToolResult,
 )
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
@@ -154,6 +161,23 @@ async def test_tools_provider(
     return policy_provider
 
 
+def _build_processing_service(
+    *,
+    llm_client: LLMInterface,
+    tools_provider: ToolsProvider,
+    service_config: ProcessingServiceConfig,
+    context_providers: list[ContextProvider],
+) -> ProcessingService:
+    return ProcessingService(
+        llm_client=llm_client,
+        tools_provider=tools_provider,
+        service_config=service_config,
+        context_providers=context_providers,
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
+
+
 @pytest.fixture(scope="function")
 def test_processing_service(
     mock_llm_client: RuleBasedMockLLMClient,
@@ -186,15 +210,11 @@ def test_processing_service(
     known_users_provider = KnownUsersContextProvider(
         chat_id_to_name_map={}, prompts=mock_processing_service_config.prompts
     )
-    context_providers = [notes_provider, calendar_provider, known_users_provider]
-
-    return ProcessingService(
+    return _build_processing_service(
         llm_client=mock_llm_client,
         tools_provider=test_tools_provider,
         service_config=mock_processing_service_config,
-        context_providers=context_providers,
-        server_url="http://testserver",
-        app_config=AppConfig(),
+        context_providers=[notes_provider, calendar_provider, known_users_provider],
     )
 
 
@@ -559,15 +579,44 @@ async def test_streaming_continues_after_tool_error(
     assert len(error_events) == 0, f"Unexpected error events in stream: {error_events}"
 
 
+class _ToolRaisingProvider:
+    """Delegates to a real tools provider, except that one tool raises."""
+
+    def __init__(
+        self, wrapped: ToolsProvider, *, failing_tool: str, error: Exception
+    ) -> None:
+        self._wrapped = wrapped
+        self._failing_tool = failing_tool
+        self._error = error
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return await self._wrapped.get_tool_definitions()
+
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        if name == self._failing_tool:
+            raise self._error
+        return await self._wrapped.execute_tool(name, arguments, context, call_id)
+
+    async def close(self) -> None:
+        await self._wrapped.close()
+
+
 async def test_streaming_continues_after_tool_execution_exception(
+    app_fixture: FastAPI,
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    test_processing_service: ProcessingService,
+    test_tools_provider: ToolsProvider,
+    mock_processing_service_config: ProcessingServiceConfig,
 ) -> None:
     """Test that streaming continues when a tool raises an exception during execution.
 
-    This tests the code path in _execute_single_tool where execute_tool() raises
-    an Exception, which should be caught and returned as a tool_result error,
+    The exception should be caught and returned as a tool_result error,
     allowing the LLM to continue generating a response.
     """
     user_prompt = "Create a note called Test"
@@ -616,116 +665,58 @@ async def test_streaming_continues_after_tool_execution_exception(
         ),
     ))
 
-    # Patch the tools_provider to raise an exception for our tool call
-    original_execute = test_processing_service.tools_provider.execute_tool
-
-    async def raise_on_target_call(*args: object, **kwargs: object) -> object:
-        # call_id is passed as 4th positional arg: execute_tool(name, args, ctx, call_id)
-        actual_call_id = args[3] if len(args) > 3 else kwargs.get("call_id")
-        if actual_call_id == tool_call_id:
-            raise RuntimeError(
+    app_fixture.state.processing_service = _build_processing_service(
+        llm_client=mock_llm_client,
+        tools_provider=_ToolRaisingProvider(
+            test_tools_provider,
+            failing_tool="add_or_update_note",
+            error=RuntimeError(
                 "Simulated tool execution failure: database connection lost"
-            )
-        return await original_execute(*args, **kwargs)  # type: ignore[arg-type]  # test monkey-patch forwards args
-
-    test_processing_service.tools_provider.execute_tool = raise_on_target_call  # type: ignore[assignment]  # test monkey-patch
-
-    try:
-        response = await run_chat_turn_stream(
-            test_client,
-            {"prompt": user_prompt},
-        )
-
-        assert response.status_code == 200
-
-        # Parse SSE events
-        events = parse_sse_events(response.text)
-
-        event_types = [e["type"] for e in events]
-
-        # Should have tool_call event
-        assert "tool_call" in event_types, f"Expected tool_call. Events: {event_types}"
-
-        # Should have tool_result with error from the exception
-        tool_result_events = [e for e in events if e["type"] == "tool_result"]
-        assert len(tool_result_events) >= 1, (
-            f"Expected tool_result. Events: {event_types}"
-        )
-        tool_result_text = tool_result_events[0]["data"]["result"]
-        assert "Error" in tool_result_text, (
-            f"Expected error in tool result, got: {tool_result_text}"
-        )
-        assert "database connection lost" in tool_result_text
-
-        # CRITICAL: Stream should continue after tool execution error
-        assert "text" in event_types, (
-            f"Stream was cut off after tool execution error! Expected text events "
-            f"but got: {event_types}"
-        )
-        text_events = [e for e in events if e["type"] == "text"]
-        combined_text = "".join(e["data"]["content"] for e in text_events)
-        assert combined_text == llm_final_reply
-
-        # Should complete normally
-        assert "turn_ended" in event_types, (
-            f"Missing turn_ended event. Events: {event_types}"
-        )
-
-        # Should NOT have error events (tool errors are returned as tool_results, not errors)
-        error_events = [e for e in events if e["type"] == "error"]
-        assert len(error_events) == 0, f"Unexpected error events: {error_events}"
-    finally:
-        test_processing_service.tools_provider.execute_tool = original_execute  # type: ignore[assignment] - restoring original method after test monkey-patch
-
-
-async def test_streaming_no_database_connection_errors(
-    test_client: AsyncClient,
-    mock_llm_client: RuleBasedMockLLMClient,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Regression test: streaming should not produce database connection errors.
-
-    Previously, the DB context was owned by the SSE generator. When the generator
-    exited (e.g. client disconnect), the DB context closed and killed the
-    processing task's connection mid-operation. Now process_stream() owns its own
-    DB context, so no "No active database connection" errors should occur.
-    """
-    user_prompt = "Hello, test DB lifecycle"
-    llm_response = "Response received successfully."
-
-    mock_llm_client.rules.append((
-        lambda args: any(
-            msg.role == "user" and user_prompt in str(msg.content or "")
-            for msg in args.get("messages", [])
-        ),
-        LLMOutput(
-            content=llm_response,
-            tool_calls=None,
-            reasoning_info=MessageReasoningInfo(
-                prompt_tokens=25, completion_tokens=25, total_tokens=50
             ),
         ),
-    ))
+        service_config=mock_processing_service_config,
+        context_providers=[],
+    )
 
-    with caplog.at_level(logging.ERROR):
-        response = await run_chat_turn_stream(
-            test_client,
-            {"prompt": user_prompt},
-        )
+    response = await run_chat_turn_stream(
+        test_client,
+        {"prompt": user_prompt},
+    )
 
     assert response.status_code == 200
 
-    # Verify no database connection errors in logs
-    db_error_messages = [
-        record.message
-        for record in caplog.records
-        if "NoneType" in record.message
-        or "No active database connection" in record.message
-        or "database connection" in record.message.lower()
-    ]
-    assert db_error_messages == [], (
-        f"Database connection errors found in logs: {db_error_messages}"
+    events = parse_sse_events(response.text)
+    event_types = [e["type"] for e in events]
+
+    assert "tool_call" in event_types, f"Expected tool_call. Events: {event_types}"
+
+    tool_result_events = [e for e in events if e["type"] == "tool_result"]
+    assert len(tool_result_events) == 1, f"Expected tool_result. Events: {event_types}"
+    assert tool_result_events[0]["data"]["tool_call_id"] == tool_call_id
+    tool_result_text = tool_result_events[0]["data"]["result"]
+    assert "Error" in tool_result_text, (
+        f"Expected error in tool result, got: {tool_result_text}"
     )
+    assert "database connection lost" in tool_result_text
+
+    # CRITICAL: Stream should continue after tool execution error
+    assert "text" in event_types, (
+        f"Stream was cut off after tool execution error! Expected text events "
+        f"but got: {event_types}"
+    )
+    text_events = [e for e in events if e["type"] == "text"]
+    combined_text = "".join(e["data"]["content"] for e in text_events)
+    assert combined_text == llm_final_reply
+
+    turn_ended_events = [e for e in events if e["type"] == "turn_ended"]
+    assert len(turn_ended_events) == 1, (
+        f"Missing turn_ended event. Events: {event_types}"
+    )
+    assert turn_ended_events[0]["data"]["status"] == "complete"
+
+    # Tool errors are returned as tool_results, not stream errors
+    error_events = [e for e in events if e["type"] == "error"]
+    assert len(error_events) == 0, f"Unexpected error events: {error_events}"
 
 
 class _SpyNotifier:
@@ -758,9 +749,15 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
     mock_llm_client: RuleBasedMockLLMClient,
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """If the client disconnects mid-turn, processing finishes in the background
-    and the final reply is delivered via push notification."""
+    and the final reply is delivered via push notification.
+
+    The producer owns its own database context, so the subscriber going away
+    must not close a connection the producer is still using: no database
+    connection errors may be logged.
+    """
     user_prompt = "Keep working even if I close the app"
     llm_response = "All done in the background!"
     conversation_id = "disconnect-conv-1"
@@ -795,46 +792,71 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
     spy = _SpyNotifier()
     app_fixture.state.web_chat_interface = WebChatInterface(db_engine, notifier=spy)
 
-    # Start the turn. The producer runs in the hub, decoupled from any HTTP
-    # request, so it survives the subscriber disconnecting.
-    turn_id = str(uuid.uuid4())
-    post_response = await test_client.post(
-        "/api/v1/chat/turns",
-        json={
-            "turn_id": turn_id,
-            "prompt": user_prompt,
-            "interface_type": "web",
-            "conversation_id": conversation_id,
-        },
-    )
-    assert post_response.status_code == 200
-
-    # Open a stream subscription and wait until processing is underway.
-    subscribe_task = asyncio.create_task(
-        test_client.get(
-            f"/api/v1/chat/conversations/{conversation_id}/stream",
-            params={"from_seq": 0},
+    with caplog.at_level(logging.ERROR):
+        # Start the turn. The producer runs in the hub, decoupled from any HTTP
+        # request, so it survives the subscriber disconnecting.
+        turn_id = str(uuid.uuid4())
+        post_response = await test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": turn_id,
+                "prompt": user_prompt,
+                "interface_type": "web",
+                "conversation_id": conversation_id,
+            },
         )
+        assert post_response.status_code == 200
+        hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+
+        # Open a stream subscription and wait until it is attached and
+        # processing is underway.
+        subscribe_task = asyncio.create_task(
+            test_client.get(
+                f"/api/v1/chat/conversations/{conversation_id}/stream",
+                params={"from_seq": 0},
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=10)
+        await wait_for_condition(
+            lambda: hub.subscriber_count(conversation_id) == 1,
+            timeout=10.0,
+            description="stream subscriber to attach",
+        )
+
+        # Simulate the client closing the app: cancel the in-flight subscription
+        # before it can observe (and acknowledge) the turn_ended event.
+        subscribe_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await subscribe_task
+        await wait_for_condition(
+            lambda: hub.subscriber_count(conversation_id) == 0,
+            timeout=10.0,
+            description="stream subscriber to detach",
+        )
+
+        # Processing should continue in the background; let the LLM finish.
+        release.set()
+
+        # The completed reply must be delivered as a push notification.
+        await asyncio.wait_for(spy.notified.wait(), timeout=10)
+
+        # Let the background producer task fully settle before assertions/teardown.
+        producer_tasks = hub.get_active_producer_tasks(conversation_id)
+        if producer_tasks:
+            await asyncio.gather(*producer_tasks, return_exceptions=True)
+
+    db_error_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.ERROR
+        and (
+            "NoneType" in record.getMessage()
+            or "database connection" in record.getMessage().lower()
+        )
+    ]
+    assert db_error_messages == [], (
+        f"Database connection errors logged after disconnect: {db_error_messages}"
     )
-    await asyncio.wait_for(started.wait(), timeout=5)
-
-    # Simulate the client closing the app: cancel the in-flight subscription
-    # before it can observe (and acknowledge) the turn_ended event.
-    subscribe_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await subscribe_task
-
-    # Processing should continue in the background; let the LLM finish.
-    release.set()
-
-    # The completed reply must be delivered as a push notification.
-    await asyncio.wait_for(spy.notified.wait(), timeout=10)
-
-    # Let the background producer task fully settle before assertions/teardown.
-    hub = app_fixture.state.conversation_stream_hub
-    producer_tasks = hub.get_active_producer_tasks(conversation_id)
-    if producer_tasks:
-        await asyncio.gather(*producer_tasks, return_exceptions=True)
 
     assert len(spy.calls) == 1
     user_identifier, _title, body, metadata = spy.calls[0]
@@ -859,12 +881,37 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
     assert assistant_messages, "Assistant reply should be persisted after disconnect"
 
 
+class _TaintLookupUnavailableError(RuntimeError):
+    pass
+
+
+class _TaintLookupFailsOnceProvider:
+    """A tainted context provider whose first taint lookup fails."""
+
+    def __init__(self) -> None:
+        self.taint_lookups = 0
+
+    @property
+    def name(self) -> str:
+        return "taint_lookup_fails_once"
+
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
+        return []
+
+    async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
+        self.taint_lookups += 1
+        if self.taint_lookups == 1:
+            raise _TaintLookupUnavailableError("taint store unavailable")
+        return ()
+
+
 async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
     app_fixture: FastAPI,
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
+    test_tools_provider: ToolsProvider,
+    mock_processing_service_config: ProcessingServiceConfig,
     db_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failure during pre-producer setup must not strand the prompt.
 
@@ -890,18 +937,12 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
         ),
     ))
 
-    service = app_fixture.state.processing_service
-    preparer = service.context_preparer
-    real_aggregate = preparer.aggregate_context_taint_sources
-    calls = {"n": 0}
-
-    async def fail_once() -> object:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("context taint aggregation unavailable")
-        return await real_aggregate()
-
-    monkeypatch.setattr(preparer, "aggregate_context_taint_sources", fail_once)
+    app_fixture.state.processing_service = _build_processing_service(
+        llm_client=mock_llm_client,
+        tools_provider=test_tools_provider,
+        service_config=mock_processing_service_config,
+        context_providers=[_TaintLookupFailsOnceProvider()],
+    )
 
     turn_id = str(uuid.uuid4())
     body = {
@@ -911,8 +952,16 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
         "conversation_id": conversation_id,
     }
 
-    with pytest.raises(RuntimeError, match="context taint aggregation unavailable"):
+    with pytest.raises(RuntimeError) as setup_failure:
         await test_client.post("/api/v1/chat/turns", json=body)
+    failure_chain: list[BaseException] = []
+    failure: BaseException | None = setup_failure.value
+    while failure is not None:
+        failure_chain.append(failure)
+        failure = failure.__cause__
+    assert any(
+        isinstance(exc, _TaintLookupUnavailableError) for exc in failure_chain
+    ), f"POST failed for an unexpected reason: {failure_chain!r}"
 
     # The retry carries the same turn_id and must actually run the turn.
     # The prompt must not have survived the failed setup: it is what the

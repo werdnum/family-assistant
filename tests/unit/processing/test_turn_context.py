@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -23,10 +24,12 @@ from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import SystemMessage, TextContentPart, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.turn_context import (
     render_turn_context_block,
     turn_context_guidance,
 )
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm.messages import LLMMessage
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.tools import ToolExecutionContext
     from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -400,13 +404,30 @@ async def test_opted_out_profile_is_not_told_it_has_context(
 
 
 @pytest.mark.no_db
-def test_url_conversion_preserves_the_scaffolding_flag() -> None:
+@pytest.mark.asyncio
+async def test_url_conversion_preserves_the_scaffolding_flag() -> None:
     """Rebuilding a UserMessage from scratch would silently drop it."""
+    taint_metadata: TaintMetadata = {
+        "version": "runtime_v2",
+        "max_tier": "unknown_external",
+        "sources": [],
+    }
     message = UserMessage(
         content=[TextContentPart(type="text", text="hi")],
         is_turn_scaffolding=True,
+        taint_metadata=taint_metadata,
+    )
+    processor = AttachmentProcessor(
+        attachment_registry=MagicMock(spec=AttachmentRegistry),
+        app_config=AppConfig(),
+        clock=MockClock(MOCK_NOW),
     )
 
-    rebuilt = message.model_copy(update={"content": list(message.content)})
+    [converted] = await processor.convert_message_urls(
+        MagicMock(spec=Database), [message], acting_user_id=None
+    )
 
-    assert rebuilt.is_turn_scaffolding is True
+    assert isinstance(converted, UserMessage)
+    assert converted.content == [TextContentPart(type="text", text="hi")]
+    assert converted.is_turn_scaffolding is True
+    assert converted.taint_metadata == taint_metadata

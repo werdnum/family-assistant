@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import urllib.request
+import uuid
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -13,9 +13,9 @@ from opentelemetry import trace as otel_trace
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.call_context import (
-    current_processing_profile,
     reset_model_selection,
     reset_processing_profile,
     set_model_selection,
@@ -37,6 +37,8 @@ from family_assistant.observability.metrics import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
+from family_assistant.processing.protocol import DelegationTransientError
+from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.tools import ToolNotFoundError
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
@@ -59,6 +61,8 @@ from family_assistant.tools.video_backends import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Mapping
 
+    from google.genai.interactions import Interaction
+
     from family_assistant.llm.messages import MessageReasoningInfo
     from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolDefinition
@@ -69,15 +73,20 @@ def _sample(name: str, labels: Mapping[str, str]) -> float:
     return REGISTRY.get_sample_value(name, dict(labels)) or 0.0
 
 
-@pytest.fixture
-def profile() -> Iterator[str]:
-    """A profile label unique to the test, so counters cannot collide.
+def _unique(prefix: str) -> str:
+    """A label value no other test, or rerun of this one, can have used.
 
     The registry is process-global and shared with every other test in the
     worker; a per-test label is what keeps assertions about absolute values
     honest without resetting global state.
     """
-    label = f"test_profile_{id(object())}"
+    return f"{prefix}_{uuid.uuid4().hex}"
+
+
+@pytest.fixture
+def profile() -> Iterator[str]:
+    """A unique profile label, active as the current processing profile."""
+    label = _unique("test_profile")
     token = set_processing_profile(label)
     try:
         yield label
@@ -500,10 +509,32 @@ def test_an_unselected_tier_records_the_default_without_a_requested_one() -> Non
 def test_the_profile_is_captured_when_the_call_starts(profile: str) -> None:
     """A streamed call ends after its caller has left the profile's block."""
     telemetry = _telemetry(provider="google", model="gemini-test", streaming=True)
+    other_profile = _unique("other_profile")
 
-    reset_processing_profile(set_processing_profile("some_other_profile"))
-    assert current_processing_profile() == profile
-    assert telemetry.attribution.profile_id == profile
+    token = set_processing_profile(other_profile)
+    try:
+        telemetry.finish_success(response=None)
+    finally:
+        reset_processing_profile(token)
+
+    labels = {
+        "tier": "none",
+        "provider": "google",
+        "model": "gemini-test",
+        "resolved_model": "gemini-test",
+        "operation": "chat",
+        "outcome": "success",
+        "error_type": "",
+    }
+    assert (
+        _sample("family_assistant_llm_calls_total", {**labels, "profile": profile}) == 1
+    )
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total", {**labels, "profile": other_profile}
+        )
+        == 0
+    )
 
 
 def test_an_abandoned_streamed_call_still_records_an_outcome(profile: str) -> None:
@@ -571,36 +602,41 @@ def test_abandoning_a_call_that_already_finished_counts_it_once(profile: str) ->
 
 
 def test_tool_execution_is_counted_by_outcome() -> None:
-    labels = {"profile": "p_tool", "tool": "get_note", "outcome": "denied"}
-    before = _sample("family_assistant_tool_calls_total", labels)
+    profile = _unique("p_tool")
 
     record_tool_call(
-        profile="p_tool", tool="get_note", outcome="denied", duration_seconds=0.5
+        profile=profile, tool="get_note", outcome="denied", duration_seconds=0.5
     )
 
-    assert _sample("family_assistant_tool_calls_total", labels) - before == 1
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": profile, "tool": "get_note", "outcome": "denied"},
+        )
+        == 1
+    )
     assert (
         _sample(
             "family_assistant_tool_duration_seconds_count",
-            {"profile": "p_tool", "tool": "get_note"},
+            {"profile": profile, "tool": "get_note"},
         )
-        >= 1
+        == 1
     )
 
 
 def test_a_finished_turn_leaves_the_in_progress_gauge_where_it_found_it() -> None:
-    gauge_labels = {"profile": "p_turn"}
-    before = _sample("family_assistant_turns_in_progress", gauge_labels)
+    profile = _unique("p_turn")
+    gauge_labels = {"profile": profile}
 
-    turn = TurnMetrics("p_turn")
-    assert _sample("family_assistant_turns_in_progress", gauge_labels) - before == 1
+    turn = TurnMetrics(profile)
+    assert _sample("family_assistant_turns_in_progress", gauge_labels) == 1
     turn.finish("success")
 
-    assert _sample("family_assistant_turns_in_progress", gauge_labels) == before
+    assert _sample("family_assistant_turns_in_progress", gauge_labels) == 0
     assert (
         _sample(
             "family_assistant_turns_total",
-            {"profile": "p_turn", "outcome": "success"},
+            {"profile": profile, "outcome": "success"},
         )
         == 1
     )
@@ -608,17 +644,26 @@ def test_a_finished_turn_leaves_the_in_progress_gauge_where_it_found_it() -> Non
 
 def test_finishing_a_turn_twice_counts_it_once() -> None:
     """The loop finishes on its own exit path and again in cleanup."""
-    turn = TurnMetrics("p_turn_twice")
+    profile = _unique("p_turn_twice")
+    turn = TurnMetrics(profile)
+
     turn.finish("success")
     turn.finish("cancelled")
 
     assert (
         _sample(
+            "family_assistant_turns_total", {"profile": profile, "outcome": "success"}
+        )
+        == 1
+    )
+    assert (
+        _sample(
             "family_assistant_turns_total",
-            {"profile": "p_turn_twice", "outcome": "cancelled"},
+            {"profile": profile, "outcome": "cancelled"},
         )
         == 0
     )
+    assert _sample("family_assistant_turns_in_progress", {"profile": profile}) == 0
 
 
 # --- Exposition ----------------------------------------------------------
@@ -626,8 +671,9 @@ def test_finishing_a_turn_twice_counts_it_once() -> None:
 
 def test_the_exporter_serves_the_metrics_it_has_collected() -> None:
     """The whole point of the module is what a scrape gets back."""
+    profile = _unique("p_export")
     record_tool_call(
-        profile="p_export", tool="get_note", outcome="returned", duration_seconds=0.1
+        profile=profile, tool="get_note", outcome="returned", duration_seconds=0.1
     )
     server = start_metrics_exporter(0, addr="127.0.0.1")
     assert server is not None
@@ -641,8 +687,10 @@ def test_the_exporter_serves_the_metrics_it_has_collected() -> None:
         server.shutdown()
         server.server_close()
 
-    assert 'family_assistant_tool_calls_total{outcome="returned"' in body
-    assert 'profile="p_export"' in body
+    assert (
+        "family_assistant_tool_calls_total"
+        f'{{outcome="returned",profile="{profile}",tool="get_note"}} 1.0'
+    ) in body.splitlines()
 
 
 # --- Managed-agent runs --------------------------------------------------
@@ -699,31 +747,48 @@ def test_an_agent_run_reports_its_token_modalities() -> None:
     assert buckets["output"] == 1000
 
 
-def test_a_committed_run_is_counted_even_if_its_usage_cannot_be_read() -> None:
+class _UnreadableInteractionClient(GoogleGenAIClient):
+    """A Google client whose read of a finished run fails, as an outage would."""
+
+    async def get_agent_interaction(self, interaction_id: str) -> Interaction:
+        raise DelegationTransientError(f"interaction {interaction_id} unavailable")
+
+
+@pytest.mark.asyncio
+async def test_a_committed_run_is_counted_even_if_its_usage_cannot_be_read() -> None:
     """The enrichment read may fail; the run still happened and was still billed.
 
     The caller has already committed the terminal transition, so no later poll
     reaches this hook again -- dropping the call here would lose the whole run
     rather than its token detail.
     """
-    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
-    # Bound to a stand-in rather than a whole ProcessingService: the two
-    # attributes below are all this method reads, and constructing the service
-    # would pull in the entire processing stack for one call.
-    service = SimpleNamespace(
-        service_config=SimpleNamespace(id="p_unreadable"),
-        _google_client=lambda: client,
+    profile = _unique("p_unreadable")
+    service = InteractionsAgentProcessingService(
+        llm_client=_UnreadableInteractionClient(
+            api_key="test", model="deep-research-preview-04-2026"
+        ),
+        tools_provider=LocalToolsProvider(registrations=[]),
+        service_config=ProcessingServiceConfig(
+            prompts={},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id=profile,
+        ),
+        context_providers=[],
+        server_url=None,
+        app_config=AppConfig(),
     )
 
-    InteractionsAgentProcessingService._record_run_metrics(
-        cast("InteractionsAgentProcessingService", service), None, outcome="success"
-    )
+    await service.record_terminal_metrics("interaction-1", outcome="success")
 
     assert (
         _sample(
             "family_assistant_llm_calls_total",
             {
-                "profile": "p_unreadable",
+                "profile": profile,
                 "tier": "none",
                 "provider": "google",
                 "model": "models/deep-research-preview-04-2026",
@@ -748,8 +813,10 @@ def test_a_returning_tool_is_not_recorded_as_a_success() -> None:
     "success" would let a tool error rate read as healthy while real failures
     flowed through it.
     """
+    profile = _unique("p_returned")
+
     record_tool_call(
-        profile="p_returned",
+        profile=profile,
         tool="generate_image",
         outcome="returned",
         duration_seconds=0.1,
@@ -758,14 +825,14 @@ def test_a_returning_tool_is_not_recorded_as_a_success() -> None:
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_returned", "tool": "generate_image", "outcome": "success"},
+            {"profile": profile, "tool": "generate_image", "outcome": "success"},
         )
         == 0
     )
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_returned", "tool": "generate_image", "outcome": "returned"},
+            {"profile": profile, "tool": "generate_image", "outcome": "returned"},
         )
         == 1
     )
@@ -974,16 +1041,15 @@ def _one_tool_provider(behaviour: Exception | str) -> LocalToolsProvider:
 @pytest.mark.asyncio
 async def test_the_provider_counts_the_executions_that_reach_it() -> None:
     """Every entry path holds this provider, so counting here counts them all."""
-    provider = TaintTrackingToolsProvider(
-        _one_tool_provider("done"), profile="p_returned"
-    )
+    profile = _unique("p_returned")
+    provider = TaintTrackingToolsProvider(_one_tool_provider("done"), profile=profile)
 
     await provider.execute_tool("some_tool", {}, _execution_context())
 
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_returned", "tool": "some_tool", "outcome": "returned"},
+            {"profile": profile, "tool": "some_tool", "outcome": "returned"},
         )
         == 1
     )
@@ -997,9 +1063,8 @@ async def test_an_unknown_tool_is_counted_under_a_bounded_label() -> None:
     loop against /api/tools/execute/{tool_name} would otherwise grow the series
     set without bound.
     """
-    provider = TaintTrackingToolsProvider(
-        _one_tool_provider("done"), profile="p_missing"
-    )
+    profile = _unique("p_missing")
+    provider = TaintTrackingToolsProvider(_one_tool_provider("done"), profile=profile)
 
     for name in ("no_such_tool", "another_typo", "../../etc/passwd"):
         with pytest.raises(ToolNotFoundError):
@@ -1007,7 +1072,7 @@ async def test_an_unknown_tool_is_counted_under_a_bounded_label() -> None:
         assert (
             _sample(
                 "family_assistant_tool_calls_total",
-                {"profile": "p_missing", "tool": name, "outcome": "not_found"},
+                {"profile": profile, "tool": name, "outcome": "not_found"},
             )
             == 0
         )
@@ -1015,7 +1080,7 @@ async def test_an_unknown_tool_is_counted_under_a_bounded_label() -> None:
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_missing", "tool": UNKNOWN_TOOL, "outcome": "not_found"},
+            {"profile": profile, "tool": UNKNOWN_TOOL, "outcome": "not_found"},
         )
         == 3
     )
@@ -1030,8 +1095,9 @@ async def test_a_tool_that_raises_is_still_counted_as_returned() -> None:
     at this level can tell that from an answer, so calling it success would
     make a tool error rate read as healthy while real failures flowed through.
     """
+    profile = _unique("p_raised")
     provider = TaintTrackingToolsProvider(
-        _one_tool_provider(RuntimeError("boom")), profile="p_raised"
+        _one_tool_provider(RuntimeError("boom")), profile=profile
     )
 
     await provider.execute_tool("some_tool", {}, _execution_context())
@@ -1039,14 +1105,14 @@ async def test_a_tool_that_raises_is_still_counted_as_returned() -> None:
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_raised", "tool": "some_tool", "outcome": "returned"},
+            {"profile": profile, "tool": "some_tool", "outcome": "returned"},
         )
         == 1
     )
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_raised", "tool": "some_tool", "outcome": "success"},
+            {"profile": profile, "tool": "some_tool", "outcome": "success"},
         )
         == 0
     )

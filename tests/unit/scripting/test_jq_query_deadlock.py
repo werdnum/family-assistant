@@ -85,8 +85,6 @@ async def test_jq_query_from_script_no_deadlock(
         api_backend=None,
     )
 
-    # Script that creates an attachment and then calls jq_query() on it
-    # This will trigger the deadlock in _process_attachment_arguments
     script = """
 # Create a JSON attachment (use text/plain since application/json isn't in allowed list)
 test_data = [
@@ -101,8 +99,6 @@ attachment = attachment_create(
     mime_type="text/plain"
 )
 
-# Query the attachment to filter people over 30
-# This is where the deadlock occurs
 result = jq_query(
     attachment_id=attachment["id"],
     jq_program="[.[] | select(.age > 30)]"
@@ -110,10 +106,6 @@ result = jq_query(
 result
 """
 
-    # This should complete without timeout
-    # Currently it will timeout after 30s due to the deadlock
     result = await execute_script_tool(ctx, script)
 
-    # Verify the script executed successfully
-    assert result.text is not None
-    assert "Charlie" in result.text or "35" in result.text
+    assert result.get_data() == [{"name": "Charlie", "age": 35}], result.text

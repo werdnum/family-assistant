@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import tempfile
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -385,6 +385,19 @@ class TestInboundMessage:
     ) -> None:
         """One malformed file must not leave its predecessors registered."""
         codec, registry, db_context = transfer
+        earlier = await codec.message_to_content_parts(
+            _message(
+                Part(
+                    root=FilePart(
+                        file=FileWithBytes(bytes=base64.b64encode(b"earlier").decode())
+                    )
+                )
+            ),
+            conversation_id="a2a-partial",
+            owner_user_id=OWNER,
+        )
+        assert earlier[0]["type"] == "attachment"
+        earlier_id = earlier[0]["attachment_id"]
         message = _message(
             Part(
                 root=FilePart(
@@ -406,10 +419,10 @@ class TestInboundMessage:
         stored = await registry.get_recent_attachments_for_conversation(
             db_context,
             "a2a-partial",
-            datetime.now(UTC) - timedelta(minutes=5),
+            datetime(2000, 1, 1, tzinfo=UTC),
             acting_user_id=OWNER,
         )
-        assert stored == []
+        assert [attachment.attachment_id for attachment in stored] == [earlier_id]
 
     @pytest.mark.asyncio
     async def test_a_storage_failure_removes_what_it_already_stored(
@@ -420,13 +433,14 @@ class TestInboundMessage:
         """Nothing collects a tool-source orphan, so the batch cleans up after itself."""
         codec, registry, db_context = transfer
         real_store = registry.store_and_register_tool_attachment
-        calls = {"n": 0}
+        stored_before_failure: list[str] = []
 
         async def _fail_on_second(*args: object, **kwargs: object) -> object:
-            calls["n"] += 1
-            if calls["n"] == 2:
+            if stored_before_failure:
                 raise OSError("disk on fire")
-            return await real_store(*args, **kwargs)  # type: ignore[arg-type]
+            metadata = await real_store(*args, **kwargs)  # type: ignore[arg-type]
+            stored_before_failure.append(metadata.attachment_id)
+            return metadata
 
         monkeypatch.setattr(
             registry, "store_and_register_tool_attachment", _fail_on_second
@@ -443,13 +457,13 @@ class TestInboundMessage:
                 message, conversation_id="a2a-storage-fail", owner_user_id=OWNER
             )
 
-        stored = await registry.get_recent_attachments_for_conversation(
-            db_context,
-            "a2a-storage-fail",
-            datetime.now(UTC) - timedelta(minutes=5),
-            acting_user_id=OWNER,
+        assert len(stored_before_failure) == 1
+        orphan_id = stored_before_failure[0]
+        assert (
+            await registry.get_attachment(db_context, orphan_id, acting_user_id=OWNER)
+            is None
         )
-        assert stored == []
+        assert registry.get_attachment_path(orphan_id) is None
 
     @pytest.mark.asyncio
     async def test_data_part_becomes_json_text(

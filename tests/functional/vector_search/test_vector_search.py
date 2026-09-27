@@ -4,7 +4,7 @@ Tests advanced search features, error conditions, and edge cases.
 """
 
 import asyncio
-import time
+import math
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +17,15 @@ from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.storage.database import Database
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
+
+FIXTURE_SOURCE_IDS = [
+    "business_plan",
+    "edu_article",
+    "finance_note",
+    "health_newsletter",
+    "tech_report",
+]
+TECHNOLOGY_EMBEDDING = [0.0, 1.0] + [0.0] * 1534
 
 
 class TestDocument:
@@ -193,6 +202,36 @@ async def _setup_comprehensive_test_data(
         )
 
 
+async def _add_embedded_document(
+    db: Database,
+    source_type: str,
+    source_id: str,
+    created_at: datetime,
+    embedding: list[float],
+) -> None:
+    doc_id = await db.vector.add_document(
+        TestDocument(
+            source_type=source_type,
+            source_id=source_id,
+            title=source_id,
+            created_at=created_at,
+        )
+    )
+    await db.vector.add_embedding(
+        document_id=doc_id,
+        chunk_index=0,
+        embedding_type="content_chunk",
+        embedding=embedding,
+        embedding_model="gemini-exp-03-07",
+        content=f"Content of {source_id}",
+    )
+
+
+# ast-grep-ignore: no-dict-any - external API response has dynamic fields
+def _source_ids(results: list[dict[str, Any]]) -> list[str]:
+    return [result["document"]["source_id"] for result in results]
+
+
 @pytest.mark.asyncio
 @pytest.mark.postgres
 async def test_vector_search_semantic_accuracy(
@@ -206,18 +245,11 @@ async def test_vector_search_semantic_accuracy(
     assert resp.status_code == 200
     results = resp.json()
 
-    # Finance document should be first (exact match)
-    assert len(results) > 0
+    assert len(results) == len(FIXTURE_SOURCE_IDS)
     top_result = results[0]
     assert top_result["document"]["source_id"] == "finance_note"
-    # Since API converts distance to score, exact match should have score = 1.0
     assert top_result["score"] == pytest.approx(1.0, abs=1e-6)
-
-    # Mixed topic should be second (partial match)
-    if len(results) > 1:
-        second_result = results[1]
-        # Should have lower score than exact match
-        assert second_result["score"] < top_result["score"]
+    assert all(result["score"] < top_result["score"] for result in results[1:])
 
 
 @pytest.mark.asyncio
@@ -236,11 +268,7 @@ async def test_vector_search_filters_by_source_type(
         },
     )
     assert resp.status_code == 200
-    results = resp.json()
-
-    # Should only return note documents
-    for result in results:
-        assert result["document"]["source_type"] == "note"
+    assert sorted(_source_ids(resp.json())) == ["business_plan", "finance_note"]
 
 
 @pytest.mark.asyncio
@@ -259,40 +287,61 @@ async def test_vector_search_metadata_filtering(
         },
     )
     assert resp.status_code == 200
-    results = resp.json()
-
-    # Should only return technology documents
-    for result in results:
-        assert result["document"]["metadata"]["category"] == "technology"
+    assert _source_ids(resp.json()) == ["tech_report"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_vector_search_date_filtering(
-    comprehensive_vector_client: httpx.AsyncClient,
+async def test_vector_search_created_before_excludes_newer_documents(
+    comprehensive_vector_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
-    """Test filtering by date range."""
-    # Filter documents created after a certain time
-    cutoff_time = datetime.now(UTC).isoformat()
+    """created_before keeps only documents created on or before the cutoff."""
+    await _add_embedded_document(
+        Database(engine=pg_vector_db_engine),
+        source_type="pdf",
+        source_id="archived_report",
+        created_at=datetime(2020, 1, 1, tzinfo=UTC),
+        embedding=TECHNOLOGY_EMBEDDING,
+    )
 
     resp = await comprehensive_vector_client.post(
         "/api/vector-search/",
         json={
             "query_text": "technology",
             "limit": 10,
-            "filters": {"created_before": cutoff_time},
+            "filters": {"created_before": "2021-01-01T00:00:00+00:00"},
         },
     )
-    assert resp.status_code == 200
-    results = resp.json()
 
-    # All documents should be created before cutoff
-    for result in results:
-        doc_created = datetime.fromisoformat(
-            result["document"]["created_at"].replace("Z", "+00:00")
-        )
-        cutoff_dt = datetime.fromisoformat(cutoff_time.replace("Z", "+00:00"))
-        assert doc_created <= cutoff_dt
+    assert resp.status_code == 200
+    assert _source_ids(resp.json()) == ["archived_report"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_vector_search_created_after_excludes_older_documents(
+    comprehensive_vector_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
+) -> None:
+    """created_after keeps only documents created on or after the cutoff."""
+    await _add_embedded_document(
+        Database(engine=pg_vector_db_engine),
+        source_type="pdf",
+        source_id="archived_report",
+        created_at=datetime(2020, 1, 1, tzinfo=UTC),
+        embedding=TECHNOLOGY_EMBEDDING,
+    )
+
+    resp = await comprehensive_vector_client.post(
+        "/api/vector-search/",
+        json={
+            "query_text": "technology",
+            "limit": 10,
+            "filters": {"created_after": "2021-01-01T00:00:00+00:00"},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert sorted(_source_ids(resp.json())) == FIXTURE_SOURCE_IDS
 
 
 @pytest.mark.asyncio
@@ -300,15 +349,13 @@ async def test_vector_search_date_filtering(
 async def test_vector_search_empty_query(
     comprehensive_vector_client: httpx.AsyncClient,
 ) -> None:
-    """Test behavior with empty query."""
+    """A blank query returns no results rather than an error."""
     resp = await comprehensive_vector_client.post(
         "/api/vector-search/", json={"query_text": "", "limit": 5}
     )
-    assert resp.status_code == 200
-    results = resp.json()
 
-    # Should return some results (fallback behavior)
-    assert isinstance(results, list)
+    assert resp.status_code == 200
+    assert resp.json() == []
 
 
 @pytest.mark.asyncio
@@ -340,11 +387,7 @@ async def test_vector_search_very_large_limit(
         "/api/vector-search/", json={"query_text": "technology", "limit": 10000}
     )
     assert resp.status_code == 200
-    results = resp.json()
-
-    # Should not crash and should respect actual document count
-    assert isinstance(results, list)
-    assert len(results) <= 10000  # Should be much less due to actual document count
+    assert sorted(_source_ids(resp.json())) == FIXTURE_SOURCE_IDS
 
 
 @pytest.mark.asyncio
@@ -386,12 +429,8 @@ async def test_vector_search_special_characters(
         resp = await comprehensive_vector_client.post(
             "/api/vector-search/", json={"query_text": query, "limit": 5}
         )
-        # Should not crash, might return 200 with empty results
-        assert resp.status_code in {200, 422}  # Either success or validation error
-
-        if resp.status_code == 200:
-            results = resp.json()
-            assert isinstance(results, list)
+        assert resp.status_code == 200, (query, resp.text)
+        assert sorted(_source_ids(resp.json())) == FIXTURE_SOURCE_IDS, query
 
 
 @pytest.mark.asyncio
@@ -399,24 +438,27 @@ async def test_vector_search_special_characters(
 async def test_vector_search_concurrent_requests(
     comprehensive_vector_client: httpx.AsyncClient,
 ) -> None:
-    """Test concurrent search requests."""
+    """Concurrent searches each rank their own matching document first."""
+    expected_top_match = {
+        "finance": "finance_note",
+        "technology": "tech_report",
+        "health": "health_newsletter",
+        "education": "edu_article",
+        "business": "business_plan",
+    }
 
-    # ast-grep-ignore: no-dict-any - external API response has dynamic fields
-    async def single_search(query: str) -> list[dict[str, Any]]:
+    async def top_match(query: str) -> str:
         resp = await comprehensive_vector_client.post(
             "/api/vector-search/", json={"query_text": query, "limit": 5}
         )
-        return resp.json() if resp.status_code == 200 else []
+        assert resp.status_code == 200, (query, resp.text)
+        return resp.json()[0]["document"]["source_id"]
 
-    # Run multiple searches concurrently
-    queries = ["finance", "technology", "health", "education", "business"]
-    tasks = [single_search(query) for query in queries]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    top_matches = await asyncio.gather(*(top_match(q) for q in expected_top_match))
 
-    # All should succeed
-    for i, result in enumerate(results):
-        assert not isinstance(result, Exception), f"Query {queries[i]} failed: {result}"
-        assert isinstance(result, list)
+    assert dict(zip(expected_top_match, top_matches, strict=True)) == (
+        expected_top_match
+    )
 
 
 @pytest.mark.asyncio
@@ -450,53 +492,30 @@ async def test_vector_search_document_with_no_embeddings(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_vector_search_performance_with_large_dataset(
+async def test_vector_search_large_dataset_returns_nearest_documents_up_to_limit(
     comprehensive_vector_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
-    """Test search performance with a larger dataset."""
-
-    # Add more documents for performance testing
+    """With more documents than the limit, the nearest ones come back in order."""
     db = Database(engine=pg_vector_db_engine)
-    # Create 50 additional documents
+    # Each document sits at a strictly larger angle from the "finance" axis
+    # than the previous one, and all are nearer to it than tech_report (at 90
+    # degrees), so the nearest 20 to "finance" are known and strictly ordered.
     for i in range(50):
-        doc = TestDocument(
+        angle = (i + 1) * (math.pi / 2) / 52
+        await _add_embedded_document(
+            db,
             source_type="performance_test",
             source_id=f"perf_doc_{i}",
-            id=None,
-            source_uri=None,
-            title=f"Performance Test Document {i}",
-            created_at=datetime.now(UTC),
-            metadata={"batch": "performance", "index": i},
-            file_path=None,
-        )
-        doc_id = await db.vector.add_document(doc)
-
-        # Add random embedding with correct dimensions
-        embedding = [0.1] * 1536  # Use correct dimensions
-        embedding[0] = 0.1 * (i % 10)  # Add some variation
-        if len(embedding) > 1:
-            embedding[1] = 0.2 * ((i + 1) % 10)
-
-        await db.vector.add_embedding(
-            document_id=doc_id,
-            chunk_index=0,
-            embedding_type="content_chunk",
-            embedding=embedding,
-            embedding_model="gemini-exp-03-07",  # Use correct model
-            content=f"Performance test content for document {i}",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+            embedding=[math.cos(angle), math.sin(angle)] + [0.0] * 1534,
         )
 
-    # Time the search
-    start_time = time.time()
     resp = await comprehensive_vector_client.post(
-        "/api/vector-search/", json={"query_text": "performance", "limit": 20}
+        "/api/vector-search/", json={"query_text": "finance", "limit": 20}
     )
-    end_time = time.time()
 
     assert resp.status_code == 200
-    results = resp.json()
-    assert isinstance(results, list)
-
-    # Should complete reasonably quickly (under 5 seconds for test environment)
-    search_duration = end_time - start_time
-    assert search_duration < 5.0, f"Search took too long: {search_duration}s"
+    assert _source_ids(resp.json()) == [
+        "finance_note",
+        *(f"perf_doc_{i}" for i in range(19)),
+    ]

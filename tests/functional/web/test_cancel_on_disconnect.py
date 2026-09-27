@@ -5,7 +5,7 @@ import contextlib
 import inspect
 
 import pytest
-from starlette.types import Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from family_assistant.request_side_effects import mark_state_changed
 from family_assistant.web.app_creator import create_app
@@ -88,18 +88,32 @@ async def test_post_runs_to_completion_after_disconnect() -> None:
     cancelling on disconnect would drop the turn.
     """
     spy = _HandlerSpy()
+    sent: list[Message] = []
 
-    async def release_once_started() -> None:
-        await spy.started.wait()
-        spy.release.set()
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
 
-    releaser = asyncio.create_task(release_once_started())
-    sent = await _run("POST", spy, [{"type": "http.disconnect"}])
-    await releaser
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    middleware = CancelOnClientDisconnectMiddleware(spy)
+    task = asyncio.create_task(middleware(_scope("POST"), receive, send))
+
+    await spy.started.wait()
+    # Bounded negative wait: a cancellable request is cut off as soon as the
+    # middleware reads that disconnect, well inside this window.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+    assert spy.cancelled is False, "a POST was cut off when its client left"
+
+    spy.release.set()
+    await asyncio.wait_for(task, timeout=5)
 
     assert spy.completed is True
-    assert spy.cancelled is False
-    assert sent[0]["type"] == "http.response.start"
+    assert [m["type"] for m in sent] == [
+        "http.response.start",
+        "http.response.body",
+    ]
 
 
 @pytest.mark.asyncio
@@ -238,33 +252,38 @@ async def test_a_get_that_has_written_is_not_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_a_write_does_not_carry_over_to_the_next_request() -> None:
     """Each request gets its own tracker, so one write cannot protect the next."""
-    written = CancelOnClientDisconnectMiddleware(_HandlerSpy())
+    spy = _HandlerSpy()
 
     async def writing_handler(scope: Scope, receive: Receive, send: Send) -> None:
         mark_state_changed()
 
-    async def receive() -> Message:
+    handlers: list[ASGIApp] = [writing_handler, spy]
+
+    async def next_handler(scope: Scope, receive: Receive, send: Send) -> None:
+        await handlers.pop(0)(scope, receive, send)
+
+    middleware = CancelOnClientDisconnectMiddleware(next_handler)
+
+    async def connected_receive() -> Message:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
-
-    async def send(message: Message) -> None:
-        pass
-
-    written.app = writing_handler
-    await asyncio.wait_for(written(_scope("GET"), receive, send), timeout=5)
-
-    # A second request through the same middleware instance must start clean.
-    spy = _HandlerSpy()
 
     async def disconnecting_receive() -> Message:
         return {"type": "http.disconnect"}
 
-    second = CancelOnClientDisconnectMiddleware(spy)
+    async def send(message: Message) -> None:
+        pass
+
     await asyncio.wait_for(
-        second(_scope("GET"), disconnecting_receive, send), timeout=5
+        middleware(_scope("GET"), connected_receive, send), timeout=5
+    )
+    await asyncio.wait_for(
+        middleware(_scope("GET"), disconnecting_receive, send), timeout=5
     )
 
+    assert handlers == []
     assert spy.cancelled is True
+    assert spy.completed is False
 
 
 def test_get_routes_with_untracked_side_effects_are_exempt() -> None:

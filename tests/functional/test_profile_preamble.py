@@ -134,6 +134,9 @@ class TestProfilePreambleInSystemPrompt:
         head, body_marker, _ = system_prompt.partition("You are a test assistant")
         assert body_marker, "Expected the profile's own prompt in the system prompt"
         assert head.strip() == "[Active Processing Profile: minimal_profile]"
+        assert "Some catalog blurb" not in system_prompt
+        assert "explicitly selected" not in system_prompt
+        assert "outside your profile's scope" not in system_prompt
 
 
 class TestProfilePreambleInStream:

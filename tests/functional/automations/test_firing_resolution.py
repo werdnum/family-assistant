@@ -614,6 +614,35 @@ async def test_a_script_re_saved_in_a_tainted_turn_un_cures_its_automation(
 
 
 @pytest.mark.asyncio
+async def test_a_clean_script_does_not_cure_the_tainted_automation_running_it(
+    db_engine: AsyncEngine,
+) -> None:
+    """The automation that names a script is part of the closure a firing resolves."""
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="capture_trigger()",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=_tainted_tracker(),
+        action_type="script",
+        action_config={"script_name": "greet"},
+        tools_provider=_capture_tools([]),
+    )
+    payload: ScriptExecutionPayload = {
+        "script_name": "greet",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+        "conversation_id": "test_conv",
+    }
+
+    assert (await _fire_script(db_engine, payload)).definition_taint_metadata is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("make_tracker", "resolves"),
     [(_clean_tracker, True), (_tainted_tracker, False)],

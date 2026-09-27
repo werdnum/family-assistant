@@ -196,7 +196,10 @@ describe('Streaming with Tool Calls', () => {
         { timeout: 5000 }
       );
       // The event's own metadata reaches the tool UI, so it never falls back to
-      // refetching each attachment to discover its name and type.
+      // refetching each attachment to discover its name and type. The ready
+      // status only shows once any such refetch has finished, so it has been
+      // recorded by then.
+      expect(await screen.findByText('1 attachment ready')).toBeInTheDocument();
       expect(screen.getByText('A photo')).toBeInTheDocument();
       expect(attachmentFetches).toEqual([]);
     },
