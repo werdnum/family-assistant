@@ -801,11 +801,18 @@ _PENDING_DELEGATION_NUDGE = (
 )
 
 
-def _pending_delegation_nudge(interface_type: str) -> str:
-    if interface_type == "voice":
+def _pending_delegation_nudge(origin_interfaces: Iterable[str | None]) -> str:
+    origins = set(origin_interfaces)
+    if origins == {"voice"}:
         return (
             "This delegation is still running. Its follow-up will appear in this "
             "call's Chat conversation when it finishes. Do not poll in a loop."
+        )
+    if "voice" in origins:
+        return (
+            "These delegations are still running. Voice-origin results will appear "
+            "directly in this Chat conversation; other results will wake their source "
+            "profile. Do not poll in a loop."
         )
     return _PENDING_DELEGATION_NUDGE
 
@@ -1807,7 +1814,7 @@ async def get_delegation_status_tool(
     summary = exec_context.db_context.delegation_runs.summarize_run(run)
     text = _format_delegation_summary(summary)
     if _has_pending_delegation([summary]):
-        text = f"{text}\n\n{_pending_delegation_nudge(exec_context.interface_type)}"
+        text = f"{text}\n\n{_pending_delegation_nudge([run['origin_interface_type']])}"
     return ToolResult(
         text=text,
         data=cast("dict[str, Any]", summary),
@@ -1845,7 +1852,7 @@ async def list_delegations_tool(
         )
     text = json.dumps(summaries, indent=2, default=str)
     if _has_pending_delegation(summaries):
-        text = f"{text}\n\n{_pending_delegation_nudge(exec_context.interface_type)}"
+        text = f"{text}\n\n{_pending_delegation_nudge(run['origin_interface_type'] for run in runs if run['status'] not in TERMINAL_DELEGATION_STATUSES)}"
     return ToolResult(
         text=text,
         data=summaries,

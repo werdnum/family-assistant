@@ -2966,6 +2966,14 @@ async def get_conversation_messages(
                 conversation_id, include_subconversations=False
             )
         )
+        if latest_user_profile_id is None:
+            runs = await db_context.delegation_runs.list_for_conversation(
+                conversation_id=conversation_id,
+                interface_type="web",
+                limit=1,
+            )
+            if runs and runs[0]["origin_interface_type"] == "voice":
+                latest_user_profile_id = runs[0]["source_profile_id"]
 
     return ConversationMessagesResponse(
         conversation_id=conversation_id,

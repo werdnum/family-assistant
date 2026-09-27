@@ -510,9 +510,10 @@ def _tool_context(
     attachment_registry: AttachmentRegistry | None = None,
     in_script: bool = False,
     taint_tracker: TurnTaintTracker | None = None,
+    interface_type: str = TEST_INTERFACE_TYPE,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
-        interface_type=TEST_INTERFACE_TYPE,
+        interface_type=interface_type,
         conversation_id=TEST_CONVERSATION_ID,
         user_name=TEST_USER_NAME,
         user_id="async-delegation-user",
@@ -765,6 +766,7 @@ async def _create_run(
     *,
     delegation_id: str,
     interface_type: str = TEST_INTERFACE_TYPE,
+    origin_interface_type: str | None = None,
     source_subconversation_id: str | None = None,
     taint_state_json: TaintMetadata | None = None,
     model_selection: ResolvedModelSelection | None = None,
@@ -781,6 +783,7 @@ async def _create_run(
         "source_profile_id": "source_profile",
         "target_service_id": "target_profile",
         "interface_type": interface_type,
+        "origin_interface_type": origin_interface_type,
         "conversation_id": TEST_CONVERSATION_ID,
         "user_id": "async-delegation-user",
         "user_name": TEST_USER_NAME,
@@ -2411,6 +2414,40 @@ async def test_status_tools_nudge_to_stop_polling_while_pending(
     assert status_result.data["status"] == "queued"
     assert "do not poll in a loop" in (status_result.text or "").lower()
     assert "do not poll in a loop" in (list_result.text or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_delegation_status_keeps_direct_delivery_guidance_in_chat(
+    db_engine: AsyncEngine,
+) -> None:
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_from_voice",
+        interface_type="web",
+        origin_interface_type="voice",
+    )
+    context = _tool_context(db_context, processing_service, interface_type="web")
+
+    status_result = await get_delegation_status_tool(
+        context, delegation_id="delegation_from_voice"
+    )
+    list_result = await list_delegations_tool(context)
+    assert "appear in this call's Chat conversation" in (status_result.text or "")
+    assert "appear in this call's Chat conversation" in (list_result.text or "")
+    assert "wake this profile" not in (status_result.text or "")
+
+    await _create_run(
+        db_context,
+        delegation_id="delegation_from_web",
+        interface_type="web",
+        origin_interface_type="web",
+    )
+    mixed_result = await list_delegations_tool(context)
+    assert "Voice-origin results will appear directly" in (mixed_result.text or "")
+    assert "other results will wake their source profile" in (mixed_result.text or "")
 
 
 @pytest.mark.asyncio
