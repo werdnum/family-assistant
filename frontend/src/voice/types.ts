@@ -49,6 +49,7 @@ export interface TranscriptEntry {
   toolArgs?: Record<string, unknown>;
   toolStatus?: 'running' | 'complete' | 'error';
   toolResult?: unknown;
+  toolCompletedAt?: Date;
 }
 
 /**
@@ -163,6 +164,7 @@ export interface GeminiLiveConfig {
  * Uses SDK's Tool type directly to ensure type compatibility.
  */
 export interface EphemeralTokenResponse {
+  profile_id: string;
   token: string;
   expires_at: string;
   tools: Tool[];

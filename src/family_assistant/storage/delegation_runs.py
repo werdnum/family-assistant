@@ -139,6 +139,7 @@ delegation_runs_table = Table(
     Column("source_profile_id", String(100), nullable=False),
     Column("target_service_id", String(100), nullable=False),
     Column("interface_type", String(50), nullable=False),
+    Column("origin_interface_type", String(50), nullable=True),
     Column("conversation_id", String(255), nullable=False),
     Column("user_id", String(255), nullable=True),
     Column("user_name", String(255), nullable=True),

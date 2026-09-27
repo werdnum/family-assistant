@@ -292,15 +292,18 @@ class ChatPromptRequest(BaseModel):
 
 
 class VoiceSessionTurn(BaseModel):
-    """One persisted line of a voice conversation transcript."""
+    """One spoken line or tool event from a voice session."""
 
-    role: Literal["user", "assistant"]
-    text: str
+    role: Literal["user", "assistant", "tool_call", "tool"]
+    text: str = ""
     timestamp: datetime | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    tool_arguments: dict[str, object] | None = None
 
 
 class VoiceSessionRequest(BaseModel):
-    """Persist a completed native-voice conversation as its own chat conversation."""
+    """Persist a completed voice session in Chat history."""
 
     conversation_id: str | None = Field(
         default=None,
