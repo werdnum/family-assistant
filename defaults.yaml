@@ -91,7 +91,8 @@ llm_parameters:
       # temperature: 0.8
   # The recipe for Opus 5 wherever a deployment names it -- an operator pinning
   # a profile to it in config.yaml, or a tier remapped to it. No shipped tier
-  # runs it: `engineer` used to, and moved to the `deep` tier. Thinking is on
+  # runs Opus 5 itself; the key also matches claude-opus-5-5 by substring, and
+  # the entry below overlays it for that model. Thinking is on
   # because the long tool loops it was chosen for are the work adaptive
   # thinking helps most. Safe now that thinking blocks are captured into
   # provider_metadata and replayed verbatim; before that, the turn after the
@@ -124,11 +125,29 @@ llm_parameters:
     output_config:
       effort: "high"
     max_tokens: 16000
+  # Opus 5.5 is the `deep` tier's primary. It takes the same shape as Opus 5
+  # (and inherits the entry above by substring), with two differences that
+  # matter here. Its effort default is `medium`, one step below Opus 5's, so
+  # `high` is restated for this model rather than left to the inherited entry
+  # -- it has to survive someone lowering Opus 5's effort. And thinking cannot
+  # be disabled at all, which the client never does: forced-tool-choice
+  # requests drop the thinking keys rather than send a disabled value.
+  #
+  # Like Fable 5.1, it rejects a forced tool choice (`required` or a named
+  # tool) with a 400. Attachment selection and structured output send one, so
+  # on this tier those calls fail on Opus and land on the Sol fallback, which
+  # accepts them.
+  "claude-opus-5-5":
+    thinking:
+      type: "adaptive"
+    output_config:
+      effort: "high"
+    max_tokens: 16000
   # GPT-6 and GPT-5.6 reasoning effort accept none/low/medium/high/xhigh/max and
   # default to medium. Both entries below are set explicitly so the separation between
   # the tiers they serve is a deliberate choice rather than a default.
   #
-  # Sol is the `deep` tier's primary, reached for the hardest multi-step work
+  # Sol is the `deep` tier's fallback, reached for the hardest multi-step work
   # rather than sitting on the interactive path, so it can afford to think
   # longer. high is a step up from the default without max's tendency to
   # overthink; xhigh and max are the next dials if it still falls short.
@@ -177,18 +196,15 @@ model_tiers:
     # tier, on whatever profile the conversation is already using.
     slash_command: "/deep"
     chain:
-      # Sol's reasoning_effort comes from the global llm_parameters entry above.
+      # Opus 5.5's thinking and effort, and Sol's reasoning_effort, come from
+      # the global llm_parameters entries above. Sol is a different provider on
+      # purpose: it covers an Anthropic outage, and it accepts the forced tool
+      # choice Opus 5.5 rejects, so attachment selection and structured output
+      # on this tier still complete through the fallback.
+      - provider: "anthropic"
+        model: "claude-opus-5-5"
       - provider: "openai"
         model: "gpt-6-sol"
-      # Fable 5.1 succeeds Fable 5 in the same tier at the same price, with a
-      # wide lead on long agentic tool loops. One known gap: it rejects a
-      # forced tool choice (`required` or a named tool) with a 400, which
-      # attachment selection sends, so a turn that lands here through the
-      # fallback and then has to pick attachments fails visibly rather than
-      # silently. `frontier` stays on Fable 5 until that call is reworked,
-      # because there is no fallback behind it.
-      - provider: "anthropic"
-        model: "claude-fable-5-1"
   frontier:
     label: "Max"
     description: "The strongest configured recipe, for the hardest requests."
@@ -203,8 +219,8 @@ model_tiers:
       # previous generation's `enabled` + `budget_tokens`. This entry is the
       # only place it is configured -- the global map deliberately has no
       # claude-fable- key (it matches by substring, so one would reach 5.1
-      # too), so Fable 5.1 inherits nothing when it serves as the `deep`
-      # tier's fallback and runs at its own default effort there. Thinking
+      # too), so Fable 5.1 inherits nothing wherever a deployment names it
+      # and runs at its own default effort there. Thinking
       # shares the max_tokens budget with the response, so the client's 8192
       # default is raised to match the effort.
       - provider: "anthropic"

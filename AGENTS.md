@@ -289,12 +289,12 @@ supervision requirements based on input trust level:
    turn carries untrusted content. It runs on the `deep` model tier, with all three tiers selectable
    per request and Auto in shadow mode, like `default_assistant` below; its routing guidance is more
    eager, because diagnosis is the work a weaker model loops on without converging.
-5. **Complex Tasks Profile [BC]**: full tool access on the `deep` model tier (OpenAI GPT-6-sol at
-   `reasoning_effort: high`, falling back to Claude Fable 5.1), with a higher iteration limit (100)
-   for deep multi-step reasoning. Used via `/complex` or delegation from the default assistant,
-   which runs the `standard` tier (Gemini 3.8 Flash, with GPT-5.6-terra as its fallback) with 50
-   iterations. Which models a tier names is configured in the top-level `model_tiers` map, not on
-   the profile, and a tier is **selectable per request** — a `model_tier` on the chat API or on
+5. **Complex Tasks Profile [BC]**: full tool access on the `deep` model tier (Claude Opus 5.5 at
+   effort `high`, falling back to OpenAI GPT-6-sol), with a higher iteration limit (100) for deep
+   multi-step reasoning. Used via `/complex` or delegation from the default assistant, which runs
+   the `standard` tier (Gemini 3.8 Flash, with GPT-5.6-terra as its fallback) with 50 iterations.
+   Which models a tier names is configured in the top-level `model_tiers` map, not on the profile,
+   and a tier is **selectable per request** — a `model_tier` on the chat API or on
    `delegate_to_service`, bounded by the profile's `allowed_model_tiers` (a user) or
    `auto_model_tiers` (a model), so `Assistant + Deep` no longer needs this profile. When a request
    names no tier, `default_assistant` runs the Auto classifier in **shadow mode**: it records which
