@@ -940,10 +940,10 @@ automatic selection is the weaker authority of the two; and setting any of them 
 The distinction is who authorized the spend. An authenticated person choosing Max on their own
 request *is* the authorization. A model choosing it is not, which is why the shipped
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
-automatically. The shipped `default_assistant` also lists three presets in `delegation_model_tiers`
-— `gpt_6_sol`, `claude_fable_5_1` and `gemini_3_8_flash` — which, being listed there, a delegating
-model may name without a confirmation. Adding a preset is a `model_tiers` entry plus a name in that
-list.
+automatically. The shipped `default_assistant` also lists four presets in `delegation_model_tiers` —
+`gpt_6_sol`, `claude_opus_5_5`, `claude_fable_5_1` and `gemini_3_8_flash` — which, being listed
+there, a delegating model may name without a confirmation. Adding a preset is a `model_tiers` entry
+plus a name in that list.
 
 #### Selecting a tier per request
 
