@@ -304,6 +304,8 @@ export function useGeminiLive(): GeminiLiveState {
 
       setActivityState('processing');
 
+      lastTranscriptRef.current = null;
+
       // Create transcript entries for each tool call with 'running' status (batched)
       const toolEntryIds: Record<string, string> = {};
       const newToolEntries: TranscriptEntry[] = toolCalls.map((toolCall) => {

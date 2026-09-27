@@ -808,6 +808,23 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(store.saved.first?.map(\.toolCallID), ["tool-only", "tool-only"])
     }
 
+    func testAssistantAnswerAfterToolIsSavedAfterToolResult() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.outputTranscription("Checking"))
+        try await waitUntil { model.transcript.entries.count == 1 }
+        session.emit(.toolCall([GeminiFunctionCall(id: "lookup", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
+        session.emit(.outputTranscription("Found it"))
+        try await waitUntil { model.transcript.entries.count == 2 }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.assistant, .toolCall, .tool, .assistant])
+        XCTAssertEqual(store.saved.first?.map(\.text).first, "Checking")
+        XCTAssertEqual(store.saved.first?.map(\.text).last, "Found it")
+    }
+
     func testPendingToolCallIsNotRecordedAsFailure() async throws {
         toolExecutor.handler = { _, _ in
             try await Task.sleep(for: .seconds(10))

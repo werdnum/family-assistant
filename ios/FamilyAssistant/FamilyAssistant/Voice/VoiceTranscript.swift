@@ -25,6 +25,7 @@ struct VoiceTranscriptEntry: Identifiable, Equatable {
 /// for persisting the session as a conversation.
 struct VoiceTranscript: Equatable {
     private(set) var entries: [VoiceTranscriptEntry] = []
+    private var canCoalesce = true
 
     var isEmpty: Bool { entries.isEmpty }
 
@@ -36,12 +37,17 @@ struct VoiceTranscript: Equatable {
         append(.assistant, text)
     }
 
+    mutating func breakCoalescing() {
+        canCoalesce = false
+    }
+
     private mutating func append(_ speaker: VoiceSpeaker, _ text: String) {
         guard !text.isEmpty else { return }
-        if let index = entries.indices.last, entries[index].speaker == speaker {
+        if canCoalesce, let index = entries.indices.last, entries[index].speaker == speaker {
             entries[index].text += text
         } else {
             entries.append(VoiceTranscriptEntry(speaker: speaker, text: text))
         }
+        canCoalesce = true
     }
 }

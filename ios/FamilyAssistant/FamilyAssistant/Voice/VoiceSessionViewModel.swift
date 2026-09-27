@@ -440,6 +440,7 @@ final class VoiceSessionViewModel {
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
         guard !calls.isEmpty else { return }
+        transcript.breakCoalescing()
         let keys = calls.map { $0.id ?? UUID().uuidString }
         for (call, key) in zip(calls, keys) {
             recordToolEvent("tool_call_proposed", call: call, callID: key)

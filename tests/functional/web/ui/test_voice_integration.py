@@ -665,6 +665,47 @@ async def test_voice_end_saves_pending_tool_without_false_failure(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+async def test_voice_assistant_answer_after_tool_keeps_history_order(
+    web_test_fixture: WebTestFixture,
+) -> None:
+    page = web_test_fixture.page
+    await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
+    await _setup_mock_audio_apis(page)
+    await _setup_mock_token_endpoint(page, web_test_fixture.base_url)
+
+    async def fulfil_tool_call(route: Route) -> None:
+        await route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "result": {"notes": []}}),
+        )
+
+    await page.route("**/api/tools/execute/**", fulfil_tool_call)
+    await page.goto(f"{web_test_fixture.base_url}/voice")
+    await page.get_by_role("button", name="Start").click()
+    await page.wait_for_function("window.__TEST_PUSH_MESSAGE__ !== undefined")
+    await page.evaluate(
+        "window.__TEST_PUSH_MESSAGE__({serverContent: {outputTranscription: {text: 'Checking'}}})"
+    )
+    await page.wait_for_function("window.__TEST_TOOL_RESPONSES__?.length > 0")
+    await page.evaluate(
+        "window.__TEST_PUSH_MESSAGE__({serverContent: {outputTranscription: {text: 'Found it'}}})"
+    )
+
+    async with page.expect_request("**/api/v1/chat/voice-sessions") as save_request:
+        await page.get_by_role("button", name="End Call").click()
+    saved_body = (await save_request.value).post_data_json
+    assert isinstance(saved_body, dict)
+    assert [(turn["role"], turn["text"]) for turn in saved_body["turns"]] == [
+        ("assistant", "Checking"),
+        ("tool_call", ""),
+        ("tool", '{"notes":[]}'),
+        ("assistant", "Found it"),
+    ]
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
 async def test_voice_tool_response_carries_silence_reminder(
     web_test_fixture: WebTestFixture,
 ) -> None:
