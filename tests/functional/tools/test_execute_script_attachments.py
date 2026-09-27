@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -234,6 +235,8 @@ async def test_execute_script_functional_composition(
     """Test functional composition: passing tool result to another tool."""
     db = Database(engine=db_engine)
     # Create tools that work together
+    received_data_attachments: list[list[ScriptAttachment]] = []
+    process_data_attachment_ids: list[str] = []
 
     async def process_data(data: str) -> ToolResult:
         # Simulate data processing
@@ -249,6 +252,7 @@ async def test_execute_script_functional_composition(
             conversation_id="test-conv",
             taint_state=TurnTaintState.empty(),
         )
+        process_data_attachment_ids.append(metadata.attachment_id)
 
         return ToolResult(
             text=f"Processed: {processed}",
@@ -261,9 +265,10 @@ async def test_execute_script_functional_composition(
         )
 
     async def create_visualization(
-        spec: str, data_attachments: list[str]
+        spec: str, data_attachments: list[ScriptAttachment]
     ) -> ToolResult:
-        # Simulate chart creation using data attachment
+        # Record what was actually received to verify functional composition
+        received_data_attachments.append(list(data_attachments))
         content = (
             f"Chart with spec: {spec} and {len(data_attachments)} data sources".encode()
         )
@@ -313,7 +318,7 @@ async def test_execute_script_functional_composition(
                         "spec": {"type": "string"},
                         "data_attachments": {
                             "type": "array",
-                            "items": {"type": "string"},
+                            "items": {"type": "attachment"},
                         },
                     },
                     "required": ["spec", "data_attachments"],
@@ -370,6 +375,15 @@ chart
     assert result.attachments is not None
     assert len(result.attachments) == 1
     assert result.attachments[0].mime_type == "image/png"
+
+    # Verify create_visualization actually received the process_data output,
+    # not just an opaque count of items.
+    assert len(received_data_attachments) == 1
+    received = received_data_attachments[0]
+    assert len(received) == 1
+    assert isinstance(received[0], ScriptAttachment)
+    assert received[0].get_id() == process_data_attachment_ids[0]
+    assert await received[0].get_content_async() == b"RAW SENSOR READINGS"
 
 
 @pytest.mark.asyncio

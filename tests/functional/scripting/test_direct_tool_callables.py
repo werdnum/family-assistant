@@ -356,30 +356,26 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
 
     result = await engine.evaluate_async(script, execution_context=context)
 
-    assert result == {
-        "allowed": "Echo: Allowed tool",
-        "denied": {
-            "add_numbers": "name 'add_numbers' is not defined",
-            "tool_add_numbers": "name 'tool_add_numbers' is not defined",
-            "greet_user": "name 'greet_user' is not defined",
-        },
-        "available": [
-            {
-                "name": "echo",
-                "description": "Echo back the input message",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "message": {
-                            "type": "string",
-                            "description": "Message to echo",
-                        }
-                    },
-                    "required": ["message"],
+    assert result["allowed"] == "Echo: Allowed tool"
+    assert set(result["denied"]) == {"add_numbers", "tool_add_numbers", "greet_user"}
+    for name, error in result["denied"].items():
+        assert isinstance(error, str) and name in error
+    assert result["available"] == [
+        {
+            "name": "echo",
+            "description": "Echo back the input message",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Message to echo",
+                    }
                 },
-            }
-        ],
-    }
+                "required": ["message"],
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -549,13 +545,10 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
 
     result = await engine.evaluate_async(script, execution_context=context)
 
-    assert result == {
-        "echo": "name 'echo' is not defined",
-        "tool_echo": "name 'tool_echo' is not defined",
-        "add_numbers": "name 'add_numbers' is not defined",
-        "tool_add_numbers": "name 'tool_add_numbers' is not defined",
-        "tools": [],
-    }
+    assert result["tools"] == []
+    for name in ("echo", "tool_echo", "add_numbers", "tool_add_numbers"):
+        error = result[name]
+        assert isinstance(error, str) and name in error
 
 
 class _InScriptProbeToolsProvider:

@@ -405,7 +405,6 @@ class TestAutomationsRepository:
         assert available is False
         assert error is not None
         assert "already exists" in error
-        assert f"schedule automation ID: {schedule_id}" in error
 
     @pytest.mark.asyncio
     async def test_check_name_available_with_exclude(

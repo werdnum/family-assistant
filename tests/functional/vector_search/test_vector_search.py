@@ -268,7 +268,9 @@ async def test_vector_search_filters_by_source_type(
         },
     )
     assert resp.status_code == 200
-    assert sorted(_source_ids(resp.json())) == ["business_plan", "finance_note"]
+    results = resp.json()
+    assert sorted(_source_ids(results)) == ["business_plan", "finance_note"]
+    assert all(result["document"]["source_type"] == "note" for result in results)
 
 
 @pytest.mark.asyncio
@@ -287,7 +289,9 @@ async def test_vector_search_metadata_filtering(
         },
     )
     assert resp.status_code == 200
-    assert _source_ids(resp.json()) == ["tech_report"]
+    results = resp.json()
+    assert _source_ids(results) == ["tech_report"]
+    assert results[0]["document"]["metadata"]["category"] == "technology"
 
 
 @pytest.mark.asyncio
@@ -314,7 +318,11 @@ async def test_vector_search_created_before_excludes_newer_documents(
     )
 
     assert resp.status_code == 200
-    assert _source_ids(resp.json()) == ["archived_report"]
+    results = resp.json()
+    assert _source_ids(results) == ["archived_report"]
+    assert datetime.fromisoformat(results[0]["document"]["created_at"]) <= datetime(
+        2021, 1, 1, tzinfo=UTC
+    )
 
 
 @pytest.mark.asyncio

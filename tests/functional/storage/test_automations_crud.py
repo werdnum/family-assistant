@@ -887,6 +887,9 @@ class TestScheduleAutomationsRepository:
         new_next = automation["next_scheduled_at"]
         assert new_next == first + timedelta(days=1)
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        pending_times = [normalize_datetime(task["scheduled_at"]) for task in pending]
+        assert set(pending_times) <= {first, new_next}
+        assert pending_times.count(first) <= 1
         queued_for_next = [
             task
             for task in pending

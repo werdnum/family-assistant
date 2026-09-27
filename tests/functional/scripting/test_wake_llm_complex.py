@@ -318,7 +318,7 @@ else:
 # Wake LLM with the snapshot attachment
 wake_llm({
     "message": "Motion detected! Check the camera snapshot.",
-    "attachment_id": attachment_id
+    "attachments": [attachment_id]
 })
 """
         },
@@ -451,5 +451,14 @@ wake_llm({
     async with aiofiles.open(attachment_path, "rb") as f:
         content = await f.read()
     assert content == b"mock_camera_image_data", "Attachment content should match"
+
+    attached_images = [
+        part
+        for part in _image_parts_sent_to_llm(mock_llm_client)
+        if part.attachment_id == received_attachment_id
+    ]
+    assert attached_images, "ToolResult image should reach the LLM"
+    expected_data_uri = f"data:image/jpeg;base64,{base64.b64encode(content).decode()}"
+    assert attached_images[0].image_url["url"] == expected_data_uri
 
     logger.info(f"--- Script Tool Result to Wake LLM Test ({test_run_id}) Passed ---")

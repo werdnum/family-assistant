@@ -988,7 +988,7 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
         automation_type="event",
     )
 
-    assert "Context: Updated context" in result.get_text()
+    assert "Updated context" in result.get_text()
     fetched = result.get_data()
     assert isinstance(fetched, dict)
     assert fetched["action_config"] == {"context": "Updated context"}

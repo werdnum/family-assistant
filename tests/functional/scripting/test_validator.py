@@ -360,6 +360,11 @@ class TestScriptValidatorConfig:
 class TestValidationResult:
     """Test ValidationResult structure."""
 
+    def test_no_diagnostics_has_no_errors_or_message(self) -> None:
+        result = ValidationResult(is_valid=True, diagnostics=[])
+        assert result.errors == []
+        assert result.error_message is None
+
     @pytest.fixture
     def mixed_result(self) -> ValidationResult:
         return ValidationResult(
