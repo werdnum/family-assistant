@@ -99,6 +99,7 @@ final class VoiceSessionViewModel {
     /// for another tool. The gap is the model's own silence, which is invisible
     /// to the backend and indistinguishable from a dropped call on the user's end.
     private var toolResultsSentAt: ContinuousClock.Instant?
+    private var toolTranscriptEntries: [VoiceTranscriptEntry] = []
     /// When the silence the user hears was last broken -- by assistant speech,
     /// by the user speaking, or by a reminder already sent. The model has no
     /// clock, so this is what decides whether its next tool result should carry
@@ -398,6 +399,16 @@ final class VoiceSessionViewModel {
         }.joined(separator: ",")
     }
 
+    private func recordToolEvent(_ event: String, call: GeminiFunctionCall, callID: String, fields: [String: String] = [:]) {
+        var details = fields
+        details["call_id"] = String(callID.prefix(100))
+        details["tool_name"] = String(call.name.prefix(64))
+        if call.name == "call_tool", case .string(let target) = call.args["name"], target.count <= 64 {
+            details["target_tool"] = target
+        }
+        diagnostics.record(event, fields: details)
+    }
+
     /// Tells the model, on its way back from a tool, that its silence has run
     /// long enough to owe the user another word.
     ///
@@ -429,7 +440,15 @@ final class VoiceSessionViewModel {
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
         guard !calls.isEmpty else { return }
+        transcript.breakCoalescing()
         let keys = calls.map { $0.id ?? UUID().uuidString }
+        for (call, key) in zip(calls, keys) {
+            recordToolEvent("tool_call_proposed", call: call, callID: key)
+            toolTranscriptEntries.append(VoiceTranscriptEntry(
+                speaker: .toolCall, text: "", toolCallID: key,
+                toolName: call.name, toolArguments: call.args
+            ))
+        }
         let previousTask = toolExecutionTail
         let receivedAt = ContinuousClock.now
         var receivedFields = [
@@ -454,7 +473,24 @@ final class VoiceSessionViewModel {
             await previousTask?.value
             guard !Task.isCancelled else { return }
             let startedAt = ContinuousClock.now
-            let responses = await self.toolRunner.run(calls)
+            var responses: [GeminiFunctionResponse] = []
+            for (call, key) in zip(calls, keys) {
+                guard !Task.isCancelled else { return }
+                self.recordToolEvent("tool_call_execution_started", call: call, callID: key)
+                let callStartedAt = ContinuousClock.now
+                let response = await self.toolRunner.run([call])[0]
+                responses.append(response)
+                self.toolTranscriptEntries.append(VoiceTranscriptEntry(
+                    speaker: .tool, text: response.response.jsonString,
+                    toolCallID: key, toolName: call.name
+                ))
+                self.recordToolEvent(
+                    response.response["error"] == nil ? "tool_call_succeeded" : "tool_call_failed",
+                    call: call,
+                    callID: key,
+                    fields: ["execution_ms": Self.milliseconds(since: callStartedAt)]
+                )
+            }
             guard !Task.isCancelled else { return }
             var fields = [
                 "call_count": String(responses.count),
@@ -555,9 +591,10 @@ final class VoiceSessionViewModel {
     /// a failure can't be shown inline — it is reported so the only copy of the
     /// transcript isn't lost without a trace.
     private func persistTranscriptIfNeeded() {
-        guard !didPersist, !transcript.isEmpty, let transcriptStore else { return }
+        guard !didPersist, (!transcript.isEmpty || !toolTranscriptEntries.isEmpty), let transcriptStore else { return }
         didPersist = true
-        let turns = transcript.entries
+        let turns = (transcript.entries + toolTranscriptEntries)
+            .sorted { $0.timestamp < $1.timestamp }
         let diagnostics = diagnostics
         let reportError = reportError
         let profileID = resolvedProfileID

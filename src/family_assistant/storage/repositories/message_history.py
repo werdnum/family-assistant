@@ -1727,6 +1727,17 @@ class MessageHistoryRepository(BaseRepository):
             return False
         if content.startswith("Error:"):
             return False
+        if content.startswith("{"):
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                parsed = None
+            if (
+                isinstance(parsed, dict)
+                and set(parsed) == {"error"}
+                and isinstance(parsed["error"], str)
+            ):
+                return False
 
         attachments = tool_message.get("attachments")
         if isinstance(attachments, list) and attachments:

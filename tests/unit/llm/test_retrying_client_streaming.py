@@ -9,6 +9,7 @@ from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.base import (
     RateLimitError,
 )
+from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.retrying_client import RetryingLLMClient
 from tests.factories.messages import (
     create_user_message,
@@ -229,4 +230,49 @@ async def test_streaming_rate_limit_no_retry_if_retry_after_too_long(
     assert events[0].type == "content"
     assert events[0].content == "Fallback content"
     assert mock_primary_client.generate_response_stream.call_count == 1
+    assert mock_fallback_client.generate_response_stream.call_count == 1
+
+
+@pytest.mark.no_db
+async def test_anthropic_primary_failing_before_output_streams_from_fallback(
+    mock_fallback_client: AsyncMock,
+) -> None:
+    """A real Anthropic primary that fails before any output hands off.
+
+    The thinking budget here cannot fit under max_tokens, so the request fails
+    locally before a byte is streamed -- the same point an outage fails at.
+    """
+
+    async def fallback_stream(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        yield LLMStreamEvent(type="content", content="Fallback content")
+        yield LLMStreamEvent(type="done", metadata={})
+
+    mock_fallback_client.generate_response_stream = MagicMock(
+        side_effect=fallback_stream
+    )
+    primary = AnthropicClient(
+        api_key="test-key",
+        model="claude-sonnet-4-6",
+        model_parameters={
+            "claude-sonnet-4-6": {
+                "thinking": {"type": "enabled", "budget_tokens": 8192}
+            }
+        },
+    )
+    client = RetryingLLMClient(
+        primary_client=primary,
+        primary_model="claude-sonnet-4-6",
+        fallback_client=mock_fallback_client,
+        fallback_model="fallback-model",
+    )
+
+    events = [
+        event
+        async for event in client.generate_response_stream([
+            create_user_message("test")
+        ])
+    ]
+
+    assert [event.type for event in events] == ["content", "done"]
+    assert events[0].content == "Fallback content"
     assert mock_fallback_client.generate_response_stream.call_count == 1

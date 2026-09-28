@@ -226,10 +226,16 @@ def delegation_belongs_to_caller(
     """Whether the caller owns this delegated history, including its parent task."""
     return (
         run["conversation_id"] == exec_context.conversation_id
-        and run["interface_type"] == exec_context.interface_type
+        and run["interface_type"] == _delegation_interface_type(exec_context)
         and run["user_id"] == exec_context.user_id
         and run["source_profile_id"] == source_service_id
         and run["source_subconversation_id"] == exec_context.subconversation_id
+    )
+
+
+def _delegation_interface_type(exec_context: ToolExecutionContext) -> str:
+    return (
+        "web" if exec_context.interface_type == "voice" else exec_context.interface_type
     )
 
 
@@ -499,7 +505,7 @@ async def _run_synchronous_delegation(
     try:
         result = await target_service.handle_chat_interaction(
             db_context=exec_context.db_context,
-            interface_type=exec_context.interface_type,
+            interface_type=_delegation_interface_type(exec_context),
             conversation_id=exec_context.conversation_id,
             trigger_content_parts=content_parts,
             trigger_interface_message_id=None,
@@ -658,7 +664,7 @@ async def _merge_delegated_result_taint(
         return
     metadata = await delegated_result_taint_metadata(
         exec_context.db_context,
-        interface_type=exec_context.interface_type,
+        interface_type=_delegation_interface_type(exec_context),
         conversation_id=exec_context.conversation_id,
         subconversation_id=subconversation_id,
         parent_taint_metadata=parent_taint_metadata,
@@ -762,15 +768,26 @@ async def _inline_delegation_result(
 
 
 def _delegation_reference_text(
-    *, delegation_id: str, target_service_id: str, status: str
+    *,
+    delegation_id: str,
+    target_service_id: str,
+    status: str,
+    voice_session: bool = False,
 ) -> str:
+    delivery = (
+        "When it finishes, the result will be delivered directly to this call's "
+        "Chat conversation. The live voice session will not resume speaking "
+        "automatically. Tell the user where to find the result. "
+        if voice_session
+        else "The result will wake this profile automatically when it finishes, "
+        "and your follow-up response will be delivered to the conversation. "
+    )
     return (
         "Delegation handed off and is now running in the background.\n"
         f"Reference: {delegation_id}\n"
         f"Target profile: {target_service_id}\n"
         f"Status: {status}\n"
-        "The result will wake this profile automatically when it finishes, and "
-        "your follow-up response will be delivered to the conversation. You do "
+        f"{delivery}You do "
         "NOT need to check on it. Let the user know the work is in progress, "
         "then end your turn. Do not call get_delegation_status in a loop to wait "
         "for it; only look it up if the user later asks for an update or you need "
@@ -782,6 +799,22 @@ _PENDING_DELEGATION_NUDGE = (
     "This delegation is still running. You will be notified automatically in this "
     "conversation when it finishes, so do not poll in a loop — end your turn instead."
 )
+
+
+def _pending_delegation_nudge(origin_interfaces: Iterable[str | None]) -> str:
+    origins = set(origin_interfaces)
+    if origins == {"voice"}:
+        return (
+            "This delegation is still running. Its follow-up will appear in this "
+            "call's Chat conversation when it finishes. Do not poll in a loop."
+        )
+    if "voice" in origins:
+        return (
+            "These delegations are still running. Voice-origin results will appear "
+            "directly in this Chat conversation; other results will wake their source "
+            "profile. Do not poll in a loop."
+        )
+    return _PENDING_DELEGATION_NUDGE
 
 
 def _has_pending_delegation(summaries: Iterable[DelegationRunSummary]) -> bool:
@@ -1233,7 +1266,8 @@ async def _enqueue_delegation(
             "task_id": task_id,
             "source_profile_id": source_service_id,
             "target_service_id": target_service_id,
-            "interface_type": exec_context.interface_type,
+            "interface_type": _delegation_interface_type(exec_context),
+            "origin_interface_type": exec_context.interface_type,
             "conversation_id": exec_context.conversation_id,
             "user_id": exec_context.user_id,
             "user_name": exec_context.user_name,
@@ -1255,7 +1289,7 @@ async def _enqueue_delegation(
             task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
             payload={
                 "delegation_id": delegation_id,
-                "interface_type": exec_context.interface_type,
+                "interface_type": _delegation_interface_type(exec_context),
                 "conversation_id": exec_context.conversation_id,
                 "user_name": exec_context.user_name,
             },
@@ -1365,6 +1399,7 @@ async def _await_or_handoff_delegation(
             delegation_id=delegation_id,
             target_service_id=queued.target_service_id,
             status=run_status,
+            voice_session=exec_context.interface_type == "voice",
         ),
         attachments=None,
         data={
@@ -1389,9 +1424,11 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "your system prompt. Profile-to-profile delegation controls are enforced by the "
                 "tool policy engine.\n\n"
                 "Returns the delegated service's text response, or — when the work runs long — an "
-                "async reference ID. When you get a reference, the result wakes this profile "
-                "automatically once it finishes and your follow-up is delivered to the conversation, "
-                "so end your turn instead of polling get_delegation_status in a loop. Errors are "
+                "async reference ID. When you get a reference outside voice mode, the result "
+                "wakes this profile and your follow-up is delivered to the conversation. In "
+                "voice mode, the result is posted directly to the saved Chat conversation without "
+                "waking this profile. End your turn instead of polling get_delegation_status in "
+                "a loop. Errors are "
                 "returned as text (and, for failed async runs, a reference ID you can pass to "
                 "get_delegation_status for the full detail).\n\n"
                 "Each delegation starts a fresh, isolated conversation with the target profile. To "
@@ -1628,7 +1665,7 @@ async def delegate_to_service_tool(
     model_selection = await target_service.resolve_model_selection_for_run(
         model_selection,
         db_context=exec_context.db_context,
-        interface_type=exec_context.interface_type,
+        interface_type=_delegation_interface_type(exec_context),
         conversation_id=exec_context.conversation_id,
         subconversation_id=subconversation_id,
         trigger_content_parts=content_parts,
@@ -1703,7 +1740,7 @@ async def start_delegation(
     model_selection = await target_service.resolve_model_selection_for_run(
         model_selection,
         db_context=exec_context.db_context,
-        interface_type=exec_context.interface_type,
+        interface_type=_delegation_interface_type(exec_context),
         conversation_id=exec_context.conversation_id,
         subconversation_id=subconversation_id,
         trigger_content_parts=content_parts,
@@ -1767,7 +1804,7 @@ async def get_delegation_status_tool(
     )
     if run is None or (
         run["conversation_id"] != exec_context.conversation_id
-        or run["interface_type"] != exec_context.interface_type
+        or run["interface_type"] != _delegation_interface_type(exec_context)
     ):
         return ToolResult(
             text=f"Error: Delegation '{delegation_id}' not found in this conversation.",
@@ -1777,7 +1814,7 @@ async def get_delegation_status_tool(
     summary = exec_context.db_context.delegation_runs.summarize_run(run)
     text = _format_delegation_summary(summary)
     if _has_pending_delegation([summary]):
-        text = f"{text}\n\n{_PENDING_DELEGATION_NUDGE}"
+        text = f"{text}\n\n{_pending_delegation_nudge([run['origin_interface_type']])}"
     return ToolResult(
         text=text,
         data=cast("dict[str, Any]", summary),
@@ -1800,7 +1837,7 @@ async def list_delegations_tool(
         )
     runs = await exec_context.db_context.delegation_runs.list_for_conversation(
         conversation_id=exec_context.conversation_id,
-        interface_type=exec_context.interface_type,
+        interface_type=_delegation_interface_type(exec_context),
         status=status,
         limit=limit,
     )
@@ -1815,7 +1852,7 @@ async def list_delegations_tool(
         )
     text = json.dumps(summaries, indent=2, default=str)
     if _has_pending_delegation(summaries):
-        text = f"{text}\n\n{_PENDING_DELEGATION_NUDGE}"
+        text = f"{text}\n\n{_pending_delegation_nudge(run['origin_interface_type'] for run in runs if run['status'] not in TERMINAL_DELEGATION_STATUSES)}"
     return ToolResult(
         text=text,
         data=summaries,

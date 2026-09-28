@@ -47,6 +47,7 @@ class DelegationRunCreate(TypedDict, total=False):
     source_profile_id: Required[str]
     target_service_id: Required[str]
     interface_type: Required[str]
+    origin_interface_type: str | None
     conversation_id: Required[str]
     subconversation_id: Required[str]
     request_text: Required[str]
@@ -69,6 +70,7 @@ class DelegationRunDict(TypedDict):
     source_profile_id: str
     target_service_id: str
     interface_type: str
+    origin_interface_type: str | None
     conversation_id: str
     user_id: str | None
     user_name: str | None
@@ -866,6 +868,7 @@ class DelegationRunsRepository(BaseRepository):
             source_profile_id=row["source_profile_id"],
             target_service_id=row["target_service_id"],
             interface_type=row["interface_type"],
+            origin_interface_type=row.get("origin_interface_type"),
             conversation_id=row["conversation_id"],
             user_id=row.get("user_id"),
             user_name=row.get("user_name"),

@@ -634,6 +634,13 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertNotNil(received.last?.1["since_tool_results_ms"])
         let recorded = String(describing: recorder.records)
         XCTAssertFalse(recorded.contains("pool") || recorded.contains("Medication"), "arguments stay out of telemetry")
+        XCTAssertEqual(
+            recorder.records.filter { $0.0 == "tool_call_proposed" }.map { $0.1["call_id"] },
+            ["c1", "c2"]
+        )
+        XCTAssertEqual(recorder.records.filter { $0.0 == "tool_call_execution_started" }.count, 2)
+        XCTAssertEqual(recorder.records.filter { $0.0 == "tool_call_succeeded" }.count, 2)
+        XCTAssertEqual(recorder.records.first { $0.0 == "tool_call_proposed" }?.1["target_tool"], "ha_call_read_tool")
         let sent = try XCTUnwrap(recorder.records.first { $0.0 == "tool_results_sent" })
         XCTAssertEqual(sent.1["error_count"], "0")
         XCTAssertNotNil(sent.1["execution_ms"])
@@ -656,6 +663,20 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(failure.1["error_code"], "57")
         XCTAssertEqual(reportedErrors.count, 1)
         guard case .failed = model.phase else { return XCTFail("expected failed, got \(model.phase)") }
+    }
+
+    func testFailedToolExecutionIsRecordedWithoutErrorText() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        toolExecutor.handler = { _, _ in throw SampleError() }
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        session.emit(.toolCall([GeminiFunctionCall(id: "failed-call", name: "noop", args: .object([:]))]))
+        try await waitUntil { recorder.records.contains { $0.0 == "tool_call_failed" } }
+
+        let failure = try XCTUnwrap(recorder.records.first { $0.0 == "tool_call_failed" })
+        XCTAssertEqual(failure.1["call_id"], "failed-call")
+        XCTAssertEqual(failure.1["tool_name"], "noop")
+        XCTAssertFalse(String(describing: failure.1).contains("boom"))
     }
 
     func testHangingUpDuringToolResponseSendIsNotAFailure() async throws {
@@ -764,13 +785,82 @@ final class VoiceSessionViewModelTests: XCTestCase {
         session.emit(.outputTranscription("hello"))
         try await waitUntil { model.transcript.entries.count == 2 }
         session.emit(.toolCall([GeminiFunctionCall(id: "handoff", name: "noop", args: .object([:]))]))
-        try await waitUntil { self.toolExecutor.conversationIDs.isEmpty == false }
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
 
         model.end()
         try await waitUntil { self.store.saved.isEmpty == false }
         XCTAssertEqual(store.saved.count, 1)
-        XCTAssertEqual(store.saved.first?.map(\.text), ["hi", "hello"])
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.user, .assistant, .toolCall, .tool])
+        XCTAssertEqual(store.saved.first?[2].toolCallID, "handoff")
+        XCTAssertEqual(store.saved.first?[3].toolCallID, "handoff")
         XCTAssertEqual(store.savedConversationIDs, toolExecutor.conversationIDs)
+    }
+
+    func testToolOnlyCallIsPersisted() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.toolCall([GeminiFunctionCall(id: "tool-only", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.toolCall, .tool])
+        XCTAssertEqual(store.saved.first?.map(\.toolCallID), ["tool-only", "tool-only"])
+    }
+
+    func testAssistantAnswerAfterToolIsSavedAfterToolResult() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.outputTranscription("Checking"))
+        try await waitUntil { model.transcript.entries.count == 1 }
+        session.emit(.toolCall([GeminiFunctionCall(id: "lookup", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.session.sentToolResponses.isEmpty == false }
+        session.emit(.outputTranscription("Found it"))
+        try await waitUntil { model.transcript.entries.count == 2 }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.assistant, .toolCall, .tool, .assistant])
+        XCTAssertEqual(store.saved.first?.map(\.text).first, "Checking")
+        XCTAssertEqual(store.saved.first?.map(\.text).last, "Found it")
+    }
+
+    func testPendingToolCallIsNotRecordedAsFailure() async throws {
+        toolExecutor.handler = { _, _ in
+            try await Task.sleep(for: .seconds(10))
+            return .null
+        }
+        let model = makeModel()
+        await model.start()
+        session.emit(.toolCall([GeminiFunctionCall(id: "pending", name: "noop", args: .object([:]))]))
+        try await waitUntil { self.toolExecutor.profileIDs.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.toolCall])
+        XCTAssertEqual(store.saved.first?.map(\.toolCallID), ["pending"])
+    }
+
+    func testCompletedToolResultSurvivesPendingSecondCall() async throws {
+        toolExecutor.handler = { name, _ in
+            if name == "second" {
+                try await Task.sleep(for: .seconds(10))
+            }
+            return .object(["result": .string(name)])
+        }
+        let model = makeModel()
+        await model.start()
+        session.emit(.toolCall([
+            GeminiFunctionCall(id: "first", name: "first", args: .object([:])),
+            GeminiFunctionCall(id: "second", name: "second", args: .object([:])),
+        ]))
+        try await waitUntil { self.toolExecutor.conversationIDs.count == 2 }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.saved.first?.map(\.speaker), [.toolCall, .toolCall, .tool])
+        XCTAssertEqual(store.saved.first?.last?.toolCallID, "first")
+        XCTAssertEqual(store.saved.first?.last?.text, "{\"result\":\"first\"}")
     }
 
     /// The saved transcript is filed under the profile the backend resolved, not
