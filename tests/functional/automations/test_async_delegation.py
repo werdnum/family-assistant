@@ -64,6 +64,7 @@ from family_assistant.storage.delegation_runs import (
     AuthenticatedSiteTaskStatus,
     delegation_runs_table,
 )
+from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     DelegatedProfileRunPayload,
@@ -4781,3 +4782,50 @@ async def test_background_authenticated_outcome_survives_generic_worker_prose(
         assert f"shop: {status}." in delivered
         assert "https://browser.example/takeover" in delivered
         assert f"resume='{delegation_id}'" in delivered
+
+
+@pytest.mark.asyncio
+async def test_a_run_is_not_left_parked_when_queueing_its_next_turn_fails(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parking and queueing the continuation commit together or not at all.
+
+    A parked run with nothing queued, and no child left to queue it, would
+    never finish; a run left ``running`` is failed by the retry or the reaper.
+    """
+    db_context = Database(engine=db_engine)
+    clock = SystemClock()
+    parent_id = await _create_run(db_context, delegation_id="delegation_parent")
+    await db_context.delegation_runs.mark_running(parent_id, clock.now())
+    child_id = await _create_run(
+        db_context,
+        delegation_id="delegation_child",
+        source_subconversation_id=f"sub_{parent_id}",
+    )
+    await db_context.delegation_runs.mark_handed_off(child_id, clock.now())
+    await db_context.delegation_runs.mark_completed(
+        delegation_id=child_id,
+        result_text="child result",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
+
+    async def _enqueue_fails(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("enqueue failed")
+
+    monkeypatch.setattr(TasksRepository, "enqueue", _enqueue_fails)
+    processing_service = cast(
+        "ProcessingService", FakeWakeCapableSourceService(FakeDelegatableService())
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+
+    with pytest.raises(RuntimeError, match="enqueue failed"):
+        await worker._park_until_children_finish(  # pylint: disable=protected-access
+            _tool_context(db_context, processing_service, chat_interface), parent_id
+        )
+
+    parent = await db_context.delegation_runs.get_by_delegation_id(parent_id)
+    assert parent is not None
+    assert parent["status"] == "running"

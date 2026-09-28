@@ -2215,19 +2215,37 @@ class TaskWorker:
                     parent_subconversation_id=run["subconversation_id"],
                 )
             )
-            if outstanding:
-                parked = await exec_context.db_context.delegation_runs.mark_awaiting_children(
-                    delegation_id
+            if outstanding and await self._park_until_children_finish(
+                exec_context, delegation_id
+            ):
+                logger.info(
+                    "Delegation run %s is waiting on %d delegation(s) of its own.",
+                    delegation_id,
+                    len(outstanding),
                 )
-                if parked is not None:
-                    logger.info(
-                        "Delegation run %s is waiting on %d delegation(s) of its own.",
-                        delegation_id,
-                        len(outstanding),
-                    )
-                    await self._continue_when_children_finish(exec_context, parked)
-                    return
+                return
         await self._finalize_delegation_run(exec_context, delegation_id, result)
+
+    async def _park_until_children_finish(
+        self, exec_context: ToolExecutionContext, delegation_id: str
+    ) -> bool:
+        """Park a run and, if its children have all finished, queue its next turn.
+
+        One transaction, so no crash can leave a run parked with nothing
+        queued and no child left to queue it. Returns False when the run was no
+        longer ``running`` to park.
+        """
+        clock = exec_context.clock or self.clock
+        priority = exec_context.inherited_task_priority()
+
+        async def _park(txn: DatabaseTransaction) -> bool:
+            parked = await txn.delegation_runs.mark_awaiting_children(delegation_id)
+            if parked is None:
+                return False
+            await self._queue_continuation_if_ready(txn, parked, clock, priority)
+            return True
+
+        return await exec_context.db_context.atomic(_park)
 
     async def _continue_when_children_finish(
         self,
@@ -2244,41 +2262,48 @@ class TaskWorker:
         priority = exec_context.inherited_task_priority()
 
         async def _requeue(txn: DatabaseTransaction) -> bool:
-            children = await txn.delegation_runs.list_undelivered_children(
-                conversation_id=parent["conversation_id"],
-                parent_subconversation_id=parent["subconversation_id"],
-            )
-            if any(
-                child["status"] not in TERMINAL_DELEGATION_STATUSES
-                for child in children
-            ):
-                return False
-            if not await txn.delegation_runs.requeue_for_continuation(
-                parent["delegation_id"], clock.now()
-            ):
-                return False
-            await txn.tasks.enqueue(
-                task_id=f"{parent['task_id']}_continue_{uuid.uuid4().hex}",
-                task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
-                payload={
-                    "delegation_id": parent["delegation_id"],
-                    "interface_type": parent["interface_type"],
-                    "conversation_id": parent["conversation_id"],
-                    "user_name": parent["user_name"] or "",
-                    "continuation": True,
-                },
-                max_retries_override=1,
-                priority=priority,
-            )
-            return True
+            return await self._queue_continuation_if_ready(txn, parent, clock, priority)
 
-        queued = await exec_context.db_context.atomic(_requeue)
-        if queued:
-            logger.info(
-                "Delegations started by run %s have finished; queued its next turn.",
-                parent["delegation_id"],
-            )
-        return queued
+        return await exec_context.db_context.atomic(_requeue)
+
+    @staticmethod
+    async def _queue_continuation_if_ready(
+        txn: DatabaseTransaction,
+        parent: DelegationRunDict,
+        clock: Clock,
+        priority: TaskPriority,
+    ) -> bool:
+        """Requeue a waiting run and enqueue its next turn, once its children are done."""
+        children = await txn.delegation_runs.list_undelivered_children(
+            conversation_id=parent["conversation_id"],
+            parent_subconversation_id=parent["subconversation_id"],
+        )
+        if any(
+            child["status"] not in TERMINAL_DELEGATION_STATUSES for child in children
+        ):
+            return False
+        if not await txn.delegation_runs.requeue_for_continuation(
+            parent["delegation_id"], clock.now()
+        ):
+            return False
+        await txn.tasks.enqueue(
+            task_id=f"{parent['task_id']}_continue_{uuid.uuid4().hex}",
+            task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
+            payload={
+                "delegation_id": parent["delegation_id"],
+                "interface_type": parent["interface_type"],
+                "conversation_id": parent["conversation_id"],
+                "user_name": parent["user_name"] or "",
+                "continuation": True,
+            },
+            max_retries_override=1,
+            priority=priority,
+        )
+        logger.info(
+            "Delegations started by run %s have finished; queued its next turn.",
+            parent["delegation_id"],
+        )
+        return True
 
     async def _deliver_to_waiting_parent(
         self,
@@ -2302,9 +2327,11 @@ class TaskWorker:
         )
         if parent is None:
             return False
-        # A parent still in its turn picks the result up when the turn ends.
-        if parent["status"] == "awaiting_children":
-            await self._continue_when_children_finish(exec_context, parent)
+        # Attempted whatever status was read: the requeue is conditioned on
+        # the parent waiting, and it waits on a parent parking in the same
+        # instant, so one of the two always sees this child finished. A parent
+        # still in its turn picks the result up when the turn ends.
+        await self._continue_when_children_finish(exec_context, parent)
         return True
 
     @staticmethod

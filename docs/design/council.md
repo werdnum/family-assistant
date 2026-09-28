@@ -66,11 +66,15 @@ general, not of the council, so it is fixed there.
 - At the end of a turn, the worker looks for the run's undelivered children: runs started from its
   subconversation that were handed off and not yet delivered. If there are any, the run moves from
   `running` to `awaiting_children` instead of finishing.
-- A child that finishes while its parent is live is not delivered to the person. If the parent is
-  waiting, the worker checks whether any child is still running; if none is, it moves the parent
-  back to `queued` — a conditional update, so of several children finishing together exactly one
-  succeeds — and enqueues a continuation turn. A parent still mid-turn picks the result up when its
-  turn ends.
+- Whenever a waiting run's children may all have finished, the worker checks whether any is still
+  running; if none is, it moves the run back to `queued` — a conditional update, so exactly one of
+  several attempts succeeds — and enqueues a continuation turn. That check runs in the same
+  transaction as parking, so a run is never left waiting with nothing queued and no child left to
+  queue it, and again whenever a child finishes.
+- A child that finishes while its parent is live is not delivered to the person. It attempts the
+  check above whatever status it read for the parent: the conditional update waits on a parent
+  parking at that moment, so one of the two always sees the child finished. A parent still mid-turn
+  picks the result up when its turn ends.
 - The continuation turn writes every finished child's result into the parent's history as internal
   data rows, marks those children delivered in the same transaction, and runs the parent's profile
   on a system trigger naming them, with the run's frozen model selection.
