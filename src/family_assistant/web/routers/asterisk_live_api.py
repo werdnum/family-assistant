@@ -224,8 +224,6 @@ class AsteriskLiveHandler:
         # Stateful resamplers for bidirectional audio
         self.asterisk_to_gemini_resampler: StatefulResampler | None = None
         self.gemini_to_asterisk_resampler: StatefulResampler | None = None
-        # Buffer for caller audio received before Gemini session is established
-        self._audio_buffer_pre_gemini: list[bytes] = []
         # Allow media to flow by default until we receive an XOFF from Asterisk
         self.media_send_allowed.set()
         self._debug_log(
@@ -574,24 +572,9 @@ class AsteriskLiveHandler:
                     await self._greeting_task
                     self._greeting_task = None
 
-                # Flush any caller audio buffered before Gemini connected
-                if self._audio_buffer_pre_gemini:
-                    logger.info(
-                        f"Flushing {len(self._audio_buffer_pre_gemini)} buffered "
-                        f"audio chunks to Gemini"
-                    )
-                    for chunk in self._audio_buffer_pre_gemini:
-                        audio_to_send = chunk
-                        if self.asterisk_to_gemini_resampler:
-                            audio_to_send = self.asterisk_to_gemini_resampler.resample(
-                                chunk
-                            )
-                        audio_blob = Blob(
-                            data=audio_to_send, mime_type="audio/pcm;rate=16000"
-                        )
-                        await self.gemini_session.send_realtime_input(audio=audio_blob)
-                    self._audio_buffer_pre_gemini.clear()
-
+                # Asterisk media is only read from here on. Frames the caller
+                # sent while Gemini was connecting (and the greeting played)
+                # are queued by the websocket transport and relayed in order.
                 # Start task to receive from Gemini and send to Asterisk
                 self.receive_task = asyncio.create_task(self._receive_from_gemini())
 
@@ -901,12 +884,7 @@ class AsteriskLiveHandler:
     async def _handle_media_message(self, audio_data: bytes) -> None:
         """Handle media (audio) from Asterisk."""
         if not self.gemini_session:
-            self._audio_buffer_pre_gemini.append(audio_data)
-            logger.debug(
-                f"Buffered {len(audio_data)} bytes pre-Gemini "
-                f"({len(self._audio_buffer_pre_gemini)} chunks)"
-            )
-            return
+            raise RuntimeError("Asterisk media relayed before Gemini session connected")
 
         logger.debug(
             f"Received {len(audio_data)} bytes from Asterisk ({self.sample_rate}Hz)"
