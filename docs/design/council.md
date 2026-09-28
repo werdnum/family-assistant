@@ -14,7 +14,7 @@ and consequential criticism, not voting or consensus.
 
 | Component                             | Responsibility                                                           |
 | ------------------------------------- | ------------------------------------------------------------------------ |
-| `council` profile (`/council`)        | Brief the members, run the phases, synthesise. Facilitator, not a voter. |
+| `council` profile                     | Brief the members, run the phases, synthesise. Facilitator, not a voter. |
 | `council_member` profile              | One research or review turn, on whichever preset the coordinator names.  |
 | `Council Deliberation` built-in skill | The procedure and the phase instructions.                                |
 
@@ -41,13 +41,17 @@ request asks for it, never as a fourth seat. The coordinator runs on the `deep` 
 
 Both profiles read the open web and each other's reports, so neither is given household data: no
 aggregated context, and the coordinator's note reads are confined to the `council` label (grant plus
-read floor), which admits the skill and nothing of the household's. The skill carries that label, so
-no other profile — the members included — can load it; the members are told not to coordinate, and
-the label is what makes that hold. Every profile may delegate to itself above its own policy, so
-recursion is closed by `allowed_delegation_sources`: only `default_assistant` and `complex_tasks`
-may convene a council, and only `council` may seat a member. A member's one outward action is a
-sandboxed computation through `coder`, gated by the taint policy as everywhere else. Council
-invocation authorises investigation and advice, not changes.
+read floor), which admits the skill and nothing of the household's. Deny-by-default tool policies
+are not enough on their own, because `global_tools_policy` outranks a profile's policy, so both
+profiles withhold the globally granted tools through `excluded_global_tools`, as `media_analyst` and
+`coder` do: `read_text_attachment` and `jq_query` resolve any attachment the user owns, and
+`report_technical_problem` persists model-supplied text. The skill carries that label, so no other
+profile — the members included — can load it; the members are told not to coordinate, and the label
+is what makes that hold. Every profile may delegate to itself above its own policy, so recursion is
+closed by `allowed_delegation_sources`: only `default_assistant` and `complex_tasks` may convene a
+council, and only `council` may seat a member. A member's one outward action is a sandboxed
+computation through `coder`, gated by the taint policy as everywhere else. Council invocation
+authorises investigation and advice, not changes.
 
 ## The runtime gap, and the fix
 
@@ -88,6 +92,12 @@ for how long its children took.
   effects is not re-run.
 - **A child that finishes after its parent has already finished** is delivered the ordinary way, as
   before this change. Reaching that needs the parent to fail or be reaped while children run.
+- **The council is reached only by delegation.** It has no slash command, because only a delegated
+  run holds the coordinator's turn open until a whole phase has finished. The web picker still lists
+  it, as it lists every local profile including the internal ones; making a local profile
+  delegation-only at every chat entry point is a general change, not this one. Chosen there, the
+  coordinator is woken per member rather than per phase; the skill tells it to wait out an
+  incomplete phase with a one-line status rather than advance.
 - **No council-specific lifecycle.** No council table, retry framework, voting, dynamic recruitment,
   or cancellation beyond what delegation already has. Phase bookkeeping is the coordinator's own
   history plus `list_delegations`, which reports each run's preset.

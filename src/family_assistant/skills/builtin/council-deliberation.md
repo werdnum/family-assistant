@@ -55,7 +55,9 @@ No member sees a peer's proposal in this phase.
 ## 3. Collect a complete phase
 
 When you are woken, match each result to its label. Advance only when every member has either
-reported or failed.
+reported or failed. If `list_delegations` shows a member of the phase still running, which happens
+only when the council was chosen directly rather than convened by the Assistant, end the turn with
+one line naming who is still working, and start nothing.
 
 - A failed member is reported honestly. With at least two successful members, continue with a
   reduced panel and say so in the synthesis. With only one, stop and return a partial investigation,

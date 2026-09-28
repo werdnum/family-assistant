@@ -13,11 +13,9 @@ questions, or getting code written (use `/coder` for that).
 
 ## Asking for one
 
-- **In any chat**, ask the Assistant: "Ask the council whether we should replace the hot water
-  system with a heat pump or solar", or "Get a council of models to look at this design". Attach any
-  files the question depends on.
-- **Directly**, start a message with `/council` in Telegram, or pick **Council** in the assistant
-  picker in the web or iOS app.
+Ask the Assistant in any chat: "Ask the council whether we should replace the hot water system with
+a heat pump or solar", or "Get a council of models to look at this design". Attach any files the
+question depends on. The Assistant convenes the council and brings its answer back to you.
 
 The council sees none of your household's notes, calendar, documents or email. Put everything the
 question depends on into the request, or attach it.

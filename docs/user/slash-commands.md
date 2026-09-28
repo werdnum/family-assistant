@@ -25,7 +25,6 @@ Which commands exist depends on how your deployment is configured; these are the
 | `/research_max`             | The most thorough multi-source research, when depth matters more than speed        |
 | `/complex`                  | Multi-step reasoning and planning that needs a long chain of work                  |
 | `/coder`                    | Writing and running code, data crunching, and other self-contained computing tasks |
-| `/council`                  | A hard question put to several models, who research, critique and revise together  |
 | `/visualize` or `/chart`    | Charts and graphs from data you provide or attach                                  |
 | `/artist`                   | Generating or editing images and video                                             |
 | `/camera` or `/investigate` | Searching and reviewing security camera footage                                    |
@@ -59,8 +58,9 @@ first. An ordinary message is different — that gets folded into the request al
   other assistant data.
 - **`/coder` when you want code written and run, not explained,** and everything it needs is in your
   request. It works in a sandbox described below.
-- **`/council` for a hard design or open-ended question** where independent answers from several
-  models, checked against each other, are worth the wait. See [council.md](council.md).
+- **For a hard design or open-ended question, ask the Assistant to convene the council** when
+  independent answers from several models, checked against each other, are worth the wait. See
+  [council.md](council.md).
 - **`/engineer` for diagnosing the assistant itself,** not for getting work done — it reads the
   application and can run code in a throwaway sandbox to reproduce a problem, but deliberately
   cannot change data or send messages. See [troubleshooting.md](troubleshooting.md).

@@ -2484,8 +2484,13 @@ service_profiles:
               target_service_id: "council_member"
           decision: "allow"
           priority: 20
-    slash_commands:
-      - "/council"
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
+    # Reached only by delegation: a delegated run is what holds the council's
+    # turn open until a whole phase of members has finished.
+    slash_commands: []
   - id: "council_member"
     description: "Internal research seat for the council profile. Not for direct use: only the council delegates here, choosing the member's model with model_tier."
     processing_config:
@@ -2544,6 +2549,10 @@ service_profiles:
               target_service_id: "coder"
           decision: "allow"
           priority: 20
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
     slash_commands: []
   - id: "engineer"
     description: "Engineering diagnostic profile with read-only access to source code, database, and error logs, plus sandboxed code execution for reproducing problems. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify application data or run code inside the application."

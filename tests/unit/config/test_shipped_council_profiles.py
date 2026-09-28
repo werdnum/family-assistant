@@ -148,4 +148,56 @@ def test_delegation_runs_one_way(shipped_config: AppConfig) -> None:
 
     assert member.processing_config.allowed_delegation_sources == ["council"]
     assert member.slash_commands == []
-    assert council.slash_commands == ["/council"]
+
+
+def test_the_council_is_reached_only_by_delegation(shipped_config: AppConfig) -> None:
+    """A delegated run is what holds the coordinator's turn open for a whole phase.
+
+    Chosen directly there is no run, so each member's completion would wake the
+    coordinator on its own.
+    """
+    assert shipped_profile(shipped_config, "council").slash_commands == []
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "expected"),
+    [
+        (
+            "council",
+            {
+                "get_note",
+                "get_attachment_info",
+                "get_delegation_status",
+                "list_delegations",
+                "delegate_to_service",
+            },
+        ),
+        (
+            "council_member",
+            {
+                "get_attachment_info",
+                "get_delegation_status",
+                "list_delegations",
+                "delegate_to_service",
+            },
+        ),
+    ],
+)
+def test_each_profile_holds_exactly_its_local_tools(
+    shipped_config: AppConfig, profile_id: str, expected: set[str]
+) -> None:
+    """Deny-by-default is not enough on its own.
+
+    `global_tools_policy` outranks a profile's own policy, so the globally
+    granted tools -- which reach any attachment the user owns, or persist
+    model-supplied text -- have to be withheld explicitly.
+    """
+    engine = _engine(shipped_config, shipped_profile(shipped_config, profile_id))
+    advertised = {
+        descriptor.name
+        for descriptor in LOCAL_TOOL_DESCRIPTORS
+        if engine.evaluate_for_advertisement(descriptor, can_confirm=False).decision
+        is ToolPolicyDecision.ALLOW
+    }
+
+    assert advertised == expected
