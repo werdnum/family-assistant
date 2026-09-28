@@ -2,11 +2,15 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import pytest
-from playwright.async_api import Page
+from playwright.async_api import Page, Route, expect
 
+from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.storage.database import Database
 from tests.functional.web.conftest import WebTestFixture
 
 
@@ -192,137 +196,6 @@ async def test_history_page_css_styling(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_history_conversations_list_display(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test conversations list display and metadata."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for API response - either conversations container or empty state will appear
-    await page.wait_for_selector(
-        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
-        state="visible",
-        timeout=10000,
-    )
-
-    # Check for either conversations or empty state
-    conversations_container = page.locator(
-        "[class*='conversationsContainer'], .conversationsContainer"
-    )
-    empty_state = page.locator("[class*='emptyState'], .emptyState")
-
-    # Either conversations are displayed or empty state is shown
-    has_conversations = (
-        await conversations_container.count() > 0
-        and await conversations_container.is_visible()
-    )
-    has_empty_state = await empty_state.count() > 0 and await empty_state.is_visible()
-
-    # At least one should be visible (conversations or empty state)
-    assert has_conversations or has_empty_state, (
-        "Neither conversations nor empty state is displayed"
-    )
-
-    # If conversations exist, test their structure
-    if has_conversations:
-        # Check for conversation cards
-        conversation_cards = page.locator(
-            "[class*='conversationCard'], .conversationCard"
-        )
-        card_count = await conversation_cards.count()
-
-        if card_count > 0:
-            first_card = conversation_cards.first
-
-            # Check conversation metadata elements
-            conversation_link = first_card.locator(
-                "[class*='conversationLink'], .conversationLink"
-            )
-            if await conversation_link.count() > 0:
-                assert await conversation_link.is_visible()
-
-            # Check for interface icon
-            interface_icon = first_card.locator(
-                "[class*='interfaceIcon'], .interfaceIcon"
-            )
-            if await interface_icon.count() > 0:
-                assert await interface_icon.is_visible()
-
-            # Check for message count metadata
-            meta_items = first_card.locator("[class*='metaItem'], .metaItem")
-            if await meta_items.count() > 0:
-                assert await meta_items.first.is_visible()
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_history_conversation_navigation(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test navigation to conversation detail view."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to history page
-    await page.goto(f"{server_url}/history")
-
-    # Wait for API response - either conversations container or empty state will appear
-    await page.wait_for_selector(
-        "[class*='conversationsContainer'], .conversationsContainer, [class*='emptyState'], .emptyState",
-        state="visible",
-        timeout=10000,
-    )
-
-    # Look for conversation links
-    conversation_links = page.locator(
-        "a[href*='/history/']:has-text('View Conversation')"
-    )
-    link_count = await conversation_links.count()
-
-    # If there are conversations, test navigation
-    if link_count > 0:
-        # Click the first conversation link
-        first_link = conversation_links.first
-        await first_link.click()
-
-        # Wait for navigation to detail view
-        await page.wait_for_selector(
-            "h1:has-text('Conversation Details'), h1:has-text('Conversation History')",
-            timeout=5000,
-        )
-
-        # Verify we're on a conversation detail page
-        detail_heading = page.locator("h1:has-text('Conversation Details')")
-        if await detail_heading.count() > 0:
-            assert await detail_heading.is_visible()
-
-            # Check for back button
-            back_button = page.locator("button:has-text('Back to Conversations')")
-            await back_button.wait_for(timeout=5000)
-            assert await back_button.is_visible()
-
-            # Test back navigation
-            await back_button.click()
-            # Wait for navigation back to list
-            await page.wait_for_selector(
-                "h1:has-text('Conversation History')", timeout=5000
-            )
-
-            # Should be back on conversations list
-            await page.wait_for_selector(
-                "h1:has-text('Conversation History')", timeout=5000
-            )
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
 async def test_history_conversation_detail_view(
     web_test_fixture_readonly: WebTestFixture,
 ) -> None:
@@ -330,35 +203,13 @@ async def test_history_conversation_detail_view(
     page = web_test_fixture_readonly.page
     server_url = web_test_fixture_readonly.base_url
 
-    # Try to navigate directly to a conversation detail (will show error for non-existent ID)
-    test_conversation_id = "test_conversation_id"
+    test_conversation_id = f"missing-{uuid4().hex}"
     await page.goto(f"{server_url}/history/{test_conversation_id}")
-
-    # Wait for the loading indicator to disappear.
-    await page.locator("text=Loading conversation...").wait_for(
-        state="hidden", timeout=10000
-    )
-
-    # After loading, we should have either details or an error.
-    detail_heading = page.locator("h1:has-text('Conversation Details')")
-    error_message = page.locator("[class*='error'], .error")
-
-    # Wait for either the details heading or an error message to be visible.
-    await page.wait_for_selector(
-        "h1:has-text('Conversation Details'), [class*='error']", timeout=5000
-    )
-
-    has_details = await detail_heading.is_visible()
-    has_error = await error_message.is_visible()
-
-    assert has_details or has_error, (
-        "Conversation detail page should show details or an error after loading."
-    )
-
-    # The back button should be present in either the details or error state.
-    back_button = page.locator("button:has-text('Back to Conversations')")
-    await back_button.wait_for(timeout=5000)
-    assert await back_button.is_visible()
+    await expect(
+        page.get_by_text("No messages found in this conversation.")
+    ).to_be_visible()
+    await page.get_by_role("button", name="Back to Conversations").click()
+    await expect(page).to_have_url(f"{server_url}/history")
 
 
 @pytest.mark.playwright
@@ -394,7 +245,6 @@ async def test_history_pagination_interface(
             assert await pagination.is_visible()
 
 
-@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_responsive_design(
@@ -412,34 +262,25 @@ async def test_history_responsive_design(
 
     # Test mobile viewport
     await page.set_viewport_size({"width": 375, "height": 667})
-    # Wait for viewport change to render
-    await page.wait_for_load_state("domcontentloaded")
-
     # Check that main elements are still visible
     heading = page.locator("h1:has-text('Conversation History')")
-    assert await heading.is_visible()
+    await expect(heading).to_be_visible()
 
     # Filters should still be accessible
     filters_section = page.locator("details summary:has-text('Filters')")
-    assert await filters_section.is_visible()
+    await expect(filters_section).to_be_visible()
 
     # Test tablet viewport
     await page.set_viewport_size({"width": 768, "height": 1024})
-    # Wait for viewport change to render
-    await page.wait_for_load_state("domcontentloaded")
-
     # Check elements are still visible
-    assert await heading.is_visible()
-    assert await filters_section.is_visible()
+    await expect(heading).to_be_visible()
+    await expect(filters_section).to_be_visible()
 
     # Test desktop viewport
     await page.set_viewport_size({"width": 1200, "height": 800})
-    # Wait for viewport change to render
-    await page.wait_for_load_state("domcontentloaded")
-
     # Check elements are still visible
-    assert await heading.is_visible()
-    assert await filters_section.is_visible()
+    await expect(heading).to_be_visible()
+    await expect(filters_section).to_be_visible()
 
 
 @pytest.mark.playwright
@@ -447,74 +288,54 @@ async def test_history_responsive_design(
 async def test_history_api_error_handling(
     web_test_fixture: WebTestFixture,
 ) -> None:
-    """Test handling of API errors in history page."""
+    """The history page reports a failed conversation-list request."""
     page = web_test_fixture.page
     server_url = web_test_fixture.base_url
 
-    # Navigate to history page
+    async def fail_conversations(route: Route) -> None:
+        await route.fulfill(status=500, body="Server error")
+
+    await page.route("**/api/v1/chat/conversations?*", fail_conversations)
     await page.goto(f"{server_url}/history")
-
-    # Wait for page to load
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for conversations or empty/error state to appear
-    await page.wait_for_selector(
-        "[class*='conversationsContainer'], [class*='emptyState'], [class*='error']",
-        timeout=5000,
-    )
-
-    # The page should handle API responses gracefully
-    # Either show conversations, empty state, or error message
-    has_conversations = (
-        await page.locator("[class*='conversationsContainer']").count() > 0
-    )
-    has_empty_state = await page.locator("[class*='emptyState']").count() > 0
-    has_error = await page.locator("[class*='error']").count() > 0
-    has_loading = await page.locator("text=Loading").count() > 0
-
-    # Page should be in one of these states, not stuck loading
-    assert has_conversations or has_empty_state or has_error or not has_loading
+    await expect(
+        page.get_by_text("Error: Failed to fetch conversations:", exact=False)
+    ).to_be_visible()
+    await expect(page.get_by_text("Loading conversations...")).to_be_hidden()
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_history_message_display_structure(
-    web_test_fixture_readonly: WebTestFixture,
+    web_test_fixture: WebTestFixture,
 ) -> None:
-    """Test message display structure in conversation view."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate directly to a conversation (will handle non-existent gracefully)
-    await page.goto(f"{server_url}/history/test_conv_id")
-
-    # Wait for page response - look for back button which should always be present
-    await page.wait_for_selector(
-        "button:has-text('Back to Conversations')", timeout=5000
+    """A saved conversation renders its user and assistant messages."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
+    db_context = Database(engine=engine)
+    conversation_id = f"history-messages-{uuid4().hex}"
+    timestamp = datetime.now(UTC)
+    await db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="History detail user prompt"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=timestamp,
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="History detail assistant reply"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=timestamp + timedelta(seconds=1),
+        user_id="test_user",
     )
 
-    # Check that the page structure is correct regardless of whether conversation exists
-    back_button = page.locator("button:has-text('Back to Conversations')")
-    await back_button.wait_for(timeout=5000)
-    assert await back_button.is_visible()
-
-    # Check for conversation metadata section
-    meta_section = page.locator("[class*='conversationMeta'], .conversationMeta")
-    if await meta_section.count() > 0:
-        assert await meta_section.is_visible()
-
-    # Check for messages container (even if empty)
-    messages_container = page.locator(
-        "[class*='messagesContainer'], .messagesContainer"
-    )
-    empty_state = page.locator("[class*='emptyState'], .emptyState")
-    error_state = page.locator("[class*='error'], .error")
-
-    # Should show one of these states
-    has_messages = (
-        await messages_container.count() > 0 and await messages_container.is_visible()
-    )
-    has_empty = await empty_state.count() > 0 and await empty_state.is_visible()
-    has_error = await error_state.count() > 0 and await error_state.is_visible()
-
-    assert has_messages or has_empty or has_error
+    await page.goto(f"{server_url}/history/{conversation_id}")
+    await expect(
+        page.get_by_role("heading", name="Conversation Details")
+    ).to_be_visible()
+    await expect(page.get_by_text("History detail user prompt")).to_be_visible()
+    await expect(page.get_by_text("History detail assistant reply")).to_be_visible()
+    await page.get_by_role("button", name="Back to Conversations").click()
+    await expect(page).to_have_url(f"{server_url}/history")

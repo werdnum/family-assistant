@@ -47,29 +47,12 @@ async def test_react_documents_page_loads(
     # Verify we're on the documents page
     await expect(page).to_have_url(f"{web_test_fixture_readonly.base_url}/documents")
 
-    # Wait for React app to mount - check for our custom attribute
-    await page.wait_for_function(
-        """() => {
-            const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-app-ready') === 'true';
-        }""",
-        timeout=15000,
-    )
-
-    # Wait for actual content to render (not just React mounting)
-    await page.wait_for_function(
-        """() => {
-            const body = document.body;
-            return body && body.textContent && body.textContent.trim().length > 20;
-        }""",
-        timeout=10000,
-    )
-
-    # The React app should render some content
-    content = await page.text_content("body")
-    assert content is not None and len(content.strip()) > 0, (
-        "Page content should not be empty"
-    )
+    await expect(
+        page.get_by_role("heading", name="Documents", exact=True)
+    ).to_be_visible()
+    await expect(
+        page.get_by_placeholder("Search documents by title...")
+    ).to_be_visible()
 
     # Take screenshot of documents page
     for viewport in ["desktop", "mobile"]:
@@ -242,7 +225,7 @@ async def test_document_search_in_react_ui(
     for title in doc_titles:
         doc_id = str(uuid.uuid4())
         async with httpx.AsyncClient() as client:
-            await client.post(
+            response = await client.post(
                 f"{web_test_fixture.base_url}/api/documents/upload",
                 data={
                     "source_id": doc_id,
@@ -256,6 +239,9 @@ async def test_document_search_in_react_ui(
                     "metadata": json.dumps({}),
                 },
             )
+            assert response.status_code in {200, 202}, (
+                f"Failed to create document: {response.text}"
+            )
 
     # Wait for all background document processing tasks to complete
     # Use task_ids=None to wait for ALL tasks including child embed_and_store_batch tasks
@@ -268,40 +254,16 @@ async def test_document_search_in_react_ui(
     # Navigate to the React documents page
     await page.goto(f"{web_test_fixture.base_url}/documents")
 
-    # Wait for the React app to load
-    await page.wait_for_function(
-        """() => {
-            const root = document.getElementById('app-root');
-            return root && root.getAttribute('data-app-ready') === 'true';
-        }""",
-        timeout=15000,
-    )
+    search_input = page.get_by_placeholder("Search documents by title...")
+    await expect(search_input).to_be_visible()
+    for title in doc_titles:
+        await expect(page.get_by_role("link", name=title)).to_be_visible()
 
-    # Wait for content
-    await page.wait_for_function(
-        """() => {
-            const body = document.body;
-            return body && body.textContent && body.textContent.trim().length > 20;
-        }""",
-        timeout=10000,
-    )
+    await search_input.fill("Python")
 
-    # Look for search input
-    search_input = page.locator("input[type='text'], input[type='search']").first
-    if await search_input.is_visible():
-        # Type search query
-        await search_input.fill("Python")
-
-        # Wait for filtered results - check that Python documents appear
-        await expect(page.locator("text=Python Tutorial")).to_be_visible(timeout=5000)
-        await expect(page.locator("text=Python Reference")).to_be_visible(timeout=5000)
-
-        # JavaScript Guide should be hidden or not present
-        js_guide = page.locator("text=JavaScript Guide")
-        is_visible = await js_guide.is_visible()
-        assert not is_visible, (
-            "JavaScript Guide should not be visible when searching for Python"
-        )
+    await expect(page.get_by_role("link", name="Python Tutorial")).to_be_visible()
+    await expect(page.get_by_role("link", name="Python Reference")).to_be_visible()
+    await expect(page.get_by_role("link", name="JavaScript Guide")).to_be_hidden()
 
 
 @pytest.mark.playwright
@@ -373,24 +335,7 @@ async def test_document_detail_navigation_in_react_ui(
     # Should navigate to detail page
     await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents/{doc_id}")
 
-    # Look for back button or link
-    back_buttons = await page.locator("button:has-text('Back')").all()
-    back_links = await page.locator("a:has-text('Back')").all()
-
-    if back_buttons:
-        # Click the first back button found
-        await back_buttons[0].click()
-    elif back_links:
-        # Click the first back link found
-        await back_links[0].click()
-
-    if back_buttons or back_links:
-        # Should navigate back to documents list
-        await page.wait_for_function(
-            """() => {
-                const body = document.body;
-                return body && body.textContent && body.textContent.trim().length > 20;
-            }""",
-            timeout=10000,
-        )
-        assert "/documents" in page.url, "Should navigate back to documents list"
+    await expect(page.get_by_text(TEST_DOC_TITLE)).to_be_visible()
+    await page.get_by_role("link", name="Back to Documents").click()
+    await expect(page).to_have_url(f"{web_test_fixture.base_url}/documents")
+    await expect(page.get_by_role("link", name=TEST_DOC_TITLE)).to_be_visible()

@@ -216,19 +216,11 @@ class ChatPage(BasePage):
             }});
         }}"""
 
-        try:
-            handle = await self.page.evaluate_handle(js_function)
-            content = await handle.json_value()
-            return content or ""
-        except Exception as e:
-            print(f"DEBUG: Error waiting for stable assistant message: {e}")
-            # Fallback for debugging
-            assistant_messages = await self.page.query_selector_all(
-                self.MESSAGE_ASSISTANT_CONTENT
-            )
-            if assistant_messages:
-                return await assistant_messages[-1].inner_text()
-            return ""
+        handle = await self.page.evaluate_handle(js_function)
+        content = await handle.json_value()
+        if not isinstance(content, str) or not content.strip():
+            raise AssertionError("Assistant message did not produce stable content")
+        return content
 
     async def get_all_messages(self) -> list[dict[str, str]]:
         """Get all messages in the conversation.
@@ -625,16 +617,9 @@ class ChatPage(BasePage):
 
     async def is_chat_input_enabled(self) -> bool:
         """Check if the chat input is enabled and ready for input."""
-        try:
-            # Wait for chat input to be visible first
-            chat_input = await self.page.wait_for_selector(
-                self.CHAT_INPUT, state="visible", timeout=5000
-            )
-            if chat_input:
-                return not await chat_input.is_disabled()
-        except Exception:
-            pass
-        return False
+        chat_input = self.page.locator(self.CHAT_INPUT)
+        await chat_input.wait_for(state="visible", timeout=5000)
+        return not await chat_input.is_disabled()
 
     async def get_current_conversation_id(self) -> str | None:
         """Get the current conversation ID from the URL."""
@@ -643,13 +628,7 @@ class ChatPage(BasePage):
             conv_id = url.split("conversation_id=")[-1].split("&")[0]
             return conv_id if conv_id else None
         # Try to get it from localStorage as a fallback
-        try:
-            conv_id = await self.page.evaluate(
-                "localStorage.getItem('lastConversationId')"
-            )
-            return conv_id
-        except Exception:
-            return None
+        return await self.page.evaluate("localStorage.getItem('lastConversationId')")
 
     async def wait_for_assistant_response(self, timeout: int = 30000) -> None:
         """Wait for assistant to complete responding.
@@ -1035,18 +1014,14 @@ class ChatPage(BasePage):
 
     async def conversation_exists_via_api(self, conversation_id: str) -> bool:
         """Check if a conversation exists by querying the API directly."""
-        try:
-            return await self._conversation_exists_via_api_unchecked(conversation_id)
-        except Exception:
-            return False
+        return await self._conversation_exists_via_api_unchecked(conversation_id)
 
     async def _conversation_exists_via_api_unchecked(
         self, conversation_id: str
     ) -> bool:
         async with httpx.AsyncClient() as client:
             response = await client.get(f"{self.base_url}/api/v1/chat/conversations")
-            if response.status_code != 200:
-                return False
+            response.raise_for_status()
 
             data = response.json()
             conversations = data.get("conversations", [])

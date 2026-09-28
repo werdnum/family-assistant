@@ -1,12 +1,13 @@
 """Playwright-based functional tests for Events React UI - List view and filtering."""
 
-import asyncio
-import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from playwright.async_api import expect
 
+from family_assistant.storage.database import Database
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.events_page import EventsPage
 
@@ -105,54 +106,6 @@ async def test_events_list_page_loads(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_events_list_filters_interface(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test filter form interactions on events page."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to events page
-    await page.goto(f"{server_url}/events")
-    await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-
-    # Create page object
-    events_page = EventsPage(page, server_url)
-
-    # Open filters section
-    await events_page.open_filters()
-
-    # Test source dropdown
-    await events_page.set_source_filter("home_assistant")
-    selected_value = await events_page.get_source_filter_value()
-    assert selected_value == "home_assistant"
-
-    # Test hours selector
-    await events_page.set_hours_filter("6")
-    hours_value = await events_page.get_hours_filter_value()
-    assert hours_value == "6"
-
-    # Test only triggered checkbox
-    initial_state = await events_page.get_only_triggered_filter_value()
-    await events_page.set_only_triggered_filter(not initial_state)
-    is_checked = await events_page.get_only_triggered_filter_value()
-    assert is_checked is not initial_state  # Verify the state toggled
-
-    # Test Clear Filters button
-    await events_page.clear_filters()
-
-    # Verify filters are cleared
-    source_value = await events_page.get_source_filter_value()
-    hours_value_after = await events_page.get_hours_filter_value()
-    is_checked_after = await events_page.get_only_triggered_filter_value()
-
-    assert source_value == "_all"  # Default value
-    assert hours_value_after == "24"  # Default value
-    assert is_checked_after is False
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
 async def test_events_filters_url_state_management(
     web_test_fixture_readonly: WebTestFixture,
 ) -> None:
@@ -242,95 +195,34 @@ async def test_events_filters_url_state_persistence_after_reload(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_events_list_display_structure(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test events list display and structure."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to events page
-    await page.goto(f"{server_url}/events")
-    await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-
-    # Wait for either events container or empty state to appear
-    events_container = page.locator("[class*='eventsContainer'], .eventsContainer")
-    empty_state = page.locator("[class*='emptyState'], .emptyState")
-    await page.wait_for_function(
-        """() => {
-            const eventsContainer = document.querySelector('[class*="eventsContainer"]');
-            const emptyState = document.querySelector('[class*="emptyState"]');
-            return (eventsContainer && window.getComputedStyle(eventsContainer).display !== 'none') ||
-                   (emptyState && window.getComputedStyle(emptyState).display !== 'none');
-        }""",
-        timeout=10000,
-    )
-
-    # Either events are displayed or empty state is shown
-    has_events = (
-        await events_container.count() > 0 and await events_container.is_visible()
-    )
-    has_empty_state = await empty_state.count() > 0 and await empty_state.is_visible()
-
-    # At least one should be visible (events or empty state)
-    assert has_events or has_empty_state, "Neither events nor empty state is displayed"
-
-    # If events exist, test their structure
-    if has_events:
-        # Check for event cards
-        event_cards = page.locator("[class*='eventCard'], .eventCard")
-        card_count = await event_cards.count()
-
-        if card_count > 0:
-            first_card = event_cards.first
-
-            # Check for event ID or timestamp
-            event_header = first_card.locator("[class*='eventHeader'], .eventHeader")
-            if await event_header.count() > 0:
-                assert await event_header.is_visible()
-
-            # Check for source badge
-            source_badge = first_card.locator("[class*='sourceBadge'], .sourceBadge")
-            if await source_badge.count() > 0:
-                assert await source_badge.is_visible()
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
 async def test_events_pagination_interface(
-    web_test_fixture_readonly: WebTestFixture,
+    web_test_fixture: WebTestFixture,
 ) -> None:
-    """Test pagination controls when available."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
+    """The Next control loads the second page of event cards."""
+    page = web_test_fixture.page
+    server_url = web_test_fixture.base_url
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
+    db_context = Database(engine=engine)
+    for index in range(21):
+        await db_context.events.store_event(
+            source_id="home_assistant",
+            event_data={"event_type": f"Event {index}"},
+            triggered_listener_ids=[],
+            timestamp=datetime.now(UTC),
+        )
 
-    # Navigate to events page
     await page.goto(f"{server_url}/events")
-    await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-
-    # Wait for page content to load - either pagination or events container should appear
-    await page.wait_for_function(
-        """() => {
-            const pagination = document.querySelector('[class*="pagination"]');
-            const eventsContainer = document.querySelector('[class*="eventsContainer"]');
-            const emptyState = document.querySelector('[class*="emptyState"]');
-            return pagination || eventsContainer || emptyState;
-        }""",
-        timeout=10000,
-    )
-
-    # Check if pagination controls are present
-    pagination = page.locator("[class*='pagination'], .pagination")
-
-    # If pagination exists, test basic functionality
-    if await pagination.count() > 0 and await pagination.is_visible():
-        # Look for page navigation elements
-        page_buttons = pagination.locator("button, a")
-        button_count = await page_buttons.count()
-
-        if button_count > 0:
-            # Pagination controls are present and visible
-            assert await pagination.is_visible()
+    await expect(page.get_by_text("Found 21 events")).to_be_visible()
+    await expect(page.locator("[class*='eventCard']")).to_have_count(20)
+    pagination = page.get_by_role("navigation", name="Pagination")
+    await expect(pagination).to_contain_text("Page 1 of 2")
+    await page.get_by_role("button", name="Next page").click()
+    await expect(page).to_have_url(f"{server_url}/events?page=2")
+    await expect(pagination).to_contain_text("Page 2 of 2")
+    await expect(page.locator("[class*='eventCard']")).to_have_count(1)
+    await expect(page.locator("[class*='eventCard']")).to_contain_text("Event 0")
+    await expect(page.get_by_role("button", name="Next page")).to_be_disabled()
 
 
 @pytest.mark.playwright
@@ -382,34 +274,23 @@ async def test_events_responsive_design(
     assert await filters_section.is_visible()
 
 
-@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_events_api_error_handling(
     web_test_fixture_readonly: WebTestFixture,
 ) -> None:
-    """Test handling of API errors in events page."""
+    """An API failure is shown to the user after loading finishes."""
     page = web_test_fixture_readonly.page
     server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to events page
-    await page.goto(f"{server_url}/events")
-    await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
-
-    # Wait for the page to finish loading (network idle indicates API calls complete)
-
-    # The page should handle API responses gracefully
-    # Either show events, empty state, or error message
-    has_events = await page.locator("[class*='eventsContainer']").count() > 0
-    has_empty_state = await page.locator("[class*='emptyState']").count() > 0
-    has_error = await page.locator("[class*='error']").count() > 0
-    has_loading = await page.locator("text=Loading").count() > 0
-
-    # Page should not be stuck loading and should show appropriate content
-    assert not has_loading, "Page should not be stuck in a loading state"
-    assert has_events or has_empty_state or has_error, (
-        "Page should display events, an empty state, or an error message"
+    await page.route(
+        "**/api/events?**", lambda route: route.fulfill(status=500, body="{}")
     )
+
+    await page.goto(f"{server_url}/events")
+    await expect(page.locator("[class*='error']")).to_contain_text(
+        "Error: Failed to fetch events"
+    )
+    await expect(page.get_by_text("Loading events...")).to_have_count(0)
 
 
 @pytest.mark.playwright
@@ -433,6 +314,9 @@ async def test_events_clear_filters_functionality(
     await events_page.set_source_filter("home_assistant")
     await events_page.set_hours_filter("1")
     await events_page.set_only_triggered_filter(True)
+    await expect(page.locator("#source_id")).to_contain_text("Home Assistant")
+    await expect(page.locator("#hours")).to_contain_text("Last 1 hour")
+    await expect(page.locator("#only_triggered")).to_be_checked()
 
     # Wait for filters to be applied by checking URL
     await page.wait_for_function(
@@ -518,15 +402,6 @@ async def test_events_filter_changes_trigger_api_calls(
     page = web_test_fixture_readonly.page
     server_url = web_test_fixture_readonly.base_url
 
-    # Monitor API requests
-    api_requests = []
-
-    def log_api_request(request: Any) -> None:  # noqa: ANN401  # playwright request object
-        if "/api/events" in request.url:
-            api_requests.append(request.url)
-
-    page.on("request", log_api_request)
-
     # Navigate to events page
     await page.goto(f"{server_url}/events")
     await page.wait_for_selector("h1:has-text('Events')", timeout=10000)
@@ -537,25 +412,12 @@ async def test_events_filter_changes_trigger_api_calls(
     # Open filters
     await events_page.open_filters()
 
-    # Clear existing requests
-    api_requests.clear()
-
-    # Change a filter using the page object method
-    await events_page.set_source_filter("home_assistant")
-
-    # Wait for API call to be captured (poll the Python list)
-    deadline = time.time() + 10  # 10 second timeout
-    while time.time() < deadline:
-        if len(api_requests) > 0 and any(
-            "source_id=home_assistant" in url for url in api_requests
-        ):
-            break
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling interval in condition-checking loop
-        await asyncio.sleep(0.1)  # Poll every 100ms
-
-    # Should have made a new API call with filter parameter
-    assert len(api_requests) > 0
-    assert any("source_id=home_assistant" in url for url in api_requests)
+    async with page.expect_request(
+        lambda request: (
+            "/api/events?" in request.url and "source_id=home_assistant" in request.url
+        )
+    ):
+        await events_page.set_source_filter("home_assistant")
 
 
 @pytest.mark.playwright

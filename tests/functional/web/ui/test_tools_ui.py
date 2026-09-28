@@ -1,9 +1,12 @@
 """Playwright tests for the React-based tools UI."""
 
+import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
+from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
 
@@ -92,25 +95,14 @@ async def test_tools_list_loads(web_test_fixture_readonly: WebTestFixture) -> No
         timeout=15000,
     )
 
-    # Wait for tools to load (either showing tools or an error)
-    # Updated to match actual component classes
-    await page.wait_for_selector(".tools-sidebar, .tools-error", timeout=10000)
-
-    # Check if tools loaded successfully
-    tools_sidebar = await page.query_selector(".tools-sidebar")
-    if tools_sidebar:
-        # Tools loaded successfully
-        tools_heading = await page.text_content(".tools-sidebar h2")
-        assert tools_heading and "Available Tools" in tools_heading, (
-            "Should show available tools heading"
-        )
-
-        # Check if there are any tool items (buttons)
-        await page.query_selector_all(".tool-item")
-    else:
-        # Check for error message if tools failed to load
-        error_element = await page.query_selector(".tools-error")
-        assert error_element is not None, "Should show either tools or error message"
+    await expect(page.get_by_role("heading", name="Available Tools")).to_be_visible(
+        timeout=10000
+    )
+    await expect(
+        page.get_by_role("button", name=re.compile(r"^list_notes\b"))
+    ).to_be_visible()
+    assert await page.locator(".tool-item").count() > 0
+    await expect(page.locator(".tools-error")).to_have_count(0)
 
 
 @pytest.mark.playwright
@@ -134,38 +126,17 @@ async def test_tool_execution_interface(
         timeout=15000,
     )
 
-    # Wait for tools to load
-    await page.wait_for_selector(".tools-sidebar", timeout=10000)
+    tool = page.get_by_role("button", name=re.compile(r"^list_notes\b"))
+    await expect(tool).to_be_visible(timeout=10000)
+    await tool.click()
 
-    # Check if there are any tools available
-    tool_items = await page.query_selector_all(".tool-item")
+    await expect(page.get_by_role("heading", name="list_notes")).to_be_visible()
+    await expect(page.locator(".json-editor-container")).not_to_be_empty()
+    await page.get_by_role("button", name="Execute Tool").click()
 
-    if len(tool_items) > 0:
-        # Click on the first tool
-        await tool_items[0].click()
-
-        # Wait for the tool details section to appear
-        tool_details = await page.wait_for_selector(
-            ".tool-details", state="visible", timeout=5000
-        )
-        assert tool_details is not None, (
-            "Tool details section should appear after clicking a tool"
-        )
-
-        # Check for the JSON editor container
-        json_editor = await page.wait_for_selector(
-            ".json-editor-container", state="visible", timeout=5000
-        )
-        assert json_editor is not None, "JSON editor container should be visible"
-
-        # Check for the execute button
-        execute_button = await page.wait_for_selector(
-            ".btn-execute", state="visible", timeout=5000
-        )
-        assert execute_button is not None, "Execute button should be visible"
-    else:
-        # No tools available - this is still a valid state for testing
-        print("No tools available for execution interface test")
+    await expect(page.get_by_text("✓ Success")).to_be_visible(timeout=10000)
+    result_text = await page.locator(".execution-results pre").inner_text()
+    assert isinstance(json.loads(result_text), list)
 
 
 @pytest.mark.playwright
@@ -190,17 +161,17 @@ async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> N
         timeout=15000,
     )
 
-    # Check that main content is still visible on mobile
-    tools_container = await page.wait_for_selector(
-        ".tools-container", state="visible", timeout=5000
+    await expect(page.get_by_role("heading", name="Tool Explorer")).to_be_visible()
+    await expect(
+        page.get_by_role("button", name=re.compile(r"^list_notes\b"))
+    ).to_be_visible(timeout=10000)
+    sidebar = await page.locator(".tools-sidebar").bounding_box()
+    main = await page.locator(".tools-main").bounding_box()
+    assert sidebar is not None and main is not None
+    assert main["y"] >= sidebar["y"] + sidebar["height"]
+    assert await page.evaluate(
+        "document.documentElement.scrollWidth <= window.innerWidth"
     )
-    assert tools_container is not None, "Tools container should be visible on mobile"
-
-    # Check that the header is still visible - updated to match actual text
-    header = await page.wait_for_selector(
-        "h1:has-text('Tool Explorer')", state="visible", timeout=5000
-    )
-    assert header is not None, "Tool Explorer header should be visible on mobile"
 
     # Reset viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
@@ -232,13 +203,12 @@ async def test_no_javascript_errors(web_test_fixture_readonly: WebTestFixture) -
         timeout=15000,
     )
 
-    # Wait for network to be idle to ensure all async operations complete
+    await expect(
+        page.get_by_role("button", name=re.compile(r"^list_notes\b"))
+    ).to_be_visible(timeout=10000)
 
-    # Filter out non-critical errors (like 404s for sourcemaps in dev mode)
     critical_errors = [
-        err
-        for err in console_errors
-        if "404" not in err.text and "sourcemap" not in err.text.lower()
+        err for err in console_errors if "sourcemap" not in err.text.lower()
     ]
 
     assert len(critical_errors) == 0, (

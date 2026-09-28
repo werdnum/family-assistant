@@ -1,15 +1,16 @@
 """End-to-end tests for file upload functionality in the chat UI using Playwright."""
 
-import asyncio
-import json
 import tempfile
-import time
-from typing import Any
 
 import anyio
 import pytest
 from PIL import Image
 
+from family_assistant.llm.messages import (
+    ImageUrlContentPart,
+    TextContentPart,
+    UserMessage,
+)
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
@@ -29,16 +30,13 @@ async def test_image_upload_basic_functionality(
     page = web_test_with_console_check.page
     chat_page = ChatPage(page, web_test_with_console_check.base_url)
 
-    # Configure mock LLM to recognize image content
     def image_matcher(args: dict) -> bool:
-        messages = args.get("messages", [])
-        for msg in messages:
-            content = msg.content or []
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
-                        return True
-        return False
+        return any(
+            isinstance(msg, UserMessage)
+            and isinstance(msg.content, list)
+            and any(isinstance(part, ImageUrlContentPart) for part in msg.content)
+            for msg in args.get("messages", [])
+        )
 
     mock_llm_client.rules = [
         (
@@ -75,11 +73,6 @@ async def test_image_upload_basic_functionality(
         file_chooser = await fc_info.value
         await file_chooser.set_files(temp_path)
 
-        # Wait for attachment to appear in the composer
-        await page.wait_for_selector(
-            ".flex.w-full.flex-row.gap-3.overflow-x-auto", timeout=5000
-        )
-
         # Verify attachment is displayed
         attachment_preview = page.locator('[data-testid="attachment-preview"]').first
         await attachment_preview.wait_for(state="visible", timeout=5000)
@@ -93,10 +86,10 @@ async def test_image_upload_basic_functionality(
         # Wait for streaming to complete to avoid SSE connection errors
         await chat_page.wait_for_streaming_complete()
 
-        # Verify the response indicates image processing
-        last_response = await chat_page.get_last_assistant_message()
-        assert last_response
-        assert "image" in last_response.lower() or "see" in last_response.lower()
+        await chat_page.wait_for_message_content("I can see the image you uploaded!")
+        assert "no image was detected" not in (
+            await chat_page.get_last_assistant_message()
+        )
 
     finally:
         # Clean up temp file
@@ -207,21 +200,6 @@ async def test_multiple_image_formats_support(
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
-    # Configure mock LLM for image processing
-    def image_matcher(args: dict) -> bool:
-        messages = args.get("messages", [])
-        for msg in messages:
-            content = msg.content or []
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
-                        return True
-        return False
-
-    mock_llm_client.rules = [
-        (image_matcher, LLMOutput(content="I can see your image!"))
-    ]
-
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
@@ -233,6 +211,26 @@ async def test_multiple_image_formats_support(
     ]
 
     for format_name, filename in formats_to_test:
+        prompt = f"Can you see the {format_name} image?"
+        expected_reply = f"I can see your {format_name} image!"
+
+        def image_matcher(args: dict, expected_prompt: str = prompt) -> bool:
+            return any(
+                isinstance(msg, UserMessage)
+                and isinstance(msg.content, list)
+                and any(
+                    isinstance(part, TextContentPart) and expected_prompt in part.text
+                    for part in msg.content
+                )
+                and any(isinstance(part, ImageUrlContentPart) for part in msg.content)
+                for msg in args.get("messages", [])
+            )
+
+        mock_llm_client.rules = [(image_matcher, LLMOutput(content=expected_reply))]
+        mock_llm_client.default_response = LLMOutput(
+            content=f"The {format_name} image was not received."
+        )
+
         with tempfile.NamedTemporaryFile(
             suffix=f".{filename.split('.')[-1]}", delete=False
         ) as temp_file:
@@ -261,28 +259,16 @@ async def test_multiple_image_formats_support(
             file_chooser = await fc_info.value
             await file_chooser.set_files(temp_path)
 
-            # Wait for attachment to appear (should not show error)
+            # Wait for the attachment to appear before sending it.
             attachment_preview = page.locator(
                 '[data-testid="attachment-preview"]'
             ).first
             await attachment_preview.wait_for(state="visible", timeout=5000)
 
-            # Verify no error messages
-            # If the attachment preview is visible, the upload succeeded (no error occurred)
-            error_message = page.locator(
-                '[data-testid="attachment-error-message"]'
-            ).first
-            # Error message should not be visible if upload succeeded
-            assert not await error_message.is_visible()
-
-            # Remove the attachment for next test
-            remove_button = page.locator(
-                '[data-testid="remove-attachment-button"]'
-            ).first
-            if await remove_button.is_visible():
-                await remove_button.click()
-                # Wait for attachment to be removed
-                await attachment_preview.wait_for(state="hidden", timeout=5000)
+            await chat_page.send_message(prompt)
+            await chat_page.wait_for_message_content(expected_reply, timeout=30000)
+            assert "not received" not in await chat_page.get_last_assistant_message()
+            await chat_page.wait_for_streaming_complete()
 
         finally:
             # Clean up temp file
@@ -396,71 +382,12 @@ async def test_image_preview_dialog(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_drag_and_drop_upload(
-    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
-) -> None:
-    """Test drag and drop file upload functionality."""
-    page = web_test_fixture.page
-    chat_page = ChatPage(page, web_test_fixture.base_url)
-
-    # Navigate to chat
-    await chat_page.navigate_to_chat()
-
-    # Create a test image
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-        img = Image.new("RGB", (100, 100), color="orange")
-        img.save(temp_file.name, "PNG")
-        temp_path = temp_file.name
-
-    try:
-        # Get the composer area for dropping files
-        composer = page.locator('[class*="ComposerPrimitive.Root"]').first
-        if not await composer.is_visible():
-            composer = page.locator(".flex.flex-col.gap-3.max-w-3xl.mx-auto").first
-
-        await composer.wait_for(state="visible", timeout=10000)
-
-        # Create file for drag and drop
-        await anyio.Path(temp_path).read_bytes()
-
-        # Simulate drag and drop (note: actual drag/drop testing may require different approach)
-        # For now, we'll use the file chooser method as drag/drop is complex in Playwright
-        await page.set_input_files("#composer-file-input", temp_path)
-
-        # Wait for attachment to appear
-        attachment_preview = page.locator('[data-testid="attachment-preview"]').first
-        await attachment_preview.wait_for(state="visible", timeout=5000)
-
-        # Verify attachment is displayed
-        assert await attachment_preview.is_visible()
-
-    finally:
-        # Clean up temp file
-        await anyio.Path(temp_path).unlink(missing_ok=True)
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
 async def test_api_request_includes_attachments(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
     """Test that API requests properly include attachment data."""
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
-
-    # Set up network request interception
-    requests = []
-
-    def handle_request(request: Any) -> None:  # noqa: ANN401  # playwright request object
-        if "/api/v1/chat/turns" in request.url and request.method == "POST":
-            requests.append({
-                "url": request.url,
-                "method": request.method,
-                "headers": dict(request.headers),
-                "body": request.post_data,
-            })
-
-    page.on("request", handle_request)
 
     # Configure mock LLM
     mock_llm_client.default_response = LLMOutput(content="Image received!")
@@ -486,24 +413,15 @@ async def test_api_request_includes_attachments(
 
         # Wait for attachment and send message
         await page.wait_for_selector('[data-testid="attachment-preview"]', timeout=5000)
-        await chat_page.send_message("Analyze this image")
+        async with page.expect_request(
+            lambda request: (
+                "/api/v1/chat/turns" in request.url and request.method == "POST"
+            )
+        ) as request_info:
+            await chat_page.send_message("Analyze this image")
 
-        # Wait for the API request to be captured
-        # Poll until we see the request in our list
-        deadline = time.time() + 10
-        while len(requests) == 0 and time.time() < deadline:  # noqa: ASYNC110
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for request in test capture list
-            await asyncio.sleep(0.1)
-
-        # Verify request was made with attachments
-        assert len(requests) > 0, "Expected API request to be captured"
-
-        # Check the last request
-        last_request = requests[-1]
-        assert last_request["method"] == "POST"
-
-        # Parse request body
-        body_data = json.loads(last_request["body"])
+        body_data = (await request_info.value).post_data_json
+        assert isinstance(body_data, dict)
         assert "attachments" in body_data
         assert body_data["attachments"] is not None
         assert len(body_data["attachments"]) > 0

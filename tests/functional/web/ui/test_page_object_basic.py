@@ -1,6 +1,7 @@
 """Basic test to verify Page Object Model infrastructure works."""
 
 import pytest
+from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages import BasePage
@@ -19,8 +20,9 @@ async def test_base_page_navigation(web_test_fixture_readonly: WebTestFixture) -
 
     # Navigate to notes page
     await page.navigate_to("/notes")
-    # The page should exist even if there are no notes
-    assert "/notes" in web_test_fixture_readonly.page.url
+    await expect(
+        web_test_fixture_readonly.page.get_by_role("link", name="Add New Note")
+    ).to_be_visible()
 
 
 @pytest.mark.playwright
