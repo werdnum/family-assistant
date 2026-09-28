@@ -1,4 +1,8 @@
-import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react';
+import {
+  AssistantRuntimeProvider,
+  MessageNotSentError,
+  useExternalStoreRuntime,
+} from '@assistant-ui/react';
 import { ArrowLeft, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import React, { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
@@ -2199,8 +2203,20 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         name: string;
         content?: string;
         file?: File;
+        status?: { type: string; reason?: string };
       }>;
     }) => {
+      // An attachment whose upload failed at send has no content to send. The
+      // runtime puts a draft refused with MessageNotSentError back into the
+      // composer, where the attachment renders its upload error.
+      if (
+        message.attachments?.some(
+          (att) => att.status?.type === 'incomplete' && att.status.reason === 'error'
+        )
+      ) {
+        throw new MessageNotSentError('An attachment failed to upload.');
+      }
+
       // Process attachments - they might come from the runtime with different properties.
       // In @assistant-ui/react 0.12.15+, CompleteAttachment.content is ThreadUserMessagePart[]
       // (an array of content parts) rather than a plain string URL. We extract the URL from
