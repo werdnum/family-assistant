@@ -118,13 +118,11 @@ async def test_list_tools_advertises_ask_family_assistant(mcp_app: FastAPI) -> N
     assert set(tool.inputSchema["required"]) == {"question"}
     assert "conversation_id" in tool.inputSchema["properties"]
     assert tool.outputSchema is not None
-    assert {"status", "reply", "conversation_id", "turn_id"} <= set(
-        tool.outputSchema["required"]
-    )
+    assert {"status", "reply", "conversation_id"} <= set(tool.outputSchema["required"])
     assert "conversation_id" in (tool.description or "")
     assert "get_family_assistant_reply" in (tool.description or "")
     poll = next(t for t in tools.tools if t.name == "get_family_assistant_reply")
-    assert set(poll.inputSchema["required"]) == {"turn_id"}
+    assert set(poll.inputSchema["required"]) == {"conversation_id"}
 
 
 @pytest.mark.asyncio
@@ -222,21 +220,20 @@ async def test_slow_turn_is_collected_with_get_family_assistant_reply(
         assert started.structuredContent["status"] == "working"
         assert started.structuredContent["reply"] is None
         assert "get_family_assistant_reply" in started.structuredContent["message"]
-        turn_id = started.structuredContent["turn_id"]
+        conversation_id = started.structuredContent["conversation_id"]
 
         api_mock_llm_client.response_gate.set()
         _configure_adapter(
             mcp_app, db_engine, MCPAdapterConfig(enabled=True, reply_wait_seconds=30)
         )
         collected = await session.call_tool(
-            "get_family_assistant_reply", {"turn_id": turn_id}
+            "get_family_assistant_reply", {"conversation_id": conversation_id}
         )
 
     assert not collected.isError
     assert collected.structuredContent is not None
     assert collected.structuredContent["status"] == "complete"
     assert collected.structuredContent["reply"] == "The slow answer."
-    conversation_id = started.structuredContent["conversation_id"]
     assert collected.structuredContent["conversation_id"] == conversation_id
     rows = await api_db_context.message_history.get_recent_with_metadata(
         interface_type="mcp", conversation_id=conversation_id
@@ -245,14 +242,74 @@ async def test_slow_turn_is_collected_with_get_family_assistant_reply(
 
 
 @pytest.mark.asyncio
-async def test_unknown_turn_id_is_reported(mcp_app: FastAPI) -> None:
+async def test_finished_reply_is_read_from_the_conversation(
+    mcp_app: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """A reply collected after the turn ended comes from history, not memory."""
+    api_mock_llm_client.rules.append((
+        lambda args: "quick question" in str(args.get("messages", [])),
+        LLMOutput(content="The quick answer."),
+    ))
+
+    async with mcp_session(mcp_app) as session:
+        asked = await session.call_tool(
+            "ask_family_assistant", {"question": "A quick question."}
+        )
+        assert asked.structuredContent is not None
+        collected = await session.call_tool(
+            "get_family_assistant_reply",
+            {"conversation_id": asked.structuredContent["conversation_id"]},
+        )
+
+    assert not collected.isError
+    assert collected.structuredContent is not None
+    assert collected.structuredContent["status"] == "complete"
+    assert collected.structuredContent["reply"] == "The quick answer."
+
+
+@pytest.mark.asyncio
+async def test_conversation_without_a_reply_is_reported(
+    mcp_app: FastAPI, api_db_context: Database
+) -> None:
+    conversation_id = "mcp-interrupted"
+    await api_db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="A question that never got an answer."),
+        interface_type="mcp",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+
     async with mcp_session(mcp_app) as session:
         result = await session.call_tool(
-            "get_family_assistant_reply", {"turn_id": "no-such-turn"}
+            "get_family_assistant_reply", {"conversation_id": conversation_id}
         )
 
     assert result.isError
     assert "ask_family_assistant" in _reply_text(result.content)
+
+
+@pytest.mark.asyncio
+async def test_another_users_reply_is_not_found(
+    mcp_app: FastAPI, api_db_context: Database
+) -> None:
+    conversation_id = "mcp-someone-elses-reply"
+    await api_db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="Private question."),
+        interface_type="mcp",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
+
+    async with mcp_session(mcp_app) as session:
+        result = await session.call_tool(
+            "get_family_assistant_reply", {"conversation_id": conversation_id}
+        )
+
+    assert result.isError
+    assert "not found" in _reply_text(result.content).lower()
 
 
 @pytest.mark.asyncio

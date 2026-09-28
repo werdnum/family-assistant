@@ -15,7 +15,7 @@ from family_assistant.web.auth import MCP_ENDPOINT_PATH
 from family_assistant.web.mcp_adapter.config import adapter_config
 from family_assistant.web.mcp_adapter.oauth import install_oauth_routes
 from family_assistant.web.mcp_adapter.tools import register_tools
-from family_assistant.web.mcp_adapter.turns import PendingTurns
+from family_assistant.web.mcp_adapter.turns import RunningTurns
 
 if TYPE_CHECKING:
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -27,8 +27,8 @@ SERVER_INSTRUCTIONS = (
     "Family Assistant is a household assistant with access to the family's notes, "
     "calendar, tasks, documents and smart home. Ask it questions in natural language "
     "with ask_family_assistant; pass back the conversation_id it returns to continue "
-    'the same conversation. A long request returns status "working" with a '
-    "turn_id: collect the answer with get_family_assistant_reply."
+    'the same conversation. A long request returns status "working": collect the '
+    "answer with get_family_assistant_reply and the same conversation_id."
 )
 
 
@@ -87,8 +87,8 @@ class MCPAdapter:
             stateless_http=True,
             json_response=True,
         )
-        pending_turns = PendingTurns()
-        register_tools(mcp, pending_turns)
+        running_turns = RunningTurns()
+        register_tools(mcp, running_turns)
         # Builds the session manager; the Starlette app it returns is unused.
         mcp.streamable_http_app()
         self._session_manager = mcp.session_manager
@@ -97,7 +97,7 @@ class MCPAdapter:
                 yield
         finally:
             self._session_manager = None
-            await pending_turns.aclose()
+            await running_turns.aclose()
 
 
 def install_mcp_adapter(app: FastAPI) -> MCPAdapter:

@@ -3303,10 +3303,11 @@ mcp_adapter:
 
 ### mcp_adapter.reply_wait_seconds
 
-How long one MCP tool call waits for a turn before returning `status: "working"` with a `turn_id`,
-which the client passes to `get_family_assistant_reply` to wait again. The turn keeps running either
-way. Keep it below the shortest tool-call limit among the clients in use: ChatGPT abandons a call
-after about a minute, and Cloudflare cuts a response that sends nothing for 100 seconds.
+How long one MCP tool call waits for a turn before returning `status: "working"`, after which the
+client calls `get_family_assistant_reply` with the conversation id to wait again. The turn keeps
+running either way. Keep it below the shortest tool-call limit among the clients in use: ChatGPT
+abandons a call after one to two minutes, and Cloudflare cuts a response that sends nothing for 100
+seconds.
 
 | Property  | Value                    |
 | --------- | ------------------------ |

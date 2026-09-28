@@ -8,6 +8,7 @@ confirmations are inherited rather than re-implemented. A turn that outlasts
 ``get_family_assistant_reply`` collects it (see ``turns``).
 """
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Mapping
@@ -27,13 +28,9 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_user
-from family_assistant.web.mcp_adapter.turns import (
-    PendingTurn,
-    PendingTurns,
-    wait_for_turn,
-)
-from family_assistant.web.models import ChatPromptRequest
-from family_assistant.web.routers.chat_api import run_non_streaming_turn
+from family_assistant.web.mcp_adapter.turns import RunningTurns, wait_for_turn
+from family_assistant.web.models import ChatMessageResponse, ChatPromptRequest
+from family_assistant.web.routers.chat_api import latest_reply, run_non_streaming_turn
 from family_assistant.web.web_chat_interface import WebChatInterface
 
 logger = logging.getLogger(__name__)
@@ -43,7 +40,7 @@ MCP_INTERFACE_TYPE = "mcp"
 
 STILL_WORKING_MESSAGE = (
     "Family Assistant is still working on this. Call get_family_assistant_reply "
-    "with this turn_id to wait for the reply."
+    "with this conversation_id to wait for the reply."
 )
 
 
@@ -53,7 +50,7 @@ class AskFamilyAssistantResult(BaseModel):
     status: Literal["complete", "working"] = Field(
         description=(
             "complete: reply holds the answer. working: the answer is not ready "
-            "yet; call get_family_assistant_reply with turn_id to wait for it."
+            "yet; call get_family_assistant_reply with conversation_id to wait for it."
         )
     )
     reply: str | None = Field(
@@ -64,9 +61,6 @@ class AskFamilyAssistantResult(BaseModel):
             "The conversation this exchange belongs to. Pass it back as "
             "conversation_id to continue the same conversation."
         )
-    )
-    turn_id: str = Field(
-        description="This exchange; pass it to get_family_assistant_reply."
     )
     message: str | None = Field(
         default=None, description="What to do next while status is working."
@@ -139,35 +133,37 @@ def _tool_error_for(exc: HTTPException) -> ToolError:
     return ToolError(str(exc.detail))
 
 
-def _result_for(pending: PendingTurn) -> AskFamilyAssistantResult:
-    """The tool result for ``pending`` as it stands: its reply, error, or progress."""
-    if not pending.task.done():
-        return AskFamilyAssistantResult(
-            status="working",
-            reply=None,
-            conversation_id=pending.conversation_id,
-            turn_id=pending.turn_id,
-            message=STILL_WORKING_MESSAGE,
-        )
-    if pending.task.cancelled():
+def _working(conversation_id: str) -> AskFamilyAssistantResult:
+    return AskFamilyAssistantResult(
+        status="working",
+        reply=None,
+        conversation_id=conversation_id,
+        message=STILL_WORKING_MESSAGE,
+    )
+
+
+def _finished_turn_result(
+    task: asyncio.Task[ChatMessageResponse],
+) -> AskFamilyAssistantResult:
+    """The result of a turn that has ended: its reply, or its failure as a tool error."""
+    if task.cancelled():
         raise ToolError(
             "This turn was stopped before it finished. Ask again with "
             "ask_family_assistant and the same conversation_id."
         )
     try:
-        response = pending.task.result()
+        response = task.result()
     except HTTPException as exc:
         raise _tool_error_for(exc) from exc
     return AskFamilyAssistantResult(
         status="complete",
         reply=response.reply,
         conversation_id=response.conversation_id,
-        turn_id=pending.turn_id,
     )
 
 
-def register_tools(mcp: FastMCP, pending_turns: PendingTurns) -> None:
-    """Register the adapter's tools on ``mcp``, running turns in ``pending_turns``."""
+def register_tools(mcp: FastMCP, running_turns: RunningTurns) -> None:
+    """Register the adapter's tools on ``mcp``, running turns in ``running_turns``."""
 
     @mcp.tool()
     async def ask_family_assistant(
@@ -190,26 +186,30 @@ def register_tools(mcp: FastMCP, pending_turns: PendingTurns) -> None:
 
         Some requests take several minutes. If the result's status is "working",
         the answer is not ready yet: call get_family_assistant_reply with its
-        turn_id, and keep calling it while the status stays "working".
+        conversation_id, and keep calling it while the status stays "working".
         """
         request = ctx.request_context.request
         if request is None:
             raise ToolError("ask_family_assistant needs an HTTP request context.")
         current_user = await get_current_user(request)
         processing_service = _select_processing_service(request)
-        turn_id = str(uuid.uuid4())
         conversation_id = conversation_id or f"mcp-{uuid.uuid4()}"
+        if running_turns.is_running(conversation_id):
+            raise ToolError(
+                "A request is still running in this conversation. Call "
+                "get_family_assistant_reply with this conversation_id for its reply, "
+                "then ask again."
+            )
         payload = ChatPromptRequest(
             prompt=question,
             conversation_id=conversation_id,
             interface_type=MCP_INTERFACE_TYPE,
-            turn_id=turn_id,
         )
-        pending = pending_turns.start(
-            turn_id=turn_id,
-            conversation_id=conversation_id,
-            user_id=str(current_user["user_identifier"]),
-            turn=run_non_streaming_turn(
+        user_id = str(current_user["user_identifier"])
+        task = running_turns.start(
+            conversation_id,
+            user_id,
+            run_non_streaming_turn(
                 request,
                 current_user,
                 Database(request.app.state.database_engine),
@@ -219,34 +219,50 @@ def register_tools(mcp: FastMCP, pending_turns: PendingTurns) -> None:
                 initial_taint_sources=(mcp_caller_taint_source(current_user),),
             ),
         )
-        await wait_for_turn(
-            pending, request.app.state.config.mcp_adapter.reply_wait_seconds
-        )
-        return _result_for(pending)
+        if not await wait_for_turn(
+            task, request.app.state.config.mcp_adapter.reply_wait_seconds
+        ):
+            return _working(conversation_id)
+        return _finished_turn_result(task)
 
     @mcp.tool()
     async def get_family_assistant_reply(
-        turn_id: str,
+        conversation_id: str,
         ctx: Context,
     ) -> AskFamilyAssistantResult:
         """Wait for the reply to an ask_family_assistant call that is still working.
 
-        Pass the turn_id from a result whose status was "working". Returns the
-        reply once it is ready; if the status is still "working", call this again
-        with the same turn_id.
+        Pass the conversation_id from a result whose status was "working".
+        Returns the reply once it is ready; if the status is still "working",
+        call this again with the same conversation_id.
         """
         request = ctx.request_context.request
         if request is None:
             raise ToolError("get_family_assistant_reply needs an HTTP request context.")
         current_user = await get_current_user(request)
-        pending = pending_turns.get(turn_id, str(current_user["user_identifier"]))
-        if pending is None:
+        task = running_turns.get(conversation_id, str(current_user["user_identifier"]))
+        if task is not None:
+            if not await wait_for_turn(
+                task, request.app.state.config.mcp_adapter.reply_wait_seconds
+            ):
+                return _working(conversation_id)
+            return _finished_turn_result(task)
+        try:
+            reply = await latest_reply(
+                request,
+                current_user,
+                Database(request.app.state.database_engine),
+                conversation_id,
+                interface_type=MCP_INTERFACE_TYPE,
+            )
+        except HTTPException as exc:
+            raise _tool_error_for(exc) from exc
+        if reply is None:
             raise ToolError(
-                "No turn with this turn_id is running or recently finished; it may "
-                "have been interrupted by a restart. Ask again with "
+                "The latest request in this conversation ended without a reply; it "
+                "may have been interrupted by a restart. Ask again with "
                 "ask_family_assistant and the same conversation_id."
             )
-        await wait_for_turn(
-            pending, request.app.state.config.mcp_adapter.reply_wait_seconds
+        return AskFamilyAssistantResult(
+            status="complete", reply=reply, conversation_id=conversation_id
         )
-        return _result_for(pending)
