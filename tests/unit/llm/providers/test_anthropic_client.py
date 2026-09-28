@@ -596,3 +596,18 @@ class TestConversationCacheBreakpoints:
             else 0
         )
         assert system_breakpoints + len(_breakpoint_positions(api_messages)) <= 4
+
+
+@pytest.mark.no_db
+async def test_stream_setup_failure_surfaces_original_error() -> None:
+    """A request that fails to serialize raises its own error, not UnboundLocalError."""
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-6")
+    malformed = cast("LLMMessage", object())
+
+    stream = cast(
+        "AsyncGenerator[LLMStreamEvent]",
+        client.generate_response_stream([UserMessage(content="hello"), malformed]),
+    )
+
+    with pytest.raises(TypeError, match="Unsupported message type for serialization"):
+        await anext(stream)

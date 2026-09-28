@@ -1370,17 +1370,17 @@ class AnthropicClient(BaseLLMClient):
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
         span = tracer.start_span("llm.provider.generate_stream")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="anthropic",
+            system="anthropic",
+            requested_model=self.model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            streaming=True,
+        )
         try:
-            telemetry = LLMCallTelemetry(
-                span,
-                provider="anthropic",
-                system="anthropic",
-                requested_model=self.model,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                streaming=True,
-            )
 
             async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
                 processed_messages = self._process_tool_messages(list(messages))
