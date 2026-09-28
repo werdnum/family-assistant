@@ -317,7 +317,7 @@ async def test_history_message_display_structure(
     conversation_id = f"history-messages-{uuid4().hex}"
     timestamp = datetime.now(UTC)
     await db_context.message_history.add_message(
-        UserMessage(content="History detail user prompt"),
+        UserMessage.from_trusted_user(content="History detail user prompt"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=timestamp,

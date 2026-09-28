@@ -74,7 +74,7 @@ async def test_web_chat_no_notification_when_disabled(
     conversation_id = "test-disabled"
     db_context = Database(engine=db_engine)
     await db_context.message_history.add_message(
-        message=UserMessage(content="Hello, assistant"),
+        message=UserMessage.from_trusted_user(content="Hello, assistant"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=SystemClock().now(),
@@ -120,7 +120,7 @@ async def test_web_chat_handles_push_notification_error_gracefully(
     conversation_id = "test-conv-error"
     db_context = Database(engine=db_engine)
     await db_context.message_history.add_message(
-        message=UserMessage(content="Hello, assistant"),
+        message=UserMessage.from_trusted_user(content="Hello, assistant"),
         interface_type="web",
         conversation_id=conversation_id,
         timestamp=SystemClock().now(),
