@@ -230,13 +230,24 @@ async def test_a_spoken_interface_never_contributes(
 ) -> None:
     """The pinned exclusion: spoken interfaces read memory but do not feed it.
 
-    Aged past the maximum deferral as well as the idle window, so the only
-    thing that can exclude it is the contributing-interface filter itself.
+    Evaluated under the shipped settings, so what is exercised is the exclusion
+    a deployment that configures nothing actually gets. Aged past the maximum
+    deferral as well as the idle window, beside a web conversation aged the
+    same, so the only thing that can exclude it is the contributing-interface
+    filter itself.
     """
     db = Database(engine=db_engine)
-    await _say(db, minutes_ago=30 * 60, interface_type=interface_type)
+    await _say(
+        db,
+        minutes_ago=30 * 60,
+        interface_type=interface_type,
+        conversation_id="spoken-conv",
+    )
+    await _say(
+        db, minutes_ago=30 * 60, interface_type="web", conversation_id="web-conv"
+    )
 
-    assert await _due(db) == []
+    assert await _due(db, settings=MemoryConfig().to_review_settings()) == ["web-conv"]
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,15 @@ def _completing_stream(interaction_id: str, text: str) -> AsyncGenerator[MagicMo
     return generator()
 
 
+def _accept_submissions(mock_genai_client: MagicMock) -> AsyncMock:
+    """Make the SDK's create() accept a submit-path request, and return it."""
+    interaction = MagicMock()
+    interaction.id = "inter_ag_submitted"
+    create = AsyncMock(return_value=interaction)
+    mock_genai_client.aio.interactions.create = create
+    return create
+
+
 @pytest.mark.parametrize(
     "model_id",
     [
@@ -184,7 +193,10 @@ async def test_antigravity_agent_config_carries_max_total_tokens(
     }
 
 
-def test_antigravity_create_kwargs_validate_against_the_sdk_request_model() -> None:
+@pytest.mark.asyncio
+async def test_antigravity_submitted_request_validates_against_the_sdk_request_model(
+    mock_genai_client: MagicMock,
+) -> None:
     """The submitted body is what the installed SDK accepts, not just a dict we like."""
     client = GoogleGenAIClient(
         api_key="test",
@@ -192,26 +204,34 @@ def test_antigravity_create_kwargs_validate_against_the_sdk_request_model() -> N
         antigravity_model="gemini-3.8-flash",
         antigravity_max_total_tokens=250_000,
     )
+    create = _accept_submissions(mock_genai_client)
 
-    kwargs = client._build_agent_create_kwargs([
+    await client.start_agent_interaction([
         SystemMessage(content="Be careful."),
         UserMessage(content="Do the thing."),
     ])
 
-    body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
+    body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
     assert body.agent == ANTIGRAVITY_AGENT_ID
     assert body.agent_config.type == "antigravity"
     assert body.agent_config.model == "gemini-3.8-flash"
     assert body.agent_config.max_total_tokens == 250_000
-    assert body.system_instruction is not None
+    assert body.input == "Do the thing."
+    assert body.system_instruction == "Be careful."
+    assert body.environment.type == "remote"
 
 
-def test_antigravity_requires_non_empty_input() -> None:
+@pytest.mark.asyncio
+async def test_antigravity_requires_non_empty_input(
+    mock_genai_client: MagicMock,
+) -> None:
     """A system prompt alone is not a task for an agent that executes work."""
     client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+    create = _accept_submissions(mock_genai_client)
 
     with pytest.raises(InvalidRequestError, match="Antigravity requires non-empty"):
-        client._build_agent_create_kwargs([SystemMessage(content="Be careful.")])
+        await client.start_agent_interaction([SystemMessage(content="Be careful.")])
+    create.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -240,7 +260,10 @@ async def test_start_agent_interaction_submits_antigravity_without_streaming(
     assert call_kwargs["previous_interaction_id"] == "inter_ag_prev"
 
 
-def test_media_injected_as_provider_parts_is_refused_not_dropped() -> None:
+@pytest.mark.asyncio
+async def test_media_injected_as_provider_parts_is_refused_not_dropped(
+    mock_genai_client: MagicMock,
+) -> None:
     """An image or PDF injection has no text form the agent could receive.
 
     The Google adapter injects multimodal attachments as provider `parts`,
@@ -248,22 +271,28 @@ def test_media_injected_as_provider_parts_is_refused_not_dropped() -> None:
     turn fails rather than asking the agent about a file it never got.
     """
     client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+    create = _accept_submissions(mock_genai_client)
     injected = UserMessage(content="[System: File from previous tool response]")
     injected.parts = [{"inline_data": {"mime_type": "image/png"}}]
 
     with pytest.raises(InvalidRequestError, match="cannot read attachments"):
-        client._build_agent_create_kwargs([
+        await client.start_agent_interaction([
             UserMessage(content="Crop the attached image."),
             injected,
         ])
+    create.assert_not_called()
 
 
-def test_image_url_content_part_is_refused_not_dropped() -> None:
+@pytest.mark.asyncio
+async def test_image_url_content_part_is_refused_not_dropped(
+    mock_genai_client: MagicMock,
+) -> None:
     """The same holds for an image_url part reaching the agent path."""
     client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+    create = _accept_submissions(mock_genai_client)
 
     with pytest.raises(InvalidRequestError, match="cannot read image_url"):
-        client._build_agent_create_kwargs([
+        await client.start_agent_interaction([
             UserMessage(
                 content=[
                     TextContentPart(type="text", text="What is in this picture?"),
@@ -273,19 +302,25 @@ def test_image_url_content_part_is_refused_not_dropped() -> None:
                 ]
             )
         ])
+    create.assert_not_called()
 
 
-def test_text_shaped_attachment_injection_still_reaches_the_agent() -> None:
+@pytest.mark.asyncio
+async def test_text_shaped_attachment_injection_still_reaches_the_agent(
+    mock_genai_client: MagicMock,
+) -> None:
     """A CSV/JSON/text attachment is injected as text, so it must still pass."""
     client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+    create = _accept_submissions(mock_genai_client)
 
-    kwargs = client._build_agent_create_kwargs([
+    await client.start_agent_interaction([
         UserMessage(content="Transform the attached CSV."),
         UserMessage(content="[System: File from previous tool response]\na,b\n1,2"),
     ])
 
-    assert "Transform the attached CSV." in kwargs["input"]
-    assert "a,b" in kwargs["input"]
+    submitted_input = create.call_args.kwargs["input"]
+    assert "Transform the attached CSV." in submitted_input
+    assert "a,b\n1,2" in submitted_input
 
 
 def _egress_client(
@@ -431,9 +466,9 @@ async def test_interactive_path_also_states_the_default_sandbox(
 
 
 @pytest.mark.asyncio
-async def test_environment_with_egress_validates_against_the_sdk_request_model() -> (
-    None
-):
+async def test_environment_with_egress_validates_against_the_sdk_request_model(
+    mock_genai_client: MagicMock,
+) -> None:
     """The transform shape is what the installed SDK accepts, not just a dict we like."""
     client = _egress_client({
         "allowlist": [
@@ -443,11 +478,11 @@ async def test_environment_with_egress_validates_against_the_sdk_request_model()
             }
         ]
     })
+    create = _accept_submissions(mock_genai_client)
 
-    kwargs = client._build_agent_create_kwargs([UserMessage(content="Clone the repo.")])
-    kwargs["environment"], _ = await client._build_agent_environment()
+    await client.start_agent_interaction([UserMessage(content="Clone the repo.")])
 
-    body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
+    body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
     assert body.environment.type == "remote"
     assert body.environment.network.allowlist[0].domain == "github.com"
     assert body.environment.network.allowlist[0].transform == [
@@ -468,34 +503,47 @@ _STORED_GITHUB = EgressResolution(
 
 
 @pytest.mark.asyncio
-async def test_a_stored_git_credential_is_bound_to_the_sandbox_variable() -> None:
+async def test_a_stored_git_credential_is_bound_to_the_sandbox_variable(
+    mock_genai_client: MagicMock,
+) -> None:
     """The request the installed SDK accepts carries the credential binding."""
     client = _egress_client(_STORED_GITHUB)
+    create = _accept_submissions(mock_genai_client)
 
-    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+    await client.start_agent_interaction([UserMessage(content="Fix the bug.")])
 
-    body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
+    body = _CREATE_INTERACTION_ADAPTER.validate_python(create.call_args.kwargs)
     assert body.environment.model_dump(exclude_none=True)["env"] == {
         GITHUB_GIT_AUTH_ENV: {"credential": "fa-egress-github-app-1-git"}
     }
 
 
 @pytest.mark.asyncio
-async def test_a_stored_git_credential_tells_the_agent_to_configure_git() -> None:
+async def test_a_stored_git_credential_tells_the_agent_to_configure_git(
+    mock_genai_client: MagicMock,
+) -> None:
     """Git sends nothing until the variable is in its header, so the binding
     is useless unless the agent is told to put it there."""
     client = _egress_client(_STORED_GITHUB)
+    create = _accept_submissions(mock_genai_client)
 
-    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+    await client.start_agent_interaction([
+        SystemMessage(content="You are a coding agent."),
+        UserMessage(content="Fix the bug."),
+    ])
 
+    system_instruction = create.call_args.kwargs["system_instruction"]
+    assert "You are a coding agent." in system_instruction
     assert (
         "'http.https://github.com/.extraHeader' "
         f'"Authorization: Basic ${GITHUB_GIT_AUTH_ENV}"'
-    ) in kwargs["system_instruction"]
+    ) in system_instruction
 
 
 @pytest.mark.asyncio
-async def test_without_a_stored_git_credential_git_is_not_mentioned() -> None:
+async def test_without_a_stored_git_credential_git_is_not_mentioned(
+    mock_genai_client: MagicMock,
+) -> None:
     """A header-only rule carries its own Authorization, which the proxy would
     write over anything git sent."""
     client = _egress_client({
@@ -506,8 +554,13 @@ async def test_without_a_stored_git_credential_git_is_not_mentioned() -> None:
             }
         ]
     })
+    create = _accept_submissions(mock_genai_client)
 
-    kwargs = await client._build_agent_request([UserMessage(content="Fix the bug.")])
+    await client.start_agent_interaction([
+        SystemMessage(content="You are a coding agent."),
+        UserMessage(content="Fix the bug."),
+    ])
 
-    assert "env" not in kwargs["environment"]
-    assert GITHUB_GIT_AUTH_ENV not in kwargs.get("system_instruction", "")
+    call_kwargs = create.call_args.kwargs
+    assert "env" not in call_kwargs["environment"]
+    assert call_kwargs["system_instruction"] == "You are a coding agent."

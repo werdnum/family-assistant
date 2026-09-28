@@ -14,7 +14,7 @@ from telegram import Update
 from telegram.ext import Application, ContextTypes
 
 from .conftest import TelegramHandlerTestFixture
-from .helpers import assert_bot_sent_message, wait_for_bot_response
+from .helpers import assert_bot_sent_message
 
 _MEDIA_LIMIT = 1024 * 1024
 _OVERSIZED = b"\0" * (2 * _MEDIA_LIMIT)
@@ -74,6 +74,6 @@ async def test_an_oversized_pdf_document_is_still_accepted(
 
     await _send_document(fix, _OVERSIZED, "report.pdf", "application/pdf")
 
-    updates = await wait_for_bot_response(fix.telegram_client)
-    texts = [u.get("message", {}).get("text", "") for u in updates]
-    assert not any("File size exceeds" in text for text in texts), texts
+    update = await assert_bot_sent_message(fix.telegram_client, "Default mock response")
+    message_text = update.get("message", {}).get("text", "")
+    assert "File size exceeds" not in message_text

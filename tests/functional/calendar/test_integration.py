@@ -1,10 +1,9 @@
 import asyncio
 import json
 import logging
-import time
 import uuid
 from datetime import datetime, timedelta
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -36,10 +35,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from family_assistant.tools.calendar import (
-    search_calendar_events_tool,
-)
-from family_assistant.tools.types import CalendarConfig, ToolExecutionContext
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
@@ -49,6 +44,9 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +89,7 @@ async def test_format_datetime_or_date_all_day_tomorrow_with_mock_clock() -> Non
         dt_obj=event_dt, timezone=local_tz, is_end=False, clock=mock_clock
     )
 
-    assert "Tomorrow" in formatted_str
+    assert formatted_str == "Tomorrow (Jun 24)"
 
 
 def get_radicale_client(
@@ -134,44 +132,6 @@ async def get_event_by_summary_from_radicale(
     return None
 
 
-async def wait_for_radicale_indexing(
-    exec_context: ToolExecutionContext,
-    calendar_config: "CalendarConfig",
-    event_summary: str,
-    timeout_seconds: float = 5.0,
-) -> bool:
-    """
-    Wait for Radicale to index a newly created event.
-
-    Radicale CalDAV server doesn't immediately make events searchable after creation.
-    This function polls the search functionality until the event appears or timeout.
-
-    Args:
-        exec_context: Tool execution context
-        calendar_config: Calendar configuration
-        event_summary: Summary of the event to wait for
-        timeout_seconds: Maximum time to wait in seconds (default: 5.0)
-
-    Returns:
-        True if event became searchable, False if timeout
-    """
-    deadline = time.time() + timeout_seconds
-    while time.time() < deadline:
-        search_result = await search_calendar_events_tool(
-            exec_context=exec_context,
-            calendar_config=calendar_config,
-            search_text=event_summary,
-        )
-
-        if event_summary in search_result:
-            return True
-
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling for calendar event to appear in search
-        await asyncio.sleep(0.1)
-
-    return False
-
-
 @pytest.mark.asyncio
 async def test_add_event_and_verify_in_turn_context(
     db_engine: AsyncEngine,
@@ -191,7 +151,8 @@ async def test_add_event_and_verify_in_turn_context(
 
     event_summary = f"Test Meeting {uuid.uuid4()}"
     local_tz = ZoneInfo(TEST_TIMEZONE_STR)
-    tomorrow = datetime.now(local_tz) + timedelta(days=1)
+    clock = MockClock(initial_time=datetime.now(local_tz))
+    tomorrow = clock.now() + timedelta(days=1)
     start_dt_local = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0)
     end_dt_local = start_dt_local + timedelta(hours=1)
 
@@ -280,6 +241,7 @@ async def test_add_event_and_verify_in_turn_context(
         calendar_config=test_calendar_config,
         prompts=dummy_prompts,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        clock=clock,
     )
     service_config = ProcessingServiceConfig(
         id="test_cal_add_profile",
@@ -328,9 +290,6 @@ async def test_add_event_and_verify_in_turn_context(
     assert radicale_event_check is not None, (
         f"Event '{event_summary}' not found in Radicale {test_calendar_direct_url} after tool execution."
     )
-
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
-    await asyncio.sleep(0.5)
 
     # The context block is built once per turn, so the turn that created the
     # event predates it. Take another turn and read what the model was given.

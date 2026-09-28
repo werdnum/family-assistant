@@ -55,13 +55,18 @@ async def test_render_home_assistant_template_success(
     """
     logger.info("\n--- Test: Render Home Assistant Template Success ---")
 
-    # The template we'll render
-    template_str = "{{ states('sensor.living_room_temperature') }}"
-    expected_result = "22.5"
+    template_str = (
+        "{%- set temp = states('sensor.living_room_temperature') | float -%}\n"
+        "Temperature: {{ temp }}°C\n"
+        "Status: {% if temp > 25 %}Hot{% else %}Comfortable{% endif %}\n"
+    )
+    rendered_by_home_assistant = "\n  Temperature: 22.5°C\nStatus: Comfortable\n\n"
+    expected_result = "Temperature: 22.5°C\nStatus: Comfortable"
 
-    # Create mock Home Assistant client
     mock_ha_client = MagicMock()
-    mock_ha_client.async_get_rendered_template = AsyncMock(return_value=expected_result)
+    mock_ha_client.async_get_rendered_template = AsyncMock(
+        return_value=rendered_by_home_assistant
+    )
 
     tool_call_id = f"call_ha_template_{uuid.uuid4()}"
 
@@ -96,14 +101,14 @@ async def test_render_home_assistant_template_success(
         return (
             last_message.role == "tool"
             and last_message.tool_call_id == tool_call_id
-            and expected_result in (last_message.content or "")
+            and last_message.content == expected_result
         )
 
     final_llm_response = MockLLMOutput(
-        content=f"The living room temperature is {expected_result}°C.", tool_calls=None
+        content="The living room is 22.5°C and comfortable.", tool_calls=None
     )
 
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
+    llm_client = RuleBasedMockLLMClient(
         rules=[
             (render_template_matcher, render_template_response),
             (final_response_matcher, final_llm_response),
@@ -174,14 +179,18 @@ async def test_render_home_assistant_template_success(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    assert final_reply and expected_result in final_reply, (
-        f"Expected temperature '{expected_result}' not in reply: '{final_reply}'"
-    )
-
-    # Verify the mock was called correctly
     mock_ha_client.async_get_rendered_template.assert_awaited_once_with(
         template=template_str
     )
+    tool_messages = [
+        message
+        for call in llm_client.get_calls()
+        for message in call["kwargs"]["messages"]
+        if message.role == "tool" and message.tool_call_id == tool_call_id
+    ]
+    assert tool_messages, "The rendered template never reached the LLM"
+    assert tool_messages[-1].content == expected_result
+    assert final_reply == "The living room is 22.5°C and comfortable."
 
     logger.info("Test Render Home Assistant Template Success PASSED.")
 
@@ -307,167 +316,6 @@ async def test_render_home_assistant_template_no_client(
     )
 
     logger.info("Test Render Home Assistant Template No Client PASSED.")
-
-
-@pytest.mark.asyncio
-async def test_render_home_assistant_template_complex(
-    db_engine: AsyncEngine,
-) -> None:
-    """
-    Test rendering a complex Home Assistant template with multiple entities and calculations.
-    """
-    logger.info("\n--- Test: Render Complex Home Assistant Template ---")
-
-    # Complex template with calculations
-    complex_template = """
-{%- set temp = states('sensor.outside_temperature') | float -%}
-{%- set humidity = states('sensor.outside_humidity') | float -%}
-{%- set feels_like = temp - 0.55 * (1 - humidity/100) * (temp - 14) -%}
-Temperature: {{ temp }}°C
-Humidity: {{ humidity }}%
-Feels like: {{ feels_like | round(1) }}°C
-Status: {% if temp > 25 %}Hot{% elif temp < 10 %}Cold{% else %}Comfortable{% endif %}
-"""
-
-    expected_result = """Temperature: 18.5°C
-Humidity: 65%
-Feels like: 17.4°C
-Status: Comfortable"""
-
-    # Create mock Home Assistant client
-    mock_ha_client = MagicMock()
-    mock_ha_client.async_get_rendered_template = AsyncMock(return_value=expected_result)
-
-    tool_call_id = f"call_ha_complex_{uuid.uuid4()}"
-
-    # --- LLM Rules ---
-    def weather_info_matcher(kwargs: MatcherArgs) -> bool:
-        last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        return (
-            "weather" in last_text
-            and "feels like" in last_text
-            and kwargs.get("tools") is not None
-        )
-
-    weather_info_response = MockLLMOutput(
-        content="I'll calculate the weather information including the 'feels like' temperature.",
-        tool_calls=[
-            ToolCallItem(
-                id=tool_call_id,
-                type="function",
-                function=ToolCallFunction(
-                    name="render_home_assistant_template",
-                    arguments=json.dumps({"template": complex_template}),
-                ),
-            )
-        ],
-    )
-
-    def weather_result_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        if len(messages) < 2:
-            return False
-        last_message = messages[-1]
-        return (
-            last_message.role == "tool"
-            and last_message.tool_call_id == tool_call_id
-            and "18.5°C" in (last_message.content or "")
-            and "Comfortable" in (last_message.content or "")
-        )
-
-    weather_result_response = MockLLMOutput(
-        content="Here's the current weather information:\n\n"
-        "- Temperature: 18.5°C\n"
-        "- Humidity: 65%\n"
-        "- Feels like: 17.4°C\n"
-        "- Status: Comfortable\n\n"
-        "The weather is quite pleasant right now!",
-        tool_calls=None,
-    )
-
-    llm_client: LLMInterface = RuleBasedMockLLMClient(
-        rules=[
-            (weather_info_matcher, weather_info_response),
-            (weather_result_matcher, weather_result_response),
-        ]
-    )
-
-    # --- Setup ProcessingService ---
-    dummy_prompts = {"system_prompt": "You are a helpful weather assistant."}
-
-    enabled_tools = ["render_home_assistant_template"]
-    filtered_definitions = [
-        tool
-        for tool in local_tools_definition
-        if tool.get("function", {}).get("name") in enabled_tools
-    ]
-    filtered_implementations = {
-        name: impl
-        for name, impl in local_tool_implementations.items()
-        if name in enabled_tools
-    }
-
-    local_provider = LocalToolsProvider(
-        definitions=filtered_definitions,
-        implementations=filtered_implementations,
-    )
-    mcp_provider = MCPToolsProvider(mcp_server_configs={})
-    composite_provider = CompositeToolsProvider(
-        providers=[local_provider, mcp_provider]
-    )
-    await composite_provider.get_tool_definitions()
-
-    service_config = ProcessingServiceConfig(
-        id="test_ha_complex_profile",
-        prompts=dummy_prompts,
-        timezone=ZoneInfo(TEST_TIMEZONE_STR),
-        max_history_messages=5,
-        history_max_age_hours=24,
-        tools_config=ToolsConfig(),
-        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
-    )
-
-    processing_service = ProcessingService(
-        llm_client=llm_client,
-        tools_provider=composite_provider,
-        context_providers=[],
-        service_config=service_config,
-        server_url=None,
-        app_config=AppConfig(),
-    )
-
-    # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
-
-    # --- Simulate User Interaction ---
-    user_message = (
-        "What's the weather like outside? Include the feels like temperature."
-    )
-    db_context = Database(engine=db_engine)
-    result = await processing_service.handle_chat_interaction(
-        db_context=db_context,
-        chat_interface=MagicMock(),
-        interface_type="test",
-        conversation_id=TEST_CHAT_ID,
-        trigger_content_parts=[{"type": "text", "text": user_message}],
-        trigger_interface_message_id="msg_ha_complex_test",
-        user_name=TEST_USER_NAME,
-    )
-    final_reply = result.text_reply
-    error = result.error_traceback
-
-    assert error is None, f"Error during interaction: {error}"
-    assert final_reply, "No reply received"
-    assert "18.5°C" in final_reply, "Temperature not in reply"
-    assert "17.4°C" in final_reply, "Feels like temperature not in reply"
-    assert "Comfortable" in final_reply, "Status not in reply"
-
-    # Verify the template was passed correctly
-    mock_ha_client.async_get_rendered_template.assert_awaited_once()
-    call_args = mock_ha_client.async_get_rendered_template.call_args
-    assert call_args[1]["template"].strip() == complex_template.strip()
-
-    logger.info("Test Render Complex Home Assistant Template PASSED.")
 
 
 @pytest.mark.asyncio

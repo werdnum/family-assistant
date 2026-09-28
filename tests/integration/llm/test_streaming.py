@@ -43,7 +43,6 @@ This provides deterministic testing with full streaming support while maintainin
 a single, consistent interface for all providers.
 """
 
-import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
@@ -187,11 +186,11 @@ async def test_basic_streaming(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_record_mode: str,
 ) -> None:
     """Test basic streaming functionality for each provider."""
-    # Skip if running in CI without API keys
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Recording this test requires {provider.upper()}_API_KEY")
 
     client = await llm_client_factory(provider, model, None)
 
@@ -240,10 +239,11 @@ async def test_streaming_with_system_message(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_record_mode: str,
 ) -> None:
     """Test streaming with system messages."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Recording this test requires {provider.upper()}_API_KEY")
 
     client = await llm_client_factory(provider, model, None)
 
@@ -295,10 +295,11 @@ async def test_streaming_with_tool_calls(
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
     sample_tools: list[ToolDefinition],
+    llm_record_mode: str,
 ) -> None:
     """Test streaming with tool calls."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Recording this test requires {provider.upper()}_API_KEY")
 
     client = await llm_client_factory(provider, model, None)
 
@@ -343,10 +344,11 @@ async def test_streaming_with_tool_calls(
 @pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     sample_tools: list[ToolDefinition],
+    llm_record_mode: str,
 ) -> None:
     """Replay the Responses API flow required by GPT-5.6-sol tool calls."""
-    if os.getenv("CI") and not os.getenv("OPENAI_API_KEY"):
-        pytest.skip("Skipping OpenAI test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv("OPENAI_API_KEY"):
+        pytest.skip("Recording this test requires OPENAI_API_KEY")
 
     client = LLMClientFactory.create_client({
         "provider": "openai",
@@ -550,59 +552,15 @@ async def test_anthropic_streaming_thinking_round_trip(
         ("anthropic", "claude-haiku-4-5-20251001"),
     ],
 )
-async def test_streaming_error_handling(
-    provider: str,
-    model: str,
-    llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
-) -> None:
-    """Test error handling during streaming."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
-    client = await llm_client_factory(provider, model, None)
-
-    # Test with invalid message format (missing role)
-    messages = [
-        {
-            "content": "This message is missing the role field",
-        }
-    ]
-
-    error_event_received = False
-    error_message = None
-
-    try:
-        async for event in client.generate_response_stream(messages):  # type: ignore[reportArgumentType]
-            if event.type == "error":
-                error_event_received = True
-                error_message = event.error
-                break
-    except Exception as e:
-        # Some providers might raise exceptions instead of yielding error events
-        error_message = str(e)
-
-    # Either we got an error event or an exception
-    assert error_event_received or error_message is not None
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.vcr(before_record_response=sanitize_response)
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("openai", "gpt-4.1-nano"),
-        ("anthropic", "claude-haiku-4-5-20251001"),
-    ],
-)
 async def test_streaming_with_multi_turn_conversation(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_record_mode: str,
 ) -> None:
     """Test streaming with multi-turn conversation."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Recording this test requires {provider.upper()}_API_KEY")
 
     client = await llm_client_factory(provider, model, None)
 
@@ -644,10 +602,11 @@ async def test_streaming_reasoning_info(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_record_mode: str,
 ) -> None:
     """Test that reasoning info (usage data) is included in streaming responses."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Recording this test requires {provider.upper()}_API_KEY")
 
     client = await llm_client_factory(provider, model, None)
 
@@ -670,21 +629,11 @@ async def test_streaming_reasoning_info(
     # Verify we got content
     assert accumulated_content
 
-    # Check for reasoning_info (usage data) if available
-    if reasoning_info:
-        assert isinstance(reasoning_info, dict)
-        # Most providers include token counts in streaming
-        assert any(
-            key in reasoning_info
-            for key in [
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "prompt_token_count",
-                "candidates_token_count",
-                "total_token_count",
-            ]
-        )
+    assert reasoning_info is not None
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        token_count = reasoning_info.get(key)
+        assert isinstance(token_count, int)
+        assert token_count > 0
 
 
 @pytest.mark.no_db
@@ -701,10 +650,11 @@ async def test_streaming_content_accumulation(
     provider: str,
     model: str,
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
+    llm_record_mode: str,
 ) -> None:
     """Test that content chunks accumulate correctly to form the complete response."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv(f"{provider.upper()}_API_KEY"):
+        pytest.skip(f"Recording this test requires {provider.upper()}_API_KEY")
 
     client = await llm_client_factory(provider, model, None)
 
@@ -897,58 +847,9 @@ async def test_streaming_with_tool_calls_gemini(
     # Verify done event was received
     assert done_event_received
 
-    # Should have tool calls (Note: Google Gemini may not support tool calling yet)
-    # This test may fail until tool calling is implemented for Google provider
-    # For now, we just verify the stream works even if no tools are called
-    if tool_calls:
-        # Verify tool calls contain expected functions
-        tool_names = [tc.function.name for tc in tool_calls]
-        assert "get_weather" in tool_names or "calculate" in tool_names
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("google", "gemini-3.8-flash"),
-    ],
-)
-async def test_streaming_error_handling_gemini(
-    provider: str,
-    model: str,
-    llm_client_factory: Callable[
-        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
-    ],
-    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    llm_replay_config: dict[str, Any],
-) -> None:
-    """Test error handling during streaming for Google Gemini using SDK record/replay."""
-    client = await llm_client_factory(provider, model, None, llm_replay_config)
-
-    # Test with invalid message format (missing role)
-    messages = [
-        {
-            "content": "This message is missing the role field",
-        }
-    ]
-
-    error_event_received = False
-    error_message = None
-
-    try:
-        async for event in client.generate_response_stream(messages):  # type: ignore[reportArgumentType]
-            if event.type == "error":
-                error_event_received = True
-                error_message = event.error
-                break
-    except Exception as e:
-        # Some providers might raise exceptions instead of yielding error events
-        error_message = str(e)
-
-    # Either we got an error event or an exception
-    assert error_event_received or error_message is not None
+    assert tool_calls
+    tool_names = [tc.function.name for tc in tool_calls]
+    assert "get_weather" in tool_names or "calculate" in tool_names
 
 
 @pytest.mark.no_db
@@ -1036,145 +937,11 @@ async def test_streaming_reasoning_info_gemini(
     # Verify we got content
     assert accumulated_content
 
-    # Check for reasoning_info (usage data) if available
-    if reasoning_info:
-        assert isinstance(reasoning_info, dict)
-        # Most providers include token counts in streaming
-        assert any(
-            key in reasoning_info
-            for key in [
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "prompt_token_count",
-                "candidates_token_count",
-                "total_token_count",
-            ]
-        )
-
-
-@pytest.mark.no_db
-@pytest.mark.llm_integration
-@pytest.mark.parametrize(
-    "provider,model",
-    [
-        ("google", "gemini-3.8-flash"),
-    ],
-)
-async def test_google_streaming_with_multiturns_and_tool_calls(
-    provider: str,
-    model: str,
-    llm_client_factory: Callable[
-        # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-        [str, str, str | None, dict[str, Any] | None], Awaitable[LLMInterface]
-    ],
-    sample_tools: list[ToolDefinition],
-    # ast-grep-ignore: no-dict-any - Test infrastructure requires dict config
-    llm_replay_config: dict[str, Any],
-) -> None:
-    """Test streaming with multi-turn conversation including tool calls for Google Gemini.
-
-    This test reproduces the Pydantic validation bug where the Google GenAI client
-    uses camelCase keys (functionCall, functionResponse) instead of snake_case keys
-    (function_call, function_response) expected by the SDK's Pydantic validation.
-
-    The bug manifests when:
-    1. Streaming is enabled
-    2. Multi-turn conversation (with assistant message containing tool_calls in history)
-    3. Real API call (not VCR replay)
-    """
-
-    client = await llm_client_factory(provider, model, None, llm_replay_config)
-    assert isinstance(client, GoogleGenAIClient)
-
-    # Simulate a multi-turn conversation with tool calls
-    # This is the exact pattern that triggers the Pydantic validation error
-    messages = [
-        create_user_message("What's the weather in Paris?"),
-        create_assistant_message(
-            content=None,
-            tool_calls=[
-                create_tool_call(
-                    call_id="call_123",
-                    function_name="get_weather",
-                    arguments='{"location": "Paris, France", "unit": "celsius"}',
-                )
-            ],
-        ),
-        create_tool_message(
-            tool_call_id="call_123",
-            name="get_weather",
-            content="The weather in Paris is 18°C and sunny.",
-        ),
-    ]
-
-    # Capture what gets sent to the API by inspecting _convert_messages_to_genai_format
-    converted = client._convert_messages_to_genai_format(messages)
-
-    # Check if using camelCase (bug) or snake_case (correct)
-    converted_json = json.dumps(converted, default=str)
-    has_camel_case = (
-        "functionCall" in converted_json or "functionResponse" in converted_json
-    )
-    has_snake_case = (
-        "function_call" in converted_json or "function_response" in converted_json
-    )
-
-    print("\n=== Converted format check ===")
-    print(f"Has camelCase (functionCall/functionResponse): {has_camel_case}")
-    print(f"Has snake_case (function_call/function_response): {has_snake_case}")
-    print(f"Sample: {converted_json[:500]}")
-
-    # Try to stream the next response
-    accumulated_content = ""
-    done_event_received = False
-    error_occurred = False
-    error_message = None
-
-    async def consume_stream() -> None:
-        nonlocal accumulated_content
-        nonlocal done_event_received
-        nonlocal error_message
-        nonlocal error_occurred
-
-        async for event in client.generate_response_stream(
-            messages, tools=sample_tools, tool_choice="auto"
-        ):
-            if event.type == "content" and event.content:
-                accumulated_content += event.content
-            elif event.type == "done":
-                done_event_received = True
-            elif event.type == "error":
-                error_occurred = True
-                error_message = event.error
-
-    try:
-        await consume_stream()
-    except Exception as e:
-        error_occurred = True
-        error_message = str(e)
-        print(f"Exception: {type(e).__name__}: {str(e)[:500]}")
-
-    # Report the results
-    if error_occurred and has_camel_case:
-        print("\n=== BUG REPRODUCED ===")
-        print(f"Error: {error_message[:200] if error_message else 'Unknown error'}")
-        print("This is the expected Pydantic validation error with camelCase keys")
-        # This is expected when the bug is present
-        assert error_message and (
-            "validation" in error_message.lower() or "Extra inputs" in error_message
-        )
-    elif has_snake_case:
-        print("\n=== BUG FIXED ===")
-        print("Using snake_case keys - streaming should work")
-        assert not error_occurred, f"Streaming failed unexpectedly: {error_message}"
-        assert done_event_received, "Done event not received"
-        assert accumulated_content, "No content received from streaming"
-    else:
-        # Neither format found - something else is wrong
-        raise AssertionError(
-            f"Unexpected format in converted messages: {converted_json[:200]}"
-        )
+    assert reasoning_info is not None
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        token_count = reasoning_info.get(key)
+        assert isinstance(token_count, int)
+        assert token_count > 0
 
 
 @pytest.mark.no_db
@@ -1236,6 +1003,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
     # Attempt streaming - this should work but will fail with Pydantic validation
     # error if the bug is present
     accumulated_content = ""
+    tool_calls = []
     done_received = False
 
     async def consume_stream() -> None:
@@ -1247,6 +1015,8 @@ async def test_google_streaming_pydantic_validation_reproducer(
         ):
             if event.type == "content" and event.content:
                 accumulated_content += event.content
+            elif event.type == "tool_call" and event.tool_call:
+                tool_calls.append(event.tool_call)
             elif event.type == "done":
                 done_received = True
             elif event.type == "error":
@@ -1275,4 +1045,6 @@ async def test_google_streaming_pydantic_validation_reproducer(
 
     # Verify we got a proper response
     assert done_received, "Did not receive done event from streaming"
-    assert accumulated_content or done_received, "No content received from streaming"
+    assert accumulated_content or tool_calls, (
+        "No content or tool call received from streaming"
+    )

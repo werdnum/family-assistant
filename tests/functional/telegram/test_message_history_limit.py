@@ -201,6 +201,11 @@ async def test_reminder_after_completed_conversation(
     user_id = 12345
     context = create_context(fixture.application, chat_id, user_id)
 
+    # Captures the exact message list the LLM receives for the reminder turn,
+    # so the test can verify the older note conversation was actually dropped
+    # by max_history_messages rather than assuming it from a canned reply.
+    reminder_turn_messages: list[Any] = []
+
     # Set up dynamic LLM response
     def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401
         user_messages = [
@@ -222,15 +227,10 @@ async def test_reminder_after_completed_conversation(
                 content="I've successfully updated your note with the new content!"
             )
         elif "Reminder triggered" in last_user_msg:
-            # Check conversation context
-            if "water meter" in last_user_msg:
-                # This is the reminder we should handle
-                return LLMOutput(
-                    content="Here's your reminder: Don't forget to check the water meter!"
-                )
-            else:
-                # Fallback
-                return LLMOutput(content="Here's your reminder!")
+            reminder_turn_messages.extend(messages)
+            return LLMOutput(
+                content="Here's your reminder: Don't forget to check the water meter!"
+            )
 
         return False
 
@@ -293,7 +293,20 @@ async def test_reminder_after_completed_conversation(
         f"Expected a reminder response about water meter, but got: "
         f"{[r.get('message', {}).get('text', '') for r in bot_responses]}"
     )
-    # Should NOT mention the note update
-    assert "note" not in reminder_response.lower()
-    assert "updated" not in reminder_response.lower()
-    assert "content" not in reminder_response.lower()
+
+    # Verify the messages actually sent to the LLM for the reminder turn were
+    # truncated by max_history_messages=3: with 5 prior messages (2 note-related
+    # exchanges) and the reminder trigger itself, only the last 3 fit, so the
+    # oldest exchange -- the user's "clobbered" complaint and its reply -- must
+    # be gone, not merely absent from the mock's canned reply text.
+    assert reminder_turn_messages, "Expected the reminder turn to reach the LLM"
+    history_text = " ".join(
+        extract_text_from_content(msg.content)
+        for msg in reminder_turn_messages
+        if hasattr(msg, "content")
+    )
+    assert "clobbered" not in history_text
+    assert "Oh dear" not in history_text
+    assert "new content for the note" in history_text
+    assert "successfully updated your note" in history_text
+    assert "Reminder triggered" in history_text

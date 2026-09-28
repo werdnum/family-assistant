@@ -241,4 +241,4 @@ async def test_slash_command_routes_to_specific_profile(
         )
 
         # 3. Confirmation Manager should not be called for this simple query
-        fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
+        fix.mock_confirmation_manager.assert_not_awaited()

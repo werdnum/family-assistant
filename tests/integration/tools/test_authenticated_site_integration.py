@@ -10,6 +10,7 @@ implementation of the flow.
 from __future__ import annotations
 
 import json
+from functools import partial
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlsplit
@@ -21,7 +22,6 @@ from browser_handoff_service.main import app as browser_server_app
 from browser_handoff_service.main import registry as browser_server_registry
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
-from family_assistant.tools import browser_backend as backend_module
 from family_assistant.tools.browser_autofill import (
     browser_autofill_tool,
     browser_report_login_outcome_tool,
@@ -31,6 +31,8 @@ from family_assistant.tools.browser_backend import (
     AuthenticatedSessionUnavailableError,
     BrowserBackendError,
     RemoteBrowserBackend,
+    close_browser_backend,
+    get_browser_backend,
 )
 
 if TYPE_CHECKING:
@@ -53,6 +55,16 @@ async def _browser_server_state(
 ) -> AsyncIterator[None]:
     monkeypatch.setenv("BROWSER_RUNTIME", "fake")
     monkeypatch.setenv("BROWSER_HANDOFF_SERVICE_TOKEN", _SERVICE_TOKEN)
+    # Backends that get_browser_backend builds reach the in-process service;
+    # a client given its own transport keeps it.
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        partial(
+            httpx.AsyncClient,
+            transport=httpx.ASGITransport(app=browser_server_app),
+        ),
+    )
     await _clear_browser_server_state()
     yield
     await _clear_browser_server_state()
@@ -68,37 +80,63 @@ async def _clear_browser_server_state() -> None:
     browser_server_registry.workers.clear()
 
 
-def _backend(
-    *,
-    alias: str | None = "test-site",
-    origins: frozenset[str] | None = None,
-    ordinary: bool = False,
-    autofill_enabled: bool = False,
-) -> RemoteBrowserBackend:
-    config = BrowserHandoffConfig(
+def _handoff_config(
+    handoff_capable_profiles: list[str] | None = None,
+) -> BrowserHandoffConfig:
+    return BrowserHandoffConfig(
         enabled=True,
         service_url=_SERVICE_URL,
         auth=RemoteA2AAuthConfig(
             type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"
         ),
+        handoff_capable_profiles=handoff_capable_profiles or ["browser_profile"],
     )
+
+
+def _backend(
+    *,
+    alias: str | None = "test-site",
+    origins: frozenset[str] | None = None,
+) -> RemoteBrowserBackend:
     client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=browser_server_app),
         base_url=_SERVICE_URL,
         timeout=10.0,
     )
     return RemoteBrowserBackend(
-        config,
+        _handoff_config(),
         "integ-auth-conv",
         client=client,
-        autofill_enabled=autofill_enabled,
-        authenticated=None
-        if ordinary
-        else AuthenticatedSessionSpec(
+        authenticated=AuthenticatedSessionSpec(
             site_id="test_site",
             jar_id=None,
             confine_origins=origins if origins is not None else frozenset({ORIGIN}),
             credential_alias=alias,
+        ),
+    )
+
+
+def _tool_context(
+    conversation_id: str,
+    profile_id: str,
+    handoff_capable_profiles: list[str],
+) -> ToolExecutionContext:
+    return cast(
+        "ToolExecutionContext",
+        SimpleNamespace(
+            conversation_id=conversation_id,
+            subconversation_id=None,
+            processing_profile_id=profile_id,
+            processing_service=SimpleNamespace(
+                app_config=SimpleNamespace(
+                    authenticated_sites={},
+                    browser_handoff_config=_handoff_config(handoff_capable_profiles),
+                )
+            ),
+            user_name="andrew",
+            timezone=None,
+            tool_call_batch=None,
+            tool_call_id=None,
         ),
     )
 
@@ -181,6 +219,18 @@ def _session_record(session_id: str) -> Any:  # noqa: ANN401 - the service's own
     return browser_server_registry.sessions[session_id]
 
 
+def _offer_password_field(session_id: str) -> FakeBrowserWorker:
+    """Put a single visible password field on the session's fake login page."""
+    worker = cast(
+        "FakeBrowserWorker",
+        browser_server_registry.workers[_session_record(session_id).worker_id],
+    )
+    worker.autofill_fields = [
+        {"ref": "e12", "input_type": "password", "name": "Password"}
+    ]
+    return worker
+
+
 @pytest.mark.asyncio
 async def test_the_service_agrees_the_session_is_confined_and_pinned() -> None:
     backend = _backend()
@@ -226,28 +276,28 @@ async def test_autofill_fills_without_the_value_reaching_this_side(
     backend = _backend()
     session_id = await backend.start_authenticated_session()
     await backend.goto(f"{ORIGIN}/login")
+    worker = _offer_password_field(session_id)
     response = await backend.autofill(
         step_key="password-1",
         fields=[{"kind": "password"}],
         wait_seconds=1,
         context={"site": "test_site", "acting_user": "andrew"},
     )
-    assert response["status"] in {"filled", "refused"}
-    # Whatever the fake page allowed, the secret is in none of it.
+    assert response["status"] == "filled", response
+    assert worker.filled == [{"ref": "e12", "kind": "password", "value": "hunter2"}]
     assert "hunter2" not in json.dumps(response)
     assert "hunter2" not in json.dumps(
         _session_record(session_id).model_dump(mode="json")
     )
-    # Whether a Keychute request happens at all depends on the fake runtime
-    # offering an eligible field, which is browser-server's business. When one
-    # does, it must name the real document origin rather than a configured set,
-    # and carry the per-step idempotency key.
+    # The request names the session's pinned alias and the real document
+    # origin rather than a configured set, and carries the per-step key.
     created = [r for r in keychute_requests if r.url.path == "/v1/access-requests"]
-    for request in created:
-        body = json.loads(request.content)
-        assert body["idempotency_key"].startswith(f"{session_id}:")
-        assert body["mechanism"] == "autofill"
-        assert body["constraints"]["origins"] == [{"host": "example.test", "port": 443}]
+    assert len(created) == 1
+    body = json.loads(created[0].content)
+    assert body["secret_name"] == "test-site"
+    assert body["idempotency_key"].startswith(f"{session_id}:")
+    assert body["mechanism"] == "autofill"
+    assert body["constraints"]["origins"] == [{"host": "example.test", "port": 443}]
     await backend.close()
 
 
@@ -255,12 +305,15 @@ async def test_autofill_fills_without_the_value_reaching_this_side(
 async def test_a_pending_decision_parks_rather_than_filling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _fake_keychute(monkeypatch, approved=False)
+    keychute_requests = _fake_keychute(monkeypatch, approved=False)
     backend = _backend()
-    await backend.start_authenticated_session()
+    session_id = await backend.start_authenticated_session()
     await backend.goto(f"{ORIGIN}/login")
+    worker = _offer_password_field(session_id)
     response = await backend.autofill(step_key="password-1", wait_seconds=1)
-    assert response["status"] in {"approval_pending", "refused"}
+    assert response["status"] == "approval_pending", response
+    assert worker.filled == []
+    assert not [r for r in keychute_requests if r.url.path.startswith("/v1/grants/")]
     await backend.close()
 
 
@@ -325,36 +378,12 @@ async def test_authenticated_otp_handoff_returns_through_server_side_claim(
     await backend.close()
 
 
-def _credential_tool_context(
-    monkeypatch: pytest.MonkeyPatch,
+async def _credential_tool_context(
     profile_id: str,
 ) -> tuple[RemoteBrowserBackend, ToolExecutionContext]:
-    backend = _backend(ordinary=True, autofill_enabled=True)
-    monkeypatch.setitem(
-        backend_module._remote_backends, ("on-demand-conv", True), backend
-    )
-    context = cast(
-        "ToolExecutionContext",
-        SimpleNamespace(
-            conversation_id="on-demand-conv",
-            subconversation_id=None,
-            processing_profile_id=profile_id,
-            processing_service=SimpleNamespace(
-                app_config=SimpleNamespace(
-                    authenticated_sites={},
-                    browser_handoff_config=BrowserHandoffConfig(
-                        enabled=True,
-                        service_url=_SERVICE_URL,
-                        handoff_capable_profiles=[profile_id],
-                    ),
-                )
-            ),
-            user_name="andrew",
-            timezone=None,
-            tool_call_batch=None,
-            tool_call_id=None,
-        ),
-    )
+    context = _tool_context("on-demand-conv", profile_id, [profile_id])
+    backend = await get_browser_backend(context)
+    assert isinstance(backend, RemoteBrowserBackend)
     return backend, context
 
 
@@ -367,18 +396,13 @@ async def test_credential_browser_requests_named_secret_and_resumes_approval(
     profile_id: str,
 ) -> None:
     pending_requests = _fake_keychute(monkeypatch, approved=False)
-    backend, context = _credential_tool_context(monkeypatch, profile_id)
+    backend, context = await _credential_tool_context(profile_id)
     try:
         await backend.goto(f"{ORIGIN}/login")
         assert backend.session_id is not None
         record = _session_record(backend.session_id)
         assert record.autofill_enabled and not record.authenticated_site
-        worker = cast(
-            "FakeBrowserWorker", browser_server_registry.workers[record.worker_id]
-        )
-        worker.autofill_fields = [
-            {"ref": "e12", "input_type": "password", "name": "Password"}
-        ]
+        worker = _offer_password_field(backend.session_id)
         pending = await browser_autofill_tool(
             context, secret_name="my-password", kind="password"
         )
@@ -405,7 +429,7 @@ async def test_credential_browser_requests_named_secret_and_resumes_approval(
         assert not backend.autofill_step_keys
         await backend.goto("https://another.example.test/")
     finally:
-        await backend.close()
+        await close_browser_backend(context)
 
 
 @pytest.mark.asyncio
@@ -413,9 +437,7 @@ async def test_rejected_password_can_be_corrected_in_the_same_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _fake_keychute(monkeypatch)
-    backend, context = _credential_tool_context(
-        monkeypatch, "credential_browser_profile"
-    )
+    backend, context = await _credential_tool_context("credential_browser_profile")
     try:
         await backend.goto(f"{ORIGIN}/login")
         failed_session_id = backend.session_id
@@ -430,13 +452,7 @@ async def test_rejected_password_can_be_corrected_in_the_same_conversation(
         assert (
             backend.session_id is not None and backend.session_id != failed_session_id
         )
-        record = _session_record(backend.session_id)
-        worker = cast(
-            "FakeBrowserWorker", browser_server_registry.workers[record.worker_id]
-        )
-        worker.autofill_fields = [
-            {"ref": "e12", "input_type": "password", "name": "Password"}
-        ]
+        _offer_password_field(backend.session_id)
         filled = await browser_autofill_tool(
             context, secret_name="corrected-password", kind="password"
         )
@@ -444,7 +460,7 @@ async def test_rejected_password_can_be_corrected_in_the_same_conversation(
         assert isinstance(data, dict)
         assert data["status"] == "filled", filled.get_text()
     finally:
-        await backend.close()
+        await close_browser_backend(context)
 
 
 @pytest.mark.asyncio
@@ -452,63 +468,33 @@ async def test_profile_switch_isolates_browsers_and_preserves_each_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A normal tab can execute JS without disabling the separate login browser."""
-    monkeypatch.setattr(backend_module, "_remote_backends", {})
-    config = BrowserHandoffConfig(
-        enabled=True,
-        service_url=_SERVICE_URL,
-        auth=RemoteA2AAuthConfig(
-            type="bearer", token_env="BROWSER_HANDOFF_SERVICE_TOKEN"
-        ),
-        handoff_capable_profiles=[
+    context = _tool_context(
+        "switch-conv",
+        "browser_profile",
+        [
             "browser_profile",
             "browser_visual_profile",
             "credential_browser_profile",
             "credential_browser_visual_profile",
         ],
     )
-    context = cast(
-        "ToolExecutionContext",
-        SimpleNamespace(
-            conversation_id="switch-conv",
-            subconversation_id=None,
-            processing_profile_id="browser_profile",
-            timezone=None,
-            processing_service=SimpleNamespace(
-                app_config=SimpleNamespace(
-                    authenticated_sites={},
-                    browser_handoff_config=config,
-                )
-            ),
-            user_name="andrew",
-            tool_call_batch=None,
-            tool_call_id=None,
-        ),
-    )
-    ordinary = await backend_module.get_browser_backend(context)
-    assert isinstance(ordinary, RemoteBrowserBackend)
-    await ordinary._client.aclose()
-    ordinary._client = httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=browser_server_app)
-    )
-    context.processing_profile_id = "credential_browser_profile"
-    protected = await backend_module.get_browser_backend(context)
-    assert isinstance(protected, RemoteBrowserBackend)
-    await protected._client.aclose()
-    protected._client = httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=browser_server_app)
-    )
     try:
+        ordinary = await get_browser_backend(context)
+        assert isinstance(ordinary, RemoteBrowserBackend)
+        context.processing_profile_id = "credential_browser_profile"
+        protected = await get_browser_backend(context)
+        assert isinstance(protected, RemoteBrowserBackend)
         await ordinary.goto(f"{ORIGIN}/public")
         assert await ordinary.evaluate("document.title")
         assert "<h1>" in await ordinary.extract_html(selector=None)
         assert protected.session_id is None
         context.processing_profile_id = "browser_visual_profile"
-        assert await backend_module.get_browser_backend(context) is ordinary
+        assert await get_browser_backend(context) is ordinary
         with pytest.raises(BrowserBackendError, match="credential_browser_profile"):
             await browser_autofill_tool(context, secret_name="my-password")
 
         context.processing_profile_id = "credential_browser_visual_profile"
-        assert await backend_module.get_browser_backend(context) is protected
+        assert await get_browser_backend(context) is protected
         await protected.goto(f"{ORIGIN}/login")
         assert ordinary.session_id != protected.session_id
         assert ordinary.session_id is not None and protected.session_id is not None
@@ -523,13 +509,7 @@ async def test_profile_switch_isolates_browsers_and_preserves_each_mode(
             await protected.evaluate("document.title")
         with pytest.raises(BrowserBackendError, match="denied"):
             await protected.extract_html(selector=None)
-        worker = cast(
-            "FakeBrowserWorker",
-            browser_server_registry.workers[protected_record.worker_id],
-        )
-        worker.autofill_fields = [
-            {"ref": "e12", "input_type": "password", "name": "Password"}
-        ]
+        _offer_password_field(protected.session_id)
         _fake_keychute(monkeypatch, approved=False)
         pending = await browser_autofill_tool(context, secret_name="my-password")
         assert (
@@ -537,13 +517,21 @@ async def test_profile_switch_isolates_browsers_and_preserves_each_mode(
             and pending.data["status"] == "approval_pending"
         )
         context.processing_profile_id = "browser_profile"
-        assert await backend_module.get_browser_backend(context) is ordinary
+        assert await get_browser_backend(context) is ordinary
         assert await ordinary.evaluate("document.title")
         context.processing_profile_id = "credential_browser_profile"
-        assert await backend_module.get_browser_backend(context) is protected
+        assert await get_browser_backend(context) is protected
         _fake_keychute(monkeypatch, approved=True)
         filled = await browser_autofill_tool(context, secret_name="my-password")
         assert isinstance(filled.data, dict) and filled.data["status"] == "filled"
     finally:
-        await backend_module.close_browser_backend(context)
-    assert not backend_module._remote_backends
+        await close_browser_backend(context)
+    assert normal_record.state == "cancelled"
+    assert protected_record.state == "cancelled"
+    context.processing_profile_id = "browser_profile"
+    reopened_ordinary = await get_browser_backend(context)
+    context.processing_profile_id = "credential_browser_profile"
+    reopened_protected = await get_browser_backend(context)
+    await close_browser_backend(context)
+    assert reopened_ordinary is not ordinary
+    assert reopened_protected is not protected

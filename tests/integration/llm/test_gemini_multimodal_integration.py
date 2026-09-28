@@ -60,6 +60,7 @@ async def google_client_gemini3_flash(
 @pytest.mark.asyncio
 async def test_tool_image_attachment_delivered_to_gemini3(
     google_client_gemini3_flash: GoogleGenAIClient,
+    llm_record_mode: str,
 ) -> None:
     """A tool image attachment must reach gemini-3.8-flash without a 400.
 
@@ -69,8 +70,8 @@ async def test_tool_image_attachment_delivered_to_gemini3(
     the multimodal function response was emitted in a ``role="function"`` Content;
     after the fix it is emitted in a ``role="user"`` Content and the model can see it.
     """
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Google test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Recording Google responses requires GEMINI_API_KEY")
 
     tool_msg = ToolMessage(
         tool_call_id="call_1",

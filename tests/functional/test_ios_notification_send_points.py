@@ -101,7 +101,10 @@ async def test_notify_conversation_no_owner_is_noop(db_engine: AsyncEngine) -> N
 
 @pytest.mark.asyncio
 async def test_notify_conversation_disabled_is_noop(db_engine: AsyncEngine) -> None:
-    """A disabled notifier is never invoked."""
+    """A disabled notifier is never invoked, even when the owner is resolvable."""
+    await _add_user_message(
+        db_engine, interface_type="web", conversation_id="conv-1", user_id="owner-1"
+    )
     notifier = _RecordingNotifier(enabled=False)
     db = Database(engine=db_engine)
     dispatched = await notify_conversation(
@@ -128,7 +131,7 @@ async def test_pending_confirmation_notifies_target_user(
         notifier=notifier,
     )
 
-    await service.create_request(
+    request = await service.create_request(
         target_user_id="user-1",
         tool_name="calendar.create_event",
         tool_args={"title": "Flight"},
@@ -144,7 +147,7 @@ async def test_pending_confirmation_notifies_target_user(
     metadata = notifier.metadata[0]
     assert metadata is not None
     assert metadata.category == CONFIRMATION_CATEGORY
-    assert metadata.request_id is not None
+    assert metadata.request_id == request["id"]
 
 
 @pytest.mark.asyncio
