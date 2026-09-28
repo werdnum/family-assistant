@@ -234,10 +234,12 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
 async def test_statement_timeout_aborts_a_runaway_statement(
     db_engine: AsyncEngine,
 ) -> None:
-    """A statement past the ceiling is aborted rather than left running."""
+    """A statement past the ceiling is aborted, and surfaced rather than replayed."""
     db = Database(db_engine)
+    attempts: list[None] = []
 
     async def sleep_past_a_tightened_ceiling(txn: DatabaseTransaction) -> None:
+        attempts.append(None)
         # Tighten the ceiling for this transaction rather than waiting out the
         # production-sized one; the mechanism under test is identical.
         await txn.execute(sa.text("SET LOCAL statement_timeout = 250"))
@@ -246,6 +248,7 @@ async def test_statement_timeout_aborts_a_runaway_statement(
     with pytest.raises(DBAPIError) as exc_info:
         await db.atomic(sleep_past_a_tightened_ceiling)
 
-    # 57014 = query_canceled. Notably not in the retryable allowlist, so
-    # ``atomic()`` surfaces it instead of replaying the runaway three times.
+    # 57014 = query_canceled. Not in the retryable allowlist, so ``atomic()``
+    # surfaces it instead of replaying the runaway.
     assert getattr(exc_info.value.orig, "pgcode", None) == "57014"
+    assert len(attempts) == 1

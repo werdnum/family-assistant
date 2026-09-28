@@ -518,13 +518,26 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
         query: VectorSearchQuery,
         query_embedding: list[float] | None = None,
     ) -> list[dict[str, object]]:
+        """Rank the inaccessible turn first, then apply the same prefilter and
+        limit the real vector store would: source-id scoping before slicing.
+
+        Ignoring ``query.source_ids``/``query.limit`` here would return both
+        turns and let the current-user hit sit first only by luck of
+        insertion order; scoping and truncating the way the store does means
+        a regression that drops the prefilter surfaces as the inaccessible
+        turn's content in the result, not merely as a different internal
+        query shape.
+        """
         nonlocal captured_query
         _ = db_context, query_embedding
         captured_query = query
-        return [
+        hits: list[dict[str, object]] = [
             {"source_id": "message_turn:turn-other-user"},
             {"source_id": "message_turn:turn-current-user"},
         ]
+        if query.source_ids:
+            hits = [hit for hit in hits if hit["source_id"] in query.source_ids]
+        return hits[: query.limit]
 
     monkeypatch.setattr(
         "family_assistant.tools.communication.query_vector_store",
@@ -547,10 +560,10 @@ async def test_semantic_history_search_prefilters_access_before_vector_limit(
     assert data["results"][0]["content"] == "The accessible passport note"
     assert captured_query is not None
     assert captured_query.limit == 1
-    assert captured_query.source_ids == ["message_turn:turn-current-user"]
-    assert {
-        metadata_filter.key for metadata_filter in captured_query.metadata_filters
-    } == {"interface_type", "processing_profile_id"}
+    assert {filter_.key for filter_ in captured_query.metadata_filters} == {
+        "interface_type",
+        "processing_profile_id",
+    }
 
 
 @pytest.mark.asyncio
@@ -740,8 +753,7 @@ async def test_search_documents_excludes_message_history_source(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """General document search never searches message-history index entries."""
-    captured_query: VectorSearchQuery | None = None
+    """General document search never surfaces message-history index entries."""
 
     async def fake_query_vector_store(
         *,
@@ -749,10 +761,33 @@ async def test_search_documents_excludes_message_history_source(
         query: VectorSearchQuery,
         query_embedding: list[float] | None = None,
     ) -> list[dict[str, object]]:
-        nonlocal captured_query
+        """Stand in for the store, applying its own exclusion to seeded hits.
+
+        Both a note and a message-history turn "match" the query; only the
+        exclusion the tool passes decides which one the fake hands back. A
+        regression that stops requesting the exclusion changes the outcome
+        assertion below, not just the value of an unused captured argument.
+        """
         _ = db_context, query_embedding
-        captured_query = query
-        return []
+        seeded_hits = [
+            {
+                "document_id": 1,
+                "title": "Passport renewal policy",
+                "source_type": "note",
+                "doc_metadata": {},
+            },
+            {
+                "document_id": 2,
+                "title": "Old chat about a passport",
+                "source_type": "message_history",
+                "doc_metadata": {},
+            },
+        ]
+        return [
+            hit
+            for hit in seeded_hits
+            if hit["source_type"] not in query.excluded_source_types
+        ]
 
     monkeypatch.setattr(
         "family_assistant.tools.documents.query_vector_store",
@@ -766,33 +801,61 @@ async def test_search_documents_excludes_message_history_source(
         query="passport",
     )
 
-    assert result == "No relevant documents found matching the query and filters."
-    assert captured_query is not None
-    assert captured_query.excluded_source_types == ["message_history"]
+    assert "Passport renewal policy" in result
+    assert "Old chat about a passport" not in result
 
 
 @pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_vector_search_excludes_message_history_without_source_acl(
-    db_engine: AsyncEngine,
+    pg_vector_db_engine: AsyncEngine,
 ) -> None:
     """Raw vector search does not expose message history without source IDs."""
-    db = Database(engine=db_engine)
-    query = VectorSearchQuery(
-        search_type="semantic",
-        semantic_query="passport",
-        embedding_model="mock-embedding-model",
-        source_types=["message_history"],
-        embedding_types=["message_turn"],
-        limit=5,
-        read_policy=NoteReadPolicy.UNRESTRICTED,
+    db = Database(engine=pg_vector_db_engine)
+    generator = MockEmbeddingGenerator(dimensions=3)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Where did we put the passport",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-acl",
     )
-    results = await query_vector_store(
+    await handle_index_message_history_batch(
+        _build_exec_context(db, embedding_generator=generator),
+        {"turn_id": "turn-acl"},
+    )
+
+    def _query(source_ids: list[str]) -> VectorSearchQuery:
+        return VectorSearchQuery(
+            search_type="semantic",
+            semantic_query="passport",
+            embedding_model=generator.model_name,
+            source_types=["message_history"],
+            embedding_types=["message_turn"],
+            source_ids=source_ids,
+            limit=5,
+            read_policy=NoteReadPolicy.UNRESTRICTED,
+        )
+
+    unscoped_results = await query_vector_store(
         db_context=db,
-        query=query,
+        query=_query([]),
+        query_embedding=[0.0, 0.0, 0.0],
+    )
+    # Positive control: the indexed turn is reachable once its source ID is
+    # named, proving the empty result above reflects the ACL exclusion rather
+    # than an indexing failure or an unrelated empty database.
+    scoped_results = await query_vector_store(
+        db_context=db,
+        query=_query(["message_turn:turn-acl"]),
         query_embedding=[0.0, 0.0, 0.0],
     )
 
-    assert results == []
+    assert unscoped_results == []
+    assert [result["source_id"] for result in scoped_results] == [
+        "message_turn:turn-acl"
+    ]
 
 
 @pytest.mark.asyncio

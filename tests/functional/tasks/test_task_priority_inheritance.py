@@ -7,6 +7,7 @@ that value on.
 """
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
@@ -20,23 +21,16 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
+from tests.helpers import wait_for_tasks_to_complete
 
 CHILD_TASK_TYPE = "priority_inheritance_child"
 
 # ast-grep-ignore: no-dict-any - task payloads are heterogeneous; these tests use empty payloads
 TaskPayload = dict[str, Any]
 
+WorkerFactory = Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]]
 
-def _worker(db_engine: AsyncEngine) -> TaskWorker:
-    return TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
-        calendar_config={},
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        engine=db_engine,
-        shutdown_event_instance=asyncio.Event(),
-    )
+INHERITABLE_PRIORITIES = [TaskPriority.INTERACTIVE, TaskPriority.BACKGROUND]
 
 
 async def _priority_of(db: Database, task_id: str) -> int:
@@ -48,12 +42,18 @@ async def _priority_of(db: Database, task_id: str) -> int:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("lane", INHERITABLE_PRIORITIES)
 async def test_handler_context_carries_the_dequeued_rows_lane(
     db_engine: AsyncEngine,
+    task_worker_manager: WorkerFactory,
+    lane: TaskPriority,
 ) -> None:
     """The worker is the one place a running task's lane becomes known."""
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
     seen: list[TaskPriority | None] = []
 
     async def handler(
@@ -66,27 +66,28 @@ async def test_handler_context_carries_the_dequeued_rows_lane(
     await db.tasks.enqueue(
         task_id="lane_probe",
         task_type="lane_probe",
-        priority=TaskPriority.BACKGROUND,
+        priority=lane,
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=["lane_probe"],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
+    new_task_event.set()
 
-    await worker._process_task(db, task, asyncio.Event())
+    await wait_for_tasks_to_complete(db_engine, task_ids={"lane_probe"})
 
-    assert seen == [TaskPriority.BACKGROUND]
+    assert seen == [lane]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("lane", INHERITABLE_PRIORITIES)
 async def test_work_a_handler_enqueues_stays_in_its_lane(
     db_engine: AsyncEngine,
+    task_worker_manager: WorkerFactory,
+    lane: TaskPriority,
 ) -> None:
     """A continuation inherits rather than re-deciding, so a chain cannot escape."""
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
 
     async def handler(
         exec_context: ToolExecutionContext,
@@ -102,27 +103,28 @@ async def test_work_a_handler_enqueues_stays_in_its_lane(
     await db.tasks.enqueue(
         task_id="walking_probe",
         task_type="walking_probe",
-        priority=TaskPriority.BACKGROUND,
+        priority=lane,
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=["walking_probe"],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
+    new_task_event.set()
 
-    await worker._process_task(db, task, asyncio.Event())
+    await wait_for_tasks_to_complete(db_engine, task_ids={"walking_probe"})
 
-    assert await _priority_of(db, "continuation") == TaskPriority.BACKGROUND
+    assert await _priority_of(db, "continuation") == lane
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("lane", INHERITABLE_PRIORITIES)
 async def test_the_next_occurrence_of_a_recurring_task_keeps_its_lane(
     db_engine: AsyncEngine,
+    task_worker_manager: WorkerFactory,
+    lane: TaskPriority,
 ) -> None:
     """Recurrence copies the row, so the lane comes with it."""
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
 
     async def handler(
         exec_context: ToolExecutionContext,
@@ -137,16 +139,11 @@ async def test_the_next_occurrence_of_a_recurring_task_keeps_its_lane(
         task_type="recurring_probe",
         scheduled_at=scheduled_at,
         recurrence_rule="FREQ=DAILY",
-        priority=TaskPriority.BACKGROUND,
+        priority=lane,
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=["recurring_probe"],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
+    new_task_event.set()
 
-    await worker._process_task(db, task, asyncio.Event())
+    await wait_for_tasks_to_complete(db_engine, task_ids={"recurring_probe"})
 
     rows = await db.fetch_all(
         select(tasks_table.c.task_id, tasks_table.c.priority).where(
@@ -154,7 +151,7 @@ async def test_the_next_occurrence_of_a_recurring_task_keeps_its_lane(
             tasks_table.c.status == "pending",
         )
     )
-    assert [row["priority"] for row in rows] == [TaskPriority.BACKGROUND]
+    assert [row["priority"] for row in rows] == [lane]
 
 
 @pytest.mark.asyncio

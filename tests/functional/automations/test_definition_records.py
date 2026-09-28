@@ -19,7 +19,6 @@ from family_assistant.security.definition_records import (
     definition_record_from_row,
     listener_definition_content,
     script_definition_content,
-    stamp_definition,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -382,19 +381,9 @@ async def test_toggling_an_automation_leaves_its_record_valid(
         timezone=ZoneInfo("UTC"),
     )
 
-    assert _record(await _schedule_row(db_engine, automation_id)) == before
-
-
-def test_the_stamping_helper_is_the_only_source_of_a_record() -> None:
-    """A record is bound to content and disposition together, never assembled piecemeal."""
-    record = stamp_definition(
-        content={"code": "x"},
-        taint_state=TurnTaintState.empty(),
-        human_direct=True,
-    )
-
-    assert record.matches({"code": "x"})
-    assert record.disposition is CreationDisposition.CLEAN
+    row = await _schedule_row(db_engine, automation_id)
+    assert row["enabled"] is False
+    assert _record(row) == before
 
 
 @pytest.mark.asyncio

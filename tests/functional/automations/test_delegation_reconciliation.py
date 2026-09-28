@@ -13,6 +13,7 @@ See ``docs/design/delegation-remote-reconciliation.md``.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
@@ -25,7 +26,6 @@ from family_assistant.processing import (
     ChatInteractionResult,
     DelegationTaskNotFoundError,
     DelegationTransientError,
-    ObservableDelegationService,
     RemoteDisposition,
     RemoteObservation,
 )
@@ -42,6 +42,7 @@ from family_assistant.task_worker import (
     DELEGATION_RECONCILE_MAX_ATTEMPTS,
     DELEGATION_RECONCILE_TASK_TYPE,
     DelegationReconcilePayload,
+    DelegationRunCleanupPayload,
 )
 from family_assistant.utils.clock import SystemClock
 
@@ -71,6 +72,10 @@ if TYPE_CHECKING:
     from family_assistant.task_worker import TaskWorker
 
 REMOTE_TASK_ID = "srv-1"
+
+# A zero timeout makes a run failed moments ago due for the cleanup pass's
+# unnotified-run recovery, rather than waiting out the production grace.
+_CLEANUP_PAYLOAD = DelegationRunCleanupPayload(running_timeout_seconds=0)
 
 
 def _observation(
@@ -108,15 +113,27 @@ class FakeObservableService(FakePollableService):
     ``cancelled`` and then ``completed`` -- the sequence that lost real work.
     The last reading repeats once the script runs out, which is what a settled
     provider does.
+
+    ``read_barrier`` holds every read until the barrier's party count of reads
+    is in flight, so concurrent reconcilers all hold a reading before any of
+    them acts on it.
     """
 
-    def __init__(self, observations: list[RemoteObservation | BaseException]) -> None:
+    def __init__(
+        self,
+        observations: list[RemoteObservation | BaseException],
+        *,
+        read_barrier: asyncio.Barrier | None = None,
+    ) -> None:
         super().__init__()
         self._observations = list(observations)
+        self._read_barrier = read_barrier
         self.observe_calls: list[str] = []
 
     async def observe_async(self, remote_task_id: str) -> RemoteObservation:
         self.observe_calls.append(remote_task_id)
+        if self._read_barrier is not None:
+            await self._read_barrier.wait()
         item = (
             self._observations.pop(0)
             if len(self._observations) > 1
@@ -179,7 +196,7 @@ async def _failed_run(
 
 
 def _worker_for(
-    db_engine: AsyncEngine, target: FakeObservableService
+    db_engine: AsyncEngine, target: FakePollableService
 ) -> tuple[TaskWorker, ProcessingService, AsyncMock]:
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
@@ -288,24 +305,32 @@ async def test_racing_reconcilers_recover_a_late_result_once(
 
     The guarantee is on the recovery transition rather than the scheduler, so
     it has to hold when the same run is reconciled twice with no coordination
-    between the attempts. It is a guarantee about recovery, not about
-    delivery: terminal delivery sends before recording ``notified_at``, so a
-    crash in that window re-sends -- a property of the existing delivery
-    protocol that a late result inherits like any other terminal result.
+    between the attempts: both read the provider before either recovers, so
+    both arrive at the transition holding the same accepted completion. It is
+    a guarantee about recovery, not about delivery: terminal delivery sends
+    before recording ``notified_at``, so a crash in that window re-sends -- a
+    property of the existing delivery protocol that a late result inherits
+    like any other terminal result.
     """
-    target = FakeObservableService([
-        _observation(RemoteDisposition.COMPLETED, output_text="late result")
-    ])
+    target = FakeObservableService(
+        [_observation(RemoteDisposition.COMPLETED, output_text="late result")],
+        read_barrier=asyncio.Barrier(2),
+    )
     worker, processing_service, chat_interface = _worker_for(db_engine, target)
     await _failed_run(db_engine, "delegation_once")
 
-    for _ in range(2):
-        db_context = Database(engine=db_engine)
+    async def reconcile() -> None:
         await worker.handle_delegation_reconcile(
-            _tool_context(db_context, processing_service, chat_interface),
+            _tool_context(
+                Database(engine=db_engine), processing_service, chat_interface
+            ),
             _reconcile_payload("delegation_once"),
         )
 
+    async with asyncio.timeout(60):
+        await asyncio.gather(reconcile(), reconcile())
+
+    assert len(target.observe_calls) == 2
     chat_interface.send_message.assert_awaited_once()
     db_context = Database(engine=db_engine)
     rows = await db_context.fetch_all(
@@ -314,8 +339,35 @@ async def test_racing_reconcilers_recover_a_late_result_once(
         .where(message_history_table.c.role == "assistant")
     )
     assert len(rows) == 1
-    # The second pass found a settled run and did not even read the provider.
-    assert len(target.observe_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_run_is_not_read_again(
+    db_engine: AsyncEngine,
+) -> None:
+    """A reconciliation arriving after a recovery finds the run settled.
+
+    A task enqueued before the recovery, or by a sweep, must neither read the
+    provider again nor deliver the result a second time.
+    """
+    target = FakeObservableService([
+        _observation(RemoteDisposition.COMPLETED, output_text="late result")
+    ])
+    worker, processing_service, chat_interface = _worker_for(db_engine, target)
+    await _failed_run(db_engine, "delegation_recovered")
+    db_context = Database(engine=db_engine)
+    context = _tool_context(db_context, processing_service, chat_interface)
+    await worker.handle_delegation_reconcile(
+        context, _reconcile_payload("delegation_recovered")
+    )
+    reads_before = len(target.observe_calls)
+
+    await worker.handle_delegation_reconcile(
+        context, _reconcile_payload("delegation_recovered")
+    )
+
+    assert len(target.observe_calls) == reads_before
+    chat_interface.send_message.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -555,9 +607,8 @@ async def test_the_sweep_starts_reconciliation_without_multiplying_it(
 
     db_context = Database(engine=db_engine)
     context = _tool_context(db_context, processing_service, chat_interface)
-    now = SystemClock().now()
     for _ in range(3):
-        await worker._reconcile_lost_runs(context, now=now)
+        await worker.handle_delegation_run_cleanup(context, _CLEANUP_PAYLOAD)
 
     pending = await db_context.tasks.get_all(
         task_type=DELEGATION_RECONCILE_TASK_TYPE, status="pending", limit=10
@@ -572,20 +623,26 @@ async def test_the_sweep_starts_reconciliation_without_multiplying_it(
 async def test_the_sweep_ignores_runs_with_nothing_to_re_read(
     db_engine: AsyncEngine,
 ) -> None:
-    """A run that never reached a provider is not reconciliation's business."""
+    """A run that never reached a provider is not reconciliation's business.
+
+    A refused submit fails the run for a reason that would otherwise earn it
+    another read, so the missing remote id is the only thing keeping it out.
+    """
     target = FakeObservableService([_observation(RemoteDisposition.PENDING)])
     worker, processing_service, chat_interface = _worker_for(db_engine, target)
     db_context = Database(engine=db_engine)
-    await _create_run(db_context, delegation_id="delegation_stranded")
+    await _create_run(db_context, delegation_id="delegation_never_submitted")
     await db_context.delegation_runs.mark_failed(
-        delegation_id="delegation_stranded",
-        error="The delegated run was interrupted.",
+        delegation_id="delegation_never_submitted",
+        error="The submit was refused.",
         completed_at=SystemClock().now(),
-        local_failure_kind="stranded",
+        local_failure_kind="transport",
     )
 
-    context = _tool_context(db_context, processing_service, chat_interface)
-    await worker._reconcile_lost_runs(context, now=SystemClock().now())
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        _CLEANUP_PAYLOAD,
+    )
 
     pending = await db_context.tasks.get_all(
         task_type=DELEGATION_RECONCILE_TASK_TYPE, status="pending", limit=10
@@ -638,44 +695,46 @@ async def test_a_stale_observation_does_not_overwrite_a_newer_one(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("disposition", "remote_status", "confirmed"),
+    [
+        pytest.param(
+            RemoteDisposition.PENDING, "in_progress", False, id="still_running"
+        ),
+        pytest.param(RemoteDisposition.FAILED, "failed", False, id="failed"),
+        pytest.param(RemoteDisposition.CANCELLED, "cancelled", True, id="cancelled"),
+    ],
+)
 async def test_cancellation_is_only_claimed_once_the_provider_confirms_it(
     db_engine: AsyncEngine,
+    disposition: RemoteDisposition,
+    remote_status: str,
+    confirmed: bool,
 ) -> None:
-    """Asking to cancel is not the same fact as the provider having cancelled."""
+    """Asking to cancel is not the same fact as the provider having cancelled.
+
+    A run timed out at its cap has had cancellation requested and been failed;
+    the reconciliation read that follows is what says whether the provider
+    acted on the request, and only a ``cancelled`` reading does.
+    """
+    target = FakeObservableService([_observation(disposition, status=remote_status)])
+    worker, processing_service, chat_interface = _worker_for(db_engine, target)
+    await _failed_run(db_engine, "delegation_cancel", local_failure_kind="timeout")
     db_context = Database(engine=db_engine)
-    await _create_run(db_context, delegation_id="delegation_cancel")
-    now = SystemClock().now()
+    await db_context.delegation_runs.mark_cancel_requested(
+        "delegation_cancel", now=SystemClock().now()
+    )
 
-    await db_context.delegation_runs.mark_cancel_requested("delegation_cancel", now=now)
+    await worker.handle_delegation_reconcile(
+        _tool_context(db_context, processing_service, chat_interface),
+        _reconcile_payload("delegation_cancel"),
+    )
+
     run = await db_context.delegation_runs.get_by_delegation_id("delegation_cancel")
     assert run is not None
+    assert run["remote_status"] == remote_status
     assert run["cancel_requested_at"] is not None
-    assert run["cancel_confirmed_at"] is None
-
-    # A reading that still shows the run going does not confirm anything.
-    still_running = _observation(RemoteDisposition.PENDING, status="in_progress")
-    await db_context.delegation_runs.record_remote_observation(
-        "delegation_cancel",
-        observation=still_running.to_metadata(),
-        observed_at=still_running.observed_at,
-        remote_status=still_running.status,
-        cancel_confirmed=False,
-    )
-    run = await db_context.delegation_runs.get_by_delegation_id("delegation_cancel")
-    assert run is not None
-    assert run["cancel_confirmed_at"] is None
-
-    confirmed = _observation(RemoteDisposition.CANCELLED)
-    await db_context.delegation_runs.record_remote_observation(
-        "delegation_cancel",
-        observation=confirmed.to_metadata(),
-        observed_at=confirmed.observed_at,
-        remote_status=confirmed.status,
-        cancel_confirmed=True,
-    )
-    run = await db_context.delegation_runs.get_by_delegation_id("delegation_cancel")
-    assert run is not None
-    assert run["cancel_confirmed_at"] is not None
+    assert (run["cancel_confirmed_at"] is not None) is confirmed
 
 
 @pytest.mark.asyncio
@@ -713,15 +772,38 @@ async def test_the_poll_path_records_what_it_saw(
     assert run is not None
     assert run["status"] == "awaiting_remote"
     assert run["remote_status"] == "pending"
-    assert run["remote_observation_json"] is not None
+    observation = run["remote_observation_json"]
+    assert observation is not None
+    assert observation["remote_task_id"] == REMOTE_TASK_ID
+    assert observation["disposition"] == "pending"
+    assert run["cancel_confirmed_at"] is None
 
 
 @pytest.mark.asyncio
-async def test_an_observable_target_satisfies_the_protocol() -> None:
-    """Observability is structural, and separate from being pollable."""
-    observable = FakeObservableService([_observation(RemoteDisposition.PENDING)])
-    assert isinstance(observable, ObservableDelegationService)
-    assert not isinstance(FakePollableService(), ObservableDelegationService)
+async def test_the_sweep_leaves_runs_of_a_target_that_can_only_be_polled(
+    db_engine: AsyncEngine,
+) -> None:
+    """Being pollable is not being observable, and reconciliation does not guess.
+
+    A target that can only poll has no way to re-read a run after it was given
+    up on, so the run is left alone even though it failed for a reason that
+    would otherwise earn it another read.
+    """
+    worker, processing_service, chat_interface = _worker_for(
+        db_engine, FakePollableService()
+    )
+    await _failed_run(db_engine, "delegation_poll_only")
+
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        _CLEANUP_PAYLOAD,
+    )
+
+    pending = await db_context.tasks.get_all(
+        task_type=DELEGATION_RECONCILE_TASK_TYPE, status="pending", limit=10
+    )
+    assert pending == []
 
 
 @pytest.mark.asyncio
@@ -755,18 +837,18 @@ async def test_a_recovered_run_wakes_the_source_again_instead_of_replaying_the_f
     await db_context.delegation_runs.update_remote_task(
         "delegation_rewake", remote_task_id=REMOTE_TASK_ID, remote_context_id=None
     )
-    failed = await db_context.delegation_runs.mark_failed(
+    await db_context.delegation_runs.mark_failed(
         delegation_id="delegation_rewake",
         error="The target_profile run cancelled.",
         completed_at=SystemClock().now(),
         local_failure_kind="remote_status",
     )
-    assert failed is not None
 
     context = _tool_context(db_context, processing_service, chat_interface)
-    # The real failure notification, which leaves the wake turn's reply stored
-    # with no interface_message_id because "web" is a history interface.
-    await worker._force_notify_delegation(context, failed)
+    # The real failure notification, delivered by the cleanup pass, which
+    # leaves the wake turn's reply stored with no interface_message_id because
+    # "web" is a history interface.
+    await worker.handle_delegation_run_cleanup(context, _CLEANUP_PAYLOAD)
     assert source.wake_call_count == 1
 
     await worker.handle_delegation_reconcile(

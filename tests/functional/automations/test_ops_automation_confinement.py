@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -26,13 +27,14 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.scripting.errors import ScriptError
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import (
     TaskWorker,
-    _process_script_wake_llm,  # noqa: PLC2701  # testing the script wake_llm guard
     handle_llm_callback,
+    handle_script_execution,
 )
 from family_assistant.tools import CompositeToolsProvider
 from family_assistant.tools.automations import (
@@ -49,9 +51,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncEngine
-
-    from family_assistant.events.processor import EventListenerDict
-    from family_assistant.scripting.monty_engine import WakeRequest
 
 
 def _exec_context(
@@ -194,25 +193,39 @@ async def test_create_wake_llm_automation_allowed_for_normal_profile(
 async def test_script_wake_llm_refused_for_confined_profile(
     db_engine: AsyncEngine,
 ) -> None:
-    """A confined script cannot escape via Monty's built-in wake_llm()."""
-    db = Database(engine=db_engine)
-    ctx = _exec_context(
-        db,
-        conversation_id="conv_script",
-        processing_profile_id="ops_automation",
-        allow_wake_llm=False,
+    """A script stamped with a confined profile cannot escape via Monty's
+    built-in wake_llm(), even when the worker's default profile may wake."""
+    ops_service = _worker_service(service_id="ops_automation", allow_wake_llm=False)
+    default_service = _worker_service(
+        service_id="default_assistant",
+        registry={"ops_automation": ops_service},
     )
-    wake_request: WakeRequest = {
-        "context": {"message": "escape"},
-        "include_event": False,
-    }
-    with pytest.raises(WakeLlmProfileError):
-        await _process_script_wake_llm(
-            exec_context=ctx,
-            wake_contexts=[wake_request],
-            event_data={},
-            listener_id=None,
+    db = Database(engine=db_engine)
+    worker_ctx = replace(
+        _exec_context(
+            db,
+            conversation_id="conv_script",
+            processing_profile_id="default_assistant",
+            allow_wake_llm=True,
+        ),
+        processing_service=default_service,
+    )
+
+    with pytest.raises(ScriptError, match="not permitted to wake the LLM") as exc_info:
+        await handle_script_execution(
+            worker_ctx,
+            {
+                "script_code": "wake_llm({'message': 'escape'})\n",
+                "conversation_id": "conv_script",
+                "processing_profile_id": "ops_automation",
+            },
         )
+    assert isinstance(exc_info.value.__cause__, WakeLlmProfileError)
+
+    rows = await db.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert rows == []
 
 
 # --- cross-profile update_automation denial ---
@@ -255,6 +268,11 @@ async def test_cross_profile_update_denied(db_engine: AsyncEngine) -> None:
     assert "error" in data
     assert "owned by profile" in data["error"].lower()
 
+    stored = await db.schedule_automations.get_by_id(automation_id)
+    assert stored is not None
+    assert stored["description"] != "hijacked"
+    assert stored["processing_profile_id"] == "ops_automation"
+
 
 @pytest.mark.asyncio
 async def test_same_profile_update_allowed(db_engine: AsyncEngine) -> None:
@@ -285,6 +303,11 @@ async def test_same_profile_update_allowed(db_engine: AsyncEngine) -> None:
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" not in data
+
+    stored = await db.schedule_automations.get_by_id(automation_id)
+    assert stored is not None
+    assert stored["description"] == "updated by owner"
+    assert stored["processing_profile_id"] == "ops_automation"
 
 
 # --- schedule_future_callback wake guard ---
@@ -364,6 +387,10 @@ async def test_wake_llm_update_refused_for_confined_profile(
     assert "error" in data
     assert "not permitted to wake the llm" in data["error"].lower()
 
+    stored = await db.schedule_automations.get_by_id(automation_id)
+    assert stored is not None
+    assert stored["action_config"] == {"context": "wake up"}
+
 
 # --- execution-time wake guard and profile-consistent context in the worker ---
 
@@ -434,10 +461,23 @@ async def test_queued_wake_refused_for_confined_profile(
     )
     new_task_event.set()
 
-    with pytest.raises(RuntimeError, match="Task.*failed"):
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"WakeLlmProfileError: Refusing queued llm_callback for profile "
+            r"'ops_automation': the profile is not permitted to wake the LLM"
+        ),
+    ):
         await wait_for_tasks_to_complete(
             db_engine, task_types={"llm_callback"}, timeout_seconds=15
         )
+
+    history_rows = await db_ctx.fetch_all(
+        select(message_history_table.c.role).where(
+            message_history_table.c.conversation_id == "conv_queued_wake"
+        )
+    )
+    assert history_rows == []
 
 
 @pytest.mark.asyncio
@@ -501,18 +541,37 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
 # --- event-listener origin wake guard ---
 
 
-def _wake_listener(*, origin_profile_id: str | None) -> dict[str, object]:
-    return {
-        "id": 1,
-        "name": "Confined Wake Listener",
-        "source_id": "webhook",
-        "conversation_id": "conv_event_wake",
-        "interface_type": "telegram",
-        "action_type": "wake_llm",
-        "action_config": {"context": "event fired"},
-        "processing_profile_id": origin_profile_id,
-        "created_by_user_id": "user-1",
-    }
+_WAKE_PROFILE_FLAGS = {"ops_automation": False, "default_assistant": True}
+
+
+async def _create_wake_listener(
+    db: Database, *, name: str, origin_profile_id: str
+) -> int:
+    """Store a wake_llm webhook listener directly, as a pre-existing or
+    admin-created listener would be (bypassing the creation-path guard)."""
+    return await db.events.create_event_listener(
+        name=name,
+        source_id="webhook",
+        match_conditions={"event": "data"},
+        conversation_id="conv_event_wake",
+        action_type="wake_llm",
+        action_config={"context": "event fired"},
+        processing_profile_id=origin_profile_id,
+        created_by_user_id="user-1",
+    )
+
+
+async def _deliver_webhook_event(db_engine: AsyncEngine) -> None:
+    processor = EventProcessor(
+        sources={},
+        get_db_context_func=lambda: Database(engine=db_engine),
+        profile_wake_llm_flags=_WAKE_PROFILE_FLAGS,
+    )
+    await processor.start()
+    try:
+        await processor.process_event("webhook", {"event": "data"})
+    finally:
+        await processor.stop()
 
 
 @pytest.mark.asyncio
@@ -521,47 +580,40 @@ async def test_event_listener_wake_refused_for_confined_origin(
 ) -> None:
     """The event_handler routing must not launder a wake the origin profile may
     not perform: a listener stamped with an allow_wake_llm=False profile is
-    skipped instead of enqueueing an llm_callback."""
-    processor = EventProcessor(
-        sources={},
-        get_db_context_func=lambda: Database(engine=db_engine),
-        profile_wake_llm_flags={"ops_automation": False},
-    )
+    skipped instead of enqueueing an llm_callback, while other listeners
+    matching the same event still fire."""
     db = Database(engine=db_engine)
-    await processor._execute_action_in_context(
-        db,
-        cast("EventListenerDict", _wake_listener(origin_profile_id="ops_automation")),
-        {"event": "data"},
+    await _create_wake_listener(
+        db, name="Confined Wake", origin_profile_id="ops_automation"
     )
-    rows = await db.fetch_all(
-        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    permitted_id = await _create_wake_listener(
+        db, name="Permitted Wake", origin_profile_id="default_assistant"
     )
-    assert rows == []
+
+    await _deliver_webhook_event(db_engine)
+
+    callbacks = await db.tasks.get_all(task_type="llm_callback")
+    assert len(callbacks) == 1
+    payload = callbacks[0]["payload"]
+    assert payload is not None
+    assert payload["callback_context"]["listener_id"] == permitted_id
 
 
 @pytest.mark.asyncio
 async def test_event_listener_wake_allowed_origin_routes_to_event_handler(
     db_engine: AsyncEngine,
 ) -> None:
-    processor = EventProcessor(
-        sources={},
-        get_db_context_func=lambda: Database(engine=db_engine),
-        profile_wake_llm_flags={"default_assistant": True},
-    )
     db = Database(engine=db_engine)
-    await processor._execute_action_in_context(
-        db,
-        cast(
-            "EventListenerDict",
-            _wake_listener(origin_profile_id="default_assistant"),
-        ),
-        {"event": "data"},
+    listener_id = await _create_wake_listener(
+        db, name="Permitted Wake", origin_profile_id="default_assistant"
     )
-    rows = await db.fetch_all(
-        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
-    )
-    assert len(rows) == 1
-    raw_payload = rows[0]["payload"]
-    payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+
+    await _deliver_webhook_event(db_engine)
+
+    callbacks = await db.tasks.get_all(task_type="llm_callback")
+    assert len(callbacks) == 1
+    payload = callbacks[0]["payload"]
+    assert payload is not None
+    assert payload["callback_context"]["listener_id"] == listener_id
     # Untrusted trigger: the woken turn runs under the restricted profile.
     assert payload["processing_profile_id"] == "event_handler"

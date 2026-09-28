@@ -1,15 +1,16 @@
 """Basic event handling tests for the event listener system."""
 
-import asyncio
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
-import janus
 import pytest
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.home_assistant_source import HomeAssistantSource
@@ -19,6 +20,7 @@ from family_assistant.storage import Database
 from family_assistant.storage.events import (
     EventSourceType,
     cleanup_old_events,
+    event_listeners_table,
     recent_events_table,
 )
 from family_assistant.tools.events import query_recent_events_tool
@@ -26,6 +28,7 @@ from family_assistant.tools.events import (
     test_event_listener_tool as event_listener_test_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from tests.helpers import wait_for_condition
 
 
 class MockFiredEvent:
@@ -58,6 +61,25 @@ class MockState:
         self.state = state
         self.attributes = {"friendly_name": f"Test {state}"}
         self.last_changed = datetime.now(UTC).isoformat()
+
+
+class FakeWebsocketClient:
+    """Stands in for homeassistant_api's WebsocketClient, firing a fixed set of events."""
+
+    def __init__(self, api_url: str, token: str, events: list[MockFiredEvent]) -> None:
+        self.api_url = api_url
+        self.token = token
+        self.events = events
+
+    def __enter__(self) -> "FakeWebsocketClient":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    @contextmanager
+    def listen_events(self) -> Iterator[Iterator[MockFiredEvent]]:
+        yield iter(self.events)
 
 
 def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can be any type
@@ -110,50 +132,42 @@ async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
-    """Test processing Home Assistant state change events."""
-    # Create mock HA client
+    """A state change fired over the HA websocket is stored and queryable."""
     mock_client = MagicMock()
     mock_client.api_url = "http://localhost:8123/api"
     mock_client.token = "test_token"
     mock_client.verify_ssl = True
 
-    # Create event source
-    ha_source = HomeAssistantSource(client=mock_client)
-
-    # Create event processor
     processor = EventProcessor(
-        sources={"ha_test": ha_source},
+        sources={"ha_test": HomeAssistantSource(client=mock_client)},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-
-    # Set processor as running (normally done by start())
-    processor._running = True
-
-    # Initialize the janus queue (normally done by start())
-    ha_source._event_queue = janus.Queue(maxsize=1000)
-
-    # Process a state change event
-    event = MockFiredEvent(
+    fired_event = MockFiredEvent(
         entity_id="sensor.temperature", old_state="20.5", new_state="21.0"
     )
 
-    # Simulate the sync handler adding event to queue
-    ha_source._handle_event_sync("state_changed", event)
+    async def event_stored() -> bool:
+        rows = await Database(db_engine).fetch_all(
+            select(recent_events_table.c.event_id)
+        )
+        return bool(rows)
 
-    # Process the event from the queue (normally done by _process_events task)
-    # We'll manually process it here since we're not running the full async loop
-    if ha_source._event_queue and not ha_source._event_queue.async_q.empty():
-        queued_event = await ha_source._event_queue.async_q.get()
-        await processor.process_event("home_assistant", queued_event)
-        ha_source._event_queue.async_q.task_done()
+    with patch(
+        "family_assistant.events.home_assistant_source.WebsocketClient",
+        partial(FakeWebsocketClient, events=[fired_event]),
+    ):
+        await processor.start()
+        try:
+            await wait_for_condition(
+                event_stored,
+                timeout=30.0,
+                description="HA state change stored in recent_events",
+            )
+        finally:
+            await processor.stop()
 
-    # Give a small delay to ensure async writes complete
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Allowing async write completion
-    await asyncio.sleep(0.1)
-
-    # Query recent events
     db_ctx = Database(db_engine)
     exec_context = ToolExecutionContext(
         interface_type="test",
@@ -176,53 +190,40 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
         exec_context=exec_context, source_id="home_assistant", hours=1
     )
 
-    # Parse JSON result
-    result_data = json.loads(result)
-
-    assert result_data["count"] >= 1
-    assert result_data["source_filter"] == "home_assistant"
-
-    # Check event data
-    events = result_data["events"]
-    assert len(events) >= 1
-
-    # Find our temperature event
-    temp_event = None
-    for event in events:
-        if event["event_data"].get("entity_id") == "sensor.temperature":
-            temp_event = event
-            break
-
-    assert temp_event is not None
+    events = json.loads(result)["events"]
+    assert len(events) == 1
+    temp_event = events[0]
     assert temp_event["source_id"] == "home_assistant"
+    assert temp_event["event_data"]["entity_id"] == "sensor.temperature"
     assert temp_event["event_data"]["event_type"] == "state_changed"
     assert temp_event["event_data"]["old_state"]["state"] == "20.5"
     assert temp_event["event_data"]["new_state"]["state"] == "21.0"
 
-    # Clean up janus queue
-    await ha_source._event_queue.aclose()
-
 
 @pytest.mark.asyncio
 async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
-    """Test event matching against listener conditions."""
-    # Add a test listener
+    """Only an event satisfying the listener's match conditions fires its action."""
     db_ctx = Database(db_engine)
     await db_ctx.execute(
         text("""INSERT INTO event_listeners
-                 (name, match_conditions, source_id, enabled, conversation_id)
-                 VALUES (:name, :conditions, :source_id, :enabled, :conversation_id)"""),
+                 (name, match_conditions, source_id, action_type, enabled,
+                  conversation_id)
+                 VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                         :conversation_id)"""),
         {
             "name": "Temperature Monitor",
             "conditions": json.dumps({
                 "entity_id": "sensor.temperature",
-                "new_state.state": "26.0",  # Simple equality match
+                "new_state.state": "26.0",
             }),
             "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
             "enabled": True,
             "conversation_id": "test_conversation",
         },
     )
+    listener_row = await db_ctx.fetch_one(select(event_listeners_table.c.id))
+    assert listener_row is not None
 
     processor = EventProcessor(
         sources={},
@@ -230,26 +231,21 @@ async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
+    await processor.start()
 
-    await processor._refresh_listener_cache()
-
-    # Test matching
     match_event = {"entity_id": "sensor.temperature", "new_state": {"state": "26.0"}}
     no_match_event = {"entity_id": "sensor.temperature", "new_state": {"state": "24.0"}}
 
-    listeners = processor._listener_cache.get("home_assistant", [])
-    assert len(listeners) == 1
+    await processor.process_event("home_assistant", no_match_event)
+    await processor.process_event("home_assistant", match_event)
+    await processor.stop()
 
-    assert await processor._check_match_conditions(
-        match_event,
-        listeners[0]["match_conditions"],
-        listeners[0].get("condition_script"),
-    )
-    assert not await processor._check_match_conditions(
-        no_match_event,
-        listeners[0]["match_conditions"],
-        listeners[0].get("condition_script"),
-    )
+    callback_tasks = await Database(db_engine).tasks.get_all(task_type="llm_callback")
+    assert len(callback_tasks) == 1
+    payload = callback_tasks[0]["payload"]
+    assert payload is not None
+    assert payload["callback_context"]["listener_id"] == listener_row["id"]
+    assert payload["callback_context"]["event_data"] == match_event
 
 
 @pytest.mark.asyncio
@@ -338,7 +334,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
     # Assert
     data = json.loads(result)
     assert data["matched_count"] == 1
-    assert data["total_tested"] >= 2
+    assert data["total_tested"] == 3
     assert len(data["matched_events"]) == 1
     assert data["matched_events"][0]["event_data"]["entity_id"] == "person.alex"
     assert data["matched_events"][0]["event_data"]["new_state"]["state"] == "Home"
@@ -402,12 +398,8 @@ async def test_test_event_listener_tool_no_match_wrong_state(
     # Assert
     data = json.loads(result)
     assert data["matched_count"] == 0
-    assert data["total_tested"] >= 1
-    assert data["analysis"] is not None
-    assert len(data["analysis"]) > 0
-    # Should mention the actual state values found
-    analysis_text = " ".join(data["analysis"])
-    assert "new_state.state" in analysis_text or "Field" in analysis_text
+    assert data["total_tested"] == 1
+    assert "Field 'new_state.state' exists but has value: 'Home'" in data["analysis"]
 
 
 @pytest.mark.asyncio
@@ -503,5 +495,11 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
     db_ctx = Database(db_engine)
     deleted_count = await cleanup_old_events(db_ctx, retention_hours=48)
 
-    # Assert - the cleanup function works correctly
-    assert deleted_count == 1  # Exactly one old event was deleted
+    # Assert
+    assert deleted_count == 1
+    remaining = await db_ctx.fetch_all(
+        select(
+            recent_events_table.c.event_data["entity_id"].as_string().label("entity_id")
+        )
+    )
+    assert [row["entity_id"] for row in remaining] == ["test.recent"]

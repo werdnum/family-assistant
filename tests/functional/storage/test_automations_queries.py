@@ -177,45 +177,47 @@ class TestAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_list_all_pagination(self, db_context: Database) -> None:
-        """Test pagination in list_all."""
+        """Pages walk the merged schedule/event list newest-first, without gaps or overlap."""
         conversation_id = str(uuid.uuid4())
+        events_repo = EventsRepository(db_context)
 
-        # Create 5 schedule automations
         for i in range(5):
-            await db_context.schedule_automations.create(
-                name=f"Auto {i}",
-                recurrence_rule="FREQ=DAILY;BYHOUR=9",
-                action_type="wake_llm",
-                action_config={"context": f"test{i}"},
-                conversation_id=conversation_id,
-                timezone=ZoneInfo("UTC"),
+            if i % 2 == 0:
+                await db_context.schedule_automations.create(
+                    name=f"Schedule {i}",
+                    recurrence_rule="FREQ=DAILY;BYHOUR=9",
+                    action_type="wake_llm",
+                    action_config={"context": f"test{i}"},
+                    conversation_id=conversation_id,
+                    timezone=ZoneInfo("UTC"),
+                )
+            else:
+                await events_repo.create_event_listener(
+                    name=f"Event {i}",
+                    description="Test event listener",
+                    source_id="home_assistant",
+                    match_conditions={"entity_id": f"sensor.test{i}"},
+                    action_type="wake_llm",
+                    action_config={"context": f"event{i}"},
+                    conversation_id=conversation_id,
+                    interface_type="telegram",
+                )
+
+        pages: list[list[str]] = []
+        totals: list[int] = []
+        for offset in (0, 2, 4):
+            automations, total = await db_context.automations.list_all(
+                conversation_id, limit=2, offset=offset
             )
+            pages.append([a.name for a in automations])
+            totals.append(total)
 
-        # Get all
-        automations, total = await db_context.automations.list_all(conversation_id)
-        assert total == 5
-        assert len(automations) == 5
-
-        # Get first page (limit 2)
-        automations, total = await db_context.automations.list_all(
-            conversation_id, limit=2
-        )
-        assert total == 5  # Total count should be full count
-        assert len(automations) == 2  # But only 2 returned
-
-        # Get second page (offset 2, limit 2)
-        automations, total = await db_context.automations.list_all(
-            conversation_id, limit=2, offset=2
-        )
-        assert total == 5
-        assert len(automations) == 2
-
-        # Get third page (offset 4, limit 2)
-        automations, total = await db_context.automations.list_all(
-            conversation_id, limit=2, offset=4
-        )
-        assert total == 5
-        assert len(automations) == 1  # Only 1 remaining
+        assert totals == [5, 5, 5]
+        assert pages == [
+            ["Schedule 4", "Event 3"],
+            ["Schedule 2", "Event 1"],
+            ["Schedule 0"],
+        ]
 
     @pytest.mark.asyncio
     async def test_get_by_id_schedule(self, db_context: Database) -> None:
@@ -379,14 +381,13 @@ class TestAutomationsRepository:
         assert "event automation" in error
 
     @pytest.mark.asyncio
-    async def test_check_name_available_cross_type_conflict(
+    async def test_check_name_available_exclusion_of_other_type_with_same_id(
         self, db_context: Database
     ) -> None:
-        """Test that name conflicts are detected across automation types."""
+        """Excluding an event does not exempt a schedule that shares its numeric id."""
         conversation_id = str(uuid.uuid4())
 
-        # Create schedule automation with name "Shared Name"
-        await db_context.schedule_automations.create(
+        schedule_id = await db_context.schedule_automations.create(
             name="Shared Name",
             recurrence_rule="FREQ=DAILY;BYHOUR=9",
             action_type="wake_llm",
@@ -395,9 +396,11 @@ class TestAutomationsRepository:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Try to check if we can create event automation with same name
         available, error = await db_context.automations.check_name_available(
-            "Shared Name", conversation_id
+            "Shared Name",
+            conversation_id,
+            exclude_id=schedule_id,
+            exclude_type="event",
         )
         assert available is False
         assert error is not None
@@ -577,13 +580,19 @@ class TestAutomationsRepository:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Get stats via unified repository
+        stored = await db_context.schedule_automations.get_by_id(automation_id)
+        assert stored is not None
+
         stats = await db_context.automations.get_execution_stats(
             automation_id, "schedule"
         )
         assert stats is not None
-        assert "total_executions" in stats
         assert "next_scheduled_at" in stats
+        assert stats["total_executions"] == 0
+        assert stats["last_execution_at"] is None
+        assert stats["recent_executions"] == []
+        assert stats["next_scheduled_at"] is not None
+        assert stats["next_scheduled_at"] == stored["next_scheduled_at"]
 
     @pytest.mark.asyncio
     async def test_get_execution_stats_event(self, db_context: Database) -> None:
@@ -604,8 +613,10 @@ class TestAutomationsRepository:
             interface_type="telegram",
         )
 
-        # Get stats via unified repository
         stats = await db_context.automations.get_execution_stats(event_id, "event")
         assert stats is not None
-        # Event automations have different stats structure (daily_executions)
         assert "daily_executions" in stats
+        assert stats["total_executions"] == 0
+        assert stats["daily_executions"] == 0
+        assert stats["last_execution_at"] is None
+        assert stats["recent_events"] == []

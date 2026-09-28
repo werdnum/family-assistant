@@ -2,10 +2,9 @@
 
 import asyncio
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from unittest.mock import MagicMock
-from zoneinfo import ZoneInfo
 
 import pytest
 from prometheus_client import REGISTRY
@@ -15,6 +14,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
+from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 
 
 def _sample(name: str, labels: Mapping[str, str]) -> float:
@@ -31,18 +31,6 @@ def task_type() -> str:
     counter value honest without resetting global state.
     """
     return f"metrics_probe_{uuid.uuid4().hex[:8]}"
-
-
-def _worker(db_engine: AsyncEngine) -> TaskWorker:
-    return TaskWorker(
-        processing_service=MagicMock(),
-        chat_interface=MagicMock(),
-        calendar_config={},
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        engine=db_engine,
-        shutdown_event_instance=asyncio.Event(),
-    )
 
 
 @pytest.mark.asyncio
@@ -70,11 +58,16 @@ async def test_enqueue_counts_the_task_it_wrote(
 
 @pytest.mark.asyncio
 async def test_a_task_that_ran_is_counted_as_completed(
-    db_engine: AsyncEngine, task_type: str
+    db_engine: AsyncEngine,
+    task_type: str,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """The success path counts the execution and times the handler."""
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, _new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
 
     async def handler(
         # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
@@ -88,14 +81,28 @@ async def test_a_task_that_ran_is_counted_as_completed(
     await db.tasks.enqueue(
         task_id=task_type, task_type=task_type, priority=TaskPriority.INTERACTIVE
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=[task_type],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
 
-    await worker._process_task(db, task, asyncio.Event())
+    await wait_for_tasks_to_complete(engine=db_engine, task_ids={task_type})
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": task_type,
+                    "priority": "interactive",
+                    "outcome": "completed",
+                },
+            )
+            == 1.0
+            and _sample(
+                "family_assistant_task_duration_seconds_count",
+                {"task_type": task_type, "priority": "interactive"},
+            )
+            == 1.0
+        ),
+        timeout=10.0,
+        description=f"completed task metrics for {task_type}",
+    )
 
     assert (
         _sample(
@@ -115,11 +122,16 @@ async def test_a_task_that_ran_is_counted_as_completed(
 
 @pytest.mark.asyncio
 async def test_a_failing_task_with_retries_left_is_counted_as_retried(
-    db_engine: AsyncEngine, task_type: str
+    db_engine: AsyncEngine,
+    task_type: str,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """A failure the queue will try again is its own outcome, not a failure."""
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, _new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
 
     async def handler(
         # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
@@ -133,31 +145,39 @@ async def test_a_failing_task_with_retries_left_is_counted_as_retried(
     await db.tasks.enqueue(
         task_id=task_type, task_type=task_type, priority=TaskPriority.INTERACTIVE
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=[task_type],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
 
-    await worker._process_task(db, task, asyncio.Event())
-
-    assert (
-        _sample(
-            "family_assistant_tasks_processed_total",
-            {"task_type": task_type, "priority": "interactive", "outcome": "retried"},
-        )
-        == 1.0
+    # A retry leaves the task queued for another attempt rather than
+    # terminal, so wait on the metric the worker's processing loop records
+    # rather than on the row reaching a done/failed status.
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": task_type,
+                    "priority": "interactive",
+                    "outcome": "retried",
+                },
+            )
+            == 1.0
+        ),
+        timeout=10.0,
+        description=f"retried-outcome metric for {task_type}",
     )
 
 
 @pytest.mark.asyncio
 async def test_a_failing_task_out_of_retries_is_counted_as_failed(
-    db_engine: AsyncEngine, task_type: str
+    db_engine: AsyncEngine,
+    task_type: str,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """An execution the queue gives up on is counted once, as failed."""
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, _new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
 
     async def handler(
         # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
@@ -174,14 +194,25 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
         max_retries_override=0,
         priority=TaskPriority.INTERACTIVE,
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=[task_type],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
 
-    await worker._process_task(db, task, asyncio.Event())
+    await wait_for_tasks_to_complete(
+        engine=db_engine, task_ids={task_type}, allow_failures=True
+    )
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": task_type,
+                    "priority": "interactive",
+                    "outcome": "failed",
+                },
+            )
+            == 1.0
+        ),
+        timeout=10.0,
+        description=f"failed task metric for {task_type}",
+    )
 
     assert (
         _sample(
@@ -195,6 +226,7 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
 @pytest.mark.asyncio
 async def test_a_task_rejected_before_its_handler_runs_is_counted_as_failed(
     db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
     """A terminal outcome the worker decides without dispatching still counts.
 
@@ -204,7 +236,10 @@ async def test_a_task_rejected_before_its_handler_runs_is_counted_as_failed(
     because nothing ran.
     """
     db = Database(db_engine)
-    worker = _worker(db_engine)
+    worker, _new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
     task_id = f"metrics_probe_{uuid.uuid4().hex[:8]}"
     failed_before = _sample(
         "family_assistant_tasks_processed_total",
@@ -234,14 +269,25 @@ async def test_a_task_rejected_before_its_handler_runs_is_counted_as_failed(
         payload={},
         priority=TaskPriority.INTERACTIVE,
     )
-    task = await db.tasks.dequeue(
-        worker_id="worker",
-        task_types=["llm_callback"],
-        current_time=worker.clock.now(),
-    )
-    assert task is not None
 
-    await worker._process_task(db, task, asyncio.Event())
+    await wait_for_tasks_to_complete(
+        engine=db_engine, task_ids={task_id}, allow_failures=True
+    )
+    await wait_for_condition(
+        lambda: (
+            _sample(
+                "family_assistant_tasks_processed_total",
+                {
+                    "task_type": "llm_callback",
+                    "priority": "interactive",
+                    "outcome": "failed",
+                },
+            )
+            == failed_before + 1.0
+        ),
+        timeout=10.0,
+        description=f"rejected callback metric for {task_id}",
+    )
 
     assert (
         _sample(

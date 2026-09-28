@@ -393,40 +393,6 @@ async def test_decision_only_approval_does_not_enqueue_execution_task(
 
 
 @pytest.mark.asyncio
-async def test_durable_decision_only_approval_does_not_enqueue_execution_task(
-    db_engine: AsyncEngine,
-) -> None:
-    service = _service(db_engine)
-    request = await service.create_request(
-        target_user_id="user-1",
-        tool_name="calendar.create_event",
-        tool_args={"title": "Flight", "start": "2026-05-01T09:00:00-07:00"},
-        tool_call_id="call-1",
-        source_message_internal_id=None,
-        confirmation_prompt="Create calendar event: Flight",
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        decision_only=True,
-    )
-
-    approved = await service.approve_and_enqueue_execution(
-        request_id=request["id"],
-        approving_user_id="user-1",
-        approving_interface="web",
-    )
-
-    assert approved["status"] == "approved"
-    assert approved["decision_only"] is True
-    assert approved["execution_task_id"] is None
-
-    db = Database(engine=db_engine)
-    tasks = await db.tasks.get_all(
-        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-    )
-
-    assert tasks == []
-
-
-@pytest.mark.asyncio
 async def test_durable_decision_only_flag_suppresses_enqueue(
     db_engine: AsyncEngine,
 ) -> None:
@@ -447,6 +413,7 @@ async def test_durable_decision_only_flag_suppresses_enqueue(
     )
 
     assert approved["status"] == "approved"
+    assert approved["decision_only"] is True
     assert approved["execution_task_id"] is None
     db = Database(engine=db_engine)
     tasks = await db.tasks.get_all(
@@ -651,26 +618,42 @@ async def test_mark_expired_expires_only_pending_requests(
     db_engine: AsyncEngine,
 ) -> None:
     service = _service(db_engine)
-    expired_id = await _create_request(
-        db_engine,
-        expires_at=datetime.now(UTC) - timedelta(minutes=1),
-    )
+    created_at = datetime.now(UTC)
+    lapsed_deadline = created_at + timedelta(minutes=10)
+    sweep_at = created_at + timedelta(hours=1)
+    expired_id = await _create_request(db_engine, expires_at=lapsed_deadline)
     pending_id = await _create_request(
-        db_engine,
-        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        db_engine, expires_at=created_at + timedelta(hours=3)
+    )
+    approved_id = await _create_request(db_engine, expires_at=lapsed_deadline)
+    await service.approve_without_enqueueing_execution(
+        request_id=approved_id,
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+    rejected_id = await _create_request(db_engine, expires_at=lapsed_deadline)
+    await service.reject(
+        request_id=rejected_id,
+        rejecting_user_id="user-1",
+        rejecting_interface="telegram",
     )
 
-    expired_count = await service.mark_expired(now=datetime.now(UTC))
+    expired_count = await service.mark_expired(now=sweep_at)
 
     assert expired_count == 1
     db = Database(engine=db_engine)
-    expired = await db.confirmation_requests.get(expired_id)
-    pending = await db.confirmation_requests.get(pending_id)
+    statuses: dict[str, str] = {}
+    for request_id in (expired_id, pending_id, approved_id, rejected_id):
+        request = await db.confirmation_requests.get(request_id)
+        assert request is not None
+        statuses[request_id] = request["status"]
 
-    assert expired is not None
-    assert expired["status"] == "expired"
-    assert pending is not None
-    assert pending["status"] == "pending"
+    assert statuses == {
+        expired_id: "expired",
+        pending_id: "pending",
+        approved_id: "approved",
+        rejected_id: "rejected",
+    }
 
 
 @pytest.mark.asyncio

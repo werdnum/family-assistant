@@ -636,8 +636,7 @@ log_event()
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     processing_service = ProcessingService(
         llm_client=RuleBasedMockLLMClient(

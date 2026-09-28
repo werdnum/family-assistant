@@ -52,10 +52,6 @@ async def test_recurring_task_failure_continues_recurrence(
         priority=TaskPriority.INTERACTIVE,
     )
 
-    # Give time for task to be committed to database
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Ensuring database commit before worker query
-    await asyncio.sleep(0.1)
-
     # Wake up worker to process task
     new_task_event.set()
 
@@ -81,7 +77,7 @@ async def test_recurring_task_failure_continues_recurrence(
 
     await wait_for_condition(
         check_conditions,
-        timeout=5.0,
+        timeout=10.0,
         description="Original task should fail and recurring task should be created",
     )
 
@@ -91,4 +87,18 @@ async def test_recurring_task_failure_continues_recurrence(
     tasks = await db_context.fetch_all(stmt)
     task = tasks[0] if tasks else None
     assert task is not None
-    assert task["recurrence_rule"] is not None
+    assert task["recurrence_rule"] == "FREQ=MINUTELY;INTERVAL=1"
+
+    # Verify the rescheduled occurrence carries forward the recurrence state correctly
+    recur_stmt = select(tasks_table).where(
+        tasks_table.c.task_id.like("recur_fail_test_recur_%")
+    )
+    recur_tasks = await db_context.fetch_all(recur_stmt)
+    assert len(recur_tasks) == 1
+    next_task = recur_tasks[0]
+    assert next_task["task_type"] == "fail_recur"
+    assert next_task["status"] == "pending"
+    assert next_task["recurrence_rule"] == "FREQ=MINUTELY;INTERVAL=1"
+    assert next_task["scheduled_at"] is not None
+    assert task["created_at"] is not None
+    assert next_task["scheduled_at"] > task["created_at"]

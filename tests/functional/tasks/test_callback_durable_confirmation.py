@@ -16,9 +16,11 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.database import Database
 from family_assistant.task_worker import LlmCallbackPayload, handle_llm_callback
 from family_assistant.tools.types import (
@@ -209,5 +211,5 @@ async def test_callback_without_owner_reports_tool_not_run(
     assert "no recorded owner" in processing_service.confirmation_outcome.result
 
     db_context = Database(engine=db_engine)
-    rows = await db_context.confirmation_requests.list_pending_for_user("anyone")
+    rows = await db_context.fetch_all(select(confirmation_requests_table.c.id))
     assert rows == []

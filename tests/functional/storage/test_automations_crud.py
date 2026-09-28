@@ -7,14 +7,16 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database, DatabaseExecutor
+from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.schedule_automations import (
     ScheduleAutomationsRepository,
 )
+from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
@@ -526,11 +528,7 @@ class TestScheduleAutomationsRepository:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Get original next_scheduled_at
-        automation = await db_context.schedule_automations.get_by_id(automation_id)
-        assert automation is not None
-
-        # Update recurrence rule
+        before_update = datetime.now(UTC)
         result = await db_context.schedule_automations.update(
             automation_id,
             conversation_id,
@@ -539,13 +537,13 @@ class TestScheduleAutomationsRepository:
         )
         assert result is True
 
-        # Verify next_scheduled_at was recalculated
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
         assert automation["recurrence_rule"] == "FREQ=DAILY;BYHOUR=15"
-        # next_scheduled_at should be different (though we can't easily predict exact time)
-        # Just verify it's still set
-        assert automation["next_scheduled_at"] is not None
+        next_at = automation["next_scheduled_at"]
+        assert next_at is not None
+        assert next_at.astimezone(UTC).hour == 15
+        assert before_update < next_at <= datetime.now(UTC) + timedelta(days=1)
 
     @pytest.mark.asyncio
     async def test_update_recurrence_rule_invalid(self, db_context: Database) -> None:
@@ -862,37 +860,43 @@ class TestScheduleAutomationsRepository:
     async def test_after_task_execution_schedules_next(
         self, db_context: Database
     ) -> None:
-        """Test after_task_execution schedules next task instance."""
+        """A finished run advances to the next slot and queues a task for it."""
         conversation_id = str(uuid.uuid4())
 
         automation_id = await db_context.schedule_automations.create(
             name="Test Auto",
-            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
             timezone=ZoneInfo("UTC"),
         )
-
-        # Get initial next_scheduled_at
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
+        first = automation["next_scheduled_at"]
+        assert first is not None
 
-        # Simulate task execution
-        execution_time = datetime.now(UTC)
         await db_context.schedule_automations.after_task_execution(
             automation_id,
-            execution_time,
+            first + timedelta(minutes=5),
             timezone=ZoneInfo("UTC"),
         )
 
-        # Verify next_scheduled_at was updated
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
         new_next = automation["next_scheduled_at"]
-        assert new_next is not None  # Should be set after execution
-        # Next scheduled time should be after the execution time
-        assert new_next > execution_time
+        assert new_next == first + timedelta(days=1)
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        pending_times = [normalize_datetime(task["scheduled_at"]) for task in pending]
+        assert set(pending_times) <= {first, new_next}
+        assert pending_times.count(first) <= 1
+        queued_for_next = [
+            task
+            for task in pending
+            if normalize_datetime(task["scheduled_at"]) == new_next
+        ]
+        assert len(queued_for_next) == 1
+        assert queued_for_next[0]["task_type"] == "llm_callback"
 
     @pytest.mark.asyncio
     async def test_after_task_execution_stops_at_count(
@@ -1064,7 +1068,6 @@ class TestScheduleAutomationsRepository:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Disable the automation
         await db_context.schedule_automations.update_enabled(
             automation_id,
             conversation_id,
@@ -1072,35 +1075,35 @@ class TestScheduleAutomationsRepository:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Get initial execution count
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
         assert automation["execution_count"] == 0
+        slot = automation["next_scheduled_at"]
+        assert slot is not None
 
-        # Simulate task execution
-        execution_time = datetime.now(UTC)
+        execution_time = slot + timedelta(minutes=5)
         await db_context.schedule_automations.after_task_execution(
             automation_id,
             execution_time,
             timezone=ZoneInfo("UTC"),
         )
 
-        # Verify stats WERE updated (execution happened so it should be recorded)
-        # but next task wasn't scheduled (automation is disabled)
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
-        assert automation["execution_count"] == 1  # Should be incremented
-        assert automation["last_execution_at"] is not None  # Should be set
+        assert automation["execution_count"] == 1
+        assert automation["last_execution_at"] == execution_time
+        assert automation["next_scheduled_at"] == slot
+        assert await _get_pending_tasks_for_automation(db_context, automation_id) == []
 
     @pytest.mark.asyncio
     async def test_create_with_timezone_interprets_rrule_in_local_time(
         self, db_context: Database
     ) -> None:
-        """Test that RRULE BYHOUR is interpreted in the given timezone, not UTC."""
+        """RRULE BYHOUR is read in the timezone passed in, whichever zone that is."""
         conversation_id = str(uuid.uuid4())
         sydney_tz = ZoneInfo("Australia/Sydney")
 
-        automation_id = await db_context.schedule_automations.create(
+        sydney_id = await db_context.schedule_automations.create(
             name="Sydney Morning",
             recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
             action_type="wake_llm",
@@ -1108,59 +1111,28 @@ class TestScheduleAutomationsRepository:
             conversation_id=conversation_id,
             timezone=sydney_tz,
         )
-
-        automation = await db_context.schedule_automations.get_by_id(automation_id)
-        assert automation is not None
-        next_at = automation["next_scheduled_at"]
-        assert next_at is not None
-
-        # The stored time is UTC. Convert to Sydney to verify it's 9:00 local.
-        next_sydney = next_at.astimezone(sydney_tz)
-        assert next_sydney.hour == 9
-        assert next_sydney.minute == 0
-
-    @pytest.mark.asyncio
-    async def test_timezone_differs_from_utc(self, db_context: Database) -> None:
-        """Test that timezone-aware scheduling differs from UTC-based scheduling."""
-        conversation_id = str(uuid.uuid4())
-        sydney_tz = ZoneInfo("Australia/Sydney")
-
-        # Create with Sydney timezone
-        auto_sydney = await db_context.schedule_automations.create(
-            name="Sydney Auto",
+        utc_id = await db_context.schedule_automations.create(
+            name="UTC Morning",
             recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
             action_type="wake_llm",
-            action_config={"context": "test"},
-            conversation_id=conversation_id,
-            timezone=sydney_tz,
-        )
-
-        # Create with UTC (no timezone)
-        auto_utc = await db_context.schedule_automations.create(
-            name="UTC Auto",
-            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
-            action_type="wake_llm",
-            action_config={"context": "test"},
+            action_config={"context": "Good morning UTC"},
             conversation_id=conversation_id,
             timezone=ZoneInfo("UTC"),
         )
 
-        sydney_auto = await db_context.schedule_automations.get_by_id(auto_sydney)
-        utc_auto = await db_context.schedule_automations.get_by_id(auto_utc)
+        sydney_auto = await db_context.schedule_automations.get_by_id(sydney_id)
+        utc_auto = await db_context.schedule_automations.get_by_id(utc_id)
         assert sydney_auto is not None
         assert utc_auto is not None
-
         sydney_next = sydney_auto["next_scheduled_at"]
         utc_next = utc_auto["next_scheduled_at"]
         assert sydney_next is not None
         assert utc_next is not None
 
-        # 9am Sydney and 9am UTC should schedule at different UTC instants.
-        assert sydney_next != utc_next
-
-        # Verify each is 9:00 in its respective timezone
-        assert sydney_next.astimezone(sydney_tz).hour == 9
-        assert utc_next.astimezone(ZoneInfo("UTC")).hour == 9
+        next_sydney = sydney_next.astimezone(sydney_tz)
+        assert (next_sydney.hour, next_sydney.minute) == (9, 0)
+        next_utc = utc_next.astimezone(UTC)
+        assert (next_utc.hour, next_utc.minute) == (9, 0)
 
     @pytest.mark.asyncio
     async def test_after_task_execution_with_timezone(
@@ -1215,10 +1187,14 @@ class TestScheduleAutomationsRepository:
             conversation_id=conversation_id,
             timezone=sydney_tz,
         )
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        anchor = automation["next_scheduled_at"]
+        assert anchor is not None
 
-        # Simulate execution with a naive datetime (no tzinfo).
-        # The code should treat it as UTC, not system-local time.
-        naive_execution = datetime(2026, 2, 28, 22, 5, 0)
+        # Read as UTC this is 18:00 Sydney on the anchor's day, after its slot;
+        # read as Sydney wall-clock time it would be before 09:00 that morning.
+        naive_execution = (anchor + timedelta(hours=9)).replace(tzinfo=None)
         await db_context.schedule_automations.after_task_execution(
             automation_id, naive_execution, timezone=sydney_tz
         )
@@ -1227,17 +1203,17 @@ class TestScheduleAutomationsRepository:
         assert automation is not None
         next_at = automation["next_scheduled_at"]
         assert next_at is not None
-
-        # Naive 22:05 UTC = March 1 09:05 AEDT, so next 9am Sydney is March 2
         next_sydney = next_at.astimezone(sydney_tz)
-        assert next_sydney.hour == 9
-        assert next_sydney.minute == 0
+        assert (next_sydney.hour, next_sydney.minute) == (9, 0)
+        assert next_sydney.date() == anchor.astimezone(sydney_tz).date() + timedelta(
+            days=1
+        )
 
     @pytest.mark.asyncio
     async def test_re_enable_recalculates_next_scheduled_at(
         self, db_context: Database
     ) -> None:
-        """Re-enabling an automation should recalculate next_scheduled_at from now."""
+        """Re-enabling after a long disable schedules the next slot after now."""
         conversation_id = str(uuid.uuid4())
         sydney_tz = ZoneInfo("Australia/Sydney")
 
@@ -1249,14 +1225,11 @@ class TestScheduleAutomationsRepository:
             conversation_id=conversation_id,
             timezone=sydney_tz,
         )
-
-        # Record original next_scheduled_at
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
-        original_next = automation["next_scheduled_at"]
-        assert original_next is not None
+        created_next = automation["next_scheduled_at"]
+        assert created_next is not None
 
-        # Disable
         result = await db_context.schedule_automations.update_enabled(
             automation_id,
             conversation_id,
@@ -1265,42 +1238,66 @@ class TestScheduleAutomationsRepository:
         )
         assert result is True
 
-        # Re-enable with timezone
+        # The disable lasted a month: the stored slot is long past.
+        stale_slot = (
+            created_next.astimezone(sydney_tz) - timedelta(days=30)
+        ).astimezone(UTC)
+        await db_context.execute(
+            update(schedule_automations_table)
+            .where(schedule_automations_table.c.id == automation_id)
+            .values(next_scheduled_at=stale_slot, recurrence_anchor=stale_slot)
+        )
+
+        before_enable = datetime.now(UTC)
         result = await db_context.schedule_automations.update_enabled(
             automation_id, conversation_id, enabled=True, timezone=sydney_tz
         )
         assert result is True
+        after_enable = datetime.now(UTC)
 
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is not None
         assert automation["enabled"] is True
         new_next = automation["next_scheduled_at"]
-        assert new_next is not None
+        assert new_next in {
+            _first_local_time_after(before_enable, sydney_tz, hour=9),
+            _first_local_time_after(after_enable, sydney_tz, hour=9),
+        }
+        pending = await _get_pending_tasks_for_automation(db_context, automation_id)
+        assert [normalize_datetime(task["scheduled_at"]) for task in pending] == [
+            new_next
+        ]
 
-        # The recalculated time should still be 9am Sydney
-        next_sydney = new_next.astimezone(sydney_tz)
-        assert next_sydney.hour == 9
-        assert next_sydney.minute == 0
+
+def _first_local_time_after(moment: datetime, tz: ZoneInfo, *, hour: int) -> datetime:
+    """The first ``hour``:00 wall-clock time in ``tz`` strictly after ``moment``, in UTC."""
+    local = moment.astimezone(tz)
+    slot = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if slot <= local:
+        slot = (local + timedelta(days=1)).replace(
+            hour=hour, minute=0, second=0, microsecond=0
+        )
+    return slot.astimezone(UTC)
 
 
 async def _get_pending_tasks_for_automation(
     db_context: Database, automation_id: int
 ) -> list[dict]:
-    """Helper to query pending tasks for a specific automation."""
-    stmt = select(tasks_table).where(
-        tasks_table.c.status == "pending",
-        tasks_table.c.task_id.like(f"sched_auto_{automation_id}_%"),
-    )
-    rows = await db_context.fetch_all(stmt)
-    return [dict(row) for row in rows]
+    """The automation's queued runs that are still pending."""
+    return [
+        task
+        for task in await _get_all_tasks_for_automation(db_context, automation_id)
+        if task["status"] == "pending"
+    ]
 
 
 async def _get_all_tasks_for_automation(
     db_context: Database, automation_id: int
 ) -> list[dict]:
-    """Helper to query all tasks (any status) for a specific automation."""
+    """The automation's runs in any status, excluding stats-advance bookkeeping."""
     stmt = select(tasks_table).where(
-        tasks_table.c.task_id.like(f"sched_auto_{automation_id}_%"),
+        tasks_table.c.payload["automation_id"].as_string() == str(automation_id),
+        tasks_table.c.task_type != SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
     )
     rows = await db_context.fetch_all(stmt)
     return [dict(row) for row in rows]
@@ -1703,15 +1700,14 @@ class TestTaskQueueSync:
         # Delete the automation
         await db_context.schedule_automations.delete(automation_id, conversation_id)
 
-        # Verify pending task was cancelled
         all_tasks = await _get_all_tasks_for_automation(db_context, automation_id)
-        assert all(t["status"] == "cancelled" for t in all_tasks)
+        assert [t["status"] for t in all_tasks] == ["cancelled"]
 
     @pytest.mark.asyncio
     async def test_update_recurrence_rule_reschedules_task(
         self, db_context: Database
     ) -> None:
-        """Updating recurrence_rule cancels old task and schedules new one."""
+        """Updating recurrence_rule leaves one queued run, at the new rule's time."""
         conversation_id = str(uuid.uuid4())
 
         automation_id = await db_context.schedule_automations.create(
@@ -1722,15 +1718,11 @@ class TestTaskQueueSync:
             conversation_id=conversation_id,
             timezone=ZoneInfo("UTC"),
         )
-
-        # Get initial pending task
         pending_before = await _get_pending_tasks_for_automation(
             db_context, automation_id
         )
         assert len(pending_before) == 1
-        old_task_id = pending_before[0]["task_id"]
 
-        # Update recurrence rule
         await db_context.schedule_automations.update(
             automation_id,
             conversation_id,
@@ -1738,46 +1730,54 @@ class TestTaskQueueSync:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Verify new pending task exists with a different task_id
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        next_at = automation["next_scheduled_at"]
+        assert next_at is not None
+        assert next_at.astimezone(UTC).hour == 15
         pending_after = await _get_pending_tasks_for_automation(
             db_context, automation_id
         )
-        assert len(pending_after) == 1
-        assert pending_after[0]["task_id"] != old_task_id
+        assert [normalize_datetime(t["scheduled_at"]) for t in pending_after] == [
+            next_at
+        ]
 
     @pytest.mark.asyncio
     async def test_enable_already_enabled_reschedules(
         self, db_context: Database
     ) -> None:
-        """Calling update_enabled(True) on an already-enabled automation reschedules."""
+        """Enabling an already-enabled automation leaves one run, at the next slot."""
         conversation_id = str(uuid.uuid4())
 
         automation_id = await db_context.schedule_automations.create(
             name="Daily Task",
-            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
             action_type="wake_llm",
             action_config={"context": "test"},
             conversation_id=conversation_id,
             timezone=ZoneInfo("UTC"),
         )
-
-        # Get initial task ID
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 1
-        original_task_id = pending[0]["task_id"]
 
-        # Update enabled to True (same as current) — reschedules to recalculate next_at
+        before_enable = datetime.now(UTC)
         await db_context.schedule_automations.update_enabled(
             automation_id,
             conversation_id,
             enabled=True,
             timezone=ZoneInfo("UTC"),
         )
+        after_enable = datetime.now(UTC)
 
-        # Verify a new task was scheduled (old one cancelled, new one created)
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        next_at = automation["next_scheduled_at"]
+        assert next_at in {
+            _first_local_time_after(before_enable, ZoneInfo("UTC"), hour=9),
+            _first_local_time_after(after_enable, ZoneInfo("UTC"), hour=9),
+        }
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
-        assert len(pending) == 1
-        assert pending[0]["task_id"] != original_task_id
+        assert [normalize_datetime(t["scheduled_at"]) for t in pending] == [next_at]
 
     @pytest.mark.asyncio
     async def test_update_description_no_task_sync(self, db_context: Database) -> None:
@@ -1879,9 +1879,7 @@ class TestTaskQueueSync:
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 1
         assert pending[0]["payload"]["task_name"] == "Old Script Name"
-        old_task_id = pending[0]["task_id"]
 
-        # Update name only
         await db_context.schedule_automations.update(
             automation_id,
             conversation_id,
@@ -1889,10 +1887,8 @@ class TestTaskQueueSync:
             timezone=ZoneInfo("UTC"),
         )
 
-        # Verify task was rescheduled with new name
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 1
-        assert pending[0]["task_id"] != old_task_id
         assert pending[0]["payload"]["task_name"] == "New Script Name"
 
     @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
@@ -20,11 +20,10 @@ from family_assistant.events.storage import EventStorage
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import Database
-from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.events import EventSourceType, recent_events_table
 from family_assistant.storage.message_history import message_history_table
-from family_assistant.storage.tasks import tasks_table
-from family_assistant.storage.types import EventListenerDict
+from family_assistant.storage.repositories.tasks import TasksRepository
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
 from family_assistant.tools import (
     CompositeToolsProvider,
@@ -204,21 +203,14 @@ async def test_end_to_end_event_listener_wakes_llm(
         },
     )
 
-    # Step 2: Create event processor and refresh cache
+    # Step 2: Create and start the event processor
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-
-    processor._running = True
-    await processor._refresh_listener_cache()
-
-    # Verify listener is in cache
-    listeners = processor._listener_cache.get("home_assistant", [])
-    assert len(listeners) == 1
-    assert listeners[0]["name"] == "Motion Light Automation"
+    await processor.start()
 
     # Step 3: Process a motion detection event
     motion_event = {
@@ -270,9 +262,8 @@ async def test_end_to_end_event_listener_wakes_llm(
         )
     )
 
-    # There should be at least one llm_callback task
-    assert len(tasks_result) > 0
-    callback_task = tasks_result[0]  # Get the first one
+    assert len(tasks_result) == 1
+    callback_task = tasks_result[0]
 
     # Verify task payload
     # Handle both string (SQLite) and dict (PostgreSQL) formats
@@ -422,7 +413,7 @@ async def test_failing_listener_undoes_the_ones_that_already_ran(
     fire a second time.
     """
     db_ctx = Database(db_engine)
-    for name in ("Succeeding alert", "Failing alert"):
+    for name in ("First back door alert", "Second back door alert"):
         await db_ctx.execute(
             text("""INSERT INTO event_listeners
                      (name, match_conditions, source_id, action_type, enabled,
@@ -441,20 +432,40 @@ async def test_failing_listener_undoes_the_ones_that_already_ran(
             },
         )
 
-    real_execute = EventProcessor._execute_action_in_context
+    real_enqueue = TasksRepository.enqueue
+    enqueued_task_ids: list[str] = []
 
-    async def fail_the_second(
-        self: EventProcessor,
-        db_ctx: DatabaseTransaction,
-        listener: EventListenerDict,
-        # ast-grep-ignore: no-dict-any - mirrors the patched method's own signature for arbitrary event payloads
-        event_data: dict[str, Any],
+    async def fail_the_second_enqueue(
+        repository: TasksRepository,
+        task_id: str,
+        task_type: str,
+        # ast-grep-ignore: no-dict-any - mirrors the patched method's own signature for per-task-type payloads
+        payload: Mapping[str, Any] | None = None,
+        scheduled_at: datetime | None = None,
+        max_retries_override: int | None = None,
+        recurrence_rule: str | None = None,
+        original_task_id: str | None = None,
+        only_if_absent: bool = False,
+        *,
+        priority: TaskPriority,
     ) -> None:
-        if listener["name"] == "Failing alert":
+        enqueued_task_ids.append(task_id)
+        if len(enqueued_task_ids) == 2:
             raise RuntimeError("action enqueue unavailable")
-        await real_execute(self, db_ctx, listener, event_data)
+        await real_enqueue(
+            repository,
+            task_id,
+            task_type,
+            payload,
+            scheduled_at,
+            max_retries_override,
+            recurrence_rule,
+            original_task_id,
+            only_if_absent,
+            priority=priority,
+        )
 
-    monkeypatch.setattr(EventProcessor, "_execute_action_in_context", fail_the_second)
+    monkeypatch.setattr(TasksRepository, "enqueue", fail_the_second_enqueue)
 
     processor = EventProcessor(
         sources={},
@@ -462,8 +473,7 @@ async def test_failing_listener_undoes_the_ones_that_already_ran(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     with pytest.raises(RuntimeError, match="action enqueue unavailable"):
         await processor.process_event(
@@ -475,7 +485,7 @@ async def test_failing_listener_undoes_the_ones_that_already_ran(
     queued = await db_ctx.fetch_all(
         select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
     )
-    assert queued == [], "the succeeding listener's action must not survive"
+    assert queued == [], "the first listener's action must not survive"
     assert await db_ctx.fetch_all(select(recent_events_table)) == []
 
 
@@ -520,8 +530,7 @@ async def test_a_failed_event_record_does_not_disturb_the_listeners(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     await processor.process_event("home_assistant", {"entity_id": "binary_sensor.gate"})
 
@@ -573,8 +582,7 @@ async def test_two_listeners_on_one_event_both_enqueue_their_action(
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     await processor.process_event(
         "home_assistant", {"entity_id": "binary_sensor.side_door"}
@@ -626,8 +634,7 @@ async def test_one_time_listener_disables_after_trigger(
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
-    processor._running = True
-    await processor._refresh_listener_cache()
+    await processor.start()
 
     door_event = {
         "entity_id": "binary_sensor.front_door",
