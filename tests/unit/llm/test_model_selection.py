@@ -395,3 +395,21 @@ def test_every_runnable_tier_is_listed_once() -> None:
         "deep",
         "gpt_6_sol",
     ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"tier": "deep", "source": ["model"]}, id="list-source"),
+        pytest.param(
+            {"tier": "deep", "source": "auto", "routing_outcome": {"x": 1}},
+            id="object-outcome",
+        ),
+    ],
+)
+def test_a_persisted_selection_with_an_unhashable_field_is_refused(
+    payload: dict[str, object],
+) -> None:
+    """Refused as malformed, not by a TypeError from the membership check."""
+    with pytest.raises(ValueError, match="unknown"):
+        ResolvedModelSelection.from_json(payload)

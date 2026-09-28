@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Literal, Self, get_args
+from typing import TYPE_CHECKING, Literal, Self, cast, get_args
 
 if TYPE_CHECKING:
     from family_assistant.config_models import ModelTierConfig, ServiceProfile
@@ -343,7 +343,7 @@ class ResolvedModelSelection:
             msg = f"Persisted model selection is {type(data).__name__}, not an object."
             raise ValueError(msg)
         source = data.get("source")
-        if source not in _PERSISTABLE_SOURCES:
+        if not isinstance(source, str) or source not in _PERSISTABLE_SOURCES:
             msg = f"Persisted model selection has unknown source {source!r}."
             raise ValueError(msg)
         tier = data.get("tier")
@@ -354,7 +354,9 @@ class ResolvedModelSelection:
             msg = "Persisted model selection has a non-string tier."
             raise ValueError(msg)
         outcome = data.get("routing_outcome")
-        if outcome is not None and outcome not in ROUTING_OUTCOMES:
+        if outcome is not None and (
+            not isinstance(outcome, str) or outcome not in ROUTING_OUTCOMES
+        ):
             msg = f"Persisted model selection has unknown routing outcome {outcome!r}."
             raise ValueError(msg)
         would_choose = data.get("routing_would_choose")
@@ -367,8 +369,10 @@ class ResolvedModelSelection:
         return cls(
             tier=tier,
             requested=requested,
-            source=source,
-            routing_outcome=outcome,
+            # Membership in the derived sets was checked above; the checker
+            # cannot carry that back to the Literal types.
+            source=cast("SelectionSource", source),
+            routing_outcome=cast("RoutingOutcome | None", outcome),
             routing_would_choose=would_choose,
             classifier_model=classifier_model,
             frozen=True,
