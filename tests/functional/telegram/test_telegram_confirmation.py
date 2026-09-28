@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import pytest
 import telegramify_markdown  # type: ignore[import-untyped]  # No type stubs available
@@ -42,8 +42,8 @@ from family_assistant.telegram.ui import (
 from family_assistant.tools import PolicyEngine, ToolPolicyConfig, ToolPolicyDecision
 from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
     ToolProviderComposite,
-    ToolProviderWrapper,
     ToolsProvider,
     find_provider_by_type,
 )
@@ -754,20 +754,26 @@ async def test_durable_telegram_external_approval_timeout_waits_for_execution() 
     assert outcome.result == "executed:external"
 
 
+class _MutableToolsProviderWrapper(Protocol):
+    wrapped_provider: ToolsProvider
+
+
 def _replace_wrapped_provider(
-    root: ToolsProvider, old: ToolsProvider, new: ToolsProvider
+    root: ToolsProvider,
+    old: PolicyEnforcingToolsProvider,
+    new: PolicyEnforcingToolsProvider,
 ) -> bool:
     """Swap `old` for `new` wherever it is wrapped inside `root`.
 
-    Walks wrapper and composite providers via their public surface
-    (`wrapped_provider` / `get_providers()`) rather than any provider's
-    private state. Returns whether a replacement was made.
+    Walks the mutable wrapper types and composite providers via their
+    public surface. Returns whether a replacement was made.
     """
     if root is old:
         return False
-    if isinstance(root, ToolProviderWrapper):
+    if isinstance(root, (TaintTrackingToolsProvider, PolicyEnforcingToolsProvider)):
         if root.wrapped_provider is old:
-            root.wrapped_provider = new  # type: ignore[misc]
+            mutable_wrapper = cast("_MutableToolsProviderWrapper", root)
+            mutable_wrapper.wrapped_provider = new
             return True
         return _replace_wrapped_provider(root.wrapped_provider, old, new)
     if isinstance(root, ToolProviderComposite):

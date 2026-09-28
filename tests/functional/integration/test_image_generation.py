@@ -192,7 +192,7 @@ async def test_generate_image_forwards_style_to_backend(style: str) -> None:
     mock_context = MockExecutionContext(backend=backend)
 
     result = await generate_image_tool(
-        mock_context,  # type: ignore[arg-type]
+        mock_context,  # type: ignore[arg-type]  # Image tool only needs the injected backend; this fake omits unrelated context fields.
         prompt="a landscape with mountains",
         style=style,
     )
@@ -208,7 +208,7 @@ async def test_generate_image_reports_backend_failure_without_attachment() -> No
     mock_context = MockExecutionContext(backend=QuotaExhaustedImageBackend())
 
     result = await generate_image_tool(
-        mock_context,  # type: ignore[arg-type]
+        mock_context,  # type: ignore[arg-type]  # Image tool only needs the injected backend; this fake omits unrelated context fields.
         prompt="a red circle",
         style="auto",
     )
