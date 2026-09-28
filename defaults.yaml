@@ -247,18 +247,19 @@ model_tiers:
         model: "claude-opus-5-5"
   claude_fable_5_1:
     label: "Claude Fable 5.1"
-    # Rejects a forced tool choice, which attachment selection sends, so a
-    # request carrying attachments for it to pick from fails visibly here.
     description: "Anthropic's strongest model, at its default effort."
     chain:
       - provider: "anthropic"
         model: "claude-fable-5-1"
-  gemini_3_8_flash:
-    label: "Gemini 3.8 Flash"
-    description: "Google's fast model; the only one that reads audio and video."
+  kimi_k3:
+    label: "Kimi K3"
+    description: "Moonshot AI's open-weight model, served through OpenRouter."
     chain:
-      - provider: "google"
-        model: "gemini-3.8-flash"
+      # The `openrouter/` prefix routes the request to OpenRouter with
+      # OPENROUTER_API_KEY; OpenRouter itself knows the model as
+      # `moonshotai/kimi-k3`, which is what goes on the wire.
+      - provider: "openai"
+        model: "openrouter/moonshotai/kimi-k3"
 
 # The Auto classifier: a cheap call before the turn that picks which of a
 # profile's `auto_model_tiers` the request deserves. It runs only for profiles
@@ -1093,7 +1094,7 @@ service_profiles:
     # Specific models another profile may ask for by name -- for comparing
     # independent answers to one question. Auto never routes to these and the
     # tier picker does not list them.
-    delegation_model_tiers: ["gpt_6_sol", "claude_opus_5_5", "claude_fable_5_1", "gemini_3_8_flash"]
+    delegation_model_tiers: ["gpt_6_sol", "claude_opus_5_5", "claude_fable_5_1", "kimi_k3"]
     auto_routing_guidance: |
       Prefer standard for routine conversation, retrieval and straightforward
       tool use. Choose deep where substantial ambiguity, multi-stage reasoning,

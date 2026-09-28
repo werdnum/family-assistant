@@ -139,6 +139,10 @@ class OpenAIClient(BaseLLMClient):
             str(self.client.base_url).rstrip("/") == _OPENAI_API_BASE_URL
         )
         self.model = model
+        # `openrouter/` is this application's routing prefix -- it selects the
+        # OpenRouter base URL and key, and keys `llm_parameters` -- not part of
+        # the id OpenRouter knows the model by, so it is dropped on the wire.
+        self._api_model = model.removeprefix("openrouter/")
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
         logger.info(
@@ -347,7 +351,7 @@ class OpenAIClient(BaseLLMClient):
                 model=self.model,
             )
         params: dict[str, object] = {
-            "model": self.model,
+            "model": self._api_model,
             "input": self._messages_to_responses_input(messages),
             "include": ["reasoning.encrypted_content"],
             "stream": stream,
@@ -971,7 +975,7 @@ class OpenAIClient(BaseLLMClient):
 
         # Build parameters with defaults, then model-specific overrides
         params = {
-            "model": self.model,
+            "model": self._api_model,
             "messages": api_message_dicts,
             **self.default_kwargs,
             **self._get_model_specific_params(self.model),
@@ -1039,7 +1043,7 @@ class OpenAIClient(BaseLLMClient):
             self._to_chat_completions_message(msg) for msg in processed_messages
         ]
         base_params = {
-            "model": self.model,
+            "model": self._api_model,
             "messages": api_message_dicts,
             **self.default_kwargs,
             **self._get_model_specific_params(self.model),
@@ -1135,7 +1139,7 @@ class OpenAIClient(BaseLLMClient):
             self._to_chat_completions_message(msg) for msg in processed_messages
         ]
         base_params = {
-            "model": self.model,
+            "model": self._api_model,
             "messages": api_message_dicts,
             "response_format": {"type": "json_object"},
             **self.default_kwargs,
@@ -1346,7 +1350,7 @@ class OpenAIClient(BaseLLMClient):
 
             # Build parameters with defaults, then model-specific overrides
             params = {
-                "model": self.model,
+                "model": self._api_model,
                 "messages": api_message_dicts,
                 "stream": True,  # Enable streaming
                 # Streaming responses carry no usage unless it is requested, so

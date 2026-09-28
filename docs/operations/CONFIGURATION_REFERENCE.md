@@ -744,7 +744,9 @@ OpenRouter API key for accessing multiple LLM providers.
 | Sensitive | **Yes**                     |
 | Example   | `sk-or-v1-...`              |
 
-Used when model names start with `openrouter/`.
+Used when model names start with `openrouter/`. The shipped `kimi_k3` delegation preset is one, and
+every tier a profile may run on gets its client built at startup, so a deployment running the
+shipped `default_assistant` needs this key or must drop `kimi_k3` from its `delegation_model_tiers`.
 
 ______________________________________________________________________
 
@@ -942,9 +944,9 @@ The distinction is who authorized the spend. An authenticated person choosing Ma
 request *is* the authorization. A model choosing it is not, which is why the shipped
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
 automatically. The shipped `default_assistant` also lists four presets in `delegation_model_tiers` —
-`gpt_6_sol`, `claude_opus_5_5`, `claude_fable_5_1` and `gemini_3_8_flash` — which, being listed
-there, a delegating model may name without a confirmation. Adding a preset is a `model_tiers` entry
-plus a name in that list.
+`gpt_6_sol`, `claude_opus_5_5`, `claude_fable_5_1` and `kimi_k3` — which, being listed there, a
+delegating model may name without a confirmation. Adding a preset is a `model_tiers` entry plus a
+name in that list.
 
 #### Selecting a tier per request
 

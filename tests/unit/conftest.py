@@ -26,10 +26,15 @@ def provider_api_keys_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
     """Credentials for every provider the shipped configuration names.
 
     Constructing a client reads its provider's key from the environment, so a
-    test that builds real clients needs all three present. They are never sent
-    anywhere: nothing here issues a request.
+    test that builds real clients needs all of them present. They are never
+    sent anywhere: nothing here issues a request.
     """
-    for env_var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+    for env_var in (
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
         monkeypatch.setenv(env_var, f"fake-{env_var.lower()}-for-tests")
 
 

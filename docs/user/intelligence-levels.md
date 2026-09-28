@@ -77,8 +77,8 @@ there is refused with an explanation rather than silently ignored.
 ## Asking specific models
 
 Sometimes you want a particular model's view rather than a level, or several models' views side by
-side: ask the same question of GPT, Claude and Gemini and compare what comes back. Ask the Assistant
-in plain words ("put this to GPT-6 Sol, Claude Fable and Gemini and compare their answers"). It
+side: ask the same question of GPT, Claude and Kimi and compare what comes back. Ask the Assistant
+in plain words ("put this to GPT-6 Sol, Claude Opus and Kimi K3 and compare their answers"). It
 hands the question to a copy of itself running on each model you name, so every answer comes from
 the model named, and reports which answer came from which. If one of those models is unavailable,
 that answer fails rather than quietly coming from a different model.
