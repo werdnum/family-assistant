@@ -146,6 +146,7 @@ def validate_profile_model_tier(
     tier_name = processing_config.model_tier
     allowed = profile_conf.allowed_model_tiers
     auto = profile_conf.auto_model_tiers
+    delegation = profile_conf.delegation_model_tiers
 
     # Once, before the branches: whether Auto has anything to choose from is
     # asked of the same two fields either way, and stating it on each exit is
@@ -156,6 +157,7 @@ def validate_profile_model_tier(
         for field, value in (
             ("allowed_model_tiers", allowed),
             ("auto_model_tiers", auto),
+            ("delegation_model_tiers", delegation),
         ):
             if value is not None:
                 msg = (
@@ -177,7 +179,11 @@ def validate_profile_model_tier(
 
     _reject_tier_on_pinned_runtime(profile_conf, tier_name, tier)
 
-    for field, value in (("allowed_model_tiers", allowed), ("auto_model_tiers", auto)):
+    for field, value in (
+        ("allowed_model_tiers", allowed),
+        ("auto_model_tiers", auto),
+        ("delegation_model_tiers", delegation),
+    ):
         if value is None:
             continue
         unknown = sorted(set(value) - set(model_tiers))
@@ -194,8 +200,23 @@ def validate_profile_model_tier(
     # named -- checking only the default would let an alternate reach a
     # server-side agent runtime that silently drops the profile's tools and
     # history.
-    for selectable in sorted({*(allowed or ()), *(auto or ())} - {tier_name}):
+    for selectable in sorted(
+        {*(allowed or ()), *(auto or ()), *(delegation or ())} - {tier_name}
+    ):
         _reject_interactions_agent_tier(profile_id, selectable, model_tiers[selectable])
+
+    # A delegation preset promises "this model's answer or a visible failure",
+    # which a fallback entry would quietly break: the answer would come from
+    # the fallback while the run still names the preset.
+    for preset in delegation or ():
+        if len(model_tiers[preset].chain) != 1:
+            msg = (
+                f"Profile '{profile_id}' lists model tier '{preset}' in "
+                "delegation_model_tiers, but its chain has a fallback. A "
+                "delegation preset names exactly one model, so a delegation "
+                "asking for it is never answered by another."
+            )
+            raise ValueError(msg)
 
     if allowed is not None and tier_name not in allowed:
         msg = (

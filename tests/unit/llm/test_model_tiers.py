@@ -42,12 +42,14 @@ def _profile(
     allowed_model_tiers: list[str] | None = None,
     auto_model_tiers: list[str] | None = None,
     remote_a2a: RemoteA2AConfig | None = None,
+    delegation_model_tiers: list[str] | None = None,
 ) -> ServiceProfile:
     return ServiceProfile(
         id=profile_id,
         processing_config=processing_config,
         allowed_model_tiers=allowed_model_tiers,
         auto_model_tiers=auto_model_tiers,
+        delegation_model_tiers=delegation_model_tiers,
         remote_a2a=remote_a2a,
     )
 
@@ -331,6 +333,80 @@ def test_a_selectable_tier_naming_an_interactions_agent_model_is_rejected() -> N
     )
 
     with pytest.raises(ValueError, match="'research'.*Interactions API agent model"):
+        validate_profile_model_tier(profile, tiers)
+
+
+def test_a_delegation_preset_naming_an_interactions_agent_model_is_rejected() -> None:
+    """A delegation preset gets a client like any other runnable tier."""
+    tiers = {
+        "standard": ModelTierConfig(
+            chain=[RetryModelConfig(provider="openai", model="gpt-5.6-terra")]
+        ),
+        "research": ModelTierConfig(
+            chain=[
+                RetryModelConfig(
+                    provider="google", model="deep-research-preview-04-2026"
+                )
+            ]
+        ),
+    }
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        delegation_model_tiers=["research"],
+    )
+
+    with pytest.raises(ValueError, match="'research'.*Interactions API agent model"):
+        validate_profile_model_tier(profile, tiers)
+
+
+def test_delegation_model_tiers_naming_an_unknown_tier_is_rejected() -> None:
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        delegation_model_tiers=["gpt_7"],
+    )
+
+    with pytest.raises(ValueError, match="unknown model tier.*delegation_model_tiers"):
+        validate_profile_model_tier(profile, TIERS)
+
+
+def test_delegation_model_tiers_without_a_tier_is_rejected() -> None:
+    profile = _profile(
+        ProcessingConfig(llm_model="claude-opus-5"),
+        delegation_model_tiers=["deep"],
+    )
+
+    with pytest.raises(ValueError, match="delegation_model_tiers without a model_tier"):
+        validate_profile_model_tier(profile, TIERS)
+
+
+def test_delegation_model_tiers_need_not_be_in_the_allowed_list() -> None:
+    """Presets are kept off the tier picker, so they are not selectable tiers."""
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        allowed_model_tiers=["standard"],
+        delegation_model_tiers=["deep"],
+    )
+
+    assert validate_profile_model_tier(profile, TIERS) is TIERS["standard"]
+
+
+def test_a_delegation_preset_with_a_fallback_is_rejected() -> None:
+    """A preset's answer must come from the model it names, never a stand-in."""
+    tiers = {
+        **TIERS,
+        "deep_with_fallback": ModelTierConfig(
+            chain=[
+                RetryModelConfig(provider="openai", model="gpt-5.6-sol"),
+                RetryModelConfig(provider="anthropic", model="claude-fable-5"),
+            ]
+        ),
+    }
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        delegation_model_tiers=["deep_with_fallback"],
+    )
+
+    with pytest.raises(ValueError, match="'deep_with_fallback'.*has a fallback"):
         validate_profile_model_tier(profile, tiers)
 
 

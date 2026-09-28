@@ -717,6 +717,13 @@ class ServiceProfile(BaseModel):
     # authorized by `allowed_model_tiers` instead: it is the user's own choice
     # to spend more, where this is authority handed to a model.
     auto_model_tiers: list[str] | None = None
+    # Tiers a delegating model may name for this profile *in addition to*
+    # `auto_model_tiers`, without Auto ever routing to them and without the
+    # tier picker listing them. This is where exact-model presets live -- a
+    # single-model tier such as `opus` -- so another profile can ask for one
+    # specific model (a "council" fanning a question out to several) while
+    # everyday routing and the product's tier vocabulary stay as they are.
+    delegation_model_tiers: list[str] | None = None
     # Where this profile's routing threshold sits, in the classifier's own
     # words. Thresholds are contextual to the agent -- a diagnostic profile
     # reaches for stronger reasoning more readily than a chat assistant -- so
@@ -740,6 +747,7 @@ class DefaultProfileSettings(BaseModel):
     visibility_grants: list[str] = Field(default_factory=list)
     allowed_model_tiers: list[str] | None = None
     auto_model_tiers: list[str] | None = None
+    delegation_model_tiers: list[str] | None = None
     auto_routing_guidance: str | None = None
 
 

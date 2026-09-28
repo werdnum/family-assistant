@@ -2692,6 +2692,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "remote_a2a",
         "allowed_model_tiers",
         "auto_model_tiers",
+        "delegation_model_tiers",
         "auto_routing_guidance",
         # Set from the profile definition directly rather than merged.
         "id",

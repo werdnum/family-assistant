@@ -357,9 +357,22 @@ Auto then enables for the Assistant and Engineer first; pinned profiles stay out
 - **Mid-run model switching.** One recipe per turn is the conservative baseline; hybrid patterns are
   later, explicit work.
 - **A raw model picker in ordinary UX.** Provider churn is an operator concern; tiers keep the user
-  concept stable while operators remap underneath. Exact-model presets ("specifically Fable") only
-  if real need emerges, and never as profiles.
+  concept stable while operators remap underneath. Exact-model presets exist for delegation only
+  (see below), never on the picker and never as profiles.
 - **Difficulty escalation via retry.** Rejected above.
+
+## Exact-model presets for delegation
+
+A "council" — one question put to several specific models, answers compared — needs a delegating
+model to name a model, not a capability level. A preset is an ordinary tier holding one model and no
+fallback, so naming it yields that model's answer or a visible failure, never a stand-in's answer
+under its name. A profile admits presets through a third list, `delegation_model_tiers`, rather than
+`auto_model_tiers`, because that list is also the Auto classifier's range: presets are not points on
+a capability scale, and the classifier must not route everyday turns to them. They are kept off the
+intelligence control for the same reason. A person may still name one through the API, preserving
+the rule that a model cannot reach a tier a person would be refused. Presets reuse the tier
+admission gate, client construction and persisted envelope unchanged; the delegating model sees them
+listed beside the target, separately from its tiers, and delegation status reports each run's tier.
 
 ## Deliberate simplifications
 
@@ -367,6 +380,9 @@ Accepted residual behavior, recorded so review does not re-litigate it:
 
 - Cross-model `resume_delegation_id` keeps current semantics: resuming under a different tier
   replays history across providers exactly as a fallback turn does today. Known limitation.
+- Delegation results do not report the provider's served model. With presets carrying no fallback,
+  the tier a council requested already identifies the model that answered; a fallback tier's served
+  model stays in the run's own message records.
 - Tiers do not carry `max_iterations`; "deep thinking" and "long-running" remain separately
   configured, on the profile.
 - `research`/`research_max` stay as-is; deep-research models are pinned by design.

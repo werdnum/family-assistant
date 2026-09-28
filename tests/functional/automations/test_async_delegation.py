@@ -876,6 +876,12 @@ async def test_the_worker_runs_a_queued_delegation_at_its_persisted_tier(
         tier="deep", requested="deep", source="model", frozen=True
     )
 
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_tiered")
+    assert run is not None
+    # Shown to the caller, so answers fanned out at several models can be told
+    # apart.
+    assert db_context.delegation_runs.summarize_run(run).get("model_tier") == "deep"
+
 
 @pytest.mark.asyncio
 async def test_a_run_queued_before_tiers_existed_still_runs(
@@ -994,6 +1000,8 @@ async def test_a_malformed_persisted_envelope_fails_the_run(
     assert run is not None
     assert run["status"] == "failed"
     assert run["error"] is not None
+    # A listing still renders the run, without a tier it cannot name.
+    assert "model_tier" not in db_context.delegation_runs.summarize_run(run)
 
 
 @pytest.mark.asyncio

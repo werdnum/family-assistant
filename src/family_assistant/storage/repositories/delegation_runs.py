@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, NotRequired, Required, TypedDict, cast
 from sqlalchemy import insert, or_, select, true, update
 from sqlalchemy.sql import functions as func
 
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.storage.delegation_runs import (
     RECONCILABLE_FAILURE_KINDS,
     TERMINAL_DELEGATION_STATUSES,
@@ -128,6 +129,10 @@ class DelegationRunSummary(TypedDict):
     started_at: str | None
     completed_at: str | None
     handed_off_at: str | None
+    # The tier the run was resolved to, where it has one, so a caller that
+    # fanned one question out at several specific models can tell which
+    # answer came from which.
+    model_tier: NotRequired[str]
     result_text: NotRequired[str | None]
     error: NotRequired[str | None]
     # Present only on a run recovered from a late provider success, so a
@@ -805,6 +810,21 @@ class DelegationRunsRepository(BaseRepository):
         row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
+    @staticmethod
+    def _summary_model_tier(run: DelegationRunDict) -> str | None:
+        """The tier to show for *run*, if its envelope names one.
+
+        A malformed envelope is not raised here: the worker already fails the
+        run over it, with the reason in ``error``, and one bad row must not
+        take the whole listing down with it.
+        """
+        if run["model_selection_json"] is None:
+            return None
+        try:
+            return ResolvedModelSelection.from_json(run["model_selection_json"]).tier
+        except ValueError:
+            return None
+
     def summarize_run(self, run: DelegationRunDict) -> DelegationRunSummary:
         """Return a compact summary suitable for tool callers."""
         summary = DelegationRunSummary(
@@ -820,6 +840,8 @@ class DelegationRunsRepository(BaseRepository):
             completed_at=self._to_iso(run["completed_at"]),
             handed_off_at=self._to_iso(run["handed_off_at"]),
         )
+        if (tier := self._summary_model_tier(run)) is not None:
+            summary["model_tier"] = tier
         if run["status"] == "completed":
             summary["result_text"] = run["result_text"]
             late_recovered_at = self._to_iso(run["late_recovered_at"])

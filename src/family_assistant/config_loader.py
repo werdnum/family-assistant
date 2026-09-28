@@ -772,6 +772,7 @@ PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
 PROFILE_TIER_ELIGIBILITY_KEYS: tuple[str, ...] = (
     "allowed_model_tiers",
     "auto_model_tiers",
+    "delegation_model_tiers",
 )
 
 # Top-level profile keys holding a list that a profile replaces wholesale rather

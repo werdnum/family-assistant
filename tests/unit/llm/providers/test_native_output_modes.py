@@ -80,6 +80,32 @@ async def test_openai_generate_json_uses_native_json_mode() -> None:
 
 @pytest.mark.no_db
 @pytest.mark.asyncio
+async def test_openai_drops_the_openrouter_routing_prefix_on_the_wire() -> None:
+    """`openrouter/` picks the endpoint here; OpenRouter itself knows the model
+    as `vendor/model`, and rejects an id carrying our prefix."""
+    client = OpenAIClient(
+        api_key="test",
+        model="openrouter/moonshotai/kimi-k3",
+        base_url="https://openrouter.ai/api/v1",
+    )
+    response = MagicMock()
+    response.choices = [MagicMock()]
+    response.choices[0].message = MagicMock(content='{"answer":"ok"}')
+
+    with patch.object(
+        client.client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = response
+
+        await client.generate_json(messages=[UserMessage(content="Return JSON")])
+
+    assert mock_create.await_args is not None
+    assert mock_create.await_args.kwargs["model"] == "moonshotai/kimi-k3"
+    assert client.model == "openrouter/moonshotai/kimi-k3"
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
 async def test_anthropic_generate_structured_uses_native_tool_schema() -> None:
     """Anthropic structured output asks for its native output tool."""
     client = AnthropicClient(api_key="test", model="claude-sonnet-4-5")

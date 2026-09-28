@@ -74,6 +74,17 @@ Every other assistant runs on one fixed level: some because what they do is tied
 one level is the right one for the job. Those show no intelligence control, and asking for a level
 there is refused with an explanation rather than silently ignored.
 
+## Asking specific models
+
+Sometimes you want a particular model's view rather than a level, or several models' views side by
+side: ask the same question of GPT, Claude and Kimi and compare what comes back. Ask the Assistant
+in plain words ("put this to GPT-6 Sol, Claude Opus and Kimi K3 and compare their answers"). It
+hands the question to a copy of itself running on each model you name, so every answer comes from
+the model named, and reports which answer came from which. If one of those models is unavailable,
+that answer fails rather than quietly coming from a different model.
+
+The models on offer are the ones your household's setup lists; these are not on the level picker.
+
 ## Seeing what a reply ran at
 
 In the web app and the iOS app, a reply carries the level it ran at beside the name of the assistant
