@@ -385,10 +385,37 @@ class TestTokenSession:
             yield client
 
     @pytest.mark.asyncio
-    async def test_token_session_sets_cookie(self, session_client: AsyncClient) -> None:
-        response = await session_client.post("/api/auth/token-session")
+    async def test_token_session_cookie_authenticates_without_bearer(
+        self,
+        app_fixture: FastAPI,
+        session_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(app_fixture.state.auth_service, "auth_enabled", True)
+        code_verifier, code_challenge = _create_pkce_pair()
+        exchange = await session_client.post(
+            "/api/auth/exchange",
+            json={
+                "code": _seed_auth_code(code_challenge),
+                "code_verifier": code_verifier,
+            },
+        )
+        assert exchange.status_code == 200
+
+        before = await session_client.get("/api/auth/me")
+        response = await session_client.post(
+            "/api/auth/token-session",
+            headers={"Authorization": f"Bearer {exchange.json()['api_token']}"},
+        )
+        after = await session_client.get("/api/auth/me")
+
+        assert before.status_code == 401
         assert response.status_code == 200
-        assert response.json()["ok"] is True
+        assert response.json() == {"ok": True}
+        assert "session=" in response.headers["set-cookie"]
+        assert after.status_code == 200
+        assert after.json()["source"] == "app_token_session"
+        assert after.json()["raw_user_identifier"] == "testuser@example.com"
 
 
 class TestAppleAppSiteAssociation:

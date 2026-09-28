@@ -1,15 +1,14 @@
-"""Integration test for thought signature persistence through HTTP API.
+"""Replay-backed HTTP tests for persisted Gemini thought signatures and turns."""
 
-This test verifies that thought signatures are preserved through the entire
-user journey via the HTTP API using Gemini SDK record/replay.
-"""
-
+import asyncio
+import json
 import os
+import re
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,6 +23,8 @@ from family_assistant.context_providers import (
     NotesContextProvider,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.google_types import GeminiProviderMetadata
+from family_assistant.llm.messages import AssistantMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -56,6 +57,26 @@ _REPLAY_REGISTRATIONS = [
 GEMINI_REPLAY_DIR = "tests/cassettes/gemini"
 
 
+class _SSEToolFunction(TypedDict):
+    name: str
+
+
+class _SSEToolCall(TypedDict):
+    function: _SSEToolFunction
+
+
+class _SSEData(TypedDict, total=False):
+    turn_id: str
+    status: str
+    content: str
+    tool_call: _SSEToolCall
+
+
+class _SSEEvent(TypedDict):
+    type: str
+    data: _SSEData
+
+
 def _replay_file_path(module_name: str, test_name: str) -> Path:
     return Path(GEMINI_REPLAY_DIR) / module_name / test_name / "mldev.json"
 
@@ -66,7 +87,7 @@ def gemini_http_api_debug_config(
 ) -> dict[str, str | None]:
     """Build Google SDK replay config for HTTP API tests."""
     module_name = request.node.module.__name__.replace("tests.", "")
-    test_name = request.node.name
+    test_name = re.sub(r"\[\d+-(sqlite|postgres)\]$", r"[\1]", request.node.name)
     replay_path = _replay_file_path(module_name, test_name)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
@@ -199,35 +220,66 @@ async def llm_integration_client(
         yield client
 
 
+async def _collect_turn_events(
+    client: AsyncClient, conversation_id: str, from_seq: int, turn_id: str
+) -> list[_SSEEvent]:
+    events: list[_SSEEvent] = []
+    event_type: str | None = None
+    async with asyncio.timeout(30):
+        async with client.stream(
+            "GET",
+            f"/api/v1/chat/conversations/{conversation_id}/stream",
+            params={"from_seq": from_seq},
+        ) as response:
+            assert response.status_code == 200, await response.aread()
+            async for line in response.aiter_lines():
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:") and event_type:
+                    event = _SSEEvent(
+                        type=event_type, data=cast("_SSEData", json.loads(line[5:]))
+                    )
+                    events.append(event)
+                    if (
+                        event_type == "turn_ended"
+                        and event["data"].get("turn_id") == turn_id
+                    ):
+                        return events
+                    event_type = None
+    raise AssertionError(f"No turn_ended event for {turn_id}: {events}")
+
+
 @pytest.mark.llm_integration
 async def test_multiturn_conversation_with_tool_calls_preserves_thought_signatures(
     llm_integration_client: AsyncClient,
+    db_engine: AsyncEngine,
 ) -> None:
-    """Test multi-turn conversation with tool calls works correctly.
-
-    User journey:
-    1. Ask a question requiring calculation
-    2. Get answer (tool is used automatically)
-    3. Ask another question
-    4. Should work without errors
-
-    Runs against recorded Gemini responses so PR CI stays deterministic.
-    """
-    # Turn 1: Ask question requiring tool use
+    """An API turn persists Gemini's tool call and its opaque signature."""
     response1 = await llm_integration_client.post(
         "/api/v1/chat/send_message",
         json={"prompt": "Use Python to calculate 5 + 5. Use the execute_script tool."},
     )
     assert response1.status_code == 200, f"Turn 1 failed: {response1.text}"
     data1 = response1.json()
-    assert "tool_calls" in data1, "Expected tool_calls in Turn 1"
+    assert data1["reply"].strip()
 
-    # Turn 2: Ask follow-up question
-    response2 = await llm_integration_client.post(
-        "/api/v1/chat/send_message",
-        json={"prompt": "Now calculate 10 + 10, also using Python."},
+    messages = await Database(engine=db_engine).message_history.get_recent(
+        interface_type="api",
+        conversation_id=data1["conversation_id"],
+        limit=20,
+        current_time=datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC),
     )
-    assert response2.status_code == 200, f"Turn 2 failed: {response2.text}"
+    assert any(
+        isinstance(message, AssistantMessage)
+        and message.tool_calls
+        and any(
+            call.function.name == "execute_script"
+            and isinstance(call.provider_metadata, GeminiProviderMetadata)
+            and call.provider_metadata.thought_signature is not None
+            for call in message.tool_calls
+        )
+        for message in messages
+    )
 
 
 @pytest.mark.llm_integration
@@ -235,11 +287,7 @@ async def test_multiturn_conversation_with_tool_calls_preserves_thought_signatur
 async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
     llm_integration_client: AsyncClient,
 ) -> None:
-    """Test STREAMING multi-turn conversation - should reproduce the bug.
-
-    The web UI uses streaming, and this should fail with "Corrupted thought signature"
-    on turn 2 because the streaming code path still has the base64 encoding bug.
-    """
+    """A streaming follow-up completes after a signed tool call."""
     # Turn 1: Ask question requiring tool use (streaming).
     # Resumable-streaming flow: POST /turns to start, then stream the
     # conversation's event stream.
@@ -255,31 +303,23 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
     )
     assert post1.status_code == 200, f"Turn 1 start failed: {post1.text}"
 
-    response1_chunks = []
-    tool_call_seen = False
-    async with llm_integration_client.stream(
-        "GET",
-        f"/api/v1/chat/conversations/{conversation_id}/stream",
-        params={"from_seq": 0},
-    ) as response1:
-        assert response1.status_code == 200, f"Turn 1 failed: {await response1.aread()}"
+    turn1_events = await _collect_turn_events(
+        llm_integration_client, conversation_id, 0, turn1_id
+    )
+    assert any(
+        event["type"] == "tool_call"
+        and (tool_call := event["data"].get("tool_call")) is not None
+        and tool_call["function"]["name"] == "execute_script"
+        for event in turn1_events
+    )
+    assert (
+        next(event for event in turn1_events if event["type"] == "turn_ended")[
+            "data"
+        ].get("status")
+        == "complete"
+    )
 
-        async for line in response1.aiter_lines():
-            if line.startswith("data: "):
-                data_str = line[6:]
-                if data_str.strip() and data_str != "[DONE]":
-                    response1_chunks.append(data_str)
-                    # Check if this chunk indicates a tool call
-                    if "tool_calls" in data_str or "execute_script" in data_str:
-                        tool_call_seen = True
-
-    # Verify that turn 1 actually used a tool call
-    print(f"\nTurn 1: Received {len(response1_chunks)} chunks")
-    print(f"Tool call seen: {tool_call_seen}")
-    if not tool_call_seen:
-        pytest.skip("LLM didn't use tool in turn 1 - can't test thought signature bug")
-
-    # Turn 2: Ask follow-up (streaming) - THIS SHOULD FAIL WITH CORRUPTED SIGNATURE
+    # Turn 2: Ask a follow-up in the same conversation.
     turn2_id = str(uuid.uuid4())
     post2 = await llm_integration_client.post(
         "/api/v1/chat/turns",
@@ -290,45 +330,17 @@ async def test_streaming_multiturn_with_tool_calls_reproduces_bug(
         },
     )
     assert post2.status_code == 200, f"Turn 2 start failed: {post2.text}"
-    async with llm_integration_client.stream(
-        "GET",
-        f"/api/v1/chat/conversations/{conversation_id}/stream",
-        params={"from_seq": 0},
-    ) as response2:
-        # This is where the bug manifests
-        assert response2.status_code == 200, (
-            f"Turn 2 failed (BUG REPRODUCED - corrupted thought signature): "
-            f"{await response2.aread()}"
-        )
-
-
-@pytest.mark.llm_integration
-async def test_multiturn_conversation_non_streaming_preserves_thought_signatures(
-    llm_integration_client: AsyncClient,
-) -> None:
-    """Test multi-turn conversation via non-streaming HTTP API.
-
-    This tests the full ProcessingService stack including database round-trip,
-    catching bugs that direct LLM client tests miss.
-
-    Note: Even though the HTTP endpoint is non-streaming (returns full JSON),
-    ProcessingService uses streaming internally, so this test uses the Google
-    SDK's native replay support instead of VCR.py.
-
-    If thought_signature is not preserved through the database, the second
-    request would fail with: "Function call is missing a thought_signature"
-    """
-    # Turn 1: Send message requiring tool call
-    response1 = await llm_integration_client.post(
-        "/api/v1/chat/send_message",
-        json={"prompt": "use Python to calculate 1 + 1"},
+    turn2_events = await _collect_turn_events(
+        llm_integration_client, conversation_id, post2.json()["first_seq"], turn2_id
     )
-    assert response1.status_code == 200
-
-    # Turn 2: Continue conversation - would fail without provider_metadata fix
-    # This verifies thought signatures survived the database round-trip
-    response2 = await llm_integration_client.post(
-        "/api/v1/chat/send_message",
-        json={"prompt": "thanks!"},
+    assert (
+        next(event for event in turn2_events if event["type"] == "turn_ended")[
+            "data"
+        ].get("status")
+        == "complete"
     )
-    assert response2.status_code == 200
+    assert "".join(
+        event["data"].get("content", "")
+        for event in turn2_events
+        if event["type"] == "text"
+    ).strip()

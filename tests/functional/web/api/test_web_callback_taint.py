@@ -35,7 +35,6 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.task_worker import (
     LlmCallbackPayload,
-    _llm_callback_review_trigger,  # noqa: PLC2701 - verify legacy security boundary
     _unattended_trigger_taint_sources,  # noqa: PLC2701 - verify callback trust boundary
     handle_llm_callback,
 )
@@ -232,30 +231,36 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
     assert delivery_row["taint_metadata_json"]["max_tier"] == "unknown_external"
 
 
-def test_legacy_event_callback_never_uses_combined_payload_as_definition() -> None:
+@pytest.mark.asyncio
+async def test_legacy_event_callback_never_uses_combined_payload_as_definition(
+    db_engine: AsyncEngine,
+) -> None:
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+
+    processing_service = TaintedReplyService()
+    chat_interface = WebChatInterface(db_engine, notifier=None, stream_hub=None)
     callback_context = {
         "message": "Human-authored listener instruction",
         "event_data": {"attacker": "DO_NOT_RENDER_AS_DEFINITION"},
         "listener_id": 7,
     }
-    trigger = _llm_callback_review_trigger(
-        {
-            "interface_type": "web",
-            "conversation_id": "conversation",
-            "callback_context": callback_context,
-            "scheduling_timestamp": datetime.now(UTC).isoformat(),
-        },
-        callback_context,
-        is_reminder=False,
+    payload = _payload()
+    payload["callback_context"] = callback_context
+
+    await handle_llm_callback(
+        _exec_context(ctx, processing_service, chat_interface),
+        payload,
     )
 
-    assert trigger == TriggerReviewInput(
-        trigger_type="event_listener",
-        active_request_role="user",
-        definition="Human-authored listener instruction",
-        definition_taint_metadata=None,
-        payload_present=True,
-    )
+    trigger = processing_service.last_review_trigger
+    assert trigger is not None
+    assert trigger.trigger_type == "event_listener"
+    assert trigger.active_request_role == "user"
+    assert trigger.definition == "Human-authored listener instruction"
+    assert trigger.definition_taint_metadata is None
+    assert trigger.payload_present is True
 
 
 def test_callback_requires_explicit_trusted_payload_free_definition() -> None:

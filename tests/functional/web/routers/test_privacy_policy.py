@@ -25,5 +25,5 @@ async def test_privacy_policy_served_by_real_app(actual_app: FastAPI) -> None:
 
 @pytest.mark.asyncio
 async def test_privacy_policy_route_is_registered(actual_app: FastAPI) -> None:
-    """The route is reachable by name, so links to it cannot silently break."""
+    """Named links to the privacy page resolve to its public URL."""
     assert actual_app.url_path_for("privacy_policy") == "/privacy"

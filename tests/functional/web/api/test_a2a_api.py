@@ -26,7 +26,6 @@ from a2a.types import (
     GetExtendedAgentCardRequest,
     GetTaskRequest,
     SendMessageRequest,
-    StreamResponse,
 )
 from a2a.types import (
     Message as SdkMessage,
@@ -52,6 +51,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -111,6 +111,32 @@ def _a2a_message(
     return msg
 
 
+_TERMINAL_TASK_STATES = frozenset({"completed", "failed", "canceled", "rejected"})
+
+
+async def _wait_for_terminal_task(client: AsyncClient, task_id: str) -> dict:
+    """Poll tasks/get, as a peer would, until the task reaches a terminal state."""
+
+    async def terminal_task() -> dict | None:
+        resp = await client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": task_id})
+        )
+        task = resp.json()["result"]
+        return task if task["status"]["state"] in _TERMINAL_TASK_STATES else None
+
+    task = await wait_for_condition(
+        terminal_task,
+        timeout=15,
+        description=f"A2A task {task_id} to reach a terminal state",
+    )
+    assert task is not None
+    return task
+
+
+def _text_of(parts: list[dict]) -> str:
+    return "".join(part["text"] for part in parts if part.get("kind") == "text")
+
+
 class TestAgentCard:
     @pytest.mark.asyncio
     async def test_agent_card_returns_valid_card(self, a2a_client: AsyncClient) -> None:
@@ -161,8 +187,8 @@ class TestSendMessage:
         task = data["result"]
         assert "id" in task
         assert task["status"]["state"] == "completed"
-        assert task["artifacts"] is not None
-        assert len(task["artifacts"]) >= 1
+        assert len(task["artifacts"]) == 1
+        assert _text_of(task["artifacts"][0]["parts"]) == "Hello from A2A!"
 
     @pytest.mark.asyncio
     async def test_send_message_with_file_part_reaches_llm(
@@ -368,7 +394,6 @@ class TestAsyncSendMessage:
     async def test_blocking_false_returns_working_then_completes(
         self,
         a2a_client: AsyncClient,
-        app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
     ) -> None:
         api_mock_llm_client.default_response = MockLLMOutput(content="async reply")
@@ -390,23 +415,14 @@ class TestAsyncSendMessage:
         assert task["id"] == task_id
         assert task["status"]["state"] == "working"
 
-        # Let the background task finish, then the persisted task is terminal.
-        background = app_fixture.state.a2a_background_tasks.get(task_id)
-        if background is not None:
-            await background
-
-        get_resp = await a2a_client.post(
-            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": task_id})
-        )
-        completed = get_resp.json()["result"]
+        completed = await _wait_for_terminal_task(a2a_client, task_id)
         assert completed["status"]["state"] == "completed"
-        assert completed["artifacts"]
+        assert _text_of(completed["artifacts"][0]["parts"]) == "async reply"
 
     @pytest.mark.asyncio
     async def test_resending_same_task_id_is_idempotent(
         self,
         a2a_client: AsyncClient,
-        app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
     ) -> None:
         api_mock_llm_client.default_response = MockLLMOutput(content="once only")
@@ -420,9 +436,8 @@ class TestAsyncSendMessage:
             "/api/a2a", json=_jsonrpc("message/send", params=params)
         )
         assert first.json()["result"]["status"]["state"] == "working"
-        background = app_fixture.state.a2a_background_tasks.get(task_id)
-        if background is not None:
-            await background
+        completed = await _wait_for_terminal_task(a2a_client, task_id)
+        assert completed["status"]["state"] == "completed"
         calls_after_first = len(api_mock_llm_client.get_calls())
 
         # Re-sending the same task id returns the existing (completed) task and
@@ -600,6 +615,23 @@ class TestStreamMessage:
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
+        events = _parse_sse_events(resp.text)
+        assert all("error" not in event for event in events), events
+        results = [event["result"] for event in events]
+        artifact_updates = [r for r in results if r["kind"] == "artifact-update"]
+        deltas = [r for r in artifact_updates if not r.get("lastChunk")]
+        final_chunks = [r for r in artifact_updates if r.get("lastChunk")]
+        assert "".join(_text_of(r["artifact"]["parts"]) for r in deltas) == (
+            "Streamed response"
+        )
+        assert len(final_chunks) == 1
+        assert _text_of(final_chunks[0]["artifact"]["parts"]) == "Streamed response"
+
+        last = results[-1]
+        assert last["kind"] == "status-update"
+        assert last["final"] is True
+        assert last["status"]["state"] == "completed"
+
     @pytest.mark.asyncio
     async def test_stream_persists_task(
         self,
@@ -644,6 +676,12 @@ class TestStreamMessage:
         resp = await a2a_client.post("/api/a2a/stream", json=body)
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
+
+        events = _parse_sse_events(resp.text)
+        assert len(events) == 1, events
+        assert "result" not in events[0]
+        assert events[0]["id"] == 1
+        assert events[0]["error"]["code"] == -32601  # METHOD_NOT_FOUND
 
 
 def _attach_to_response_once(
@@ -1118,28 +1156,3 @@ class TestSdkClient:
 
         with pytest.raises(TaskNotCancelableError):
             await sdk_client.cancel_task(CancelTaskRequest(id=task_id))
-
-    @pytest.mark.asyncio
-    async def test_sdk_streaming(
-        self,
-        sdk_client: Client,
-        api_mock_llm_client: RuleBasedMockLLMClient,
-    ) -> None:
-        api_mock_llm_client.default_response = MockLLMOutput(content="Streamed via SDK")
-
-        msg = _sdk_message("Hello stream")
-        events_received: list[StreamResponse] = []
-        task_id: str | None = None
-
-        async for response in sdk_client.send_message(SendMessageRequest(message=msg)):
-            events_received.append(response)
-            if response.HasField("task"):
-                task_id = response.task.id
-            elif response.HasField("status_update"):
-                task_id = response.status_update.task_id
-
-        assert len(events_received) >= 1, "Expected at least one event"
-        assert task_id is not None
-        final_task = await sdk_client.get_task(GetTaskRequest(id=task_id))
-        assert final_task.status.state == SdkTaskState.TASK_STATE_COMPLETED
-        assert len(final_task.artifacts) >= 1

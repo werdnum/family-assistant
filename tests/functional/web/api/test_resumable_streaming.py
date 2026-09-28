@@ -454,21 +454,6 @@ async def test_post_turn_rejects_conversation_owned_by_another_user(
     assert rows[0]["user_id"] == "someone_else"
 
 
-async def test_stream_on_empty_conversation_is_allowed(
-    test_client: AsyncClient,
-) -> None:
-    """Subscribing (GET /stream) to a brand-new empty conversation is allowed:
-    the always-on live-update stream attaches to the user's own freshly-created
-    conversation before any message is sent, so it must not 404. With no running
-    turn, a follow=false stream simply closes immediately (200)."""
-    conversation_id = f"conv_empty_{uuid.uuid4().hex[:8]}"
-    response = await test_client.get(
-        f"/api/v1/chat/conversations/{conversation_id}/stream",
-        params={"from_seq": 0},
-    )
-    assert response.status_code == 200, response.text
-
-
 async def test_conversation_stream_flushes_response_head_immediately(
     test_client: AsyncClient,
 ) -> None:
@@ -480,7 +465,8 @@ async def test_conversation_stream_flushes_response_head_immediately(
     out. A ``heartbeat`` frame is used rather than a bare ``:`` comment because the
     iOS parser would dispatch a spurious ``message`` event for a comment-only
     frame. A ``follow=false`` stream on an empty conversation closes right after
-    the flush, so the whole body is deterministically the heartbeat."""
+    the flush, so the whole body is deterministically the heartbeat. It also
+    verifies that a brand-new empty conversation is streamable."""
     conversation_id = f"conv_flush_{uuid.uuid4().hex[:8]}"
     response = await test_client.get(
         f"/api/v1/chat/conversations/{conversation_id}/stream",
@@ -848,9 +834,20 @@ async def test_disconnect_without_ack_fires_push(
         )
     )
     await asyncio.wait_for(started.wait(), timeout=5.0)
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        lambda: hub.subscriber_count(conversation_id) > 0,
+        timeout=10.0,
+        description="stream subscriber attached",
+    )
     subscribe_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await subscribe_task
+    await wait_for_condition(
+        lambda: hub.subscriber_count(conversation_id) == 0,
+        timeout=10.0,
+        description="stream subscriber detached",
+    )
 
     release.set()
 
@@ -863,7 +860,6 @@ async def test_disconnect_without_ack_fires_push(
     assert metadata.category == MESSAGE_CATEGORY
 
     # Drain any background producer.
-    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
     pending = hub.get_active_producer_tasks(conversation_id)
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)

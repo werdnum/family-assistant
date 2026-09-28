@@ -528,7 +528,7 @@ async def test_completed_web_turn_persists_single_user_row(
     )
     user_rows = [row for row in rows if row["role"] == "user"]
     assert len(user_rows) == 1, f"Expected one user row, got {user_rows}"
-    assert user_rows[0]["processing_profile_id"] is not None
+    assert user_rows[0]["processing_profile_id"] == "chat_api_test_profile"
 
 
 async def _seed_user_row(
@@ -1390,7 +1390,6 @@ async def test_steer_that_lands_as_the_turn_ends_is_not_recorded_as_delivered(
         "A message queued onto a controller that will never be drained must not "
         "be recorded as delivered"
     )
-
     # So the retry is refused rather than told it landed, and the client starts
     # a new turn with it.
     retry = await api_test_client.post(f"/api/v1/chat/turns/{turn_id}/steer", json=body)
@@ -1684,9 +1683,26 @@ async def test_steer_reports_the_stream_head_it_was_queued_after(
     echo from identical text the turn consumed earlier.
     """
     user_prompt = "Tell me about seqs"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        _reply("done"),
+    ))
     api_mock_llm_client.rules.append((
         lambda args: _user_message_contains(args, user_prompt),
-        _reply("done"),
+        LLMOutput(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_steer_seq",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
     ))
 
     started = asyncio.Event()
@@ -1711,27 +1727,37 @@ async def test_steer_reports_the_stream_head_it_was_queued_after(
     assert post.status_code == 200, post.text
 
     hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    handle = await hub.subscribe(conversation_id, from_seq=0)
     try:
-        await asyncio.wait_for(started.wait(), timeout=5.0)
-        steer = await api_test_client.post(
-            f"/api/v1/chat/turns/{turn_id}/steer",
-            json={"conversation_id": conversation_id, "prompt": "actually, hurry"},
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5.0)
+            steer = await api_test_client.post(
+                f"/api/v1/chat/turns/{turn_id}/steer",
+                json={
+                    "conversation_id": conversation_id,
+                    "prompt": "actually, hurry",
+                    "input_id": steer_input_id,
+                },
+            )
+            assert steer.status_code == 200, steer.text
+            queued_after_seq = steer.json()["queued_after_seq"]
+            assert queued_after_seq == hub.latest_seq(conversation_id)
+        finally:
+            release.set()
+
+        await wait_for_condition(
+            _turn_complete(hub, conversation_id, turn_id), description="turn complete"
         )
+        echoes = [
+            event
+            for event in _drain(handle)
+            if event.type == "user_input"
+            and event.payload.get("input_id") == steer_input_id
+        ]
+        assert len(echoes) == 1, f"Expected one steer echo, got {echoes}"
+        assert echoes[0].seq > queued_after_seq
     finally:
-        release.set()
-
-    assert steer.status_code == 200, steer.text
-    queued_after_seq = steer.json()["queued_after_seq"]
-    assert queued_after_seq == hub.latest_seq(conversation_id)
-
-    await wait_for_condition(
-        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
-    )
-    # Everything the turn published after the steer — including its echo — sits
-    # above the floor the client was handed.
-    turn = hub.get_turn(conversation_id, turn_id)
-    assert turn is not None
-    assert turn.latest_seq > queued_after_seq
+        hub.unsubscribe(conversation_id, handle.queue)
 
 
 async def test_steer_rejects_conversation_owned_by_another_user(

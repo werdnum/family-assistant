@@ -30,6 +30,7 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.security.taint import TaintPolicyConfig, TaintPolicyMode
 from family_assistant.services.tool_call_review import (
     ToolCallReviewer,
@@ -39,7 +40,10 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.storage import init_db
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.database import Database
-from family_assistant.storage.repositories.notes import NoteReadPolicy
+from family_assistant.storage.repositories.notes import (
+    NoteReadPolicy,
+    NoteWritePolicy,
+)
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -257,6 +261,10 @@ async def test_confirm_policy_tool_records_durable_confirmation(
     assert [(row["tool_name"], row["status"]) for row in rows] == [
         ("add_or_update_note", "pending")
     ]
+    assert (
+        await db.notes.get_by_title("Trip", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
     assert all(
         call["method_name"] != "generate_structured"
         for call in mock_llm_client.get_calls()
@@ -269,6 +277,14 @@ async def test_reviewer_confirmation_for_ineligible_tool_is_not_deferred(
     mock_llm_client: RuleBasedMockLLMClient,
     db_engine: AsyncEngine,
 ) -> None:
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        "Trip",
+        "Lands 6pm",
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=NoteProvenanceStamp.user_edit(),
+    )
+
     def calls_tool(args: MatcherArgs) -> bool:
         messages = args.get("messages", [])
         return not any(msg.role == "tool" for msg in messages)
@@ -308,7 +324,18 @@ async def test_reviewer_confirmation_for_ineligible_tool_is_not_deferred(
         response.json()["reply"]
         == "I couldn't delete that note without a live approval."
     )
-    db = Database(engine=db_engine)
+    note = await db.notes.get_by_title("Trip", read_policy=NoteReadPolicy.UNRESTRICTED)
+    assert note is not None
+    assert note.content == "Lands 6pm"
+    delete_results = [
+        msg.content
+        for call in mock_llm_client.get_calls()
+        if call["method_name"] == "generate_response"
+        for msg in call["kwargs"].get("messages", [])
+        if msg.role == "tool" and msg.tool_call_id == "delete_note_call_1"
+    ]
+    assert delete_results
+    assert all("blocked" in result.lower() for result in delete_results)
     rows = await db.fetch_all(select(confirmation_requests_table.c.id))
     assert rows == []
     assert (
