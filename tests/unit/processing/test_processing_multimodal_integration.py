@@ -3,7 +3,8 @@ Integration tests for processing.py multimodal tool results handling.
 """
 
 import logging
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
@@ -13,8 +14,15 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.services.attachment_registry import AttachmentMetadata
+from family_assistant.services.attachment_registry import (
+    AttachmentMetadata,
+    AttachmentRegistry,
+)
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult, ToolReturnType
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 class TestProcessingServiceMultimodal:
@@ -352,26 +360,12 @@ class TestProcessingServiceMultimodal:
         assert "tool execution failed" in tool_message.content.lower()
         assert tool_message.error_traceback is not None
 
-    def test_tool_result_type_alias(self) -> None:
-        """Test ToolReturnType alias works correctly"""
-
-        # Should accept string
-        string_result: ToolReturnType = "Simple result"
-        assert isinstance(string_result, str)
-
-        # Should accept ToolResult
-        tool_result: ToolReturnType = ToolResult(text="Enhanced result")
-        assert isinstance(tool_result, ToolResult)
-
-        # Type checking should work (this is mainly for static analysis)
-        def mock_tool_function() -> ToolReturnType:
-            return "test"
-
-        result = mock_tool_function()
-        assert result == "test"
-
     async def test_automatic_attachment_queuing(
-        self, processing_service: ProcessingService, mock_db_context: Mock
+        self,
+        processing_service: ProcessingService,
+        mock_db_context: Mock,
+        db_engine: "AsyncEngine",
+        tmp_path: Path,
     ) -> None:
         """Test that tool result attachments are automatically queued for display"""
         # Mock tool call object with attachment result
@@ -388,24 +382,12 @@ class TestProcessingServiceMultimodal:
         )
         tool_result = ToolResult(text="Captured camera image", attachments=[attachment])
 
-        # Mock the attachment registry
-        mock_attachment_registry = Mock()
-
-        # Mock store_and_register_tool_attachment (new public method) - returns AttachmentMetadata
-        mock_attachment_registry.store_and_register_tool_attachment = AsyncMock(
-            return_value=AttachmentMetadata(
-                attachment_id="auto_attachment_123",
-                source_type="tool",
-                source_id="mock_camera_snapshot",
-                mime_type="image/jpeg",
-                description="Test camera image",
-                size=15,
-                content_url="http://localhost:8000/attachments/auto_attachment_123",
-                storage_path="/tmp/auto_attachment_123.jpeg",
-            )
+        attachment_registry = AttachmentRegistry(
+            storage_path=str(tmp_path / "attachments"),
+            db_engine=db_engine,
+            config=None,
         )
-
-        processing_service.tool_executor.attachment_registry = mock_attachment_registry
+        processing_service.tool_executor.attachment_registry = attachment_registry
 
         # Mock tools provider to return ToolResult with attachment (async)
         mock_tools_provider = AsyncMock()
@@ -425,28 +407,33 @@ class TestProcessingServiceMultimodal:
         )
 
         # Verify that the attachment ID is returned for auto-queuing
-        assert result.auto_attachment_ids == ["auto_attachment_123"]
+        assert result.auto_attachment_ids is not None
+        assert len(result.auto_attachment_ids) == 1
+        stored_attachment_id = result.auto_attachment_ids[0]
 
-        # Verify attachment was stored and registered
-        mock_attachment_registry.store_and_register_tool_attachment.assert_called_once()
-
-        # Check that store_and_register_tool_attachment was called with correct content
-        call_args = (
-            mock_attachment_registry.store_and_register_tool_attachment.call_args
+        # Verify the attachment was actually stored and registered, not just
+        # that some mocked method was called with the right arguments.
+        db_context = Database(engine=db_engine)
+        stored_metadata = await attachment_registry.get_attachment(
+            db_context, stored_attachment_id, acting_user_id=None
         )
-        assert call_args[1]["file_content"] == b"fake jpeg data"
-        assert call_args[1]["content_type"] == "image/jpeg"
-        assert call_args[1]["tool_name"] == "mock_camera_snapshot"
+        assert stored_metadata is not None
+        assert stored_metadata.mime_type == "image/jpeg"
+        assert stored_metadata.source_id == "mock_camera_snapshot"
+        stored_content = await attachment_registry.get_attachment_content(
+            db_context, stored_attachment_id, acting_user_id=None
+        )
+        assert stored_content == b"fake jpeg data"
 
         # Verify that the attachment ID is injected into the LLM message content
         llm_message = result.llm_message
-        assert "[Attachment ID(s): auto_attachment_123]" in llm_message.content
+        assert f"[Attachment ID(s): {stored_attachment_id}]" in llm_message.content
 
         # Verify that the ToolAttachment object has the attachment_id populated
         assert (
             llm_message.transient_attachments is not None
             and llm_message.transient_attachments[0].attachment_id
-            == "auto_attachment_123"
+            == stored_attachment_id
         )
 
     async def test_no_auto_attachment_for_string_results(
@@ -640,6 +627,14 @@ class TestProcessingServiceMultimodal:
         assert second_result.stream_event.tool_result is not None
         assert "attachments_queued" in second_result.stream_event.tool_result
 
+        # The processing loop merges results into a pending attachment list in
+        # order; the explicit call must replace the auto-queued attachment
+        # rather than append to it.
+        pending_attachment_ids: list[str] = []
+        first_result.apply_attachment_updates(pending_attachment_ids)
+        second_result.apply_attachment_updates(pending_attachment_ids)
+        assert pending_attachment_ids == ["explicit_attachment_456"]
+
     async def test_multiple_attach_to_response_calls_behavior(
         self, processing_service: ProcessingService, mock_db_context: Mock
     ) -> None:
@@ -747,6 +742,12 @@ class TestProcessingServiceMultimodal:
             not second_result.auto_attachment_ids
             or len(second_result.auto_attachment_ids) == 0
         )
+
+        # The second explicit call must fully replace the first, not append.
+        pending_attachment_ids: list[str] = []
+        first_result.apply_attachment_updates(pending_attachment_ids)
+        second_result.apply_attachment_updates(pending_attachment_ids)
+        assert pending_attachment_ids == ["second_attachment_a", "second_attachment_b"]
 
     async def test_new_attachments_after_attach_to_response(
         self, processing_service: ProcessingService, mock_db_context: Mock
@@ -863,6 +864,12 @@ class TestProcessingServiceMultimodal:
         # (Each tool execution is independent)
         assert new_tool_result.auto_attachment_ids == ["new_attachment_after_explicit"]
 
-        # The processing loop will handle the logic of:
-        # - Auto-queue from new tool
-        # - But if there's another attach_to_response later, it replaces everything
+        # A later tool's auto-queued attachment is appended to the explicit
+        # selection rather than being ignored or replacing it.
+        pending_attachment_ids: list[str] = []
+        attach_result.apply_attachment_updates(pending_attachment_ids)
+        new_tool_result.apply_attachment_updates(pending_attachment_ids)
+        assert pending_attachment_ids == [
+            "explicit_attachment",
+            "new_attachment_after_explicit",
+        ]

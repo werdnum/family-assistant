@@ -430,10 +430,20 @@ def test_explicit_provider_and_model_need_no_config_file(cli: ModuleType) -> Non
 
 @pytest.mark.parametrize("ceiling", ["0", "-0.1", "1.5", "nan"])
 def test_out_of_range_ceiling_is_refused_before_any_trial(
-    cli: ModuleType, ceiling: str
+    cli: ModuleType,
+    ceiling: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     # required_clean_cases would reject the value while rendering the report,
     # after every trial had been paid for. A typo must not cost a whole run.
+    def _unexpected_judge(_config: dict[str, object]) -> None:
+        raise AssertionError("An invalid ceiling must not create a judge")
+
+    monkeypatch.setattr(
+        "family_assistant.eval.tool_call_review.runner.LLMClientFactory.create_client",
+        _unexpected_judge,
+    )
     exit_code = cli.main([
         "--dataset",
         _dataset_dir("manual"),
@@ -444,6 +454,7 @@ def test_out_of_range_ceiling_is_refused_before_any_trial(
     ])
 
     assert exit_code == 1
+    assert "--ceiling must be a rate in (0, 1]" in capsys.readouterr().err
 
 
 def test_the_snapshot_governs_case_loading_not_only_execution(

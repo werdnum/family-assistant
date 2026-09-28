@@ -505,10 +505,9 @@ async def test_idle_conversations_evicted_beyond_cap() -> None:
         await hub.start_turn(f"conv{i}", turn_id="t", user_id="u1", started_at=_now())
         await hub.end_turn(f"conv{i}", turn_id="t", status="complete")
 
-    # Only the most recent few conversations survive.
+    # Only the most recent few conversations survive, oldest-evicted-first.
     surviving = [f"conv{i}" for i in range(6) if hub.buffer_size(f"conv{i}") > 0]
-    assert len(surviving) <= 3
-    assert "conv5" in surviving
+    assert surviving == ["conv3", "conv4", "conv5"]
 
 
 @pytest.mark.asyncio

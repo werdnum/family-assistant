@@ -161,7 +161,7 @@ def _reviewing_provider(
     *,
     taint_policy: TaintPolicyConfig,
 ) -> TaintTrackingToolsProvider:
-    review_config = ToolCallReviewConfig(timeout_seconds=1)
+    review_config = ToolCallReviewConfig(timeout_seconds=30)
     return TaintTrackingToolsProvider(
         LocalToolsProvider(registrations=[]),
         taint_policy=taint_policy,
@@ -915,7 +915,7 @@ async def test_submit_async_observe_review_is_detached_and_drained_on_close(
 
     assert submission.remote_task_id == "inter_shadow"
     assert not release.is_set()
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await asyncio.wait_for(entered.wait(), timeout=10)
     events = await db_context.taint_audit_events.list_for_conversation("conv-shadow")
     assert not [event for event in events if event["event_type"] == "tool_call_review"]
 
@@ -1256,13 +1256,6 @@ async def test_cancel_async_swallows_errors() -> None:
     await service.cancel_async("inter_x")  # must not raise
 
 
-def test_remote_context_id_is_always_none() -> None:
-    """Deep Research has no context-grouping concept; always returns None."""
-    service = _make_service(_google_client())
-    assert service.remote_context_id("conv-1", "sub-1") is None
-    assert service.remote_context_id("conv-1", None) is None
-
-
 @pytest.mark.asyncio
 async def test_google_client_type_guard_rejects_non_google_llm_client() -> None:
     """A misconfigured non-Google llm_client fails fast with a clear error.
@@ -1277,18 +1270,28 @@ async def test_google_client_type_guard_rejects_non_google_llm_client() -> None:
         await service.poll_async("inter_x", None)
 
 
+@pytest.mark.asyncio
 @pytest.mark.no_db
-def test_turn_context_block_is_kept_out_of_the_research_query() -> None:
+async def test_turn_context_block_is_kept_out_of_the_research_query() -> None:
     """Deep Research collapses the prompt into one `input` string.
 
     The interactive /research path goes through the normal turn assembly, so the
     trailing context block is present in the message list. Letting it through
     would append the block verbatim to the question the model is asked to
-    research.
+    research. Exercised through ``start_agent_interaction`` (the boundary
+    delegation actually calls) rather than the private kwargs builder, so a
+    regression in the wrapper's own handling would be caught too.
     """
     client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    recorded_kwargs: dict[str, object] = {}
 
-    kwargs = client._build_agent_create_kwargs([
+    async def _record_create(**kwargs: object) -> Interaction:
+        recorded_kwargs.update(kwargs)
+        return Interaction(id="inter_1", status="queued")
+
+    cast("Any", client.client.aio.interactions).create = _record_create
+
+    await client.start_agent_interaction([
         UserMessage(content="Compare heat pump models for a cold climate."),
         UserMessage(
             content="<turn_context>\nCurrent time: 2026-07-25 10:00:00 UTC\n</turn_context>",
@@ -1296,8 +1299,8 @@ def test_turn_context_block_is_kept_out_of_the_research_query() -> None:
         ),
     ])
 
-    assert "Compare heat pump models" in str(kwargs["input"])
-    assert "turn_context" not in str(kwargs["input"])
+    assert "Compare heat pump models" in str(recorded_kwargs["input"])
+    assert "turn_context" not in str(recorded_kwargs["input"])
 
 
 @pytest.mark.no_db

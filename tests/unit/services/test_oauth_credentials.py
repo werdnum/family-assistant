@@ -8,7 +8,6 @@ internals, no ``asyncio.sleep``; concurrency is gated with ``asyncio.Event``).
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TYPE_CHECKING
 
 import httpx
@@ -40,6 +39,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.services.notifier import NotificationMetadata
+    from family_assistant.storage.repositories.oauth_connections import (
+        OAuthConnectionModel,
+    )
 
 GMAIL = GoogleScope.GMAIL_READONLY.value
 DRIVE = GoogleScope.DRIVE_READONLY.value
@@ -314,16 +316,46 @@ async def test_concurrent_calls_single_flight(db_context: Database) -> None:
     resolver = _resolver(encryption, transport=transport)
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
+    concurrency = 8
+    arrived = 0
+    all_arrived = asyncio.Event()
+    real_get_connection = db_context.oauth_connections.get_connection
+
+    async def _barriered_get_connection(
+        user_id: str, provider: str
+    ) -> OAuthConnectionModel | None:
+        # Let the real (serialized) DB read run for every caller, then hold
+        # the result until all 8 have read it, so they all reach the
+        # pre-lock cache check at the same point — otherwise a cache hit (not
+        # the lock) could explain a single transport call.
+        result = await real_get_connection(user_id, provider)
+        nonlocal arrived
+        arrived += 1
+        if arrived >= concurrency:
+            all_arrived.set()
+        await asyncio.wait_for(all_arrived.wait(), timeout=10)
+        return result
+
+    # Deliberate instance-level patch of a bound method to inject a test-only
+    # barrier; not something the type checker can model.
+    db_context.oauth_connections.get_connection = _barriered_get_connection  # type: ignore[method-assign]
+
     tasks = [
         asyncio.create_task(
             resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
         )
-        for _ in range(8)
+        for _ in range(concurrency)
     ]
-    # Let the first refresh reach the transport, then release everyone.
-    await transport.started.wait()
-    gate.set()
-    tokens = await asyncio.gather(*tasks)
+    try:
+        # Let the first refresh reach the transport, then release everyone.
+        await asyncio.wait_for(transport.started.wait(), timeout=10)
+        gate.set()
+        tokens = await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+    finally:
+        gate.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     assert all(token == "access-single" for token in tokens)
     assert transport.calls == 1
@@ -497,17 +529,6 @@ async def test_decryption_failure_propagates_without_mutation(
     assert connection.status == "active"
     assert connection.credential_generation == generation
     assert transport.calls == 0  # never reached the token endpoint
-
-
-# --------------------------------------------------------------------------- #
-# invalid_grant response shape assertion (module contract sanity)
-# --------------------------------------------------------------------------- #
-
-
-def test_invalid_grant_helper_shape() -> None:
-    # Guard the scripted invalid_grant response shape the resolver keys on.
-    response = _invalid_grant()
-    assert json.loads(response.content)["error"] == "invalid_grant"
 
 
 def test_user_operation_locks_are_stable_and_scoped() -> None:

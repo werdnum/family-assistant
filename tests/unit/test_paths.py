@@ -1,8 +1,10 @@
 """Tests for the centralized path resolution module."""
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from family_assistant import paths
 from family_assistant.paths import (
     FRONTEND_DIR,
     PACKAGE_ROOT,
@@ -29,38 +31,31 @@ class TestPathConstants:
         assert PACKAGE_ROOT.name == "family_assistant"
         assert (PACKAGE_ROOT / "__init__.py").is_file()
 
-    def test_frontend_dir(self) -> None:
-        assert FRONTEND_DIR == PROJECT_ROOT / "frontend"
+    def test_committed_resource_directories(self) -> None:
         assert FRONTEND_DIR.is_dir()
+        assert STATIC_DIR.is_dir()
+        assert TEMPLATES_DIR.is_dir()
+        assert WEB_RESOURCES_DIR.is_dir()
 
-    def test_static_dir(self) -> None:
-        assert STATIC_DIR == PACKAGE_ROOT / "static"
-
-    def test_static_dist_dir(self) -> None:
-        assert STATIC_DIST_DIR == STATIC_DIR / "dist"
-
-    def test_templates_dir(self) -> None:
-        assert TEMPLATES_DIR == PACKAGE_ROOT / "templates"
-
-    def test_web_resources_dir(self) -> None:
-        assert WEB_RESOURCES_DIR == PACKAGE_ROOT / "web" / "resources"
-
-    def test_paths_are_absolute(self) -> None:
-        for path in [
-            PROJECT_ROOT,
-            PACKAGE_ROOT,
-            FRONTEND_DIR,
-            STATIC_DIR,
-            STATIC_DIST_DIR,
-            TEMPLATES_DIR,
-            WEB_RESOURCES_DIR,
-        ]:
-            assert path.is_absolute(), f"{path} is not absolute"
-
-    def test_hierarchy_consistency(self) -> None:
+    def test_resource_directories_resolve_from_their_expected_roots(self) -> None:
         assert PACKAGE_ROOT.parent.parent == PROJECT_ROOT
-        assert STATIC_DIR.parent == PACKAGE_ROOT
-        assert STATIC_DIST_DIR.parent == STATIC_DIR
+        assert FRONTEND_DIR == PROJECT_ROOT / "frontend"
+        assert STATIC_DIR == PACKAGE_ROOT / "static"
+        assert STATIC_DIST_DIR == STATIC_DIR / "dist"
+        assert TEMPLATES_DIR == PACKAGE_ROOT / "templates"
+        assert WEB_RESOURCES_DIR == PACKAGE_ROOT / "web" / "resources"
+        assert all(
+            path.is_absolute()
+            for path in (
+                PROJECT_ROOT,
+                PACKAGE_ROOT,
+                FRONTEND_DIR,
+                STATIC_DIR,
+                STATIC_DIST_DIR,
+                TEMPLATES_DIR,
+                WEB_RESOURCES_DIR,
+            )
+        )
 
 
 class TestGetDocsUserDir:
@@ -79,10 +74,53 @@ class TestGetDocsUserDir:
 
 
 class TestValidatePathsAtStartup:
-    """Verify that startup validation runs without errors."""
+    """Verify startup validation reports missing expected directories."""
 
-    def test_dev_mode_validation(self) -> None:
+    def test_dev_mode_validation(
+        self,
+        caplog: "pytest.LogCaptureFixture",
+        monkeypatch: "pytest.MonkeyPatch",
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.delenv("DOCS_USER_DIR", raising=False)
+        monkeypatch.setattr(paths, "STATIC_DIST_DIR", tmp_path / "missing-dist")
         validate_paths_at_startup(dev_mode=True)
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == paths.logger.name and record.levelno >= logging.WARNING
+        ]
 
-    def test_prod_mode_validation(self) -> None:
+    def test_missing_docs_warning(
+        self,
+        caplog: "pytest.LogCaptureFixture",
+        monkeypatch: "pytest.MonkeyPatch",
+        tmp_path: Path,
+    ) -> None:
+        missing_docs = tmp_path / "missing-docs"
+        monkeypatch.setenv("DOCS_USER_DIR", str(missing_docs))
+        validate_paths_at_startup(dev_mode=True)
+        assert any(
+            record.name == paths.logger.name
+            and record.levelno == logging.WARNING
+            and "docs/user" in record.getMessage()
+            and str(missing_docs) in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_prod_mode_validation(
+        self,
+        caplog: "pytest.LogCaptureFixture",
+        monkeypatch: "pytest.MonkeyPatch",
+        tmp_path: Path,
+    ) -> None:
+        missing_dist = tmp_path / "missing-dist"
+        monkeypatch.setattr(paths, "STATIC_DIST_DIR", missing_dist)
         validate_paths_at_startup(dev_mode=False)
+        assert any(
+            record.name == paths.logger.name
+            and record.levelno == logging.WARNING
+            and "static/dist (prod)" in record.getMessage()
+            and str(missing_dist) in record.getMessage()
+            for record in caplog.records
+        )

@@ -119,11 +119,37 @@ def test_wrong_audience_rejected(
 
 
 def test_expired_token_rejected(
-    jwt_service: jwt_tokens.JWTTokenService,
-    monkeypatch: pytest.MonkeyPatch,
+    signing_key_pem: str, jwt_service: jwt_tokens.JWTTokenService
 ) -> None:
-    monkeypatch.setattr(jwt_tokens, "access_token_ttl_seconds", lambda: -10)
-    token = jwt_service.mint_access_token("user@example.com", 42)
+    private_key = serialization.load_pem_private_key(
+        signing_key_pem.encode("ascii"), password=None
+    )
+    assert isinstance(private_key, EllipticCurvePrivateKey)
+    now = datetime.now(UTC)
+    claims = {
+        "iss": jwt_tokens.JWT_ISSUER,
+        "aud": jwt_tokens.JWT_AUDIENCE,
+        "sub": "user@example.com",
+        "tid": 42,
+        "iat": now - timedelta(minutes=20),
+        "exp": now - timedelta(minutes=10),
+    }
+    headers = {"kid": jwt_service.jwks_document()["keys"][0]["kid"]}
+    valid_token: str = pyjwt.encode(
+        {**claims, "exp": now + timedelta(minutes=10)},
+        private_key,
+        algorithm="ES256",
+        headers=headers,
+    )
+    assert jwt_service.verify_access_token(valid_token) is not None
+
+    token: str = pyjwt.encode(
+        claims,
+        private_key,
+        algorithm="ES256",
+        headers=headers,
+    )
+    assert isinstance(token, str)
     assert jwt_service.verify_access_token(token) is None
 
 

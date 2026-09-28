@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
@@ -96,22 +97,116 @@ def _build_service(
     return service, local_provider, on_demand_view
 
 
+def _assistant_config(*, on_demand_local_tools: list[str]) -> dict[str, object]:
+    return {
+        "telegram_token": "test_token",
+        "allowed_user_ids": [12345],
+        "developer_chat_id": 12345,
+        "model": "test-model",
+        "embedding_model": "mock-deterministic-embedder",
+        "embedding_dimensions": 384,
+        "server_url": "http://test.local",
+        "database_url": "sqlite+aiosqlite:///:memory:",
+        "service_profiles": [
+            {
+                "id": "on-demand-profile",
+                "processing_config": {
+                    "prompts": {},
+                    "timezone": "UTC",
+                    "max_history_messages": 10,
+                    "history_max_age_hours": 24,
+                },
+                "tools_config": {"on_demand_local_tools": on_demand_local_tools},
+                "tools_policy": {"default_decision": "allow", "rules": []},
+            },
+            {
+                "id": "no-on-demand-profile",
+                "processing_config": {
+                    "prompts": {},
+                    "timezone": "UTC",
+                    "max_history_messages": 10,
+                    "history_max_age_hours": 24,
+                },
+                "tools_config": {},
+                "tools_policy": {"default_decision": "allow", "rules": []},
+            },
+        ],
+    }
+
+
 @pytest.mark.asyncio
-async def test_tools_provider_includes_on_demand_tools_for_non_llm_consumers() -> None:
-    """Scripts read ``service.tools_provider``; it must return ALL tools.
+@pytest.mark.no_db
+async def test_profile_tools_provider_includes_on_demand_tools_for_non_llm_consumers() -> (
+    None
+):
+    """Scripts read the profile's ``tools_provider``; it must return ALL tools.
 
-    Regression: when on-demand was wrapped around the policy provider in the
-    shared chain, scripts (which call ``get_tool_definitions()`` without an
-    activation set) only saw eager tools, so HA tools that had been moved
-    behind a skill became invisible to automations.
+    Drives the real wiring in ``Assistant._build_profile_tools_provider``, not
+    a hand-built stand-in. Regression: when on-demand was wrapped around the
+    policy provider in the shared chain, scripts (which call
+    ``get_tool_definitions()`` without an activation set) only saw eager
+    tools, so tools moved behind a skill became invisible to automations.
     """
-    service, _, on_demand_view = _build_service(with_on_demand=True)
-    assert on_demand_view is not None
+    mock_llm = RuleBasedMockLLMClient(
+        rules=[], default_response=LLMOutput(content="ok", tool_calls=None)
+    )
+    config = _assistant_config(on_demand_local_tools=["add_or_update_note"])
+    assistant = Assistant(
+        AppConfig.model_validate(config),
+        llm_client_overrides={
+            "on-demand-profile": mock_llm,
+            "no-on-demand-profile": mock_llm,
+        },
+    )
+    await assistant.setup_dependencies()
+    try:
+        service = cast(
+            "ProcessingService",
+            assistant.processing_services_registry["on-demand-profile"],
+        )
 
-    defs = await service.tools_provider.get_tool_definitions()
-    names = {d["function"]["name"] for d in defs}
+        defs = await service.tools_provider.get_tool_definitions()
+        names = {d["function"]["name"] for d in defs}
 
-    assert names == {"eager_a", "lazy_b"}
+        assert "add_or_update_note" in names
+        assert service.on_demand_view is not None
+
+        view_defs = await service.on_demand_view.get_tool_definitions()
+        view_names = {d["function"]["name"] for d in view_defs}
+        assert "add_or_update_note" not in view_names
+        assert "activate_tools" in view_names
+    finally:
+        await assistant.stop_services()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_profile_without_on_demand_entries_gets_no_view() -> None:
+    """A profile configured with no on-demand entries gets a ``None`` view."""
+    mock_llm = RuleBasedMockLLMClient(
+        rules=[], default_response=LLMOutput(content="ok", tool_calls=None)
+    )
+    config = _assistant_config(on_demand_local_tools=[])
+    assistant = Assistant(
+        AppConfig.model_validate(config),
+        llm_client_overrides={
+            "on-demand-profile": mock_llm,
+            "no-on-demand-profile": mock_llm,
+        },
+    )
+    await assistant.setup_dependencies()
+    try:
+        service = cast(
+            "ProcessingService",
+            assistant.processing_services_registry["no-on-demand-profile"],
+        )
+        assert service.on_demand_view is None
+
+        defs = await service.tools_provider.get_tool_definitions()
+        names = {d["function"]["name"] for d in defs}
+        assert "add_or_update_note" in names
+    finally:
+        await assistant.stop_services()
 
 
 @pytest.mark.asyncio
@@ -126,15 +221,3 @@ async def test_on_demand_view_still_hides_unactivated_tools_from_llm() -> None:
 
     # Eager tool plus the synthetic activate_tools meta-tool; lazy_b is hidden.
     assert names == {"eager_a", "activate_tools"}
-
-
-@pytest.mark.asyncio
-async def test_processing_service_without_on_demand_has_no_view() -> None:
-    """Profiles with no on-demand entries get a ``None`` view, not a wrapper."""
-    service, _, on_demand_view = _build_service(with_on_demand=False)
-
-    assert on_demand_view is None
-    assert service.on_demand_view is None
-    defs = await service.tools_provider.get_tool_definitions()
-    names = {d["function"]["name"] for d in defs}
-    assert names == {"eager_a", "lazy_b"}

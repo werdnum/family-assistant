@@ -21,24 +21,16 @@ class TestNoOpCases:
             "Hello, world!",
             "Numbers like 1, 2, 3 and 4.5 should pass through.",
             "Multi\nline\ntext.",
+            "It costs $100 and saves $50 monthly.",
+            # Two stand-alone amounts shouldn't be treated as math delimiters,
+            # because there's no \command between them.
+            "Paid $50 today, $25 yesterday.",
+            "Spent $5 then $7 then $3.",
+            "Just $100 here.",
         ],
     )
     def test_returns_input_unchanged(self, text: str) -> None:
         assert normalize_latex_to_unicode(text) == text
-
-    def test_currency_amount_preserved(self) -> None:
-        assert (
-            normalize_latex_to_unicode("It costs $100 and saves $50 monthly.")
-            == "It costs $100 and saves $50 monthly."
-        )
-
-    def test_two_dollar_amounts_preserved(self) -> None:
-        # Two stand-alone amounts shouldn't be treated as math delimiters,
-        # because there's no \command between them.
-        assert (
-            normalize_latex_to_unicode("Paid $50 today, $25 yesterday.")
-            == "Paid $50 today, $25 yesterday."
-        )
 
     def test_backslash_without_letters_unchanged(self) -> None:
         # Markdown-style backslash escapes shouldn't get touched.
@@ -104,13 +96,6 @@ class TestMathDelimiterStripping:
             normalize_latex_to_unicode(r"Block: $$\int f$$ done") == "Block: ∫ f done"
         )
 
-    def test_inline_dollars_without_command_preserved(self) -> None:
-        # No LaTeX command inside, so the dollars stay.
-        assert (
-            normalize_latex_to_unicode("Spent $5 then $7 then $3.")
-            == "Spent $5 then $7 then $3."
-        )
-
     def test_inline_math_with_leading_whitespace(self) -> None:
         # ``$ \alpha$`` -- LLM padding before the command -- should still be
         # recognized as math and the literal dollars dropped.
@@ -153,15 +138,6 @@ class TestRelationsAndOperators:
 
 
 class TestEdgeCases:
-    def test_empty_string(self) -> None:
-        assert not normalize_latex_to_unicode("")
-
-    def test_text_with_no_backslash_short_circuits(self) -> None:
-        # This is a behaviour assertion: even with dollars present, if there's
-        # no backslash we return the input unchanged.
-        s = "Just $100 here."
-        assert normalize_latex_to_unicode(s) is s
-
     def test_multiline_text_with_mixed_content(self) -> None:
         source = (
             "Recipe:\n"

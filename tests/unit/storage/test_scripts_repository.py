@@ -174,18 +174,40 @@ class TestScriptsRepository:
         result = await db_context.scripts.delete("nonexistent_script")
         assert result is False
 
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string"},
+                    "count": {"type": "integer"},
+                },
+                "required": ["input"],
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "properties": {
+                            "timeout": {"type": "number"},
+                            "retries": {"type": "integer"},
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                    "enabled": {"type": "boolean"},
+                },
+            },
+        ],
+        ids=["flat", "nested"],
+    )
     @pytest.mark.asyncio
-    async def test_save_with_parameters_schema(self, db_context: Database) -> None:
+    async def test_save_with_parameters_schema(
+        self, db_context: Database, schema: dict[str, object]
+    ) -> None:
         """Test saving a script with a JSON schema."""
         name = "schema_test"
-        schema = {
-            "type": "object",
-            "properties": {
-                "input": {"type": "string"},
-                "count": {"type": "integer"},
-            },
-            "required": ["input"],
-        }
 
         # Save with schema
         saved = await db_context.scripts.save(
@@ -199,63 +221,6 @@ class TestScriptsRepository:
         assert saved.parameters_schema == schema
 
         # Retrieve and verify schema is still there
-        retrieved = await db_context.scripts.get_by_name(name)
-        assert retrieved is not None
-        assert retrieved.parameters_schema == schema
-
-    @pytest.mark.asyncio
-    async def test_save_without_parameters_schema(self, db_context: Database) -> None:
-        """Test saving without schema returns None for parameters_schema."""
-        name = "no_schema_test"
-
-        # Save without schema
-        saved = await db_context.scripts.save(
-            name=name,
-            description="Script without parameters",
-            script_code="print('test')",
-        )
-
-        # Verify schema is None
-        assert saved.parameters_schema is None
-
-        # Retrieve and verify schema is still None
-        retrieved = await db_context.scripts.get_by_name(name)
-        assert retrieved is not None
-        assert retrieved.parameters_schema is None
-
-    @pytest.mark.asyncio
-    async def test_save_with_complex_parameters_schema(
-        self, db_context: Database
-    ) -> None:
-        """Test saving with a complex nested JSON schema."""
-        name = "complex_schema_test"
-        schema = {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object",
-                    "properties": {
-                        "timeout": {"type": "number"},
-                        "retries": {"type": "integer"},
-                        "tags": {"type": "array", "items": {"type": "string"}},
-                    },
-                },
-                "enabled": {"type": "boolean"},
-            },
-        }
-
-        # Save with complex schema
-        saved = await db_context.scripts.save(
-            name=name,
-            description="Complex schema test",
-            script_code="print('complex')",
-            parameters_schema=schema,
-        )
-
-        # Verify schema is preserved exactly
-        assert saved.parameters_schema == schema
-
-        # Retrieve and verify
         retrieved = await db_context.scripts.get_by_name(name)
         assert retrieved is not None
         assert retrieved.parameters_schema == schema

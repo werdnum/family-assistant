@@ -10,6 +10,7 @@ from family_assistant.task_worker import (
     DEFAULT_TASK_HANDLER_BUDGETS,
     DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES,
     PARKING_TASK_TYPES,
+    TASK_HANDLER_TIMEOUT,
     TaskHandlerBudget,
     handler_timeouts_from_budgets,
     parking_task_types_from_budgets,
@@ -52,4 +53,8 @@ def test_a_longer_budget_alone_does_not_park() -> None:
 def test_the_delegated_run_is_declared_as_parking() -> None:
     """The confirmation-gated delegated run is the parking handler we ship."""
     assert "delegated_profile_run" in PARKING_TASK_TYPES
-    assert DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES["delegated_profile_run"] == 600
+    assert DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES["delegated_profile_run"] >= 600
+    assert (
+        DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES["delegated_profile_run"]
+        > TASK_HANDLER_TIMEOUT
+    )

@@ -44,7 +44,6 @@ from family_assistant.eval.tool_call_review import (
     seed_flips,
 )
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
-from family_assistant.llm.retrying_client import RetryingLLMClient
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -266,11 +265,15 @@ def test_trigger_payload_present_string_is_rejected() -> None:
 
 
 def test_boundary_payload_mismatch_from_dict_is_rejected() -> None:
-    with pytest.raises(ValueError):
+    # A loaded dict is validated as the boundary's own payload model, so a
+    # conversation payload under a browser boundary fails on the browser fields
+    # it lacks rather than being accepted as the conversation payload it is.
+    with pytest.raises(ValidationError, match="objective"):
         EvalCase.model_validate({
             "id": "mismatch",
             "boundary": "browser",
             "label": "benign",
+            "constraints": _FULL_CONSTRAINTS.model_dump(mode="json"),
             "payload": _conversation_case().payload.model_dump(mode="json"),
         })
 
@@ -1238,14 +1241,14 @@ def test_report_records_model_parameters() -> None:
     assert "temperature" in reloaded.to_text_summary()
 
 
-def test_build_reviewer_threads_model_parameters_to_the_client(
+async def test_build_reviewer_threads_model_parameters_to_the_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
+    created: list[dict[str, object]] = []
 
     def _create_client(config: dict[str, object]) -> LLMInterface:
-        captured.update(config)
-        return cast("LLMInterface", RuleBasedMockLLMClient(rules=[]))
+        created.append(config)
+        return _denying_judge("Judged with the run's parameters.")
 
     monkeypatch.setattr(
         "family_assistant.eval.tool_call_review.runner.LLMClientFactory.create_client",
@@ -1254,28 +1257,37 @@ def test_build_reviewer_threads_model_parameters_to_the_client(
     reviewer = build_reviewer(
         "google", "gemini-3.7-flash", model_parameters={"temperature": 0.0}
     )
-    factory = reviewer._llm_client_factory
-    assert factory is not None
-    factory()
-    assert captured["model_parameters"] == {"temperature": 0.0}
+
+    report = await run_eval([_attack_conversation_case()], reviewer, seeds=1)
+
+    assert [trial.reason for trial in report.trials] == [
+        "Judged with the run's parameters."
+    ]
+    assert [(config["model"], config["model_parameters"]) for config in created] == [
+        ("gemini-3.7-flash", {"temperature": 0.0})
+    ]
+
+
+def _denying_judge(reason: str = "Not derivable.") -> LLMInterface:
+    return cast(
+        "LLMInterface",
+        RuleBasedMockLLMClient(
+            rules=[],
+            structured_rules=[
+                (
+                    lambda _args: True,
+                    ToolCallReviewResponse(
+                        verdict=ToolCallReviewVerdict.DENY, reason=reason
+                    ),
+                )
+            ],
+        ),
+    )
 
 
 def _denying_reviewer() -> ToolCallReviewer:
     """A reviewer whose judge denies everything, so trials are clean model verdicts."""
-    mock = RuleBasedMockLLMClient(
-        rules=[],
-        structured_rules=[
-            (
-                lambda _args: True,
-                ToolCallReviewResponse(
-                    verdict=ToolCallReviewVerdict.DENY, reason="Not derivable."
-                ),
-            )
-        ],
-    )
-    return ToolCallReviewer(
-        cast("LLMInterface", mock), ToolCallReviewConfig(timeout_seconds=5)
-    )
+    return ToolCallReviewer(_denying_judge(), ToolCallReviewConfig(timeout_seconds=5))
 
 
 def _unreachable_reviewer() -> ToolCallReviewer:
@@ -1328,16 +1340,25 @@ async def test_duplicate_attack_payloads_count_as_one_clean_case() -> None:
     assert distinct_report.clean_attack_cases() == 3
 
 
-def test_retry_config_builds_a_retrying_judge_client(
+async def test_retry_config_judges_with_the_fallback_when_the_primary_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A deployment that gates on a primary/fallback judge must be measured on
-    # that judge, not on a single-model stand-in.
-    captured: list[dict[str, object]] = []
+    # that judge, not on a single-model stand-in. The per-leg provider clients
+    # are the stand-ins; the factory's retry composition above them is real.
+    legs: list[dict[str, object]] = []
 
     def _create_single(config: dict[str, object]) -> LLMInterface:
-        captured.append(config)
-        return cast("LLMInterface", RuleBasedMockLLMClient(rules=[]))
+        legs.append(config)
+        if config["model"] == "gemini-3.7-flash":
+            return cast(
+                "LLMInterface",
+                RuleBasedMockLLMClient(
+                    rules=[],
+                    structured_rules=[(lambda _args: True, _raise_provider_error)],
+                ),
+            )
+        return _denying_judge("Denied by the fallback judge.")
 
     monkeypatch.setattr(
         "family_assistant.llm.factory.LLMClientFactory._create_single_client",
@@ -1350,16 +1371,20 @@ def test_retry_config_builds_a_retrying_judge_client(
         model_parameters=parameters,
         retry_config={"fallback": {"provider": "openai", "model": "gpt-5.6-terra"}},
     )
-    factory = reviewer._llm_client_factory
-    assert factory is not None
-    client = factory()
 
-    assert isinstance(client, RetryingLLMClient)
-    assert client.primary_model == "gemini-3.7-flash"
-    assert client.fallback_model == "gpt-5.6-terra"
+    report = await run_eval([_attack_conversation_case()], reviewer, seeds=1)
+
+    assert [(trial.verdict, trial.reason) for trial in report.trials] == [
+        (ToolCallReviewVerdict.DENY, "Denied by the fallback judge.")
+    ]
     # Both legs inherit the run's parameters; a fallback judged at a different
     # temperature would not be the deployed fallback.
-    assert [leg["model_parameters"] for leg in captured] == [parameters, parameters]
+    assert [
+        (leg["provider"], leg["model"], leg["model_parameters"]) for leg in legs
+    ] == [
+        ("google", "gemini-3.7-flash", parameters),
+        ("openai", "gpt-5.6-terra", parameters),
+    ]
 
 
 async def test_a_stamp_digests_free_form_model_parameters() -> None:
@@ -1410,12 +1435,6 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
         "timeout_seconds": None,
         "deployment_guidance_digest": None,
     }
-
-
-def test_allowed_attack_is_not_a_clean_trial() -> None:
-    allowed = _trial(label="attack", verdict=ToolCallReviewVerdict.ALLOW)
-
-    assert allowed.is_clean_trial is False
 
 
 def test_allowed_benign_case_is_a_clean_trial() -> None:
@@ -1611,15 +1630,8 @@ async def test_stamp_records_the_timeout_and_guidance_it_measured_under() -> Non
     assert judge["deployment_guidance_digest"] not in {None, ""}
 
 
-def test_loader_validates_arguments_for_an_attachment_typed_tool() -> None:
-    """Ten local tools declare ``type: attachment``, a project-specific extension.
-
-    Plain jsonschema rejects it while checking the *schema*, so a case naming any
-    of them — ``read_text_attachment`` is globally granted and so is likely in a
-    real case — would abort the whole dataset load even with the argument
-    absent.
-    """
-    case = EvalCase(
+def _attachment_tool_case(arguments: dict[str, object]) -> EvalCase:
+    return EvalCase(
         id="attachment-tool",
         boundary="conversation",
         label="benign",
@@ -1633,7 +1645,7 @@ def test_loader_validates_arguments_for_an_attachment_typed_tool() -> None:
                 }
             ],
             tool_name="read_text_attachment",
-            arguments={"attachment_id": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"},
+            arguments=arguments,
             sink_class="known_user_message",
             taint_state=_TRUSTED,
             policy_contexts=[
@@ -1642,7 +1654,30 @@ def test_loader_validates_arguments_for_an_attachment_typed_tool() -> None:
         ),
     )
 
+
+def test_loader_validates_arguments_for_an_attachment_typed_tool() -> None:
+    """Ten local tools declare ``type: attachment``, a project-specific extension.
+
+    Plain jsonschema rejects it while checking the *schema*, so a case naming any
+    of them — ``read_text_attachment`` is globally granted and so is likely in a
+    real case — would abort the whole dataset load even with the argument
+    absent.
+    """
+    case = _attachment_tool_case({
+        "attachment_id": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed"
+    })
+
     tool_call_review_eval.validate_against_tool_schema(case)
+
+
+def test_loader_rejects_a_non_string_attachment_argument() -> None:
+    # Accepting the attachment type must not mean skipping the tool: an
+    # attachment id is a string on the wire, so anything else is a stale or
+    # invented call that has to fail at load.
+    case = _attachment_tool_case({"attachment_id": 123})
+
+    with pytest.raises(CaseSchemaValidationError, match="attachment_id"):
+        tool_call_review_eval.validate_against_tool_schema(case)
 
 
 def test_loader_rejects_a_payload_value_the_prompt_cannot_serialize() -> None:

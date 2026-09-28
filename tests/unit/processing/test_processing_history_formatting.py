@@ -7,7 +7,6 @@ from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -540,58 +539,6 @@ def _message_text(message: UserMessage) -> str:
     )
 
 
-async def test_format_history_converts_attachment_urls(
-    processing_service: ProcessingService, tmp_path: Path
-) -> None:
-    """Test that _format_history_for_llm preserves message structure correctly."""
-
-    # Create a mock attachment file
-    attachment_id = "550e8400-e29b-41d4-a716-446655440000"
-    storage_path = tmp_path / "attachments"
-    hash_prefix = attachment_id[:2]  # "55"
-    attachment_dir = storage_path / hash_prefix
-    attachment_dir.mkdir(parents=True)
-
-    # Create a simple test image using PIL (1x1 red pixel)
-    test_image = Image.new("RGB", (1, 1), color="red")
-
-    # Save to bytes
-    image_buffer = BytesIO()
-    test_image.save(image_buffer, format="PNG")
-    test_image_content = image_buffer.getvalue()
-
-    # Write to file
-    attachment_file = attachment_dir / f"{attachment_id}.png"
-    attachment_file.write_bytes(test_image_content)
-
-    # Create and inject AttachmentService
-
-    # Create a mock db_engine for AttachmentRegistry
-
-    mock_db_engine = MagicMock()
-
-    processing_service.attachment_registry = AttachmentRegistry(
-        storage_path=str(storage_path),
-        db_engine=mock_db_engine,
-        config=None,
-    )
-
-    # Create history with user message
-    history_messages: list[LLMMessage] = [
-        create_user_message("Check this image"),
-    ]
-
-    # Format the history
-    actual_output = await processing_service.context_preparer.format_history(
-        history_messages
-    )
-
-    # Verify the message is preserved correctly as a typed message
-    assert len(actual_output) == 1
-    assert isinstance(actual_output[0], UserMessage)
-    assert actual_output[0].content == "Check this image"
-
-
 def test_web_specific_history_configuration() -> None:
     """Test that web interface gets different history limits than other interfaces."""
     mock_service_config = ProcessingServiceConfig(
@@ -660,9 +607,11 @@ def test_web_history_configuration_fallback() -> None:
     assert web_limit == 10
     assert web_age == timedelta(hours=48)
 
-    # Confirm the raw config values are None (no web-specific override)
-    assert processing_service.service_config.web_max_history_messages is None
-    assert processing_service.service_config.web_history_max_age_hours is None
+    # Web and non-web interfaces share the same fallback when unset
+    telegram_limit, telegram_age = (
+        processing_service.context_preparer.get_history_limits("telegram")
+    )
+    assert (web_limit, web_age) == (telegram_limit, telegram_age)
 
 
 def test_web_history_configuration_with_zero_values() -> None:

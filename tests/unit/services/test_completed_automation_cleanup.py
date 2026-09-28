@@ -125,6 +125,16 @@ class TestCompletedAutomationCleanup:
             enabled=True,
         )
 
+        # Give it an old last_execution_at so only the enabled=True predicate
+        # protects it; enabled listeners are never treated as "completed".
+        old_time = datetime.now(UTC) - timedelta(hours=48)
+        stmt = (
+            update(event_listeners_table)
+            .where(event_listeners_table.c.id == listener_id)
+            .values(last_execution_at=old_time)
+        )
+        await db_context.execute(stmt)
+
         await handle_completed_automation_cleanup(exec_context, {"retention_hours": 24})  # type: ignore[arg-type]
 
         # Listener should still exist (it hasn't fired yet)
@@ -144,6 +154,16 @@ class TestCompletedAutomationCleanup:
             one_time=False,
             enabled=False,
         )
+
+        # Give it an old last_execution_at so only the one_time=False predicate
+        # protects it; recurring listeners are never cleaned up regardless of age.
+        old_time = datetime.now(UTC) - timedelta(hours=48)
+        stmt = (
+            update(event_listeners_table)
+            .where(event_listeners_table.c.id == listener_id)
+            .values(last_execution_at=old_time)
+        )
+        await db_context.execute(stmt)
 
         await handle_completed_automation_cleanup(exec_context, {"retention_hours": 24})  # type: ignore[arg-type]
 

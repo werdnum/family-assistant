@@ -1031,7 +1031,9 @@ def test_build_reads_revision_from_fetched_manifest(tmp_path: Path) -> None:
     assert "**Revision**: 4f61ecb038e9c3fb77e21034b22511b523772cdd" in provenance
 
 
-def test_build_refuses_manifest_revision_override(tmp_path: Path) -> None:
+def test_build_refuses_manifest_revision_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """A fetched input cannot be relabeled with a contradictory revision."""
     script = _load_corpus_build_script()
     private_root = tmp_path / ".review-eval-local"
@@ -1046,6 +1048,7 @@ def test_build_refuses_manifest_revision_override(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
+    out_dir = private_root / "public" / "deepset-output"
     assert (
         script.main([
             "--corpus",
@@ -1055,10 +1058,12 @@ def test_build_refuses_manifest_revision_override(tmp_path: Path) -> None:
             "--upstream-revision",
             "0" * 40,
             "--out-dir",
-            str(private_root / "public" / "deepset-output"),
+            str(out_dir),
         ])
         == 1
     )
+    assert "Invalid corpus provenance" in capsys.readouterr().err
+    assert not out_dir.exists()
 
 
 def test_build_can_materialize_only_the_family_level_gate_split(
@@ -1081,7 +1086,9 @@ def test_build_can_materialize_only_the_family_level_gate_split(
     assert len(cases) == 4
 
 
-def test_build_refuses_existing_or_symlink_output_targets(tmp_path: Path) -> None:
+def test_build_refuses_existing_or_symlink_output_targets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Materialization never overwrites an operator-owned output path."""
     script = _load_corpus_build_script()
     private_root = tmp_path / ".review-eval-local"
@@ -1099,6 +1106,8 @@ def test_build_refuses_existing_or_symlink_output_targets(tmp_path: Path) -> Non
         ])
         == 1
     )
+    assert "Output target already exists" in capsys.readouterr().err
+    assert (existing / "keep.txt").read_text(encoding="utf-8") == "keep"
 
     tracked = tmp_path / "tracked-output"
     assert (
@@ -1111,7 +1120,8 @@ def test_build_refuses_existing_or_symlink_output_targets(tmp_path: Path) -> Non
         ])
         == 1
     )
-    assert (existing / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert "Invalid output directory" in capsys.readouterr().err
+    assert not tracked.exists()
 
     symlink_target = tmp_path / "symlink-target"
     symlink_target.mkdir()
@@ -1127,6 +1137,26 @@ def test_build_refuses_existing_or_symlink_output_targets(tmp_path: Path) -> Non
         ])
         == 1
     )
+    assert "Invalid output directory" in capsys.readouterr().err
+    assert not list(symlink_target.iterdir())
+
+    contained_target = private_root / "contained-target"
+    contained_target.mkdir()
+    contained_link = private_root / "contained-symlink-output"
+    contained_link.symlink_to(contained_target, target_is_directory=True)
+    assert (
+        script.main([
+            "--corpus",
+            "deepset_prompt_injections",
+            "--use-sample",
+            "--out-dir",
+            str(contained_link),
+        ])
+        == 1
+    )
+    assert "Output target already exists" in capsys.readouterr().err
+    assert contained_link.is_symlink()
+    assert not list(contained_target.iterdir())
 
 
 def test_build_validation_failure_leaves_no_partial_target(
@@ -1176,7 +1206,9 @@ def test_build_success_is_deterministic(tmp_path: Path) -> None:
         assert (outputs[0] / name).read_bytes() == (outputs[1] / name).read_bytes()
 
 
-def test_upstream_revision_cannot_contradict_the_sample(tmp_path: Path) -> None:
+def test_upstream_revision_cannot_contradict_the_sample(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     script = _load_corpus_build_script()
     out_dir = tmp_path / ".review-eval-local" / "deepset-output"
     exit_code = script.main([
@@ -1189,10 +1221,14 @@ def test_upstream_revision_cannot_contradict_the_sample(tmp_path: Path) -> None:
         str(out_dir),
     ])
     assert exit_code == 1
+    assert "--upstream-revision cannot be combined with --use-sample" in (
+        capsys.readouterr().err
+    )
+    assert not out_dir.exists()
 
 
 def test_injecagent_variant_selection_is_not_accepted_for_sample(
-    tmp_path: Path,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     script = _load_corpus_build_script()
     out_dir = tmp_path / ".review-eval-local" / "injecagent-output"
@@ -1206,6 +1242,8 @@ def test_injecagent_variant_selection_is_not_accepted_for_sample(
         str(out_dir),
     ])
     assert exit_code == 1
+    assert "--injecagent-variants requires --input" in capsys.readouterr().err
+    assert not out_dir.exists()
 
 
 def _load_corpus_build_script() -> ModuleType:

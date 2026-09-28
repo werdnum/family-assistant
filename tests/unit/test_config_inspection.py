@@ -10,9 +10,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from typing import NoReturn
 
+import pytest
 from pydantic import SecretStr
 
+from family_assistant import __main__ as entrypoint
 from family_assistant.config_inspection import (
     REDACTED,
     redact_sensitive_config,
@@ -20,8 +24,10 @@ from family_assistant.config_inspection import (
 )
 from family_assistant.config_loader import expand_env_vars_in_dict
 from family_assistant.config_models import (
+    AIWorkerConfig,
     ApnsConfig,
     AppConfig,
+    KubernetesBackendConfig,
     MCPConfig,
     MCPServerConfig,
     mcp_servers_for_runtime,
@@ -61,9 +67,16 @@ def test_unset_credential_stays_none_rather_than_redacted() -> None:
 
 def test_kubernetes_secret_name_is_not_a_credential() -> None:
     """api_keys_secret names a Kubernetes Secret; the old name heuristic hid it."""
-    dumped = AppConfig().model_dump(mode="json")
-    config = dumped["ai_worker_config"]["kubernetes"]
-    assert "api_keys_secret" in config
+    app_config = AppConfig(
+        ai_worker_config=AIWorkerConfig(
+            kubernetes=KubernetesBackendConfig(api_keys_secret="fa-worker-api-keys")
+        )
+    )
+
+    redacted = redact_sensitive_config(app_config.model_dump(mode="json"))
+
+    kubernetes = redacted["ai_worker_config"]["kubernetes"]
+    assert kubernetes["api_keys_secret"] == "fa-worker-api-keys"
 
 
 def test_runtime_mcp_dump_carries_the_real_token() -> None:
@@ -289,13 +302,46 @@ def test_live_app_config_dump_contains_no_credential_material() -> None:
 # serialized as its mask and the credential silently stops working.
 
 
-def test_cli_override_produces_a_usable_secret() -> None:
+class _StartupReached(Exception):
+    pass
+
+
+def test_cli_credential_overrides_reach_the_app_as_usable_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """model_copy(update=...) does not validate, so the CLI must convert."""
-    config = AppConfig().model_copy(
-        update={"telegram_token": SecretStr("cli-token")},
+    started_with: list[AppConfig] = []
+
+    def assistant_that_stops_before_startup(
+        config: AppConfig, llm_client_overrides: object = None
+    ) -> NoReturn:
+        started_with.append(config)
+        raise _StartupReached
+
+    monkeypatch.setattr(entrypoint, "load_config", lambda config_file_path: AppConfig())
+    monkeypatch.setattr(entrypoint, "Assistant", assistant_that_stops_before_startup)
+    monkeypatch.setattr(entrypoint.fastapi_app.state, "config", None, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "family_assistant",
+            "--telegram-token",
+            "cli-token",
+            "--openrouter-api-key",
+            "cli-openrouter-key",
+        ],
     )
+
+    with pytest.raises(_StartupReached):
+        entrypoint.main()
+
+    assert len(started_with) == 1
+    config = started_with[0]
     assert config.telegram_token is not None
     assert config.telegram_token.get_secret_value() == "cli-token"
+    assert config.openrouter_api_key is not None
+    assert config.openrouter_api_key.get_secret_value() == "cli-openrouter-key"
 
 
 def test_env_placeholders_expand_inside_secret_fields() -> None:

@@ -154,7 +154,13 @@ async def test_execution_future_completes_first() -> None:
 
 
 @pytest.mark.asyncio
-async def test_poll_approved_resolves_externally() -> None:
+async def test_poll_approved_resolves_externally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "family_assistant.services.confirmation_wait.DURABLE_CONFIRMATION_STATUS_POLL_SECONDS",
+        0.0,
+    )
     execution: asyncio.Future[ConfirmationOutcome] = (
         asyncio.get_running_loop().create_future()
     )
@@ -166,7 +172,7 @@ async def test_poll_approved_resolves_externally() -> None:
     )
 
     outcome = await wait_for_confirmation_resolution(
-        builder.strategy, timeout_seconds=5.0
+        builder.strategy, timeout_seconds=60.0
     )
 
     assert outcome == ConfirmationOutcome(kind="completed", result="poll done")
@@ -174,7 +180,13 @@ async def test_poll_approved_resolves_externally() -> None:
 
 
 @pytest.mark.asyncio
-async def test_poll_approved_without_execution_future_resolves_externally() -> None:
+async def test_poll_approved_without_execution_future_resolves_externally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "family_assistant.services.confirmation_wait.DURABLE_CONFIRMATION_STATUS_POLL_SECONDS",
+        0.0,
+    )
     builder = _RecordingStrategyBuilder(
         durable=True,
         execution=None,
@@ -183,7 +195,7 @@ async def test_poll_approved_without_execution_future_resolves_externally() -> N
     )
 
     outcome = await wait_for_confirmation_resolution(
-        builder.strategy, timeout_seconds=5.0
+        builder.strategy, timeout_seconds=60.0
     )
 
     assert outcome == ConfirmationOutcome(kind="approved")
@@ -191,7 +203,13 @@ async def test_poll_approved_without_execution_future_resolves_externally() -> N
 
 
 @pytest.mark.asyncio
-async def test_poll_rejected_resolves_externally() -> None:
+async def test_poll_rejected_resolves_externally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "family_assistant.services.confirmation_wait.DURABLE_CONFIRMATION_STATUS_POLL_SECONDS",
+        0.0,
+    )
     execution: asyncio.Future[ConfirmationOutcome] = (
         asyncio.get_running_loop().create_future()
     )
@@ -200,7 +218,7 @@ async def test_poll_rejected_resolves_externally() -> None:
     )
 
     outcome = await wait_for_confirmation_resolution(
-        builder.strategy, timeout_seconds=5.0
+        builder.strategy, timeout_seconds=60.0
     )
 
     assert outcome == ConfirmationOutcome(kind="rejected")
@@ -209,7 +227,13 @@ async def test_poll_rejected_resolves_externally() -> None:
 
 @pytest.mark.parametrize("status", ["expired", "missing", "unauthorized", "error"])
 @pytest.mark.asyncio
-async def test_poll_failed_statuses_return_failed(status: str) -> None:
+async def test_poll_failed_statuses_return_failed(
+    status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "family_assistant.services.confirmation_wait.DURABLE_CONFIRMATION_STATUS_POLL_SECONDS",
+        0.0,
+    )
     execution: asyncio.Future[ConfirmationOutcome] = (
         asyncio.get_running_loop().create_future()
     )
@@ -218,7 +242,7 @@ async def test_poll_failed_statuses_return_failed(status: str) -> None:
     )
 
     outcome = await wait_for_confirmation_resolution(
-        builder.strategy, timeout_seconds=5.0
+        builder.strategy, timeout_seconds=60.0
     )
 
     assert outcome == ConfirmationOutcome(

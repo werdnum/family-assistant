@@ -285,7 +285,13 @@ class TestWorkerCompletionListenerCleanup:
         self, exec_context: ToolExecutionContext, db_context: Database
     ) -> None:
         """Fired listeners belong to the completed automation cleanup."""
-        await _create_worker_task(db_context, "task-done", "success")
+        await _create_worker_task(
+            db_context,
+            "task-done",
+            "success",
+            age=timedelta(days=2),
+            finished_age=timedelta(days=2),
+        )
         listener_id = await _create_worker_completion_listener(
             db_context, "task-done", age=timedelta(days=2)
         )

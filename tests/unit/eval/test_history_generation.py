@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+import yaml
 
 import family_assistant.eval.tool_call_review.history_generation as generation
 import scripts.generate_review_history_cases as cli
+from family_assistant.eval import private_paths
 from family_assistant.eval.tool_call_review.history_generation import (
     BatchAttempt,
     BatchExecutionError,
@@ -28,10 +29,15 @@ from family_assistant.eval.tool_call_review.history_generation import (
     instantiate_batches,
     prepare_shapes,
 )
+from family_assistant.eval.tool_call_review.registry_snapshot import (
+    descriptors_to_snapshot,
+)
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from family_assistant.eval.tool_call_review.schema import ConversationPayload
 
 pytestmark = pytest.mark.no_db
@@ -1008,17 +1014,49 @@ def test_complete_instantiation_artifacts_can_be_loaded_for_resume(
 async def test_instantiate_resumes_complete_pair_without_pi(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    draft = _draft()
-    (tmp_path / "classification.jsonl").write_text(
-        json.dumps(_classification().model_dump(mode="json")) + "\n",
+    monkeypatch.setattr(private_paths, "PROJECT_ROOT", tmp_path)
+    private_root = tmp_path / ".review-eval-local"
+    private_root.mkdir()
+    template = TaskTemplate(
+        template_id="one",
+        intent_category="send_message",
+        tool_names=["send_message_to_user"],
+        argument_shapes={"target_chat_id": "string"},
+        sink_class="known_user_message",
+        taint_tier="trusted_user",
+        content_kind="known-contact-message",
+    )
+    templates_path = private_root / "templates.yaml"
+    templates_path.write_text(
+        yaml.safe_dump(template.model_dump(mode="json")), encoding="utf-8"
+    )
+    registry_path = private_root / "registry.json"
+    registry_path.write_text(
+        json.dumps(descriptors_to_snapshot(LOCAL_TOOL_DESCRIPTORS)), encoding="utf-8"
+    )
+    out_dir = private_root / "run"
+    common = [
+        "--templates",
+        str(templates_path),
+        "--tool-registry",
+        str(registry_path),
+        "--out-dir",
+        str(out_dir),
+    ]
+    assert cli._prepare(cli._parser().parse_args(["prepare", *common])) == 0
+    shape_id = json.loads((out_dir / "shapes.jsonl").read_text())["shape_id"]
+    classification = _classification().model_copy(update={"shape_id": shape_id})
+    draft = _draft(shape_id=shape_id)
+    (out_dir / "classification.jsonl").write_text(
+        json.dumps(classification.model_dump(mode="json")) + "\n",
         encoding="utf-8",
     )
-    (tmp_path / "classification-quarantine.jsonl").write_text("", encoding="utf-8")
-    (tmp_path / "drafts.jsonl").write_text(
+    (out_dir / "classification-quarantine.jsonl").write_text("", encoding="utf-8")
+    (out_dir / "drafts.jsonl").write_text(
         json.dumps(draft.model_dump(mode="json")) + "\n", encoding="utf-8"
     )
-    (tmp_path / "instantiation-quarantine.jsonl").write_text("", encoding="utf-8")
-    (tmp_path / "instantiation-attempts.jsonl").write_text(
+    (out_dir / "instantiation-quarantine.jsonl").write_text("", encoding="utf-8")
+    (out_dir / "instantiation-attempts.jsonl").write_text(
         json.dumps({
             "operation": "instantiate",
             "batch_number": 1,
@@ -1029,42 +1067,49 @@ async def test_instantiate_resumes_complete_pair_without_pi(
         + "\n",
         encoding="utf-8",
     )
-    manifest: dict[str, object] = {
+    manifest = json.loads((out_dir / "run.json").read_text())
+    manifest.update({
         "phase": "classified",
         "classification_accepted": 1,
         "classification_quarantined": 0,
         "classification_runnable": 1,
         "classification_review": 0,
-        "accepted_counts": {"classification": 1},
-        "quarantine_counts": {"classification": 0},
-        "quarantine_reasons": {"classification": {}},
-    }
-    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
-    args = cli._parser().parse_args([
-        "instantiate",
-        "--templates",
-        "templates.yaml",
-        "--tool-registry",
-        "registry.json",
-        "--out-dir",
-        str(tmp_path),
-    ])
-    monkeypatch.setattr(cli, "_resolve_output", lambda raw: Path(raw))
-    monkeypatch.setattr(
-        cli,
-        "_require_run",
-        lambda *_args: (manifest, [], registry, [_shape()]),
-    )
+    })
+    manifest["accepted_counts"]["classification"] = 1
+    manifest["quarantine_counts"]["classification"] = 0
+    manifest["quarantine_reasons"]["classification"] = {}
+    (out_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+    args = cli._parser().parse_args(["instantiate", *common])
 
     async def fail_if_called(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("Pi must not be called while resuming artifacts")
 
-    monkeypatch.setattr(cli, "instantiate_batches", fail_if_called)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_if_called)
 
     assert await cli._instantiate(args) == 0
-    assert (tmp_path / "cases" / "history-draft-shape-one-benign.yaml").exists()
-    assert (tmp_path / "cases" / "history-draft-shape-one-attack.yaml").exists()
-    persisted_manifest = json.loads((tmp_path / "run.json").read_text())
+    cases = {
+        path.name: yaml.safe_load(path.read_text(encoding="utf-8"))
+        for path in (out_dir / "cases").glob("*.yaml")
+    }
+    assert set(cases) == {
+        f"history-draft-{shape_id}-benign.yaml",
+        f"history-draft-{shape_id}-attack.yaml",
+    }
+    benign = cases[f"history-draft-{shape_id}-benign.yaml"]["payload"]
+    attack = cases[f"history-draft-{shape_id}-attack.yaml"]["payload"]
+    assert [message["content"] for message in benign["messages"]] == [
+        draft.benign_context,
+        draft.trusted_request,
+    ]
+    assert [message["content"] for message in attack["messages"]] == [
+        draft.attack_context,
+        draft.trusted_request,
+    ]
+    assert benign["arguments"]["target_chat_id"] == "1001"
+    assert attack["arguments"]["target_chat_id"] == "2002"
+    persisted_manifest = json.loads((out_dir / "run.json").read_text())
+    assert persisted_manifest["phase"] == "instantiated"
+    assert persisted_manifest["case_count"] == 2
     assert persisted_manifest["attempts"] == [
         {
             "operation": "instantiate",

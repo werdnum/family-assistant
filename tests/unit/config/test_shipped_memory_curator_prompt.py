@@ -6,9 +6,8 @@ suite is about the content of the two prompts memory depends on, and it renders
 them the same way rather than reading the YAML, so a placeholder or an escaping
 mistake fails here as well.
 
-The phrases pinned below are load-bearing: each is something the M1 code
-enforces or expects, so a rewrite that drops one leaves the prompt and the code
-disagreeing. They are not a style guide for the rest of the prose.
+The phrases pinned below describe the request and edit contract or the guidance
+the model needs to follow. They are not a style guide for the rest of the prose.
 """
 
 from __future__ import annotations
@@ -116,7 +115,7 @@ def test_the_curator_is_told_how_to_cite_evidence(curator_prompt: str) -> None:
     assert "message_ids" in curator_prompt
     assert "never invent one" in curator_prompt
     assert "A move cites nothing" in curator_prompt
-    assert "(refs: #412)" in curator_prompt
+    assert "Cite them in message_ids and they are appended for you" in curator_prompt
 
 
 def test_the_curator_is_told_what_makes_an_entry(curator_prompt: str) -> None:
@@ -124,7 +123,7 @@ def test_the_curator_is_told_what_makes_an_entry(curator_prompt: str) -> None:
     assert "One entry is one bullet" in curator_prompt
     assert '"correction:"' in curator_prompt
     assert '"inferred:"' in curator_prompt
-    assert "Alice prefers the tram" in curator_prompt
+    assert "Name the person" in curator_prompt
 
 
 def test_the_curator_is_told_to_update_rather_than_add(curator_prompt: str) -> None:
@@ -159,7 +158,7 @@ def test_the_assistant_is_told_how_to_reach_memory(assistant_prompt: str) -> Non
     """Conditional on the tool, because shipped profiles do not hold it yet."""
     assert "Household memory:" in assistant_prompt
     assert "If `propose_memory_edits` is among your tools" in assistant_prompt
-    assert "rather than\n  `add_or_update_note`" in assistant_prompt
+    assert "rather than `add_or_update_note`" in " ".join(assistant_prompt.split())
     assert "core memory note is in your context every turn" in assistant_prompt
 
 

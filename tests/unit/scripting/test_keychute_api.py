@@ -29,6 +29,7 @@ from family_assistant.security.taint import (
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     TaintTrackingToolsProvider,
+    ToolPolicyDeniedError,
 )
 from family_assistant.tools.types import ToolCallReviewTurnState, ToolExecutionContext
 
@@ -228,37 +229,61 @@ async def test_request_denies_high_taint_before_contacting_keychute() -> None:
     assert review_calls[0].kwargs["review_verdict"] == "confirm"
 
 
+def _denying_review() -> AsyncMock:
+    """Stand in for the taint reviewer, refusing so the request stops before Keychute."""
+    return AsyncMock(
+        side_effect=ToolPolicyDeniedError(
+            "keychute_http_request", "held for inspection"
+        )
+    )
+
+
+def _fail_if_keychute_contacted(_request: httpx.Request) -> httpx.Response:
+    pytest.fail("A refused review must not contact Keychute")
+
+
 @pytest.mark.asyncio
 async def test_request_review_receives_complete_outbound_envelope() -> None:
     execution_context = _taint_execution_context(InMemoryTurnTaintTracker())
     authorizer = execution_context.tools_provider
     assert isinstance(authorizer, TaintTrackingToolsProvider)
-    authorize = AsyncMock()
-    client = KeychuteScriptHttpClient(
-        KeychuteConfig(
-            enabled=True, url="https://keychute.test", token=SecretStr("token")
-        ),
-        "keychute_http_request(...) ",
-        execution_context,
-    )
+    authorize = _denying_review()
 
-    with patch.object(authorizer, "authorize_taint_sink", authorize):
-        await client._authorize_egress(
-            secret_name="weather",
-            url="https://example.test/x",
-            method="POST",
-            headers={"Content-Type": "application/json", "X-Tenant": "home"},
-            request_body=b'{"city":"Melbourne"}',
-            reason="forecast",
-            ttl_seconds=60,
-            max_uses=2,
-            approval_timeout_seconds=10,
-            request_timeout_seconds=5.0,
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_fail_if_keychute_contacted)
+    ) as http_client:
+        client = KeychuteScriptHttpClient(
+            KeychuteConfig(
+                enabled=True, url="https://keychute.test", token=SecretStr("token")
+            ),
+            "keychute_http_request(...) ",
+            execution_context,
+            http_client,
         )
+        with (
+            patch.object(authorizer, "authorize_taint_sink", authorize),
+            pytest.raises(
+                KeychuteScriptError,
+                match="egress denied by runtime taint policy: held for inspection",
+            ),
+        ):
+            await client.request(
+                "weather",
+                "https://example.test/x",
+                method="post",
+                headers={"Content-Type": "application/json", "X-Tenant": "home"},
+                body='{"city":"Melbourne"}',
+                reason="forecast",
+                ttl_seconds=60,
+                max_uses=2,
+                approval_timeout_seconds=10,
+                request_timeout_seconds=5.0,
+            )
 
     authorize.assert_awaited_once()
     awaited = authorize.await_args
     assert awaited is not None
+    assert awaited.kwargs["sink_class"] is SinkClass.SANDBOX_NETWORK
     assert awaited.kwargs["arguments"] == {
         "secret_name": "weather",
         "url": "https://example.test/x",
@@ -280,50 +305,53 @@ async def test_large_binary_review_body_is_encoded_off_event_loop(
     execution_context = _taint_execution_context(InMemoryTurnTaintTracker())
     authorizer = execution_context.tools_provider
     assert isinstance(authorizer, TaintTrackingToolsProvider)
-    authorize = AsyncMock()
-    client = KeychuteScriptHttpClient(
-        KeychuteConfig(
-            enabled=True, url="https://keychute.test", token=SecretStr("token")
-        ),
-        "keychute_http_request(...) ",
-        execution_context,
-    )
+    authorize = _denying_review()
     request_body = b"\xff" * (4 * 1024 * 1024)
     encoding_started = threading.Event()
     release_encoding = threading.Event()
+    released_by_event_loop: list[bool] = []
     original_b64encode = base64.b64encode
 
     def blocking_b64encode(value: bytes) -> bytes:
         encoding_started.set()
-        release_encoding.wait(timeout=1)
+        released_by_event_loop.append(release_encoding.wait(timeout=10))
         return original_b64encode(value)
 
     monkeypatch.setattr(base64, "b64encode", blocking_b64encode)
 
-    with patch.object(authorizer, "authorize_taint_sink", authorize):
-        review_task = asyncio.create_task(
-            client._authorize_egress(
-                secret_name="binary-api",
-                url="https://example.test/upload",
-                method="POST",
-                headers={"Content-Type": "application/octet-stream"},
-                request_body=request_body,
-                reason="upload exact payload",
-                ttl_seconds=60,
-                max_uses=1,
-                approval_timeout_seconds=10,
-                request_timeout_seconds=5.0,
-            )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_fail_if_keychute_contacted)
+    ) as http_client:
+        client = KeychuteScriptHttpClient(
+            KeychuteConfig(
+                enabled=True, url="https://keychute.test", token=SecretStr("token")
+            ),
+            "keychute_http_request(...) ",
+            execution_context,
+            http_client,
         )
-        try:
-            assert await asyncio.to_thread(encoding_started.wait, 0.5)
-            event_loop_progressed = asyncio.Event()
-            asyncio.get_running_loop().call_soon(event_loop_progressed.set)
-            await asyncio.wait_for(event_loop_progressed.wait(), timeout=0.1)
-        finally:
-            release_encoding.set()
-        await review_task
+        with patch.object(authorizer, "authorize_taint_sink", authorize):
+            request_task = asyncio.create_task(
+                client.request(
+                    "binary-api",
+                    "https://example.test/upload",
+                    method="POST",
+                    headers={"Content-Type": "application/octet-stream"},
+                    body=request_body,
+                    reason="upload exact payload",
+                )
+            )
+            try:
+                encoding_started_in_time = await asyncio.to_thread(
+                    encoding_started.wait, 10
+                )
+            finally:
+                release_encoding.set()
+            with pytest.raises(KeychuteScriptError, match="held for inspection"):
+                await request_task
 
+    assert encoding_started_in_time
+    assert released_by_event_loop == [True]
     authorize.assert_awaited_once()
     awaited = authorize.await_args
     assert awaited is not None

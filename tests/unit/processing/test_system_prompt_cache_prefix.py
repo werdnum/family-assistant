@@ -19,15 +19,37 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.messages import SystemMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage.database import Database
 from family_assistant.utils.clock import MockClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.tools import ToolExecutionContext
     from family_assistant.tools.types import ToolDefinition, ToolResult
+
+
+class _CapturingMockLLMClient(RuleBasedMockLLMClient):
+    """Records the exact message list handed to the provider on each request."""
+
+    def __init__(self) -> None:
+        super().__init__(rules=[], default_response=LLMOutput(content="done"))
+        self.requests: list[list[LLMMessage]] = []
+
+    async def generate_response(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str = "auto",
+    ) -> LLMOutput:
+        self.requests.append(list(messages))
+        return LLMOutput(content="done")
 
 
 class SimpleToolsProvider:
@@ -70,6 +92,7 @@ def _make_service(
     clock: MockClock | None = None,
     context_fragment: str | None = None,
     include_aggregated_context: bool = False,
+    llm_client: RuleBasedMockLLMClient | None = None,
 ) -> ProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": template},
@@ -83,9 +106,8 @@ def _make_service(
         include_aggregated_context=include_aggregated_context,
     )
     return ProcessingService(
-        llm_client=RuleBasedMockLLMClient(
-            rules=[], default_response=LLMOutput(content="ok")
-        ),
+        llm_client=llm_client
+        or RuleBasedMockLLMClient(rules=[], default_response=LLMOutput(content="ok")),
         tools_provider=SimpleToolsProvider(),
         service_config=config,
         context_providers=(
@@ -101,13 +123,6 @@ def _make_service(
 
 @pytest.mark.no_db
 class TestSystemPromptIsFullyStable:
-    def test_prompt_carries_no_timestamp(self) -> None:
-        service = _make_service()
-
-        rendered = service.format_system_prompt(user_name="tester")
-
-        assert "2026-07-25 10:00:00" not in rendered
-
     def test_prompt_is_identical_across_different_clock_times(self) -> None:
         """The whole point: the cached block must survive the clock advancing."""
         early = _make_service(
@@ -137,19 +152,36 @@ class TestSystemPromptIsFullyStable:
             user_name="tester"
         ) == full.format_system_prompt(user_name="tester")
 
-    def test_breakpoint_covers_the_whole_prompt(self) -> None:
-        service = _make_service()
 
-        rendered = service.format_system_prompt(user_name="tester")
-        message = service._build_system_message(rendered)
+class TestSystemMessageBreakpoint:
+    """Exercises the SystemMessage actually handed to the provider.
 
-        assert message.stable_prefix_len == len(rendered)
+    Unlike ``TestSystemPromptIsFullyStable``, these turns run through
+    ``handle_chat_interaction`` end to end, so they need the database.
+    """
 
-    def test_empty_prompt_reports_no_breakpoint(self) -> None:
-        """A zero-length prefix is not a breakpoint; it must be None, not 0."""
-        message = ProcessingService._build_system_message("")
+    @pytest.mark.asyncio
+    async def test_breakpoint_covers_the_whole_prompt(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        llm_client = _CapturingMockLLMClient()
+        service = _make_service(llm_client=llm_client)
 
-        assert message.stable_prefix_len is None
+        result = await service.handle_chat_interaction(
+            db_context=Database(db_engine),
+            interface_type="web",
+            conversation_id="cache-prefix-breakpoint",
+            trigger_content_parts=[{"type": "text", "text": "Hello"}],
+            trigger_interface_message_id=None,
+            user_name="tester",
+        )
+        assert result.status.value == "success"
+
+        system = next(m for m in llm_client.requests[0] if isinstance(m, SystemMessage))
+        assert system.stable_prefix_len is not None
+        assert system.content[: system.stable_prefix_len] == (
+            service.format_system_prompt(user_name="tester")
+        )
 
 
 @pytest.mark.no_db

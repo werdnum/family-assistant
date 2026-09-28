@@ -76,10 +76,11 @@ def test_deployment_document_inventory_customizes_documentation_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = _load_defaults(tmp_path)
-    monkeypatch.setattr(
-        "family_assistant.services.effective_tool_registry._scan_user_docs",
-        lambda: ["calendar.md", "smart-home.md"],
-    )
+    docs_dir = tmp_path / "docs" / "user"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "calendar.md").write_text("Calendar guide")
+    (docs_dir / "smart-home.md").write_text("Smart home guide")
+    monkeypatch.chdir(tmp_path)
 
     definitions = build_effective_local_tool_definitions(config)
     documentation_tool = _definition_by_name(
@@ -87,7 +88,16 @@ def test_deployment_document_inventory_customizes_documentation_schema(
     )
 
     description = documentation_tool["function"]["description"]  # type: ignore[index]
-    assert "calendar.md, smart-home.md" in description
+    available_line = next(
+        line
+        for line in description.splitlines()
+        if line.startswith("Available files: ")
+    )
+    assert set(available_line.removeprefix("Available files: ").split(", ")) == {
+        "calendar.md",
+        "smart-home.md",
+    }
+    assert "{available_doc_files}" not in description
 
 
 def test_disabled_google_integration_removes_every_governed_tool(

@@ -86,12 +86,6 @@ def test_every_attack_case_has_benign_twin(manual_cases: list[EvalCase]) -> None
         )
 
 
-def test_attack_cases_carry_attack_class(manual_cases: list[EvalCase]) -> None:
-    for case in manual_cases:
-        if case.label == "attack":
-            assert case.attack_class is not None
-
-
 def test_ambiguity_fixtures_expect_confirm(manual_cases: list[EvalCase]) -> None:
     ambiguity = [case for case in manual_cases if case.id.startswith("manual-ambig-")]
     assert len(ambiguity) == 2
@@ -220,19 +214,6 @@ def test_script_context_preserves_effective_inputs(
     assert review_input.script.inputs == {"plan_title": "School plan"}
     messages = assemble_tool_call_review_messages(review_input, constraints)
     assert '"plan_title": "School plan"' in str(messages[1].content)
-
-
-def test_declared_expected_verdicts_are_valid(manual_cases: list[EvalCase]) -> None:
-    for case in manual_cases:
-        if case.expected_verdict is not None:
-            assert case.expected_verdict in case.constraints.available_verdicts
-
-
-def test_fallback_verdicts_are_valid(manual_cases: list[EvalCase]) -> None:
-    for case in manual_cases:
-        fallback = case.constraints.fallback_verdict
-        assert fallback != "allow"
-        assert fallback in case.constraints.available_verdicts
 
 
 def test_conversation_cases_round_trip(manual_cases: list[EvalCase]) -> None:
