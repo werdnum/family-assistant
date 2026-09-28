@@ -1,5 +1,4 @@
-import asyncio
-import json  # Added json import
+import json
 import logging
 import uuid  # Added for turn_id
 from typing import TYPE_CHECKING
@@ -27,7 +26,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 
 # Import the rule-based mock
-from family_assistant.llm.messages import ContentPartDict, text_content
+from family_assistant.llm.messages import ContentPartDict, ToolMessage, text_content
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
@@ -53,6 +52,7 @@ from tests.mocks.mock_llm import (
     Rule,
     RuleBasedMockLLMClient,
     get_last_message_text,
+    last_real_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,8 +77,9 @@ async def test_add_and_retrieve_note_rule_mock(
     2. Instantiate RuleBasedMockLLMClient with these rules.
     3. Simulate adding a note, triggering the 'add' rule and tool call.
     4. Verify the note exists in the database.
-    5. Simulate asking about the note, triggering the 'retrieve' rule.
-    6. Verify the mock's response includes the note content without a tool call.
+    5. Simulate asking about the note, triggering a get_note tool call.
+    6. Verify the final reply, built from the get_note result, carries the
+       stored note's title and content.
     """
     # --- Setup ---
     user_message_id_add = 171  # Message ID for adding the note
@@ -121,29 +122,51 @@ async def test_add_and_retrieve_note_rule_mock(
     )
     add_note_rule: Rule = (add_note_matcher, add_note_response)
 
-    # Rule 2: Match Retrieve Note Request
+    # Rule 2: Match Retrieve Note Request and look the note up with get_note
+    retrieve_tool_call_id = f"call_{uuid.uuid4()}"
+
     def retrieve_note_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
 
         last_text = get_last_message_text(messages).lower()
-        # NOTE: This simple rule-based mock is stateless.
-        # It doesn't know if the note was *actually* added before.
-        # We rely on the test structure to call add before retrieve.
         return (
             "what do you know about" in last_text
             and f"note titled '{test_note_title}'".lower() in last_text
         )
 
-    retrieve_note_response = MockLLMOutput(  # Use the mock's LLMOutput
-        content=f"Rule-based mock says: The note '{test_note_title}' contains: {TEST_NOTE_CONTENT}",
-        tool_calls=None,  # No tool call for retrieval
+    retrieve_note_response = MockLLMOutput(
+        content=None,
+        tool_calls=[
+            ToolCallItem(
+                id=retrieve_tool_call_id,
+                type="function",
+                function=ToolCallFunction(
+                    name="get_note",
+                    arguments=json.dumps({"title": test_note_title}),
+                ),
+            )
+        ],
     )
     retrieve_note_rule: Rule = (retrieve_note_matcher, retrieve_note_response)
 
+    # Rule 3: Answer from whatever get_note returned, so the final reply can
+    # only contain the note's content if the tool read it back from the store.
+    def note_result_matcher(kwargs: MatcherArgs) -> bool:
+        last_message = last_real_message(kwargs.get("messages", []))
+        return (
+            isinstance(last_message, ToolMessage)
+            and last_message.tool_call_id == retrieve_tool_call_id
+        )
+
+    def answer_from_note_result(kwargs: MatcherArgs) -> MockLLMOutput:
+        tool_result_text = get_last_message_text(kwargs.get("messages", []))
+        return MockLLMOutput(content=f"From your notes: {tool_result_text}")
+
+    note_result_rule: Rule = (note_result_matcher, answer_from_note_result)
+
     # --- Instantiate Mock LLM ---
     llm_client: LLMInterface = RuleBasedMockLLMClient(
-        rules=[add_note_rule, retrieve_note_rule]
-        # Can optionally provide a specific default_response here
+        rules=[add_note_rule, note_result_rule, retrieve_note_rule]
     )
     logger.info("Using RuleBasedMockLLMClient for testing.")
 
@@ -256,10 +279,6 @@ async def test_add_and_retrieve_note_rule_mock(
     assert note_in_db.content == TEST_NOTE_CONTENT, "Note content in DB does not match."
     logger.info("Tool info check passed.")
 
-    # --- Add a small delay ---
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for note to be fully indexed
-    await asyncio.sleep(0.1)  # Can be shorter with mock
-
     logger.info("\n--- Running Rule-Based Mock Test: Retrieve Note ---")
     # --- Part 2: Retrieve the note ---
     retrieve_note_text = f"What do you know about the note titled '{test_note_title}'?"
@@ -295,20 +314,15 @@ async def test_add_and_retrieve_note_rule_mock(
         "No final text reply generated during retrieve note turn"
     )
 
-    # Assertion 3: Check the final response content from the mock rule
-    # Use lower() for case-insensitive comparison
-    assert TEST_NOTE_CONTENT.lower() in retrieve_final_text_reply.lower(), (
-        f"Mock LLM response did not contain the expected note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_final_text_reply}"
+    assert retrieve_final_text_reply.startswith("From your notes:"), (
+        f"The get_note result never reached the model. Response: {retrieve_final_text_reply}"
     )
-    # Use lower() for case-insensitive comparison
-    assert test_note_title.lower() in retrieve_final_text_reply.lower(), (
-        f"Mock LLM response did not contain the expected note title ('{test_note_title}'). Response: {retrieve_final_text_reply}"
+    assert TEST_NOTE_CONTENT in retrieve_final_text_reply, (
+        f"get_note did not return the stored note content ('{TEST_NOTE_CONTENT}'). Response: {retrieve_final_text_reply}"
     )
-    assert (
-        "Rule-based mock says:" in retrieve_final_text_reply
-    )  # Check it used our specific response
+    assert test_note_title in retrieve_final_text_reply, (
+        f"get_note did not return the stored note title ('{test_note_title}'). Response: {retrieve_final_text_reply}"
+    )
 
-    logger.info(
-        "Verified rule-based mock response contains note content."  # Tool call check is implicit now
-    )
+    logger.info("Verified get_note returned the stored note to the model.")
     logger.info("--- Rule-Based Mock Test Passed ---")

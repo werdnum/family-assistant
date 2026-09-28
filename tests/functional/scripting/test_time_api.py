@@ -1,6 +1,7 @@
 """Tests for the scripting time API."""
 
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, tzinfo
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -8,14 +9,43 @@ import pytest
 from family_assistant.scripting.apis import time as time_api
 
 
+def assert_is_wall_clock_between(
+    result: time_api.TimeDict, tz: tzinfo, before: float, after: float
+) -> None:
+    """Assert ``result`` is an instant in [before, after] rendered in ``tz``.
+
+    The unix bound pins the instant; comparing every wall-clock component to
+    that instant rendered in ``tz`` catches a wrong offset at any hour of the
+    day, not only when the zones disagree about the date.
+    """
+    assert int(before) <= result["unix"] <= int(after) + 1
+    expected = datetime.fromtimestamp(result["unix"], tz)
+    assert (
+        result["year"],
+        result["month"],
+        result["day"],
+        result["hour"],
+        result["minute"],
+        result["second"],
+    ) == (
+        expected.year,
+        expected.month,
+        expected.day,
+        expected.hour,
+        expected.minute,
+        expected.second,
+    )
+
+
 class TestTimeCreation:
     """Test time creation functions."""
 
     def test_time_now(self) -> None:
         """Test getting current time defaults to UTC."""
+        before = time.time()
         result = time_api.time_now()
+        after = time.time()
 
-        # Check structure
         assert isinstance(result, dict)
         assert "year" in result
         assert "month" in result
@@ -32,21 +62,17 @@ class TestTimeCreation:
         # callers without an explicit timezone never pick up the process's
         # local time by accident.
         assert result["timezone"] == "UTC"
-        now = datetime.now(UTC)
-        assert result["year"] == now.year
-        assert result["month"] == now.month
-        assert result["day"] == now.day
+        assert_is_wall_clock_between(result, UTC, before, after)
 
     def test_time_now_with_timezone(self) -> None:
         """time_now accepts an explicit ZoneInfo override."""
         tz = ZoneInfo("America/New_York")
+        before = time.time()
         result = time_api.time_now(tz)
+        after = time.time()
 
-        assert "America/New_York" in result["timezone"]
-        now = datetime.now(tz)
-        assert result["year"] == now.year
-        assert result["month"] == now.month
-        assert result["day"] == now.day
+        assert result["timezone"] == "America/New_York"
+        assert_is_wall_clock_between(result, tz, before, after)
 
     def test_time_now_accepts_timezone_name_string(self) -> None:
         """time_now accepts a timezone name string (scripts can't build ZoneInfo).
@@ -56,13 +82,12 @@ class TestTimeCreation:
         ``"America/New_York"`` - the same way time_create, time_in_location
         and time_parse already do.
         """
+        before = time.time()
         result = time_api.time_now("Europe/London")
+        after = time.time()
 
-        assert "Europe/London" in result["timezone"]
-        now = datetime.now(ZoneInfo("Europe/London"))
-        assert result["year"] == now.year
-        assert result["month"] == now.month
-        assert result["day"] == now.day
+        assert result["timezone"] == "Europe/London"
+        assert_is_wall_clock_between(result, ZoneInfo("Europe/London"), before, after)
 
     def test_time_now_rejects_invalid_timezone_string(self) -> None:
         """time_now raises ValueError for invalid timezone strings."""
@@ -71,15 +96,12 @@ class TestTimeCreation:
 
     def test_time_now_utc(self) -> None:
         """Test getting current UTC time."""
+        before = time.time()
         result = time_api.time_now_utc()
+        after = time.time()
 
         assert result["timezone"] == "UTC"
-
-        # Verify it's roughly current UTC time
-        now_utc = datetime.now(UTC)
-        assert result["year"] == now_utc.year
-        assert result["month"] == now_utc.month
-        assert result["day"] == now_utc.day
+        assert_is_wall_clock_between(result, UTC, before, after)
 
     def test_time_create(self) -> None:
         """Test creating a specific time."""
@@ -414,11 +436,22 @@ class TestUtilityFunctions:
         assert not time_api.is_between(22, 6, morning)
         assert not time_api.is_between(22, 6, afternoon)
 
-    def test_is_between_current_time(self) -> None:
-        """Test is_between with current time."""
-        # Just verify it doesn't crash
-        result = time_api.is_between(0, 24)
-        assert isinstance(result, bool)
+    def test_is_between_defaults_to_current_utc_hour(self) -> None:
+        """Without a time, is_between checks the current UTC hour.
+
+        The one-hour window containing now must match and its complement must
+        not; if the hour rolls over mid-test the outcome is undetermined.
+        """
+        before = datetime.now(UTC)
+        next_hour = (before.hour + 1) % 24
+
+        in_current_hour = time_api.is_between(before.hour, next_hour)
+        outside_current_hour = time_api.is_between(next_hour, before.hour)
+        hour_rolled_over = datetime.now(UTC).hour != before.hour
+
+        assert (in_current_hour, outside_current_hour) == (True, False) or (
+            hour_rolled_over
+        )
 
     def test_is_weekend(self) -> None:
         """Test weekend detection."""
@@ -434,11 +467,13 @@ class TestUtilityFunctions:
         sunday = time_api.time_create(year=2024, month=12, day=29)
         assert time_api.is_weekend(sunday)
 
-    def test_is_weekend_current_time(self) -> None:
-        """Test is_weekend with current time."""
-        # Just verify it doesn't crash
+    def test_is_weekend_defaults_to_current_utc_day(self) -> None:
+        """Without a time, is_weekend checks the current UTC weekday."""
+        before = datetime.now(UTC)
         result = time_api.is_weekend()
-        assert isinstance(result, bool)
+        after = datetime.now(UTC)
+
+        assert result in {before.weekday() >= 5, after.weekday() >= 5}
 
 
 class TestErrorHandling:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pylint: disable=no-name-in-module
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -9,11 +10,10 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolCallReviewConfig
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.services.tool_call_review import ToolCallReviewer
-from family_assistant.tools import (
-    PolicyEnforcingToolsProvider,
-    find_provider_by_type,
-    get_tool_definitions_for_advertisement,
-)
+from family_assistant.storage.database import Database
+from family_assistant.tools import get_tool_definitions_for_advertisement
+from family_assistant.tools.infrastructure import ToolPolicyDeniedError
+from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
@@ -122,10 +122,6 @@ async def test_assistant_profile_tools_are_policy_enforced(
 
         service = assistant.default_processing_service
         assert service is not None
-        assert (
-            find_provider_by_type(service.tools_provider, PolicyEnforcingToolsProvider)
-            is not None
-        )
 
         without_confirm = await get_tool_definitions_for_advertisement(
             service.tools_provider,
@@ -145,6 +141,26 @@ async def test_assistant_profile_tools_are_policy_enforced(
 
         assert names_without_confirm == {"get_note"}
         assert names_with_confirm == {"get_note", "delete_note"}
+
+        context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="policy-cutover",
+            user_name="test_user",
+            turn_id=None,
+            db_context=Database(db_engine),
+            processing_service=service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+        with pytest.raises(ToolPolicyDeniedError) as denied:
+            await service.tools_provider.execute_tool("list_notes", {}, context)
+        assert denied.value.tool_name == "list_notes"
     finally:
         await assistant.stop_services()
 

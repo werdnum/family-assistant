@@ -42,6 +42,7 @@ from family_assistant.storage.vector import (
 )
 from family_assistant.task_worker import TaskWorker  # For running the task worker
 from family_assistant.tools.types import ToolExecutionContext
+from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_tasks_to_complete
 
 
@@ -147,6 +148,8 @@ async def indexing_task_worker(
     # and ToolExecutionContext.
 
     mock_chat_interface_for_worker = MagicMock()
+    shutdown_event = asyncio.Event()
+    new_task_event = asyncio.Event()
 
     worker = TaskWorker(
         processing_service=_create_mock_processing_service(),  # Use MagicMock for ProcessingService
@@ -154,6 +157,7 @@ async def indexing_task_worker(
         embedding_generator=mock_pipeline_embedding_generator,  # Pass directly
         calendar_config={},
         timezone=ZoneInfo("UTC"),
+        shutdown_event_instance=shutdown_event,
         engine=pg_vector_db_engine,  # Pass the database engine
     )
     worker.register_task_handler(
@@ -161,33 +165,17 @@ async def indexing_task_worker(
         handle_embed_and_store_batch,  # Register the handler directly
     )
 
-    worker_task_handle = None
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
+    worker_task_handle = asyncio.create_task(worker.run(new_task_event))
+    logger.info("Started background task worker for indexing_task_worker fixture.")
     try:
-        worker_task_handle = asyncio.create_task(worker.run(new_task_event))
-        logger.info("Started background task worker for indexing_task_worker fixture.")
-        await asyncio.sleep(0.1)  # Give worker time to start
         yield worker, new_task_event, shutdown_event
     finally:
-        if worker_task_handle:
-            logger.info(
-                "Stopping background task worker from indexing_task_worker fixture..."
-            )
-            shutdown_event.set()
-            try:
-                await asyncio.wait_for(worker_task_handle, timeout=5.0)
-                logger.info("Background task worker (fixture) stopped.")
-            except TimeoutError:
-                logger.warning("Timeout stopping worker task (fixture). Cancelling.")
-                worker_task_handle.cancel()
-                try:
-                    await worker_task_handle
-                except asyncio.CancelledError:
-                    logger.info("Worker task (fixture) cancellation confirmed.")
-            except Exception as e:
-                logger.exception(f"Error stopping worker task (fixture): {e}")
+        await cleanup_task_worker(
+            worker_task_handle,
+            shutdown_event,
+            new_task_event,
+            test_name="indexing_task_worker",
+        )
 
 
 @pytest.mark.asyncio
@@ -327,46 +315,30 @@ async def test_indexing_pipeline_e2e(
             stmt_verify_embeddings
         )
 
-        assert_that(len(stored_embeddings_rows)).described_as(
-            "Expected at least title and one chunk embedding"
-        ).is_greater_than_or_equal_to(2)
-
-        # Log stored content for debugging
-        logger.info(f"Stored Embeddings (doc_id={doc_db_id}):")
-        for i, row_proxy_log in enumerate(stored_embeddings_rows):
-            row_dict_log = dict(row_proxy_log)
-            logger.info(
-                f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{row_dict_log.get('content')}'"
-            )
-
-        title_embedding_found = False
-        chunk_embeddings_found = 0
         expected_chunk_texts = [
-            "Apples are red Bananas are yel",  # Chunk 1
-            "e yellow Oranges are orange an",  # Chunk 2 - updated based on test failure
-            "ge and tasty.",  # Chunk 3 - updated based on test failure
+            "Apples are red Bananas are yel",
+            "e yellow Oranges are orange an",
+            "ge and tasty.",
         ]
+        stored_embeddings = sorted(
+            (row["embedding_type"], row["content"], row["embedding_model"])
+            for row in stored_embeddings_rows
+        )
+        expected_embeddings = sorted(
+            [("title_chunk", doc_title, TEST_EMBEDDING_MODEL_NAME)]
+            + [
+                ("raw_text_chunk", chunk_text, TEST_EMBEDDING_MODEL_NAME)
+                for chunk_text in expected_chunk_texts
+            ]
+        )
+        assert_that(stored_embeddings).described_as(
+            f"Stored embeddings for document {doc_db_id}"
+        ).is_equal_to(expected_embeddings)
 
-        for row_proxy in stored_embeddings_rows:
-            row = dict(row_proxy)  # Convert RowProxy to dict for easier access
-            assert_that(row["embedding_model"]).is_equal_to(TEST_EMBEDDING_MODEL_NAME)
-            # Check for the chunked title type
-            if row["embedding_type"] == "title_chunk":
-                assert_that(row["content"]).is_equal_to("Fruit Facts")  # Check content
-                title_embedding_found = True
-            elif row["embedding_type"] == "raw_text_chunk":
-                assert_that(expected_chunk_texts).contains(row["content"])
-                chunk_embeddings_found += 1
-
-        assert_that(title_embedding_found).described_as(
-            "Title embedding (title_chunk) not found"
-        ).is_true()
-        assert_that(chunk_embeddings_found).described_as(
-            f"Expected {len(expected_chunk_texts)} chunk embeddings"
-        ).is_equal_to(len(expected_chunk_texts))
-
-        # Verify search
-        query_text_for_chunk = "yellow and orange"  # Should match the second chunk
+        # At 10 hashed dimensions, word overlap does not reliably decide the
+        # ranking (unrelated words share buckets), so query with the chunk's own
+        # text: its stored embedding is at distance zero and must rank first.
+        query_text_for_chunk = expected_chunk_texts[1]
         query_vector_result = (
             await mock_pipeline_embedding_generator.generate_embeddings([
                 query_text_for_chunk
@@ -378,23 +350,14 @@ async def test_indexing_pipeline_e2e(
             db_context_for_asserts,
             query_embedding,
             TEST_EMBEDDING_MODEL_NAME,
-            limit=5,
+            limit=1,
         )
-        assert_that(search_results).described_as(
-            f"Vector search results for query '{query_text_for_chunk}'"
-        ).is_not_empty()
-
-        found_matching_chunk_in_search = False
-        for res in search_results:
-            if (
-                res["document_id"] == doc_db_id
-                and res["embedding_source_content"] == expected_chunk_texts[1]
-            ):  # "low Oranges are orange and tas"
-                found_matching_chunk_in_search = True
-                break
-        assert_that(found_matching_chunk_in_search).described_as(
-            "Relevant chunk not found via vector search"
-        ).is_true()
+        assert_that([
+            (res["document_id"], res["embedding_source_content"])
+            for res in search_results
+        ]).described_as(
+            f"Nearest vector search result for query '{query_text_for_chunk}'"
+        ).is_equal_to([(doc_db_id, query_text_for_chunk)])
 
         logger.info("Indexing pipeline E2E test passed.")
 

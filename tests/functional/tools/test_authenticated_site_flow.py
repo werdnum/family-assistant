@@ -31,8 +31,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import DelegationSecurityLevel
-from family_assistant.storage.database import Database, DatabaseTransaction
-from family_assistant.storage.repositories.tasks import TasksRepository
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     LocalToolsProvider,
@@ -59,13 +58,12 @@ from tests.mocks.mock_llm import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
-    from datetime import datetime
+    from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.storage.delegation_runs import AuthenticatedSiteEnvelope
-    from family_assistant.storage.tasks import TaskPriority
+    from family_assistant.task_worker import DelegatedProfileRunPayload, TaskWorker
     from family_assistant.tools.browser_backend import JsonDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -455,7 +453,8 @@ async def _harness(
     registry = {CALLER_PROFILE_ID: caller, WORKER_PROFILE_ID: worker}
     caller.processing_services_registry = registry
     worker.processing_services_registry = registry
-    task_worker_manager(caller, MagicMock(spec=ChatInterface))
+    task_worker, _, _ = task_worker_manager(caller, MagicMock(spec=ChatInterface))
+    _require_binding_before_delegating(cast("TaskWorker", task_worker))
     return Harness(caller=caller, engine=db_engine, conversation_id=conversation_id)
 
 
@@ -480,6 +479,36 @@ async def _envelope(
     envelope = run["authenticated_site_json"]
     assert envelope is not None
     return envelope
+
+
+def _require_binding_before_delegating(worker: TaskWorker) -> None:
+    """Fail the run if the worker starts an authenticated task unbound.
+
+    ``_start_bound_delegation`` registers the session binding on commit
+    before the task's own enqueue notification, so a worker entering
+    ``delegated_profile_run`` for an authenticated site must already find it
+    published. Wrapping the handler at the worker boundary observes this
+    ordering invariant the same way production does, rather than reaching
+    into the repository's enqueue call or a private module dict.
+    """
+    original_handler = worker.handle_delegated_profile_run
+
+    async def verifying_handler(
+        exec_context: ToolExecutionContext, payload: DelegatedProfileRunPayload
+    ) -> None:
+        run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
+            payload["delegation_id"]
+        )
+        assert run is not None
+        envelope = run["authenticated_site_json"]
+        if envelope is not None and envelope["status"] == "running":
+            binding = authenticated_binding_for(run["subconversation_id"])
+            assert binding is not None
+            assert binding.delegation_id == run["delegation_id"]
+            assert binding.backend.session_id == envelope.get("session_id")
+        await original_handler(exec_context, payload)
+
+    worker.register_task_handler("delegated_profile_run", verifying_handler)
 
 
 async def test_a_completed_run_returns_a_typed_result_and_closes_its_session(
@@ -598,61 +627,6 @@ async def test_a_rejected_password_needs_a_human_and_closes_the_session(
     assert browser_server.sessions_closed == 1
 
 
-@pytest.fixture(autouse=True)
-def _observe_binding_before_worker_notification(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original = TasksRepository.enqueue
-
-    async def enqueue(
-        repository: TasksRepository,
-        task_id: str,
-        task_type: str,
-        payload: Mapping[str, object] | None = None,
-        scheduled_at: datetime | None = None,
-        max_retries_override: int | None = None,
-        recurrence_rule: str | None = None,
-        original_task_id: str | None = None,
-        only_if_absent: bool = False,
-        *,
-        priority: TaskPriority,
-    ) -> None:
-        # This wrapper forwards the repository's full call surface while observing
-        # the real transaction, including notification work enqueued by the worker.
-        if task_type == "delegated_profile_run":
-            assert payload is not None
-            txn = cast("DatabaseTransaction", repository._db)
-            run = await txn.delegation_runs.get_by_delegation_id(
-                str(payload["delegation_id"])
-            )
-            assert run is not None
-            envelope = run["authenticated_site_json"]
-            assert envelope is not None
-            assert envelope["status"] == "running"
-
-            def verify_binding() -> None:
-                binding = authenticated_binding_for(run["subconversation_id"])
-                assert binding is not None
-                assert binding.delegation_id == run["delegation_id"]
-                assert binding.backend.session_id == envelope.get("session_id")
-
-            txn.on_commit(verify_binding)
-        await original(
-            repository,
-            task_id,
-            task_type,
-            payload,
-            scheduled_at,
-            max_retries_override,
-            recurrence_rule,
-            original_task_id,
-            only_if_absent,
-            priority=priority,
-        )
-
-    monkeypatch.setattr(TasksRepository, "enqueue", enqueue)
-
-
 @pytest.mark.parametrize(
     "failure",
     [
@@ -738,10 +712,11 @@ async def test_resume_after_losing_the_binding_fails_closed(
     assert envelope["status"] == "failed"
     assert authenticated_binding_for(run["subconversation_id"]) is None
     if failure == "binding_with_other":
-        assert (
-            authenticated_sites_module._active_runs[run["conversation_id"]]
-            == "other-run"
-        )
+        sessions_before = browser_server.sessions_created
+        resume.delegation_id = None
+        refused = await harness.ask("Start a fresh order check.")
+        assert "already running" in refused
+        assert browser_server.sessions_created == sessions_before
         return
     app_config.authenticated_sites.update(configured_sites)
     browser_server.session_read_status = 200

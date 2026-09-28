@@ -19,6 +19,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
+from family_assistant.tools.data_manipulation import jq_query_tool
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.types import ToolExecutionContext
@@ -146,12 +147,32 @@ async def attachment_registry_with_json(
 class TestJqQueryTool:
     """Test the jq_query tool functionality via script execution."""
 
+    @pytest.mark.parametrize(
+        ("jq_program", "expected_data"),
+        [
+            (
+                ".items",
+                [
+                    {"id": 1, "name": "Alice", "age": 30, "city": "New York"},
+                    {"id": 2, "name": "Bob", "age": 25, "city": "Los Angeles"},
+                    {"id": 3, "name": "Charlie", "age": 35, "city": "Chicago"},
+                ],
+            ),
+            (".items | length", 3),
+            (".items[0]", {"id": 1, "name": "Alice", "age": 30, "city": "New York"}),
+            (".items | map(.name)", ["Alice", "Bob", "Charlie"]),
+            ("[.items[0].id, .items[-1].id]", [1, 3]),
+        ],
+        ids=["all_items", "count", "first_item", "map_field", "first_and_last_id"],
+    )
     async def test_jq_query_basic(
         self,
         db_engine: AsyncEngine,
         attachment_registry_with_json: tuple[AttachmentRegistry, str, str],
+        jq_program: str,
+        expected_data: object,
     ) -> None:
-        """Test basic jq query on JSON attachment."""
+        """Test jq queries returning list, scalar, dict and mixed-list shapes."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
         db_context = Database(db_engine)
@@ -173,11 +194,10 @@ class TestJqQueryTool:
             api_backend=None,
         )
 
-        # Query: get all items (via script)
         script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
-    jq_program=".items"
+    jq_program="{jq_program}"
 )
 result
             '''
@@ -188,202 +208,7 @@ result
         assert result.text is not None
         assert "Error" not in result.text
 
-        # Parse the result data
-        data = result.get_data()
-        assert isinstance(data, list)
-        assert len(data) == 3
-        # Verify the data structure (type checker can't infer dict structure)
-        assert data[0]["name"] == "Alice"  # type: ignore[index]
-        assert data[1]["name"] == "Bob"  # type: ignore[index]
-        assert data[2]["name"] == "Charlie"  # type: ignore[index]
-
-    async def test_jq_query_count(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry_with_json: tuple[AttachmentRegistry, str, str],
-    ) -> None:
-        """Test jq query to count items."""
-        registry, attachment_id, conversation_id = attachment_registry_with_json
-
-        db_context = Database(db_engine)
-        processing_service = _create_processing_service()
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id=conversation_id,
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            attachment_registry=registry,
-            processing_service=processing_service,
-            clock=None,
-            home_assistant_client=None,
-            event_sources={},
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        # Query: count items (via script)
-        script = f'''
-result = jq_query(
-    attachment_id="{attachment_id}",
-    jq_program=".items | length"
-)
-result
-            '''
-
-        result = await execute_script_tool(exec_context, script=script)
-
-        # Script execution should succeed
-        assert result.text is not None
-        assert "Error" not in result.text
-
-        # Parse the result - should be a single value
-        data = result.get_data()
-        assert data == 3
-
-    async def test_jq_query_first_item(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry_with_json: tuple[AttachmentRegistry, str, str],
-    ) -> None:
-        """Test jq query to get first item."""
-        registry, attachment_id, conversation_id = attachment_registry_with_json
-
-        db_context = Database(db_engine)
-        processing_service = _create_processing_service()
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id=conversation_id,
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            attachment_registry=registry,
-            processing_service=processing_service,
-            clock=None,
-            home_assistant_client=None,
-            event_sources={},
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        # Query: get first item (via script)
-        script = f'''
-result = jq_query(
-    attachment_id="{attachment_id}",
-    jq_program=".items[0]"
-)
-result
-            '''
-
-        result = await execute_script_tool(exec_context, script=script)
-
-        # Script execution should succeed
-        assert result.text is not None
-        assert "Error" not in result.text
-
-        # Parse the result
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert data["name"] == "Alice"
-        assert data["city"] == "New York"
-
-    async def test_jq_query_map_field(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry_with_json: tuple[AttachmentRegistry, str, str],
-    ) -> None:
-        """Test jq query to map/extract a specific field."""
-        registry, attachment_id, conversation_id = attachment_registry_with_json
-
-        db_context = Database(db_engine)
-        processing_service = _create_processing_service()
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id=conversation_id,
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            attachment_registry=registry,
-            processing_service=processing_service,
-            clock=None,
-            home_assistant_client=None,
-            event_sources={},
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        # Query: extract all names (via script)
-        script = f'''
-result = jq_query(
-    attachment_id="{attachment_id}",
-    jq_program=".items | map(.name)"
-)
-result
-            '''
-
-        result = await execute_script_tool(exec_context, script=script)
-
-        # Script execution should succeed
-        assert result.text is not None
-        assert "Error" not in result.text
-
-        # Parse the result
-        data = result.get_data()
-        assert isinstance(data, list)
-        assert data == ["Alice", "Bob", "Charlie"]
-
-    async def test_jq_query_date_range(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry_with_json: tuple[AttachmentRegistry, str, str],
-    ) -> None:
-        """Test jq query to get date range (first and last item)."""
-        registry, attachment_id, conversation_id = attachment_registry_with_json
-
-        db_context = Database(db_engine)
-        processing_service = _create_processing_service()
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id=conversation_id,
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            attachment_registry=registry,
-            processing_service=processing_service,
-            clock=None,
-            home_assistant_client=None,
-            event_sources={},
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        # Query: get IDs of first and last item (via script)
-        script = f'''
-result = jq_query(
-    attachment_id="{attachment_id}",
-    jq_program="[.items[0].id, .items[-1].id]"
-)
-result
-            '''
-
-        result = await execute_script_tool(exec_context, script=script)
-
-        # Script execution should succeed
-        assert result.text is not None
-        assert "Error" not in result.text
-
-        # Parse the result
-        data = result.get_data()
-        assert isinstance(data, list)
-        assert data == [1, 3]
+        assert result.get_data() == expected_data
 
     async def test_jq_query_invalid_program(
         self,
@@ -423,15 +248,20 @@ result
 
         result = await execute_script_tool(exec_context, script=script)
 
-        # Script should report the error
+        # Script should report the specific jq compilation error
         assert result.text is not None
-        text = result.text.lower()
-        assert "error" in text or "invalid" in text
+        assert "invalid jq query" in result.text.lower()
 
     async def test_jq_query_attachment_not_found(
         self, db_engine: AsyncEngine, tmp_path: Path
     ) -> None:
-        """Test jq query with non-existent attachment."""
+        """Test jq query with a well-formed but unregistered attachment UUID.
+
+        Called directly rather than via a script: the script layer's own
+        argument-resolution validates and looks up the attachment before
+        jq_query ever runs, so a request routed through a script never
+        reaches this tool-level "not found" branch.
+        """
         storage_path = tmp_path / "attachments"
         storage_path.mkdir(parents=True, exist_ok=True)
 
@@ -440,7 +270,6 @@ result
         )
 
         db_context = Database(db_engine)
-        processing_service = _create_processing_service()
         exec_context = ToolExecutionContext(
             interface_type="test",
             conversation_id="test_conversation",
@@ -448,7 +277,7 @@ result
             turn_id="test-turn",
             db_context=db_context,
             attachment_registry=registry,
-            processing_service=processing_service,
+            processing_service=None,
             clock=None,
             home_assistant_client=None,
             event_sources={},
@@ -458,20 +287,14 @@ result
             api_backend=None,
         )
 
-        # Query with non-existent attachment ID (via script)
-        script = """
-result = jq_query(
-    attachment_id="nonexistent-uuid",
-    jq_program=".items"
-)
-            """
+        missing_attachment_id = str(uuid.uuid4())
+        result = await jq_query_tool(
+            exec_context, attachment_id=missing_attachment_id, jq_program=".items"
+        )
 
-        result = await execute_script_tool(exec_context, script=script)
-
-        # Script should report the error
         assert result.text is not None
-        text = result.text.lower()
-        assert "error" in text or "not found" in text
+        assert "not found" in result.text.lower()
+        assert missing_attachment_id in result.text
 
     async def test_jq_query_cross_conversation_access_allowed(
         self,
@@ -575,15 +398,21 @@ result
 
         result = await execute_script_tool(exec_context, script=script)
 
-        # Script should report the error
+        # Script should report that the attachment content isn't valid JSON
         assert result.text is not None
-        text = result.text.lower()
-        assert "error" in text or "not valid json" in text
+        assert "not valid json" in result.text.lower()
 
     async def test_jq_query_no_attachment_registry(
         self, db_engine: AsyncEngine
     ) -> None:
-        """Test jq query when attachment registry is not available."""
+        """Test jq query when attachment registry is not available.
+
+        Called directly rather than via a script: the "attachment_id"
+        parameter is declared as an attachment type, so a script-routed
+        call gets rejected by argument resolution ("Attachment registry
+        not available in execution context" via a different, wrapped
+        error) before jq_query's own registry check ever runs.
+        """
         db_context = Database(db_engine)
         exec_context = ToolExecutionContext(
             interface_type="test",
@@ -602,17 +431,8 @@ result
             api_backend=None,
         )
 
-        # Try to query without attachment registry (via script)
-        script = """
-result = jq_query(
-    attachment_id="some-id",
-    jq_program=".items"
-)
-            """
+        result = await jq_query_tool(
+            exec_context, attachment_id="some-id", jq_program=".items"
+        )
 
-        result = await execute_script_tool(exec_context, script=script)
-
-        # Script should report the error
-        assert result.text is not None
-        text = result.text.lower()
-        assert "error" in text or "attachment registry not available" in text.lower()
+        assert result.text == "Error: Attachment registry not available."

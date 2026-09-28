@@ -150,10 +150,18 @@ tools_execute("add_numbers", a=1, b=2)
 
 
 @pytest.mark.asyncio
-async def test_no_restrictions_by_default(db_engine: AsyncEngine) -> None:
-    """Test that without restrictions, all tools are available."""
-    # Create default config (no restrictions)
-    config = ScriptConfig()
+@pytest.mark.parametrize(
+    "allowed_tools",
+    [
+        pytest.param(None, id="no_restrictions"),
+        pytest.param({"echo", "add_numbers"}, id="every_tool_allowed"),
+    ],
+)
+async def test_all_tools_available_when_none_restricted(
+    db_engine: AsyncEngine, allowed_tools: set[str] | None
+) -> None:
+    """Without restrictions, or with every tool allowed, all tools are available."""
+    config = ScriptConfig(allowed_tools=allowed_tools)
 
     # Create mock tools provider
     tools_provider = MockToolsProvider()
@@ -251,109 +259,6 @@ tools_execute("echo", message="test")
     with pytest.raises(ScriptExecutionError) as exc_info:
         await engine.evaluate_async(script2, execution_context=context)
     assert "not allowed" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_denied_tool_raises_error(db_engine: AsyncEngine) -> None:
-    """Test that executing a denied tool raises a clear error."""
-    # Create config with restrictions
-    config = ScriptConfig(allowed_tools={"echo"})
-
-    # Create mock tools provider
-    tools_provider = MockToolsProvider()
-
-    # Create execution context
-    db = Database(engine=db_engine)
-    context = ToolExecutionContext(
-        interface_type="test",
-        conversation_id="test-123",
-        user_name="Test User",
-        turn_id="turn-1",
-        db_context=db,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        camera_backend=None,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
-    )
-
-    # Create engine with security config
-    engine = MontyEngine(
-        tools_provider=tools_provider,
-        config=config,
-        default_timezone=ZoneInfo("Australia/Sydney"),
-    )
-
-    # Try to execute a denied tool (this should fail)
-    script = """
-# Try to execute add_numbers which is not in allowed_tools
-result = tools_execute("add_numbers", a=1, b=2)
-result
-"""
-    # We expect an exception because add_numbers is not allowed
-    with pytest.raises(ScriptExecutionError) as exc_info:
-        await engine.evaluate_async(script, execution_context=context)
-
-    # Check that the error message mentions the tool is not allowed
-    assert "not allowed" in str(exc_info.value)
-
-
-@pytest.mark.asyncio
-async def test_multiple_allowed_tools(db_engine: AsyncEngine) -> None:
-    """Test configuration with multiple allowed tools."""
-    # Create config with both tools allowed explicitly
-    config = ScriptConfig(allowed_tools={"echo", "add_numbers"})
-
-    # Create mock tools provider
-    tools_provider = MockToolsProvider()
-
-    # Create execution context
-    db = Database(engine=db_engine)
-    context = ToolExecutionContext(
-        interface_type="test",
-        conversation_id="test-123",
-        user_name="Test User",
-        turn_id="turn-1",
-        db_context=db,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        camera_backend=None,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
-    )
-
-    # Create engine with security config
-    engine = MontyEngine(
-        tools_provider=tools_provider,
-        config=config,
-        default_timezone=ZoneInfo("Australia/Sydney"),
-    )
-
-    # Test that both tools are available
-    script = """
-tool_names = [tool["name"] for tool in tools_list()]
-tool_names
-"""
-    result = await engine.evaluate_async(script, execution_context=context)
-    assert sorted(result) == ["add_numbers", "echo"]
-
-    # Test that both can be executed
-    script2 = """
-results = []
-results.append(tools_execute("echo", message="multi test"))
-results.append(tools_execute("add_numbers", a=7, b=3))
-results
-"""
-    result2 = await engine.evaluate_async(script2, execution_context=context)
-    assert result2 == ["Echo: multi test", "Result: 10"]
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@
 Test the NotesContextProvider with prompt inclusion filtering.
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -27,78 +26,6 @@ async def cleanup_notes(engine: AsyncEngine) -> None:
     db = Database(engine=engine)
     stmt = delete(notes_table)
     await db.execute(stmt)
-
-
-@pytest.mark.asyncio
-@pytest.mark.postgres
-async def test_notes_context_provider_respects_include_in_prompt(
-    pg_vector_db_engine: AsyncEngine,
-) -> None:
-    """Test that NotesContextProvider only includes notes with include_in_prompt=True."""
-    # Clean up any existing notes
-    await cleanup_notes(pg_vector_db_engine)
-
-    # Create test notes
-    db = Database(engine=pg_vector_db_engine)
-    await db.notes.add_or_update(
-        title="Visible Note 1",
-        content="This should appear in context",
-        include_in_prompt=True,
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-    await db.notes.add_or_update(
-        title="Hidden Note 1",
-        content="This should NOT appear in context",
-        include_in_prompt=False,
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-    await db.notes.add_or_update(
-        title="Visible Note 2",
-        content="This should also appear in context",
-        include_in_prompt=True,
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-
-    # Create context provider
-    test_prompts = {
-        "note_item_format": "- {title}: {content}",
-        "notes_context_header": "Relevant notes:\n{notes_list}",
-        "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
-    }
-
-    def get_db_context_func() -> Database:
-        return Database(engine=pg_vector_db_engine)
-
-    provider = NotesContextProvider(
-        get_db_context_func=get_db_context_func,
-        prompts=test_prompts,
-        read_policy=NoteReadPolicy.UNRESTRICTED,
-    )
-
-    # Get context fragments
-    fragments = await provider.get_context_fragments(acting_user_id=None)
-
-    # Should get 2 fragments: included notes and excluded notes list
-    assert len(fragments) == 2
-
-    included_notes_fragment = fragments[0]
-    excluded_notes_fragment = fragments[1]
-
-    # Verify included notes are present
-    assert "Visible Note 1" in included_notes_fragment
-    assert "This should appear in context" in included_notes_fragment
-    assert "Visible Note 2" in included_notes_fragment
-    assert "This should also appear in context" in included_notes_fragment
-
-    # Verify excluded note is NOT present in included notes
-    assert "Hidden Note 1" not in included_notes_fragment
-    assert "This should NOT appear in context" not in included_notes_fragment
-
-    # Verify excluded note title appears in excluded list
-    assert '"Hidden Note 1"' in excluded_notes_fragment
 
 
 @pytest.mark.asyncio
@@ -159,83 +86,11 @@ async def test_notes_context_provider_empty_when_all_excluded(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_notes_context_provider_mixed_visibility(
+async def test_notes_context_provider_includes_prompt_notes_and_lists_excluded_titles(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
-    """Test NotesContextProvider with a mix of visible and hidden notes."""
-    # Clean up any existing notes
-    await cleanup_notes(pg_vector_db_engine)
-
-    # Create a mix of notes
-    db = Database(engine=pg_vector_db_engine)
-    test_notes = [
-        ("API Keys", "Secret: abc123", False),  # Should be hidden
-        ("Meeting Notes", "Tomorrow at 3pm", True),  # Should be visible
-        ("Personal Info", "SSN: 123-45-6789", False),  # Should be hidden
-        ("Shopping List", "Milk, Bread, Eggs", True),  # Should be visible
-        ("Password", "mypassword123", False),  # Should be hidden
-    ]
-
-    for title, content, include in test_notes:
-        await db.notes.add_or_update(
-            title=title,
-            content=content,
-            include_in_prompt=include,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-            provenance=NoteProvenanceStamp.internal(),
-        )
-
-    # Create context provider
-    test_prompts = {
-        "note_item_format": "- {title}: {content}",
-        "notes_context_header": "Relevant notes:\n{notes_list}",
-        "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
-    }
-
-    def get_db_context_func() -> Database:
-        return Database(engine=pg_vector_db_engine)
-
-    provider = NotesContextProvider(
-        get_db_context_func=get_db_context_func,
-        prompts=test_prompts,
-        read_policy=NoteReadPolicy.UNRESTRICTED,
-    )
-
-    # Get context fragments
-    fragments = await provider.get_context_fragments(acting_user_id=None)
-
-    # Should get 2 fragments: included notes and excluded notes list
-    assert len(fragments) == 2
-
-    included_notes_fragment = fragments[0]
-    excluded_notes_fragment = fragments[1]
-
-    # Verify only visible notes appear in included notes
-    assert "Meeting Notes" in included_notes_fragment
-    assert "Tomorrow at 3pm" in included_notes_fragment
-    assert "Shopping List" in included_notes_fragment
-    assert "Milk, Bread, Eggs" in included_notes_fragment
-
-    # Verify hidden notes do not appear in included notes content
-    assert "API Keys" not in included_notes_fragment
-    assert "Secret: abc123" not in included_notes_fragment
-    assert "Personal Info" not in included_notes_fragment
-    assert "SSN: 123-45-6789" not in included_notes_fragment
-    assert "Password" not in included_notes_fragment
-    assert "mypassword123" not in included_notes_fragment
-
-    # Verify hidden note titles appear in excluded list
-    assert '"API Keys"' in excluded_notes_fragment
-    assert '"Personal Info"' in excluded_notes_fragment
-    assert '"Password"' in excluded_notes_fragment
-
-
-@pytest.mark.asyncio
-@pytest.mark.postgres
-async def test_notes_context_provider_shows_excluded_notes_list(
-    pg_vector_db_engine: AsyncEngine,
-) -> None:
-    """Test that NotesContextProvider shows a list of excluded note titles."""
+    """Notes with include_in_prompt are rendered with their content; the rest
+    are listed by title only, so excluded content never reaches the prompt."""
     # Clean up any existing notes
     await cleanup_notes(pg_vector_db_engine)
 
@@ -289,26 +144,12 @@ async def test_notes_context_provider_shows_excluded_notes_list(
     # Get context fragments
     fragments = await provider.get_context_fragments(acting_user_id=None)
 
-    # Should have 2 fragments: included notes and excluded notes list
-    assert len(fragments) == 2
-
-    included_notes_fragment = fragments[0]
-    excluded_notes_fragment = fragments[1]
-
-    # Verify included notes content
-    assert "Public Note 1" in included_notes_fragment
-    assert "This is visible content" in included_notes_fragment
-    assert "Public Note 2" in included_notes_fragment
-    assert "Another visible note" in included_notes_fragment
-
-    # Verify excluded notes list format
-    assert "Other available notes (not included above):" in excluded_notes_fragment
-    assert '"Private Data B"' in excluded_notes_fragment
-    assert '"Secret Note A"' in excluded_notes_fragment
-
-    # Verify excluded note contents are NOT shown
-    assert "Hidden content A" not in excluded_notes_fragment
-    assert "Hidden content B" not in excluded_notes_fragment
+    assert fragments == [
+        "Relevant notes:\n"
+        "- Public Note 1: This is visible content\n"
+        "- Public Note 2: Another visible note",
+        'Other available notes (not included above): "Private Data B", "Secret Note A"',
+    ]
 
 
 @pytest.mark.asyncio
@@ -580,7 +421,7 @@ async def test_notes_clearing_attachments_with_empty_list(
         "Note With Attachments", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None
-    assert len(note.attachment_ids) == 1
+    assert note.attachment_ids == [attachment_id]
 
     # Now clear attachments by passing empty list
     await db.notes.add_or_update(
@@ -597,13 +438,7 @@ async def test_notes_clearing_attachments_with_empty_list(
         "Note With Attachments", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note_after is not None
-    attachment_ids = note_after.attachment_ids
-    # Handle case where attachment_ids is a JSON string
-    if isinstance(attachment_ids, str):
-        attachment_ids = json.loads(attachment_ids)
-    assert len(attachment_ids) == 0, (
-        f"Attachments should be cleared, but got: {attachment_ids}"
-    )
+    assert note_after.attachment_ids == []
 
 
 @pytest.mark.asyncio
@@ -656,7 +491,7 @@ async def test_notes_preserving_attachments_when_not_specified(
         "Note To Preserve", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None
-    assert len(note.attachment_ids) == 1
+    assert note.attachment_ids == [attachment_id]
 
     # Update note content without specifying attachment_ids
     await db.notes.add_or_update(
@@ -673,11 +508,5 @@ async def test_notes_preserving_attachments_when_not_specified(
         "Note To Preserve", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note_after is not None
-    attachment_ids = note_after.attachment_ids
-    # Handle case where attachment_ids is a JSON string
-    if isinstance(attachment_ids, str):
-        attachment_ids = json.loads(attachment_ids)
-    assert len(attachment_ids) == 1, (
-        f"Attachments should be preserved, but got: {attachment_ids}"
-    )
-    assert attachment_id in attachment_ids
+    assert note_after.content == "Updated content"
+    assert note_after.attachment_ids == [attachment_id]

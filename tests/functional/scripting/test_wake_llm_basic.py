@@ -6,7 +6,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -34,7 +34,13 @@ from family_assistant.tools import (
     LocalToolsProvider,
 )
 from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient, last_real_message
+from tests.mocks.mock_llm import (
+    LLMOutput,
+    RuleBasedMockLLMClient,
+    extract_text_from_content,
+    get_message_content,
+    last_real_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,19 +80,12 @@ if temp > 25.0:
     )
 
     # Step 2: Create infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
-    # Event processor
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-
-    processor._running = True
-    await processor._refresh_listener_cache()
 
     # Real tools provider
     local_provider = LocalToolsProvider(
@@ -111,8 +110,7 @@ if temp > 25.0:
             return (
                 "Script wake_llm call" in content
                 and "High temperature detected" in content
-                and "temperature" in content
-                and "27.5" in content
+                and '"temperature": 27.5' in content
             )
         return False
 
@@ -146,26 +144,16 @@ if temp > 25.0:
         server_url=None,
     )
 
-    # Start task worker
-    task_worker = TaskWorker(
+    task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+        register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"WakeLLMWorker-{test_run_id}"
-    )
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-    await asyncio.sleep(0.1)
-
     # Step 3: Process event that triggers the script
+    await processor.start()
     await processor.process_event(
         "home_assistant",
         {
@@ -174,16 +162,14 @@ if temp > 25.0:
             "new_state": {"state": "27.5"},
         },
     )
+    await processor.stop()
 
-    # Signal worker and wait for script execution
+    # The script task enqueues its llm_callback before it completes, so waiting
+    # on both types covers the woken turn too.
     new_task_event.set()
-    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
-
-    # Wait for LLM callback task
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-    await asyncio.sleep(0.5)
-    new_task_event.set()
-    await wait_for_tasks_to_complete(db_engine, task_types={"llm_callback"})
+    await wait_for_tasks_to_complete(
+        db_engine, task_types={"script_execution", "llm_callback"}
+    )
 
     # Step 4: Verify LLM was woken with correct context
     mock_chat_interface.send_message.assert_called_once()
@@ -193,23 +179,14 @@ if temp > 25.0:
     assert "27.5°C" in sent_text
     assert "cooling system" in sent_text
 
-    logger.info("LLM was successfully woken by script with temperature alert context")
-
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except TimeoutError:
-        worker_task.cancel()
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-        await asyncio.sleep(0.1)
-
     logger.info(f"--- Script Wake LLM Single Call Test ({test_run_id}) Passed ---")
 
 
 @pytest.mark.asyncio
-async def test_script_wake_llm_multiple_contexts(db_engine: AsyncEngine) -> None:
+async def test_script_wake_llm_multiple_contexts(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
     """Test that multiple wake_llm calls accumulate into a single LLM wake."""
     test_run_id = uuid.uuid4()
     logger.info(
@@ -239,11 +216,11 @@ if temp > 25:
         "severity": "warning"
     })
 
-# Check humidity  
+# Check humidity
 humidity = float(event["new_state"]["attributes"]["humidity"])
 if humidity > 80:
     wake_llm({
-        "sensor": "humidity", 
+        "sensor": "humidity",
         "value": humidity,
         "threshold": 80,
         "severity": "critical"
@@ -264,18 +241,12 @@ if air_quality < 50:
     )
 
     # Step 2: Create infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-
-    processor._running = True
-    await processor._refresh_listener_cache()
 
     local_provider = LocalToolsProvider(
         definitions=NOTE_TOOLS_DEFINITION,
@@ -289,30 +260,8 @@ if air_quality < 50:
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_multi_wake_message_id"
 
-    # LLM client that checks for multiple accumulated contexts
-    def multi_wake_matcher(args: dict) -> bool:
-        messages = args.get("messages", [])
-        if messages:
-            last_msg = last_real_message(messages)
-            content = str(getattr(last_msg, "content", "") or "")
-            return (
-                "Script wake_llm call" in content
-                and "Multiple wake requests" in content
-                and ("temperature" in content or "sensor" in content)
-                and ("humidity" in content or "sensor" in content)
-                and ("air_quality" in content or "sensor" in content)
-            )
-        return False
-
     llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (
-                multi_wake_matcher,
-                LLMOutput(
-                    content="🚨 Environment Alert: Multiple thresholds exceeded:\n- Temperature: 28°C (warning)\n- Humidity: 85% (critical)\n- Air Quality: 45 (warning)\n\nImmediate attention required!"
-                ),
-            )
-        ],
+        rules=[],
         default_response=LLMOutput(content="Monitoring environment."),
     )
 
@@ -333,25 +282,16 @@ if air_quality < 50:
         server_url=None,
     )
 
-    task_worker = TaskWorker(
+    task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+        register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"MultiWakeWorker-{test_run_id}"
-    )
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-    await asyncio.sleep(0.1)
-
     # Step 3: Process event with multiple threshold violations
+    await processor.start()
     await processor.process_event(
         "home_assistant",
         {
@@ -366,39 +306,38 @@ if air_quality < 50:
             },
         },
     )
+    await processor.stop()
 
-    # Signal worker and wait for processing
     new_task_event.set()
-    await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
+    await wait_for_tasks_to_complete(
+        db_engine, task_types={"script_execution", "llm_callback"}
+    )
 
-    # Wait for LLM callback
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-    await asyncio.sleep(0.5)
-    new_task_event.set()
-    await wait_for_tasks_to_complete(db_engine, task_types={"llm_callback"})
-
-    # Step 4: Verify LLM was woken only once with all contexts
+    # Step 4: Verify the LLM was woken exactly once, with every context
+    assert len(await db_ctx.tasks.get_all(task_type="llm_callback")) == 1
     mock_chat_interface.send_message.assert_called_once()
-    call_args = mock_chat_interface.send_message.call_args
-    sent_text = call_args[1]["text"]
 
-    # Verify all three sensor alerts are mentioned
-    assert "Temperature: 28°C" in sent_text
-    assert "Humidity: 85%" in sent_text
-    assert "Air Quality: 45" in sent_text
-    assert "critical" in sent_text
-
-    logger.info("LLM was woken once with all accumulated contexts")
-
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except TimeoutError:
-        worker_task.cancel()
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-        await asyncio.sleep(0.1)
+    wake_prompts = {
+        text
+        for call in llm_client.get_calls()
+        if call["method_name"] == "generate_response"
+        for message in call["kwargs"]["messages"]
+        if "Script wake_llm call"
+        in (text := extract_text_from_content(get_message_content(message)))
+    }
+    assert len(wake_prompts) == 1, wake_prompts
+    wake_prompt = wake_prompts.pop()
+    assert "Multiple wake requests (3)" in wake_prompt
+    for expected in (
+        '"sensor": "temperature"',
+        '"value": 28.0',
+        '"sensor": "humidity"',
+        '"value": 85.0',
+        '"severity": "critical"',
+        '"sensor": "air_quality"',
+        '"value": 45.0',
+    ):
+        assert expected in wake_prompt, f"{expected!r} missing from:\n{wake_prompt}"
 
     logger.info(
         f"--- Script Wake LLM Multiple Contexts Test ({test_run_id}) Passed ---"
@@ -406,7 +345,10 @@ if air_quality < 50:
 
 
 @pytest.mark.asyncio
-async def test_script_conditional_wake_llm(db_engine: AsyncEngine) -> None:
+async def test_script_conditional_wake_llm(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
     """Test that wake_llm is only called when conditions are met."""
     test_run_id = uuid.uuid4()
     logger.info(f"\n--- Running Script Conditional Wake LLM Test ({test_run_id}) ---")
@@ -446,18 +388,12 @@ if temp > 30 or temp < 10:
     )
 
     # Step 2: Create infrastructure
-    shutdown_event = asyncio.Event()
-    new_task_event = asyncio.Event()
-
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
         get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
-
-    processor._running = True
-    await processor._refresh_listener_cache()
 
     local_provider = LocalToolsProvider(
         definitions=NOTE_TOOLS_DEFINITION,
@@ -493,25 +429,16 @@ if temp > 30 or temp < 10:
         server_url=None,
     )
 
-    task_worker = TaskWorker(
+    task_worker, new_task_event, _ = task_worker_manager(
         processing_service=processing_service,
         chat_interface=mock_chat_interface,
-        timezone=ZoneInfo("UTC"),
-        embedding_generator=MagicMock(),
-        calendar_config={},
-        shutdown_event_instance=shutdown_event,
-        engine=db_engine,
+        register_delegation_handler=False,
     )
     task_worker.register_task_handler("script_execution", handle_script_execution)
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
-    worker_task = asyncio.create_task(
-        task_worker.run(new_task_event), name=f"ConditionalWorker-{test_run_id}"
-    )
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-    await asyncio.sleep(0.1)
-
     # Step 3: Process event with normal temperature (shouldn't wake LLM)
+    await processor.start()
     await processor.process_event(
         "home_assistant",
         {
@@ -520,37 +447,21 @@ if temp > 30 or temp < 10:
             "new_state": {"state": "22.5"},  # Normal temperature
         },
     )
+    await processor.stop()
 
-    # Signal worker and wait for script execution
     new_task_event.set()
     await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
-    # Give some time for any potential LLM callback
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-    await asyncio.sleep(0.5)
-    new_task_event.set()
-
-    # Step 4: Verify note was created but LLM was NOT woken
-    db_ctx = Database(engine=db_engine)
+    # Step 4: Verify note was created but LLM was NOT woken. A wake would have
+    # been enqueued inside the completed script task, so its absence is final.
     note = await db_ctx.notes.get_by_title(
         "Temperature Log", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None
     assert "22.5°C" in note.content
 
-    # LLM should not have been called
+    assert await db_ctx.tasks.get_all(task_type="llm_callback") == []
+    assert llm_client.get_calls() == []
     mock_chat_interface.send_message.assert_not_called()
-
-    logger.info("Script created note but did not wake LLM for normal temperature")
-
-    # Cleanup
-    shutdown_event.set()
-    new_task_event.set()
-    try:
-        await asyncio.wait_for(worker_task, timeout=2.0)
-    except TimeoutError:
-        worker_task.cancel()
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing async wake behavior
-        await asyncio.sleep(0.1)
 
     logger.info(f"--- Script Conditional Wake LLM Test ({test_run_id}) Passed ---")

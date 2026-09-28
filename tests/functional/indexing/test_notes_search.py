@@ -4,7 +4,6 @@ Tests for vector search, graceful degradation, and note updates.
 """
 
 import asyncio
-import contextlib
 import logging
 import uuid
 from typing import Any
@@ -30,6 +29,7 @@ from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, query_vectors
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
+from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_tasks_to_complete
 
 
@@ -232,7 +232,6 @@ async def test_note_update_reindexing_e2e(
 
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     note_id = None
     document_db_id = None
@@ -260,11 +259,8 @@ async def test_note_update_reindexing_e2e(
         # Wait for initial indexing task
         test_new_task_event.set()
 
-        # Find and wait for the initial indexing task to complete
+        # The index_note task is enqueued in the same transaction as the note.
         db = Database(engine=pg_vector_db_engine)
-        await asyncio.sleep(0.2)  # Wait for task to be enqueued
-
-        # Find the index_note task
         select_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
@@ -303,15 +299,17 @@ async def test_note_update_reindexing_e2e(
         assert doc_record is not None
         document_db_id = doc_record.id
 
-        # Count initial embeddings
-
-        initial_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
+        initial_embeddings_stmt = select(DocumentEmbeddingRecord.content).where(
             DocumentEmbeddingRecord.document_id == document_db_id
         )
-        initial_embeddings = await db.fetch_all(initial_embeddings_stmt)
-        initial_count = len(initial_embeddings)
+        initial_contents = [
+            row["content"] or "" for row in await db.fetch_all(initial_embeddings_stmt)
+        ]
+        initial_count = len(initial_contents)
         logger.info(f"Initial embeddings count: {initial_count}")
-        assert initial_count > 0, "No embeddings created during initial indexing"
+        assert any(initial_content in content for content in initial_contents), (
+            f"No embedding for the initial content: {initial_contents}"
+        )
 
         # --- Step 2: Update Note Content ---
         db_context = Database(engine=pg_vector_db_engine)
@@ -327,11 +325,7 @@ async def test_note_update_reindexing_e2e(
         # Wait for re-indexing task
         test_new_task_event.set()
 
-        # Find and wait for the re-indexing task
         db = Database(engine=pg_vector_db_engine)
-        await asyncio.sleep(0.2)  # Wait for task to be enqueued
-
-        # Find the new index_note task (created after update)
         select_update_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
@@ -367,16 +361,24 @@ async def test_note_update_reindexing_e2e(
 
         # --- Step 3: Verify Re-indexing Occurred ---
         db = Database(engine=pg_vector_db_engine)
-        # Check that we still have embeddings (they should be replaced, not just deleted)
-        final_embeddings_stmt = select(DocumentEmbeddingRecord.id).where(
+        final_embeddings_stmt = select(DocumentEmbeddingRecord.content).where(
             DocumentEmbeddingRecord.document_id == document_db_id
         )
-        final_embeddings = await db.fetch_all(final_embeddings_stmt)
-        final_count = len(final_embeddings)
-        logger.info(f"Final embeddings count: {final_count}")
+        final_contents = [
+            row["content"] or "" for row in await db.fetch_all(final_embeddings_stmt)
+        ]
+        logger.info(f"Final embeddings count: {len(final_contents)}")
 
-        # Should have same number of embeddings (old ones deleted, new ones created)
-        assert final_count > 0, "No embeddings found after update"
+        assert len(final_contents) == initial_count, (
+            f"Re-indexing should replace the {initial_count} embedding(s), "
+            f"found {len(final_contents)}: {final_contents}"
+        )
+        assert not any(initial_content in content for content in final_contents), (
+            f"Stale embedding for the initial content survived re-indexing: {final_contents}"
+        )
+        assert any(updated_content in content for content in final_contents), (
+            f"No embedding for the updated content after re-indexing: {final_contents}"
+        )
 
         # --- Step 4: Verify Updated Content is Searchable ---
         # Use a query that would match the updated content better
@@ -409,15 +411,12 @@ async def test_note_update_reindexing_e2e(
         logger.info("--- Note Update Re-indexing E2E Test Passed ---")
 
     finally:
-        # Cleanup (same as main test)
-        test_shutdown_event = asyncio.Event()
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-        except TimeoutError:
-            worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
+        await cleanup_task_worker(
+            worker_task,
+            worker.shutdown_event,
+            test_new_task_event,
+            test_name="note_update_reindexing",
+        )
 
         if document_db_id:
             try:
@@ -441,12 +440,8 @@ async def test_notes_indexing_graceful_degradation(
     mock_embedding_generator_notes: MockEmbeddingGenerator,
 ) -> None:
     """
-    Test that large note content is stored without embedding (graceful degradation).
-
-    This test verifies:
-    1. Small content gets embedded normally
-    2. Large content is stored but not embedded
-    3. Both are accessible via get_full_document_content
+    Test that note text over the embedding size limit is stored without being
+    embedded (graceful degradation), rather than failing the indexing task.
     """
     logger.info("\n--- Running Notes Indexing Graceful Degradation Test ---")
 
@@ -483,10 +478,8 @@ async def test_notes_indexing_graceful_degradation(
     worker.register_task_handler("index_note", notes_indexer.handle_index_note)
     worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
 
-    test_shutdown_event = asyncio.Event()
     test_new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     note_id = None
     document_db_id = None
@@ -511,10 +504,8 @@ async def test_notes_indexing_graceful_degradation(
         note_id = note_row["id"]
         logger.info(f"Created large note with ID: {note_id}")
 
-        # Find the indexing task
+        # The index_note task is enqueued in the same transaction as the note.
         db = Database(engine=pg_vector_db_engine)
-        await asyncio.sleep(0.2)  # Wait for task to be enqueued
-
         select_task_stmt = (
             select(tasks_table.c.task_id)
             .where(
@@ -540,38 +531,12 @@ async def test_notes_indexing_graceful_degradation(
         )
         logger.info(f"Indexing task {indexing_task_id} completed.")
 
-        # Wait a bit more for any embed_and_store_batch tasks that may have been created
-        await asyncio.sleep(1.0)
-        test_new_task_event.set()
-
-        # Find any embed_and_store_batch tasks for this document
-        db = Database(engine=pg_vector_db_engine)
-        # First get the document ID
-        doc_record = await db.vector.get_document_by_source_id(unique_note_title)
-        if doc_record:
-            embed_task_stmt = select(tasks_table.c.task_id, tasks_table.c.status).where(
-                tasks_table.c.task_type == "embed_and_store_batch",
-                tasks_table.c.payload.cast(Text).like(
-                    f'%"document_id": {doc_record.id}%'
-                ),
-            )
-            embed_tasks = await db.fetch_all(embed_task_stmt)
-            if embed_tasks:
-                logger.info(f"Found {len(embed_tasks)} embed_and_store_batch tasks")
-                embed_task_ids = {
-                    task["task_id"]
-                    for task in embed_tasks
-                    if task["status"] != "completed"
-                }
-                if embed_task_ids:
-                    logger.info(
-                        f"Waiting for {len(embed_task_ids)} embed tasks to complete"
-                    )
-                    await wait_for_tasks_to_complete(
-                        pg_vector_db_engine,
-                        task_ids=embed_task_ids,
-                        timeout_seconds=10.0,
-                    )
+        # The index_note handler enqueues its embed task before it completes.
+        await wait_for_tasks_to_complete(
+            pg_vector_db_engine,
+            task_types={"embed_and_store_batch"},
+            timeout_seconds=20.0,
+        )
 
         # Verify document and embeddings
         db = Database(engine=pg_vector_db_engine)
@@ -600,43 +565,28 @@ async def test_notes_indexing_graceful_degradation(
 
         assert raw_note_embedding is not None, "raw_note_text embedding not found"
 
-        # Check if it was stored without embedding due to size
-        # The actual content embedded includes title + content
-        combined_text_len = (
-            len(raw_note_embedding["content"]) if raw_note_embedding["content"] else 0
+        # Oversize text must be skipped before the embedder is called; the
+        # text_only_error / text_only_empty_result labels would mean the
+        # embedder was called and failed.
+        assert raw_note_embedding["embedding_model"] == "text_only_too_long", (
+            f"Expected oversize text to be stored without embedding, got model: "
+            f"{raw_note_embedding['embedding_model']}"
         )
-        if combined_text_len > 30000:  # Matches MAX_CONTENT_LENGTH in tasks.py
-            assert raw_note_embedding["embedding_model"] in {
-                "text_only_too_long",
-                "text_only_error",
-                "text_only_empty_result",
-            }, (
-                f"Expected storage-only model, got: {raw_note_embedding['embedding_model']}"
-            )
-            logger.info(
-                f"Large content ({combined_text_len} chars) was stored without embedding as expected"
-            )
-        else:
-            logger.info(
-                f"Content ({combined_text_len} chars) was small enough to embed"
-            )
 
-        # Verify content is stored
-        assert raw_note_embedding["content"] is not None
-        assert unique_note_title in raw_note_embedding["content"]
-        assert len(raw_note_embedding["content"]) > 30000
+        stored_content = raw_note_embedding["content"]
+        assert stored_content is not None
+        assert unique_note_title in stored_content
+        assert LARGE_CONTENT.strip() in stored_content
 
         logger.info("--- Notes Indexing Graceful Degradation Test Passed ---")
 
     finally:
-        # Cleanup
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-        except TimeoutError:
-            worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
+        await cleanup_task_worker(
+            worker_task,
+            worker.shutdown_event,
+            test_new_task_event,
+            test_name="notes_indexing_graceful_degradation",
+        )
 
         if document_db_id:
             try:

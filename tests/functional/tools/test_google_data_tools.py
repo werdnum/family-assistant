@@ -513,7 +513,8 @@ async def test_gmail_get_message_html_fallback_and_truncation(
     data = result.get_data()
     assert isinstance(data, dict)
     assert "truncated" in data["body"]
-    assert "word" in data["body"]
+    assert data["body"].startswith("word ")
+    assert "<p>" not in data["body"]
 
 
 # --------------------------------------------------------------------------- #

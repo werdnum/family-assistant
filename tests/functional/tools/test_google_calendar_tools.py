@@ -386,21 +386,36 @@ async def test_add_event_does_not_default_to_google_when_user_declined_writes(
     assert backend.requests == []
 
 
+@pytest.mark.parametrize("shared", [True, False], ids=["shared", "owned-only"])
 @pytest.mark.asyncio
-async def test_calendar_shared_by_another_account_taints_the_turn(
-    db_engine: AsyncEngine,
+async def test_only_shared_calendars_taint_the_turn(
+    db_engine: AsyncEngine, shared: bool
 ) -> None:
+    backend = _alice_backend()
+    if not shared:
+        backend.serve(
+            "tok-alice",
+            "GET",
+            "/users/me/calendarList",
+            _calendar_list(PRIMARY_ENTRY, KIDS_ENTRY),
+        )
     tracker = InMemoryTurnTaintTracker()
     ctx = _context(
         Database(db_engine),
         resolver=_alice_resolver(),
-        backend=_alice_backend(),
+        backend=backend,
         taint_tracker=tracker,
     )
 
-    await list_calendars_tool(ctx, NO_DUPLICATE_CHECK)
+    result = await list_calendars_tool(ctx, NO_DUPLICATE_CHECK)
 
-    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert "google:primary: alice@example.com" in result
+    assert "google:kids@group.calendar.google.com: Kids" in result
+    if shared:
+        assert "google:holidays@group.v.calendar.google.com: Holidays" in result
+        assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    else:
+        assert tracker.snapshot().sources == ()
 
 
 # --------------------------------------------------------------------------- #
@@ -929,13 +944,20 @@ async def test_modify_google_event_to_all_day_clears_the_time(
     }
 
 
+@pytest.mark.parametrize("invitation", [True, False], ids=["unanswered", "own-event"])
 @pytest.mark.asyncio
-async def test_deleting_an_unanswered_invitation_taints_the_turn(
-    db_engine: AsyncEngine,
+async def test_only_deleting_unvetted_events_taints_the_turn(
+    db_engine: AsyncEngine, invitation: bool
 ) -> None:
     backend = _alice_backend()
-    path = "/calendars/primary/events/invite"
-    backend.serve("tok-alice", "GET", path, _invite("invite", "Spam", "needsAction"))
+    uid = "invite" if invitation else "own"
+    event = (
+        _invite(uid, "Spam", "needsAction")
+        if invitation
+        else _event(uid, "Dentist", organizer={"self": True})
+    )
+    path = f"/calendars/primary/events/{uid}"
+    backend.serve("tok-alice", "GET", path, event)
     backend.serve("tok-alice", "DELETE", path, None, status=204)
     tracker = InMemoryTurnTaintTracker()
     ctx = _context(
@@ -945,11 +967,17 @@ async def test_deleting_an_unanswered_invitation_taints_the_turn(
         taint_tracker=tracker,
     )
 
-    await delete_calendar_event_tool(
-        ctx, NO_DUPLICATE_CHECK, uid="invite", calendar_id="google:primary"
+    result = await delete_calendar_event_tool(
+        ctx, NO_DUPLICATE_CHECK, uid=uid, calendar_id="google:primary"
     )
 
-    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert result == (
+        f"OK. Event '{event['summary']}' deleted from Google calendar google:primary."
+    )
+    if invitation:
+        assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    else:
+        assert tracker.snapshot().sources == ()
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage.database import Database
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    LocalToolsProvider,
+)
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
@@ -309,33 +314,36 @@ async def test_tools_api_not_available_without_context(db_engine: AsyncEngine) -
         tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
     )
 
-    # Script that tries to use tools - should fail without context
-    script = """
-# This should work without context (no tools available)
-result = "no tools"
-result
-"""
+    with pytest.raises(ScriptExecutionError, match="name 'tools_list' is not defined"):
+        await engine.evaluate_async("tools_list()")
 
-    # Execute without context - should work
-    result = await engine.evaluate_async(script)
-    assert result == "no tools"
 
-    # Now try to use a tool function that shouldn't exist
-    script2 = """
-# This should fail because tools_list is not defined
-tools_list()
-"""
-
-    # This should raise an error
-    with pytest.raises(Exception) as exc_info:
-        await engine.evaluate_async(script2)
-    assert "not found" in str(exc_info.value) or "NameError" in str(exc_info.value)
+async def _echo(message: str) -> str:
+    return f"Echo: {message}"
 
 
 @pytest.mark.asyncio
 async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
-    """Test that executing an invalid tool raises an error."""
-    tools_provider = MockToolsProvider()
+    """Test that executing a tool no provider registers fails the script."""
+    echo_definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": "echo",
+            "description": "Echo back the input message",
+            "parameters": {
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+            },
+        },
+    }
+    tools_provider = CompositeToolsProvider(
+        providers=[
+            LocalToolsProvider(
+                definitions=[echo_definition], implementations={"echo": _echo}
+            )
+        ]
+    )
 
     db = Database(engine=db_engine)
     context = ToolExecutionContext(
@@ -359,15 +367,9 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
         tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
     )
 
-    # Test executing non-existent tool - should raise an error
     script = """
-# This should fail because the tool doesn't exist
 tools_execute("nonexistent", arg="value")
 """
 
-    # This will raise an exception
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(ScriptExecutionError, match="Tool 'nonexistent' not found"):
         await engine.evaluate_async(script, execution_context=context)
-
-    # Check that the error mentions the unknown tool
-    assert "Unknown tool" in str(exc_info.value)
