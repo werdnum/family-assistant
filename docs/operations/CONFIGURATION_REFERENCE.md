@@ -3318,6 +3318,22 @@ mcp_adapter:
   profile_id: null
 ```
 
+### mcp_adapter.reply_wait_seconds
+
+How long one MCP tool call waits for a turn before returning `status: "working"`, after which the
+client calls `get_family_assistant_reply` with the conversation id to wait again. The turn keeps
+running either way. Keep it below the shortest tool-call limit among the clients in use: ChatGPT
+abandons a call after one to two minutes, and Cloudflare cuts a response that sends nothing for 100
+seconds.
+
+| Property  | Value                    |
+| --------- | ------------------------ |
+| Required  | No                       |
+| Default   | `45`                     |
+| Sensitive | No                       |
+| Example   | `30`                     |
+| Range     | greater than 0, up to 55 |
+
 ### mcp_adapter.authorization_server
 
 An OAuth authorization server outside the application for MCP clients to sign in with, such as the

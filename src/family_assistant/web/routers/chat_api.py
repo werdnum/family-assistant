@@ -2404,6 +2404,44 @@ async def _tool_calls_for_response(
     return tool_calls_response
 
 
+async def latest_reply(
+    request: Request,
+    current_user: Mapping[str, object],
+    db_context: Database,
+    conversation_id: str,
+    *,
+    interface_type: str,
+) -> str | None:
+    """The assistant's reply to the latest user message in ``conversation_id``.
+
+    ``None`` when the latest user message has no text reply after it: the turn
+    is still running, or ended without one. Raises the same 404 as the other
+    conversation endpoints for a conversation the caller does not own.
+    """
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    # Not get_recent: it drops messages older than a day, and a reply collected
+    # the next day is still the reply.
+    (
+        rows,
+        _has_more_before,
+        _has_more_after,
+    ) = await db_context.message_history.get_conversation_messages_paginated(
+        conversation_id, limit=50, include_subconversations=False
+    )
+    reply: str | None = None
+    for row in rows:
+        if row.get("interface_type") != interface_type:
+            continue
+        content = row.get("content")
+        if row.get("role") == "user":
+            reply = None
+        elif row.get("role") == "assistant" and isinstance(content, str) and content:
+            reply = content
+    return reply
+
+
 async def run_non_streaming_turn(
     request: Request,
     current_user: Mapping[str, object],

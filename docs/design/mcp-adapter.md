@@ -11,11 +11,30 @@ speak MCP over Streamable HTTP.
 
 ## Approach
 
-Expose one MCP server, mounted inside the existing FastAPI app, with a single tool:
+Expose one MCP server, mounted inside the existing FastAPI app, with two tools:
 
 - `ask_family_assistant(question, conversation_id=None)` runs the question through a processing
   profile as the authenticated user and returns the reply together with the conversation id, so the
   caller can hold a multi-turn conversation by passing the id back.
+- `get_family_assistant_reply(conversation_id)` collects the reply to a turn that outlasted the
+  first call.
+
+### Long turns
+
+A turn can run for minutes, and MCP clients do not hold a tool call open that long: ChatGPT abandons
+one after about a minute and sends no progress token, so progress notifications cannot extend it,
+and Cloudflare cuts any response that is silent for 100 seconds. Raising proxy timeouts therefore
+cannot help, and streaming progress helps only clients that ask for it.
+
+So the tool starts the turn as a task of its own and waits at most `mcp_adapter.reply_wait_seconds`
+(45s by default). A turn that finishes in time is returned as before, with `status: "complete"`.
+Otherwise the call returns `status: "working"` with the conversation id the client already holds,
+and the turn carries on; `get_family_assistant_reply` waits the same bound again on the running turn
+and returns the reply, or `working` once more. Once no turn is running in the conversation, it
+returns the latest reply from message history, so a finished reply needs nothing held in memory and
+survives a restart. A dropped call never cancels the turn. This is the start-then-poll shape the MCP
+Tasks proposal standardises, built from two ordinary tools because the clients in use do not speak
+Tasks yet.
 
 The turn itself is the existing non-streaming chat path (`POST /api/v1/chat/send_message`),
 extracted into a function the REST endpoint and the MCP tool both call. Everything that path already
@@ -124,8 +143,14 @@ here.
   verify signature, issuer, audience and expiry; a grant revoked at the issuer stops working when
   its current access token expires, which the issuer keeps short, rather than immediately.
 
-- **One tool, one scope.** No profile picker, no attachments, no streaming. A caller that wants a
-  different profile is a configuration change (`mcp_adapter.profile_id`), not a tool argument.
+- **A running turn is known only to the process running it.** The deployment runs one replica, and a
+  restart ends every running turn anyway. A turn that fails after the first call has returned is not
+  kept for the follow-up call to report: in production its error is a generic internal error anyway,
+  so the follow-up reads the conversation, finds no reply, and says the request failed or was
+  interrupted and that anything it did before stopping still stands.
+
+- **One scope.** No profile picker, no attachments, no streaming. A caller that wants a different
+  profile is a configuration change (`mcp_adapter.profile_id`), not a tool argument.
 
 - **Authorization codes and pending consents live in process memory**, as the iOS app-auth codes
   already do. They are single-use and expire within minutes; a restart mid-flow means the user
