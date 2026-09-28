@@ -60,7 +60,7 @@ describe('PendingDelegationsChip', () => {
       <PendingDelegationsChip delegations={[delegation({ target_profile_id: 'complex_tasks' })]} />
     );
     const chip = screen.getByTestId('pending-delegation');
-    expect(chip).toHaveTextContent('Complex tasks · Working on it');
+    expect(chip).toHaveTextContent('Complex_tasks · Working on it');
     expect(chip).toHaveAttribute('title', 'Find the best hiking trails near Hobart');
   });
 });

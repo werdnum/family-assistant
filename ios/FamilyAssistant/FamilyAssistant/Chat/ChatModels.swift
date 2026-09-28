@@ -534,8 +534,7 @@ struct ChatPendingDelegation: Decodable, Equatable, Identifiable {
         case "event_handler":
             return "Events"
         default:
-            let words = targetProfileID.replacingOccurrences(of: "_", with: " ")
-            return words.prefix(1).uppercased() + words.dropFirst()
+            return targetProfileID.prefix(1).uppercased() + targetProfileID.dropFirst()
         }
     }
 

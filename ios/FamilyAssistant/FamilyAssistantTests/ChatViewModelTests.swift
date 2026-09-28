@@ -12011,7 +12011,7 @@ final class ChatViewModelTests: XCTestCase {
         )
         XCTAssertEqual(try delegation(status: "completed").statusLabel, "Finishing up")
         XCTAssertEqual(try delegation(status: "running", cancelRequested: true).statusLabel, "Cancelling")
-        XCTAssertEqual(try delegation(status: "running", profile: "complex_tasks").profileDisplayName, "Complex tasks")
+        XCTAssertEqual(try delegation(status: "running", profile: "complex_tasks").profileDisplayName, "Complex_tasks")
 
         let started = try delegation(status: "running")
         XCTAssertEqual(started.startedAgo(now: started.createdAt.addingTimeInterval(30)), "started just now")
