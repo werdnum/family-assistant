@@ -944,10 +944,10 @@ automatic selection is the weaker authority of the two; and setting any of them 
 The distinction is who authorized the spend. An authenticated person choosing Max on their own
 request *is* the authorization. A model choosing it is not, which is why the shipped
 `default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
-automatically. The shipped `default_assistant` also lists four presets in `delegation_model_tiers` —
-`gpt_6_sol`, `claude_opus_5_5`, `claude_fable_5_1` and `kimi_k3` — which, being listed there, a
-delegating model may name without a confirmation. Adding a preset is a `model_tiers` entry plus a
-name in that list.
+automatically. The shipped `default_assistant` also lists five presets in `delegation_model_tiers` —
+`gpt_6_astra`, `gpt_6_sol`, `claude_opus_5_5`, `claude_fable_5_1` and `kimi_k3` — which, being
+listed there, a delegating model may name without a confirmation. Adding a preset is a `model_tiers`
+entry plus a name in that list.
 
 #### The council's seats
 
@@ -956,7 +956,7 @@ exact-model preset per seat (see [the user guide](../user/council.md) and
 [the design doc](../design/council.md)). Two settings have to agree:
 
 - **The roster** is in the `council` profile's system prompt: which preset sits in seats A, B and C,
-  and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_sol`,
+  and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_astra`,
   `claude_fable_5_1` and `kimi_k3`, with `claude_opus_5_5` as the alternative.
 - **The admissions** are `council_member`'s `delegation_model_tiers`. A profile admits presets for
   itself; `default_assistant`'s list does not reach the member profile.

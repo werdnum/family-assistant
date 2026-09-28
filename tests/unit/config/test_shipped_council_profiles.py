@@ -87,7 +87,7 @@ def test_every_seat_is_a_single_model_preset_the_member_admits(
     member = shipped_profile(shipped_config, "council_member")
     roster = _roster(shipped_config, council)
 
-    assert roster == ["gpt_6_sol", "claude_fable_5_1", "kimi_k3", "claude_opus_5_5"]
+    assert roster == ["gpt_6_astra", "claude_fable_5_1", "kimi_k3", "claude_opus_5_5"]
     admitted = member.delegation_model_tiers or []
     for preset in roster:
         assert preset in admitted

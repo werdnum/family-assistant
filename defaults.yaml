@@ -235,10 +235,20 @@ model_tiers:
   # picker reads. The label is what the delegating model sees.
   gpt_6_sol:
     label: "GPT-6 Sol"
-    description: "OpenAI's strongest reasoning model."
+    description: "OpenAI's GPT-6 reasoning model, the deep tier's fallback."
     chain:
       - provider: "openai"
         model: "gpt-6-sol"
+  gpt_6_astra:
+    label: "GPT-6 Astra"
+    description: "OpenAI's strongest GPT-6 model, reasoning at high effort."
+    chain:
+      - provider: "openai"
+        model: "gpt-6-astra"
+        # Set here rather than in the global map: no tier runs Astra yet, and
+        # the default medium effort undersells it for a council seat.
+        llm_parameters:
+          reasoning_effort: "high"
   claude_opus_5_5:
     label: "Claude Opus 5.5"
     description: "Anthropic's Opus model, with adaptive thinking at high effort."
@@ -1094,7 +1104,7 @@ service_profiles:
     # Specific models another profile may ask for by name -- for comparing
     # independent answers to one question. Auto never routes to these and the
     # tier picker does not list them.
-    delegation_model_tiers: ["gpt_6_sol", "claude_opus_5_5", "claude_fable_5_1", "kimi_k3"]
+    delegation_model_tiers: ["gpt_6_astra", "gpt_6_sol", "claude_opus_5_5", "claude_fable_5_1", "kimi_k3"]
     auto_routing_guidance: |
       Prefer standard for routine conversation, retrieval and straightforward
       tool use. Choose deep where substantial ambiguity, multi-stage reasoning,
@@ -2416,7 +2426,7 @@ service_profiles:
   # or message anyone; a member's only outward action is a sandboxed coding run
   # through `coder`, which the taint policy gates as it does everywhere else.
   - id: "council"
-    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Sol, Claude Fable 5.1 and Kimi K3) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It sees none of the household's notes, calendar or documents, so put everything the question depends on in the request, and pass relevant attachments."
+    description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1 and Kimi K3) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It sees none of the household's notes, calendar or documents, so put everything the question depends on in the request, and pass relevant attachments."
     # The coordinator reads only the council's own skill: the label floor keeps
     # household notes out of get_note, and the grant is what lets it see the
     # skill at all -- no other profile holds it.
@@ -2443,7 +2453,7 @@ service_profiles:
           Load the "Council Deliberation" skill with get_note before anything else and follow it.
 
           Council roster -- use exactly these, each through the council_member profile with its model_tier:
-          - Member A: model_tier "gpt_6_sol" (GPT-6 Sol)
+          - Member A: model_tier "gpt_6_astra" (GPT-6 Astra)
           - Member B: model_tier "claude_fable_5_1" (Claude Fable 5.1)
           - Member C: model_tier "kimi_k3" (Kimi K3)
           "claude_opus_5_5" (Claude Opus 5.5) is an alternative Anthropic seat, used in place of Fable only when the request asks for it -- never as an extra seat. Never substitute another model for a member, and never describe a member as a model it is not.
@@ -2522,7 +2532,7 @@ service_profiles:
     # The seats. A profile admits presets for itself -- default_assistant's
     # list does not reach here -- and every one is a single model with no
     # fallback, so a seat answers as the model it names or fails visibly.
-    delegation_model_tiers: ["gpt_6_sol", "claude_opus_5_5", "claude_fable_5_1", "kimi_k3"]
+    delegation_model_tiers: ["gpt_6_astra", "gpt_6_sol", "claude_opus_5_5", "claude_fable_5_1", "kimi_k3"]
     tools_policy:
       default_decision: "deny"
       rules:

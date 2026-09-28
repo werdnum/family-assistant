@@ -32,8 +32,7 @@ shipped-config test checks that every preset the roster names is admitted and is
 
 ### Roster
 
-The issue's preferred panel was Fable, Astra and Kimi. Astra is not a configured model, so the
-shipped panel is **GPT-6 Sol, Claude Fable 5.1 and Kimi K3** — Sol named as Sol, not relabelled.
+The shipped panel is the issue's preferred one: **GPT-6 Astra, Claude Fable 5.1 and Kimi K3**.
 **Claude Opus 5.5** is admitted as an alternative Anthropic seat, used in place of Fable when a
 request asks for it, never as a fourth seat. The coordinator runs on the `deep` tier.
 
