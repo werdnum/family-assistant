@@ -120,19 +120,29 @@ async def test_query_database_rejects_mutation(
 async def test_query_database_read_only_blocks_writes_on_postgres(
     db_engine: AsyncEngine,
 ) -> None:
-    """On PostgreSQL, SET TRANSACTION READ ONLY should block writes even if
-    sqlparse validation is somehow bypassed.
+    """On PostgreSQL, SET TRANSACTION READ ONLY should block a write that
+    passes sqlparse's SELECT-only validation, as defense-in-depth.
 
-    On SQLite, there's no SET TRANSACTION READ ONLY, so we just verify sqlparse
-    catches the mutation.
+    ``SELECT nextval(...)`` parses as a SELECT statement, so it slips past
+    ``_is_select_only``; the PostgreSQL read-only transaction guard must be
+    what actually rejects it, and the sequence must not advance.
     """
+    if db_engine.dialect.name != "postgresql":
+        pytest.skip("SET TRANSACTION READ ONLY is a PostgreSQL-only defense")
+
     db = Database(engine=db_engine)
+    before = await db.execute(text("SELECT last_value FROM error_logs_id_seq"))
+    before_value = before.rows[0]["last_value"]
+
     exec_context = _make_exec_context(db)
-    # sqlparse will catch this, so we get the validation error
-    result = await query_database(exec_context, "DROP TABLE IF EXISTS notes")
+    result = await query_database(exec_context, "SELECT nextval('error_logs_id_seq')")
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" in data
+    assert "read-only" in data["error"].lower()
+
+    after = await db.execute(text("SELECT last_value FROM error_logs_id_seq"))
+    assert after.rows[0]["last_value"] == before_value
 
 
 @pytest.mark.asyncio
@@ -239,26 +249,44 @@ async def test_read_error_logs_respects_limit(
 async def test_read_error_logs_limit_capped_at_200(
     db_engine: AsyncEngine,
 ) -> None:
-    """Limit values above 200 should be clamped to 200."""
+    """Limit values above 200 should be clamped to 200, and the clamp must
+    actually bound the rows fetched, not just the echoed filter value."""
     db = Database(engine=db_engine)
+    await db.execute(
+        insert(error_logs_table).values([
+            {
+                "logger_name": "test.module",
+                "level": "ERROR",
+                "message": f"Error {i}",
+            }
+            for i in range(201)
+        ])
+    )
     exec_context = _make_exec_context(db)
     result = await read_error_logs(exec_context, limit=500)
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["filters"]["limit"] == 200
+    assert data["count"] == 200
+    assert len(data["logs"]) == 200
 
 
 @pytest.mark.asyncio
 async def test_read_error_logs_negative_limit_clamped(
     db_engine: AsyncEngine,
 ) -> None:
-    """Negative limit values should be clamped to 1."""
+    """Negative limit values should be clamped to 1, and the clamp must
+    actually bound the rows fetched, not just the echoed filter value."""
     db = Database(engine=db_engine)
+    await _insert_error_log(db, message="first")
+    await _insert_error_log(db, message="second")
     exec_context = _make_exec_context(db)
     result = await read_error_logs(exec_context, limit=-1)
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["filters"]["limit"] == 1
+    assert data["count"] == 1
+    assert len(data["logs"]) == 1
 
 
 @pytest.mark.asyncio
@@ -424,10 +452,32 @@ async def test_read_error_logs_rejects_non_positive_window(
 async def test_read_error_logs_caps_window_at_retention(
     db_engine: AsyncEngine,
 ) -> None:
-    """since_hours is capped at 720 (the 30-day retention default)."""
+    """since_hours is capped at 720 (the 30-day retention default), and the
+    cap must actually bound the query, not just the echoed filter value."""
+    now = datetime.now(UTC)
     db = Database(engine=db_engine)
+    await db.execute(
+        insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="within retention",
+            timestamp=now - timedelta(hours=700),
+        )
+    )
+    await db.execute(
+        insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="beyond retention",
+            timestamp=now - timedelta(hours=800),
+        )
+    )
+
     exec_context = _make_exec_context(db)
     result = await read_error_logs(exec_context, since_hours=100_000)
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["filters"]["since_hours"] == 720
+    messages = {log["message"] for log in data["logs"]}
+    assert "within retention" in messages
+    assert "beyond retention" not in messages

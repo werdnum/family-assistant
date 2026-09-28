@@ -7,7 +7,6 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -20,15 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.document_indexer import DocumentIndexer
+from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.database import Database
 from family_assistant.task_worker import TaskWorker, handle_reindex_document
 from family_assistant.utils.scraping import MockScraper, ScrapeResult
 from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
-
-if TYPE_CHECKING:
-    from family_assistant.tools.types import ToolExecutionContext
 
 
 def _create_mock_processing_service() -> MagicMock:
@@ -45,7 +42,10 @@ TEST_EMBEDDING_DIMENSION = 16
 
 # --- Test Data ---
 TEST_URL = "https://example.com/reindex-test-page"
-BUGGY_CONTENT = "<html><body><p>Scraping failed.</p></body></html>"
+# Long enough to span several chunks, while the corrected page is a single chunk:
+# embeddings are upserted by chunk index, so chunk 0 is overwritten either way, and
+# only the leftover higher-index chunks show whether reindexing deleted the old ones.
+BUGGY_CONTENT = "<html><body>" + "<p>Scraping failed.</p>" * 150 + "</body></html>"
 CORRECT_CONTENT_MARKDOWN = """# Correct Page Title
 
 This is the correct content that should be indexed after the fix.
@@ -125,38 +125,6 @@ async def http_client(
         del fastapi_app.state.embedding_generator
 
 
-async def _helper_handle_embed_and_store_batch(
-    # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
-    exec_context: "ToolExecutionContext",
-    # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
-    payload: dict[str, Any],
-) -> None:
-    """Helper task handler for embedding and storing batches."""
-    db_context = exec_context.db_context
-    embedding_generator = exec_context.embedding_generator
-    document_id = payload["document_id"]
-    texts_to_embed: list[str] = payload["texts_to_embed"]
-    # ast-grep-ignore: no-dict-any - embedding metadata has dynamic mixed-type fields per chunk
-    embedding_metadata_list: list[dict[str, Any]] = payload["embedding_metadata_list"]
-
-    if not texts_to_embed or not embedding_generator:
-        return
-
-    embedding_result = await embedding_generator.generate_embeddings(texts_to_embed)
-
-    for i, vector in enumerate(embedding_result.embeddings):
-        meta = embedding_metadata_list[i]
-        await db_context.vector.add_embedding(
-            document_id=document_id,
-            chunk_index=meta.get("chunk_index", 0),
-            embedding_type=meta["embedding_type"],
-            embedding=vector,
-            embedding_model=embedding_result.model_name,
-            content=texts_to_embed[i],
-            embedding_doc_metadata=meta.get("original_content_metadata"),
-        )
-
-
 # --- Test Function ---
 
 
@@ -226,15 +194,12 @@ async def test_reindex_document_e2e(
     worker.register_task_handler(
         "process_uploaded_document", buggy_indexer.process_document
     )
-    worker.register_task_handler(
-        "embed_and_store_batch", _helper_handle_embed_and_store_batch
-    )
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
     worker.register_task_handler("reindex_document", handle_reindex_document)
 
     shutdown_event = asyncio.Event()
     new_task_event = asyncio.Event()
     worker_task = asyncio.create_task(worker.run(new_task_event))
-    await asyncio.sleep(0.1)
 
     document_id = None
     try:
@@ -263,9 +228,9 @@ async def test_reindex_document_e2e(
         db = Database(engine=pg_vector_db_engine)
         embeddings = await db.vector.get_document_by_id(document_id)
         assert embeddings is not None
-        assert len(embeddings.embeddings) > 0
-        content = embeddings.embeddings[0].content
-        assert content is not None and "failed" in content.lower()
+        buggy_contents = [emb.content or "" for emb in embeddings.embeddings]
+        assert len(buggy_contents) > 1
+        assert all("failed" in content.lower() for content in buggy_contents)
         logger.info(f"Verified buggy content was indexed for doc ID {document_id}")
 
         # --- PHASE 2: Fix and Re-index ---
@@ -315,21 +280,15 @@ async def test_reindex_document_e2e(
         doc_record = await db.vector.get_document_by_id(document_id)
         assert doc_record is not None
         assert doc_record.title == CORRECT_TITLE
-        assert len(doc_record.embeddings) > 0
-
-        # Check that the new, correct content is there
-        found_correct_chunk = any(
-            EXPECTED_CHUNK in (emb.content or "") for emb in doc_record.embeddings
+        assert len(doc_record.embeddings) == 1, (
+            "Re-indexing should replace every old chunk with the new single chunk"
         )
-        assert found_correct_chunk, "Correct content chunk not found after re-indexing"
-
-        # Check that the old, buggy content is gone
-        found_buggy_chunk = any(
-            "failed" in (emb.content or "").lower() for emb in doc_record.embeddings
+        reindexed_content = doc_record.embeddings[0].content
+        assert reindexed_content is not None
+        assert " ".join(CORRECT_CONTENT_MARKDOWN.split()) in " ".join(
+            reindexed_content.split()
         )
-        assert not found_buggy_chunk, (
-            "Buggy content chunk still exists after re-indexing"
-        )
+        assert "failed" not in reindexed_content.lower()
 
         logger.info(
             f"Verified correct content was indexed for doc ID {document_id} after re-indexing."

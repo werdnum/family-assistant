@@ -19,7 +19,10 @@ from family_assistant.memory.invariants import (
     MemoryWriteError,
 )
 from family_assistant.memory.limits import MemoryLimits
-from family_assistant.security.note_provenance import NoteProvenanceStamp
+from family_assistant.security.note_provenance import (
+    NoteProvenanceStamp,
+    stored_note_tier,
+)
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -98,6 +101,19 @@ def _external_provenance() -> NoteProvenanceStamp:
             tier=SourceTrustTier.UNKNOWN_EXTERNAL,
             labels=frozenset(),
             reason="turn read an untrusted web page",
+        )
+    )
+    return NoteProvenanceStamp.machine(state)
+
+
+def _reviewed_provenance() -> NoteProvenanceStamp:
+    state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="Packing procedure",
+            tier=SourceTrustTier.MACHINE_REVIEWED,
+            labels=frozenset(),
+            reason="prompt carried a reviewed note",
         )
     )
     return NoteProvenanceStamp.machine(state)
@@ -241,35 +257,10 @@ async def test_a_note_taking_the_renamed_core_title_is_a_topic_note(
     assert impostor is not None
     assert impostor.include_in_prompt is False
     assert await db.memory_store.get_core_note_id() == core_id
-
-
-@pytest.mark.asyncio
-async def test_exactly_one_memory_note_is_always_loaded_after_a_rename(
-    db_engine: AsyncEngine,
-) -> None:
-    """The invariant the previous test is about, stated over the whole store."""
-    db = _db(db_engine)
-    await _write_topic(db, "Sam", "- likes trams")
-    await db.notes.rename_and_update(
-        CORE_TITLE,
-        "Our Household",
-        "- small",
-        True,
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
+    prompt_notes = await db.notes.get_prompt_notes(
+        read_policy=NoteReadPolicy.UNRESTRICTED
     )
-    await _write_topic(db, CORE_TITLE, "- mine")
-
-    async with db_engine.connect() as connection:
-        rows = (
-            await connection.execute(
-                select(notes_table.c.title).where(
-                    notes_table.c.include_in_prompt.is_(True)
-                )
-            )
-        ).fetchall()
-
-    assert [row.title for row in rows] == ["Our Household"]
+    assert [note.title for note in prompt_notes] == ["Our Household"]
 
 
 # ---------------------------------------------------------------------------
@@ -338,44 +329,38 @@ async def test_externally_authored_turn_cannot_write_memory(
 
 
 @pytest.mark.asyncio
-async def test_reviewed_material_may_be_written_to_memory(
+@pytest.mark.parametrize(
+    ("provenance", "stored_tier"),
+    [
+        pytest.param(
+            NoteProvenanceStamp.internal(),
+            SourceTrustTier.TRUSTED_INTERNAL,
+            id="internal",
+        ),
+        pytest.param(
+            _reviewed_provenance(),
+            SourceTrustTier.MACHINE_REVIEWED,
+            id="reviewed",
+        ),
+    ],
+)
+async def test_reusable_material_may_be_written_to_memory(
     db_engine: AsyncEngine,
+    provenance: NoteProvenanceStamp,
+    stored_tier: SourceTrustTier,
 ) -> None:
     """The provenance rule is the reuse predicate, not authorship."""
     db = _db(db_engine)
-    reviewed = TurnTaintState.empty().add_source(
-        TaintSource(
-            source_type=TaintSourceType.NOTE,
-            source_id="Packing procedure",
-            tier=SourceTrustTier.MACHINE_REVIEWED,
-            labels=frozenset(),
-            reason="prompt carried a reviewed note",
-        )
-    )
-    await _write_topic(
-        db,
-        "Trip",
-        "- hotel",
-        provenance=NoteProvenanceStamp.machine(reviewed),
-    )
+    await _write_topic(db, "Trip", "- hotel", provenance=provenance)
 
     stored = await db.notes.get_by_title(
         "Trip", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert stored is not None
-
-
-@pytest.mark.asyncio
-async def test_internal_write_satisfies_the_provenance_rule(
-    db_engine: AsyncEngine,
-) -> None:
-    db = _db(db_engine)
-    await _write_topic(db, "Trip", "- hotel")
-
-    stored = await db.notes.get_by_title(
-        "Trip", read_policy=NoteReadPolicy.UNRESTRICTED
+    assert stored.content == "- hotel"
+    assert (
+        stored_note_tier(stored.provenance_metadata, title=stored.title) == stored_tier
     )
-    assert stored is not None
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ month = time_month(xmas)
 day = time_day(xmas)
 
 result = {
-    "now_year": time_year(now),
+    "now": now,
     "utc_tz": now_utc["timezone"],
     "xmas_formatted": formatted,
     "xmas_year": year,
@@ -40,9 +40,31 @@ result = {
 }
 result
 """
+        before = datetime.now(UTC)
         result = await engine.evaluate_async(script)
+        after = datetime.now(UTC)
 
-        assert result["now_year"] == datetime.now(UTC).year
+        now = result["now"]
+        assert now["timezone"] == "Australia/Sydney"
+        assert int(before.timestamp()) <= now["unix"] <= int(after.timestamp())
+        sydney_wall_clock = datetime.fromtimestamp(
+            now["unix"], ZoneInfo("Australia/Sydney")
+        )
+        assert (
+            now["year"],
+            now["month"],
+            now["day"],
+            now["hour"],
+            now["minute"],
+            now["second"],
+        ) == (
+            sydney_wall_clock.year,
+            sydney_wall_clock.month,
+            sydney_wall_clock.day,
+            sydney_wall_clock.hour,
+            sydney_wall_clock.minute,
+            sydney_wall_clock.second,
+        )
         assert result["utc_tz"] == "UTC"
         assert result["xmas_formatted"] == "2024-12-25 15:30:00"
         assert result["xmas_year"] == 2024
@@ -185,26 +207,19 @@ result
         engine = engine_class()
 
         script = """
-def should_send_reminder(event_time_str):
+def should_send_reminder(event_time_str, now):
     event_time = time_parse(event_time_str, "%Y-%m-%d %H:%M:%S")
-    now = time_now()
     time_until = time_diff(event_time, now)
     if time_until > 0 and time_until <= DAY:
         return True, duration_human(time_until)
     return False, ""
 
-future_time = time_add(time_now(), HOUR * 12)
-future_str = time_format(future_time, "%Y-%m-%d %H:%M:%S")
-should_remind, time_left = should_send_reminder(future_str)
-
-def is_business_hours():
-    now = time_now()
+def is_business_hours(now):
     if is_weekend(now):
         return False
     return is_between(9, 17, now)
 
-def next_monday():
-    today = time_now()
+def next_monday(today):
     weekday = time_weekday(today)
     if weekday == 0:
         days_ahead = 7
@@ -212,22 +227,60 @@ def next_monday():
         days_ahead = (7 - weekday) % 7
     return time_add(today, days_ahead * DAY)
 
-next_mon = next_monday()
+monday_10am = time_create(
+    year=2024, month=6, day=17, hour=10, timezone_name="Australia/Sydney"
+)
+monday_6pm = time_create(
+    year=2024, month=6, day=17, hour=18, timezone_name="Australia/Sydney"
+)
+saturday_10am = time_create(
+    year=2024, month=6, day=22, hour=10, timezone_name="Australia/Sydney"
+)
+
+remind_tonight, left_tonight = should_send_reminder(
+    "2024-06-17 22:00:00", monday_10am
+)
+remind_in_two_days, left_in_two_days = should_send_reminder(
+    "2024-06-19 10:00:00", monday_10am
+)
+remind_passed, left_passed = should_send_reminder(
+    "2024-06-17 09:00:00", monday_10am
+)
+
 result = {
-    "should_remind": should_remind,
-    "time_left": time_left,
-    "is_business_hours": is_business_hours(),
-    "next_monday_day": time_day(next_mon),
-    "next_monday_weekday": time_weekday(next_mon),
+    "remind_tonight": remind_tonight,
+    "left_tonight": left_tonight,
+    "remind_in_two_days": remind_in_two_days,
+    "left_in_two_days": left_in_two_days,
+    "remind_passed": remind_passed,
+    "left_passed": left_passed,
+    "business_monday_10am": is_business_hours(monday_10am),
+    "business_monday_6pm": is_business_hours(monday_6pm),
+    "business_saturday_10am": is_business_hours(saturday_10am),
+    "next_monday_from_monday": time_format(
+        next_monday(monday_10am), "%Y-%m-%d %H:%M %A"
+    ),
+    "next_monday_from_saturday": time_format(
+        next_monday(saturday_10am), "%Y-%m-%d %H:%M %A"
+    ),
 }
 result
 """
         result = await engine.evaluate_async(script)
 
-        assert result["should_remind"] is True
-        assert "h" in result["time_left"]
-        assert isinstance(result["is_business_hours"], bool)
-        assert result["next_monday_weekday"] == 0
+        assert result == {
+            "remind_tonight": True,
+            "left_tonight": "12h",
+            "remind_in_two_days": False,
+            "left_in_two_days": "",
+            "remind_passed": False,
+            "left_passed": "",
+            "business_monday_10am": True,
+            "business_monday_6pm": False,
+            "business_saturday_10am": False,
+            "next_monday_from_monday": "2024-06-24 10:00 Monday",
+            "next_monday_from_saturday": "2024-06-24 10:00 Monday",
+        }
 
     @pytest.mark.asyncio
     async def test_time_parsing_formats(self, engine_class: type) -> None:
@@ -272,13 +325,15 @@ parse_and_check_times()
 
     @pytest.mark.asyncio
     async def test_time_api_with_async_evaluation(self, engine_class: type) -> None:
-        """Test time API works with async script evaluation."""
+        """Adding DAY to a zoned time, away from any DST transition, is 86400s later."""
         engine = engine_class()
 
         script = """
-now = time_now()
-tomorrow = time_add(now, DAY)
-diff = time_diff(tomorrow, now)
+today = time_create(
+    year=2024, month=6, day=15, hour=12, timezone_name="Australia/Sydney"
+)
+tomorrow = time_add(today, DAY)
+diff = time_diff(tomorrow, today)
 diff
 """
         result = await engine.evaluate_async(script)

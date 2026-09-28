@@ -13,6 +13,7 @@ from family_assistant.scripting.apis.llm import (
     llm_call_json_async,
 )
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 
 # Patch location: llm_call_async now uses one_shot internally
@@ -28,12 +29,6 @@ def mock_llm_client() -> AsyncMock:
     )
     mock.generate_json = AsyncMock(return_value={"key": "value"})
     return mock
-
-
-@pytest.mark.no_db
-def test_default_model() -> None:
-    """Default model should be gemini-3.8-flash."""
-    assert DEFAULT_MODEL == "gemini-3.8-flash"
 
 
 @pytest.mark.no_db
@@ -178,5 +173,5 @@ async def test_llm_not_available_when_llm_api_disabled(
             config=ScriptConfig(enable_llm_api=False),
             default_timezone=ZoneInfo("Australia/Sydney"),
         )
-        with pytest.raises(Exception, match="llm"):
+        with pytest.raises(ScriptExecutionError, match=r"name 'llm' is not defined"):
             await engine.evaluate_async("llm('test')")

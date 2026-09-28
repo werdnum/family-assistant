@@ -262,11 +262,8 @@ async def _ingest_and_index_email(
     ).is_equal_to(200)
     logger.info(f"Helper: API call for Message-ID {message_id} successful.")
 
-    # After API call, the email should be in DB and task enqueued.
-    # Fetch the email ID and task ID from the database
+    # The webhook commits the email row and its indexing task before responding.
     db = Database(engine=engine)
-    # Wait briefly for task to likely appear in DB after API commit
-    await asyncio.sleep(0.2)
     select_email_stmt = select(
         received_emails_table.c.id, received_emails_table.c.indexing_task_id
     ).where(received_emails_table.c.message_id_header == message_id)
@@ -451,7 +448,6 @@ async def test_vector_ranking(
     test_new_task_event = asyncio.Event()
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     async def cleanup(test_failed: bool) -> None:
         logger.info(f"Stopping background task worker {worker_id}...")
@@ -641,7 +637,6 @@ async def test_metadata_filtering(
     test_new_task_event = asyncio.Event()
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     async def cleanup(test_failed: bool) -> None:
         logger.info(f"Stopping background task worker {worker_id}...")
@@ -822,7 +817,6 @@ async def test_keyword_filtering(
     test_new_task_event = asyncio.Event()
 
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
-    await asyncio.sleep(0.1)
 
     async def cleanup(test_failed: bool) -> None:
         logger.info(f"Stopping background task worker {worker_id}...")

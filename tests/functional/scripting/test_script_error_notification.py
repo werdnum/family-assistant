@@ -9,7 +9,6 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -38,7 +37,7 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
 )
-from tests.helpers import wait_for_tasks_to_complete
+from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
@@ -85,31 +84,51 @@ async def _make_tools_provider() -> CompositeToolsProvider:
     return provider
 
 
-async def _wait_for_notification_tasks(
-    engine: AsyncEngine,
-    *,
-    expected_count: int = 1,
-    timeout_seconds: float = 10.0,
-) -> list[TaskDict]:
-    """Poll until the expected number of script_error_notify tasks appear (or timeout)."""
-    notification_tasks: list[TaskDict] = []
-    deadline = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
-    while datetime.now(UTC) < deadline:
-        db_ctx = Database(engine=engine)
-        stmt = select(tasks_table).where(
-            tasks_table.c.task_type == "llm_callback",
-        )
-        rows = await db_ctx.fetch_all(stmt)
-        notification_tasks = [
-            cast("TaskDict", r)
-            for r in rows
-            if r["task_id"].startswith("script_error_notify_")
-        ]
-        if len(notification_tasks) >= expected_count:
-            return notification_tasks
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling interval in condition-checking loop
-        await asyncio.sleep(0.1)
-    return notification_tasks
+SENTINEL_TASK_TYPE = "test_queue_sentinel"
+
+
+async def _noop_handler(exec_context: object, payload: object) -> None:
+    return None
+
+
+async def _script_error_notifications(engine: AsyncEngine) -> list[TaskDict]:
+    rows = await Database(engine=engine).fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    return [
+        cast("TaskDict", r)
+        for r in rows
+        if r["task_id"].startswith("script_error_notify_")
+    ]
+
+
+async def _wait_for_notification_tasks(engine: AsyncEngine) -> list[TaskDict]:
+    return await wait_for_condition(
+        lambda: _script_error_notifications(engine),
+        timeout=15,
+        description="a script_error_notify llm_callback task",
+    )
+
+
+async def _wait_for_worker_to_finish_failure_handling(
+    engine: AsyncEngine, new_task_event: asyncio.Event
+) -> None:
+    """Run a no-op task through the worker and wait for it to finish.
+
+    The worker handles one task at a time, so it only dequeues this after
+    returning from the previous task's failure handling, which is where any
+    error notification is enqueued. Requires ``SENTINEL_TASK_TYPE`` to be
+    registered on the worker.
+    """
+    sentinel_id = f"sentinel_{uuid.uuid4().hex[:8]}"
+    await Database(engine=engine).tasks.enqueue(
+        task_id=sentinel_id,
+        task_type=SENTINEL_TASK_TYPE,
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
+    new_task_event.set()
+    await wait_for_tasks_to_complete(engine, task_ids={sentinel_id}, timeout_seconds=15)
 
 
 # Flaky under xdist on SQLite: the llm_callback task can stall in `processing`
@@ -132,8 +151,6 @@ async def test_script_failure_notification_is_processable(
     )
     worker.register_task_handler("script_execution", handle_script_execution)
     worker.register_task_handler("llm_callback", handle_llm_callback)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     # Enqueue a script that will always fail (syntax error) with max_retries=0
     # so it fails immediately without retrying
@@ -209,8 +226,7 @@ async def test_notify_on_failure_false_suppresses_notification(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
+    worker.register_task_handler(SENTINEL_TASK_TYPE, _noop_handler)
 
     task_id = f"test_nonotify_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
@@ -234,12 +250,10 @@ async def test_notify_on_failure_false_suppresses_notification(
             db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
-    # Give a brief window for any notification to appear (it shouldn't)
-    notification_tasks = await _wait_for_notification_tasks(
-        db_engine, expected_count=1, timeout_seconds=1.0
-    )
-    assert len(notification_tasks) == 0, (
-        f"Expected no notification tasks with notify_on_failure=False, found {len(notification_tasks)}"
+    await _wait_for_worker_to_finish_failure_handling(db_engine, new_task_event)
+    notification_tasks = await _script_error_notifications(db_engine)
+    assert notification_tasks == [], (
+        "Expected no notification tasks with notify_on_failure=False"
     )
 
 
@@ -265,8 +279,7 @@ async def test_llm_callback_failure_does_not_trigger_notification(
         raise RuntimeError("LLM callback handler failed")
 
     worker.register_task_handler("llm_callback", failing_llm_handler)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
+    worker.register_task_handler(SENTINEL_TASK_TYPE, _noop_handler)
 
     task_id = f"test_llm_fail_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
@@ -289,11 +302,9 @@ async def test_llm_callback_failure_does_not_trigger_notification(
             db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
-    # Give a brief window for any notification to appear (it shouldn't)
-    notification_tasks = await _wait_for_notification_tasks(
-        db_engine, expected_count=1, timeout_seconds=1.0
-    )
-    assert len(notification_tasks) == 0, (
+    await _wait_for_worker_to_finish_failure_handling(db_engine, new_task_event)
+    notification_tasks = await _script_error_notifications(db_engine)
+    assert notification_tasks == [], (
         "llm_callback failures should NOT spawn error notifications"
     )
 
@@ -313,8 +324,6 @@ async def test_notification_contains_event_data(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     task_id = f"test_evdata_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
@@ -380,6 +389,7 @@ async def test_confined_profile_failure_skips_llm_notification(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
+    worker.register_task_handler(SENTINEL_TASK_TYPE, _noop_handler)
 
     task_id = f"test_confined_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
@@ -404,12 +414,10 @@ async def test_confined_profile_failure_skips_llm_notification(
             db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
-    notification_tasks = await _wait_for_notification_tasks(
-        db_engine, expected_count=1, timeout_seconds=1.0
-    )
-    assert len(notification_tasks) == 0, (
-        "Expected no LLM notification for an allow_wake_llm=False profile, "
-        f"found {len(notification_tasks)}"
+    await _wait_for_worker_to_finish_failure_handling(db_engine, new_task_event)
+    notification_tasks = await _script_error_notifications(db_engine)
+    assert notification_tasks == [], (
+        "Expected no LLM notification for an allow_wake_llm=False profile"
     )
 
 

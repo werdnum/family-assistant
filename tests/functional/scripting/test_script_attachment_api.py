@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.scripting.apis.attachments import (
-    AttachmentAPI,
-    create_attachment_api,
-)
+from family_assistant.scripting.apis.attachments import create_attachment_api
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
@@ -37,9 +33,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
-
-
-# AttachmentService fixture removed - using AttachmentRegistry directly
 
 
 @pytest.fixture
@@ -75,422 +68,38 @@ async def sample_attachment(
     return attachment_record.attachment_id
 
 
-class TestAttachmentAPI:
-    """Test the AttachmentAPI class with real database operations."""
+def _script_context(
+    db_engine: AsyncEngine,
+    attachment_registry: AttachmentRegistry,
+    *,
+    conversation_id: str = "test_conversation",
+    taint_tracker: InMemoryTurnTaintTracker | None = None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id=conversation_id,
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=Database(engine=db_engine),
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+        taint_tracker=taint_tracker,
+    )
 
-    async def test_get_attachment_success(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test getting attachment metadata successfully."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
 
-        result = await api._get_async(sample_attachment)
-
-        assert result is not None
-        assert result["attachment_id"] == sample_attachment
-        assert result["source_type"] == "user"
-        assert result["mime_type"] == "text/plain"
-        assert result["description"] == "Test attachment"
-        assert result["conversation_id"] == "test_conversation"
-
-    async def test_get_attachment_not_found(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test getting non-existent attachment returns None."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        fake_id = str(uuid.uuid4())
-        result = await api._get_async(fake_id)
-
-        assert result is None
-
-    async def test_get_attachment_cross_conversation_success(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test getting attachment from different conversation is allowed."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="different_conversation",  # Different conversation
-            db_engine=db_engine,
-        )
-
-        result = await api._get_async(sample_attachment)
-
-        # Should succeed regardless of conversation
-        assert result is not None
-        assert result["attachment_id"] == sample_attachment
-
-    async def test_list_attachments_success(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test listing attachments successfully."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        result = await api._list_async()
-
-        assert len(result) >= 1
-        # Find our attachment in the results
-        our_attachment = next(
-            (att for att in result if att["attachment_id"] == sample_attachment), None
-        )
-        assert our_attachment is not None
-        assert our_attachment["source_type"] == "user"
-        assert our_attachment["mime_type"] == "text/plain"
-
-    async def test_list_attachments_filter_by_source(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test listing attachments filtered by source type."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        # Filter for user attachments
-        result = await api._list_async(source_type="user", limit=10)
-
-        assert len(result) >= 1
-        # All results should be user attachments
-        for att in result:
-            assert att["source_type"] == "user"
-
-    async def test_list_attachments_empty_conversation(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test listing attachments in empty conversation."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="empty_conversation",
-            db_engine=db_engine,
-        )
-
-        result = await api._list_async()
-        assert result == []
-
-    async def test_send_attachment_success(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test sending attachment successfully."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        result = await api._send_async(sample_attachment, "Here's your file")
-
-        assert "sent attachment" in result.lower()
-        assert sample_attachment in result
-
-    async def test_send_attachment_not_found(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test sending non-existent attachment."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        fake_id = str(uuid.uuid4())
-        result = await api._send_async(fake_id)
-
-        assert "not found" in result.lower()
-        assert fake_id in result
-
-    async def test_send_attachment_cross_conversation_success(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test sending attachment from different conversation is allowed."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="different_conversation",
-            db_engine=db_engine,
-        )
-
-        result = await api._send_async(sample_attachment)
-
-        assert "sent attachment" in result.lower()
-
-    async def test_create_attachment_with_string_content(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test creating attachment with string content."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        content = "Hello, world!"
-        metadata = await api._create_async(
-            content=content,
-            filename="test.txt",
-            description="Test text file",
-            mime_type="text/plain",
-        )
-
-        # Verify attachment was created
-        assert metadata is not None
-        assert metadata.attachment_id is not None
-        assert len(metadata.attachment_id) == 36  # UUID format
-
-        # Verify we can retrieve it
-        db_context = Database(engine=db_engine)
-        retrieved_metadata = await attachment_registry.get_attachment(
-            db_context, metadata.attachment_id, acting_user_id=None
-        )
-        assert retrieved_metadata is not None
-        assert retrieved_metadata.source_type == "script"
-        assert retrieved_metadata.mime_type == "text/plain"
-        assert retrieved_metadata.description == "Test text file"
-        assert retrieved_metadata.conversation_id == "test_conversation"
-
-        # Verify content
-        retrieved_content = await attachment_registry.get_attachment_content(
-            db_context, metadata.attachment_id, acting_user_id=None
-        )
-        assert retrieved_content == content.encode("utf-8")
-
-    async def test_create_attachment_with_bytes_content(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test creating attachment with bytes content."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        content = b"Binary data here"
-        metadata = await api._create_async(
-            content=content,
-            filename="binary.txt",
-            description="Binary file",
-            mime_type="text/plain",
-        )
-
-        # Verify attachment was created
-        assert metadata is not None
-        assert metadata.attachment_id is not None
-
-        # Verify content
-        db_context = Database(engine=db_engine)
-        retrieved_content = await attachment_registry.get_attachment_content(
-            db_context, metadata.attachment_id, acting_user_id=None
-        )
-        assert retrieved_content == content
-
-    async def test_create_attachment_with_json_content(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test creating attachment with JSON content (stored as text/plain)."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        json_data = {"key": "value", "number": 42, "list": [1, 2, 3]}
-        content = json.dumps(json_data)
-
-        metadata = await api._create_async(
-            content=content,
-            filename="data.json",
-            description="JSON data",
-            mime_type="text/plain",  # Use text/plain since application/json not in allowed list
-        )
-
-        # Verify attachment was created and content is correct
-        db_context = Database(engine=db_engine)
-        retrieved_content = await attachment_registry.get_attachment_content(
-            db_context, metadata.attachment_id, acting_user_id=None
-        )
-        assert retrieved_content is not None
-        retrieved_data = json.loads(retrieved_content.decode("utf-8"))
-        assert retrieved_data == json_data
-
-    async def test_create_attachment_cross_conversation_accessible(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test that created attachments are accessible from other conversations."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="conversation_a",
-            db_engine=db_engine,
-        )
-
-        metadata = await api._create_async(
-            content="Test content",
-            filename="test.txt",
-            description="Test file",
-            mime_type="text/plain",
-        )
-
-        # Verify it's accessible from the same conversation
-        same_api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="conversation_a",
-            db_engine=db_engine,
-        )
-        result = await same_api._get_async(metadata.attachment_id)
-        assert result is not None
-
-        # Verify it's also accessible from a different conversation
-        different_api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="conversation_b",
-            db_engine=db_engine,
-        )
-        result = await different_api._get_async(metadata.attachment_id)
-        assert result is not None
-        assert result["attachment_id"] == metadata.attachment_id
-
-    async def test_read_bytes_text_content(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-        sample_attachment: str,
-    ) -> None:
-        """Test reading attachment content as raw bytes."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        result = await api._read_bytes_async(sample_attachment)
-
-        assert result is not None
-        assert isinstance(result, bytes)
-        assert result == b"Test attachment content"
-
-    async def test_read_bytes_binary_content(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test reading binary attachment content as raw bytes without decoding."""
-        # Create an attachment with non-UTF-8 binary content
-        binary_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
-        db_context = Database(engine=db_engine)
-        attachment_record = await attachment_registry.register_user_attachment(
-            db_context=db_context,
-            content=binary_content,
-            mime_type="image/png",
-            filename="test.png",
-            conversation_id="test_conversation",
-            user_id="test_user",
-            description="Binary test attachment",
-        )
-        attachment_id = attachment_record.attachment_id
-
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        result = await api._read_bytes_async(attachment_id)
-
-        assert result is not None
-        assert isinstance(result, bytes)
-        assert result == binary_content
-
-    async def test_read_bytes_not_found(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test reading non-existent attachment returns None."""
-        api = AttachmentAPI(
-            attachment_registry=attachment_registry,
-            conversation_id="test_conversation",
-            db_engine=db_engine,
-        )
-
-        fake_id = str(uuid.uuid4())
-        result = await api._read_bytes_async(fake_id)
-
-        assert result is None
+def _engine() -> MontyEngine:
+    return MontyEngine(config=ScriptConfig(), default_timezone=ZoneInfo("UTC"))
 
 
 class TestCreateAttachmentAPI:
     """Test the create_attachment_api factory function."""
-
-    async def test_create_api_with_attachment_registry(
-        self,
-        db_engine: AsyncEngine,
-        attachment_registry: AttachmentRegistry,
-    ) -> None:
-        """Test creating AttachmentAPI from execution context."""
-        db_context = Database(engine=db_engine)
-        execution_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=attachment_registry,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        api = create_attachment_api(execution_context)
-
-        assert isinstance(api, AttachmentAPI)
-        assert api.conversation_id == "test_conversation"
 
     async def test_create_api_without_attachment_registry(
         self,
@@ -566,13 +175,48 @@ print("Hello world")
 
         assert result == "success"
 
+    async def test_script_get_returns_attachment_metadata(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+        sample_attachment: str,
+    ) -> None:
+        result = await _engine().evaluate_async(
+            script=f'attachment_get("{sample_attachment}")',
+            execution_context=_script_context(db_engine, attachment_registry),
+        )
+
+        assert result["attachment_id"] == sample_attachment
+        assert result["source_type"] == "user"
+        assert result["mime_type"] == "text/plain"
+        assert result["description"] == "Test attachment"
+        assert result["conversation_id"] == "test_conversation"
+
+    async def test_script_get_reaches_an_attachment_from_another_conversation(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+        sample_attachment: str,
+    ) -> None:
+        result = await _engine().evaluate_async(
+            script=f'attachment_get("{sample_attachment}")',
+            execution_context=_script_context(
+                db_engine,
+                attachment_registry,
+                conversation_id="different_conversation",
+            ),
+        )
+
+        assert result["attachment_id"] == sample_attachment
+        assert result["conversation_id"] == "test_conversation"
+
     async def test_script_with_attachment_functions(
         self,
         db_engine: AsyncEngine,
         attachment_registry: AttachmentRegistry,
         sample_attachment: str,
     ) -> None:
-        """Test that attachment functions are available in scripts."""
+        """A script can look up an attachment and hand its ID to a tool."""
         db_context = Database(engine=db_engine)
         execution_context = ToolExecutionContext(
             interface_type="test",
@@ -608,25 +252,10 @@ print("Hello world")
             default_timezone=ZoneInfo("Australia/Sydney"),
         )
 
-        # Test script that uses attachment functions
-        # Note: attachment_list is not available for security, so we test with known attachment ID
         script = f"""
-# Test attachment_get with known ID from test setup
-attachment_id = "{sample_attachment}"
-metadata = attachment_get(attachment_id)
-
-if metadata:
-    print("Found attachment:", metadata.get("description", "No description"))
-    # Test using attachment with LLM tools (attachment_send was removed)
-    # We can test that attach_to_response tool is available via tools_execute
-    attach_result = tools_execute("attach_to_response", attachment_ids=[attachment_id])
-    print("Attach result:", attach_result)
-    result = True
-else:
-    print("No attachment found")
-    result = False
-
-result
+metadata = attachment_get("{sample_attachment}")
+attach_result = tools_execute("attach_to_response", attachment_ids=[metadata["attachment_id"]])
+{{"metadata": metadata, "attach": attach_result}}
 """
 
         result = await engine.evaluate_async(
@@ -634,8 +263,11 @@ result
             execution_context=execution_context,
         )
 
-        # Should return True since we found attachment
-        assert result is True
+        assert result["metadata"]["attachment_id"] == sample_attachment
+        assert result["metadata"]["description"] == "Test attachment"
+        attach = json.loads(result["attach"])
+        assert attach["status"] == "attachments_queued"
+        assert attach["attachment_ids"] == [sample_attachment]
 
     async def test_script_attachment_error_handling(
         self,
@@ -799,6 +431,29 @@ attachment_id
         )
         assert content == b"Hello from script!"
 
+    async def test_script_create_attachment_from_bytes(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        """Bytes content is stored as given, without a text round trip."""
+        result = await _engine().evaluate_async(
+            script="""
+attachment_create(
+    content=b"\\x89PNG\\r\\n\\x1a\\n\\x00\\xff\\xfe",
+    filename="binary.bin",
+    description="Binary file",
+    mime_type="text/plain",
+)["id"]
+""",
+            execution_context=_script_context(db_engine, attachment_registry),
+        )
+
+        content = await attachment_registry.get_attachment_content(
+            Database(engine=db_engine), result, acting_user_id=None
+        )
+        assert content == b"\x89PNG\r\n\x1a\n\x00\xff\xfe"
+
     async def test_script_create_json_attachment(
         self,
         db_engine: AsyncEngine,
@@ -907,27 +562,15 @@ attachment_id
             config=config, default_timezone=ZoneInfo("Australia/Sydney")
         )
 
-        # Script that creates an attachment and retrieves it
         script = """
-# Create attachment (returns dict with metadata)
-attachment_dict = attachment_create(
+attachment_id = attachment_create(
     content="Test content",
     filename="test.txt",
     description="Test file",
     mime_type="text/plain"
-)
+)["id"]
 
-# Extract ID from the dict
-attachment_id = attachment_dict["id"]
-
-# Retrieve metadata using the ID
-metadata = attachment_get(attachment_id)
-
-# Return both ID and description from the original dict
-{
-    "id": attachment_id,
-    "description": attachment_dict.get("description")
-}
+{"id": attachment_id, "got": attachment_get(attachment_id)}
 """
 
         result = await engine.evaluate_async(
@@ -935,10 +578,40 @@ metadata = attachment_get(attachment_id)
             execution_context=execution_context,
         )
 
-        # Verify result
-        assert isinstance(result, dict)
-        assert "id" in result
-        assert result["description"] == "Test file"
+        assert result["got"] is not None
+        assert result["got"]["attachment_id"] == result["id"]
+        assert result["got"]["description"] == "Test file"
+        assert result["got"]["source_type"] == "script"
+
+    async def test_script_created_attachment_is_reachable_from_another_conversation(
+        self,
+        db_engine: AsyncEngine,
+        attachment_registry: AttachmentRegistry,
+    ) -> None:
+        engine = _engine()
+        attachment_id = await engine.evaluate_async(
+            script="""
+attachment_create(
+    content="Test content",
+    filename="test.txt",
+    description="Test file",
+    mime_type="text/plain",
+)["id"]
+""",
+            execution_context=_script_context(
+                db_engine, attachment_registry, conversation_id="conversation_a"
+            ),
+        )
+
+        result = await engine.evaluate_async(
+            script=f'attachment_get("{attachment_id}")',
+            execution_context=_script_context(
+                db_engine, attachment_registry, conversation_id="conversation_b"
+            ),
+        )
+
+        assert result["attachment_id"] == attachment_id
+        assert result["conversation_id"] == "conversation_a"
 
     async def test_script_read_bytes_text_attachment(
         self,
@@ -1082,6 +755,16 @@ result == None
         assert result is True
 
 
+_CREATE_DERIVED_ATTACHMENT = """
+attachment_create(
+    content="derived from the web",
+    filename="derived.txt",
+    description="derived",
+    mime_type="text/plain",
+)["id"]
+"""
+
+
 def _external_tracker() -> InMemoryTurnTaintTracker:
     return InMemoryTurnTaintTracker(
         TurnTaintState.empty().add_source(
@@ -1100,22 +783,15 @@ async def test_a_script_created_attachment_carries_the_turns_taint(
     db_engine: AsyncEngine,
     attachment_registry: AttachmentRegistry,
 ) -> None:
-    api = AttachmentAPI(
-        attachment_registry=attachment_registry,
-        conversation_id="test_conversation",
-        db_engine=db_engine,
-        taint_tracker=_external_tracker(),
-    )
-
-    created = await api._create_async(
-        content="derived from the web",
-        filename="derived.txt",
-        description="derived",
-        mime_type="text/plain",
+    attachment_id = await _engine().evaluate_async(
+        script=_CREATE_DERIVED_ATTACHMENT,
+        execution_context=_script_context(
+            db_engine, attachment_registry, taint_tracker=_external_tracker()
+        ),
     )
 
     stored = await attachment_registry.get_attachment(
-        Database(engine=db_engine), created.attachment_id, acting_user_id=None
+        Database(engine=db_engine), attachment_id, acting_user_id=None
     )
     assert stored is not None
     assert (
@@ -1124,31 +800,35 @@ async def test_a_script_created_attachment_carries_the_turns_taint(
     )
 
 
+@pytest.mark.parametrize(
+    ("read_function", "expected_content"),
+    [
+        ("attachment_read", "derived from the web"),
+        ("attachment_read_bytes", b"derived from the web"),
+    ],
+)
 async def test_a_script_reading_an_external_attachment_raises_its_turn(
     db_engine: AsyncEngine,
     attachment_registry: AttachmentRegistry,
+    read_function: str,
+    expected_content: str | bytes,
 ) -> None:
     """A clean script cannot launder external content through an attachment."""
-    writer = AttachmentAPI(
-        attachment_registry=attachment_registry,
-        conversation_id="test_conversation",
-        db_engine=db_engine,
-        taint_tracker=_external_tracker(),
-    )
-    created = await writer._create_async(
-        content="derived from the web",
-        filename="derived.txt",
-        description="derived",
-        mime_type="text/plain",
+    engine = _engine()
+    attachment_id = await engine.evaluate_async(
+        script=_CREATE_DERIVED_ATTACHMENT,
+        execution_context=_script_context(
+            db_engine, attachment_registry, taint_tracker=_external_tracker()
+        ),
     )
     reader_tracker = InMemoryTurnTaintTracker()
-    reader = AttachmentAPI(
-        attachment_registry=attachment_registry,
-        conversation_id="test_conversation",
-        db_engine=db_engine,
-        taint_tracker=reader_tracker,
+
+    content = await engine.evaluate_async(
+        script=f'{read_function}("{attachment_id}")',
+        execution_context=_script_context(
+            db_engine, attachment_registry, taint_tracker=reader_tracker
+        ),
     )
 
-    await reader._read_async(created.attachment_id)
-
+    assert content == expected_content
     assert reader_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL

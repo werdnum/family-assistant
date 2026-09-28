@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import update
 
 from family_assistant.services.backends.mock import MockBackend
+from family_assistant.services.worker_backend import WorkerStatus
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.tools.types import ToolExecutionContext
@@ -212,7 +213,10 @@ class TestCancelWorkerTask:
 
     @pytest.mark.asyncio
     async def test_cancel_active_task(
-        self, db_context: Database, mock_backend: MockBackend
+        self,
+        db_context: Database,
+        mock_backend: MockBackend,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Cancelling an active task should update DB and cancel in backend."""
         job_id = await mock_backend.spawn_task(
@@ -235,6 +239,10 @@ class TestCancelWorkerTask:
         )
 
         exec_context = _make_exec_context(db_context, conversation_id="conv-cancel")
+        monkeypatch.setattr(
+            "family_assistant.tools.worker.get_worker_backend",
+            MagicMock(return_value=mock_backend),
+        )
 
         result = await cancel_worker_task_tool(exec_context, task_id="cancel-me")
         data = result.get_data()
@@ -245,6 +253,8 @@ class TestCancelWorkerTask:
         task = await db_context.worker_tasks.get_task("cancel-me")
         assert task is not None
         assert task["status"] == "cancelled"
+        backend_task = await mock_backend.get_task_status(job_id)
+        assert backend_task.status == WorkerStatus.CANCELLED
 
     @pytest.mark.asyncio
     async def test_cancel_terminal_task_returns_error(
@@ -281,7 +291,7 @@ class TestCancelWorkerTask:
         data = result.get_data()
 
         assert isinstance(data, dict)
-        assert "error" in data
+        assert data["error"] == "Task not found: no-such-task"
 
 
 class TestMarkStaleTasks:

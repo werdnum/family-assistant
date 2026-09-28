@@ -56,8 +56,8 @@ decoded == original
 base64_encode("")
 """
         result = await engine.evaluate_async(script)
-        assert result is not None
-        assert len(result) == 0
+        assert isinstance(result, str)
+        assert not result
 
     @pytest.mark.asyncio
     async def test_base64_decode_empty_string(self, engine_class: type) -> None:
@@ -68,20 +68,31 @@ base64_encode("")
 base64_decode("")
 """
         result = await engine.evaluate_async(script)
-        assert result is not None
-        assert len(result) == 0
+        assert isinstance(result, str)
+        assert not result
 
     @pytest.mark.asyncio
     async def test_base64_encode_unicode(self, engine_class: type) -> None:
-        """Test encoding unicode text."""
+        """Test that unicode text is encoded as its UTF-8 bytes."""
         engine = engine_class()
 
         script = """
-encoded = base64_encode("héllo wörld")
-base64_decode(encoded) == "héllo wörld"
+base64_encode("héllo wörld")
 """
         result = await engine.evaluate_async(script)
-        assert result is True
+        assert result == base64.b64encode("héllo wörld".encode()).decode("ascii")
+
+    @pytest.mark.asyncio
+    async def test_base64_decode_unicode(self, engine_class: type) -> None:
+        """Test that base64 of UTF-8 bytes decodes to the unicode text."""
+        engine = engine_class()
+
+        encoded = base64.b64encode("héllo wörld".encode()).decode("ascii")
+        script = f"""
+base64_decode("{encoded}")
+"""
+        result = await engine.evaluate_async(script)
+        assert result == "héllo wörld"
 
     @pytest.mark.asyncio
     async def test_base64_encode_bytes(self, engine_class: type) -> None:
@@ -100,7 +111,7 @@ base64_encode(b"binary data")
         engine = engine_class()
 
         script = """
-base64_decode("not-valid-base64!!!")
+base64_decode("YWI")
 """
         with pytest.raises(ScriptExecutionError):
             await engine.evaluate_async(script)

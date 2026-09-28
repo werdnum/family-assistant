@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
@@ -49,6 +50,7 @@ def _make_tool_context(
     default_labels: list[str] | None = None,
     required_labels: list[str] | None = None,
     allowed_labels: list[str] | None = None,
+    memory_read: bool = False,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="test",
@@ -66,6 +68,7 @@ def _make_tool_context(
         default_note_visibility_labels=default_labels,
         required_note_visibility_labels=required_labels,
         allowed_note_visibility_labels=allowed_labels,
+        memory_read=memory_read,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -355,20 +358,43 @@ def test_context_note_write_policy_reflects_fields() -> None:
     """The exec-context helper carries the profile's confinement fields.
 
     This is the single derivation used by every context-construction site, so
-    the threading is exercised through it.
+    the threading is exercised through it. Each field gets a distinct value so
+    a swapped mapping between context and policy fields is caught.
     """
     ctx = _make_tool_context(
         db_context=None,  # type: ignore[arg-type]  # helper only reads label fields
-        visibility_grants={"ops_diagnostics"},
-        default_labels=["ops_diagnostics"],
-        required_labels=["ops_diagnostics"],
-        allowed_labels=["ops_diagnostics"],
+        visibility_grants={"grant_label"},
+        default_labels=["default_label"],
+        required_labels=["required_label"],
+        allowed_labels=["allowed_label", "default_label", "required_label"],
     )
     policy = ctx.note_write_policy()
-    assert policy.visibility_grants == {"ops_diagnostics"}
-    assert policy.default_labels == ["ops_diagnostics"]
-    assert policy.required_labels == ["ops_diagnostics"]
-    assert policy.allowed_labels == ["ops_diagnostics"]
+    assert policy.visibility_grants == {"grant_label"}
+    assert policy.default_labels == ["default_label"]
+    assert policy.required_labels == ["required_label"]
+    assert policy.allowed_labels == [
+        "allowed_label",
+        "default_label",
+        "required_label",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("memory_read", "expected_denied"),
+    [
+        (False, frozenset({MEMORY_LABEL})),
+        (True, frozenset()),
+    ],
+)
+def test_context_note_write_policy_denies_memory_label_without_memory_read(
+    memory_read: bool, expected_denied: frozenset[str]
+) -> None:
+    """A profile that cannot read memory notes may not write the memory label."""
+    ctx = _make_tool_context(
+        db_context=None,  # type: ignore[arg-type]  # helper only reads label fields
+        memory_read=memory_read,
+    )
+    assert ctx.note_write_policy().denied_labels == expected_denied
 
 
 @pytest.mark.asyncio

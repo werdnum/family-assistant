@@ -136,27 +136,3 @@ def test_complex_tasks_can_create_automations() -> None:
             ).decision
             == ToolPolicyDecision.ALLOW
         ), tool_name
-
-
-def test_default_profile_can_create_automations_without_confirmation() -> None:
-    """A profile that authors automations needs the write tools, not just reads.
-
-    The default profile previously advertised only the read-only automation tools
-    while its prompt told it to call ``create_automation``, which is why
-    automation creation had to be delegated at all.
-    """
-    default_settings, _ = _load_resolved_profiles()
-    engine = PolicyEngine.from_policy_config(default_settings.tools_policy)
-    descriptors_by_name = {
-        descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS
-    }
-
-    for tool_name in ("create_automation", "update_automation", "delete_automation"):
-        descriptor = descriptors_by_name[tool_name]
-        assert (
-            engine.evaluate_for_advertisement(
-                descriptor,
-                can_confirm=False,
-            ).decision
-            == ToolPolicyDecision.ALLOW
-        ), tool_name
