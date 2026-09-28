@@ -142,6 +142,16 @@ class DelegationRunSummary(TypedDict):
     original_error: NotRequired[str | None]
 
 
+class PendingDelegationSummary(TypedDict):
+    """A delegation its conversation is waiting on, with progress on its children."""
+
+    run: DelegationRunDict
+    # Delegations the run started itself -- a council's members, say. Both
+    # are zero for a run that started none.
+    children_total: int
+    children_finished: int
+
+
 class DelegationRunsRepository(BaseRepository):
     """Repository for managing asynchronous delegation runs."""
 
@@ -220,6 +230,63 @@ class DelegationRunsRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_dict(row) for row in rows]
+
+    async def list_pending_for_conversation(
+        self,
+        *,
+        conversation_id: str,
+    ) -> list[PendingDelegationSummary]:
+        """Delegations the conversation is still waiting to hear back from.
+
+        A run is pending from the moment it is handed off to the background
+        until its result has been delivered, so a run that has finished but
+        whose reply is still being written counts too. Only runs started from
+        the main conversation are listed: a run started from inside another
+        delegation reports to its parent, and shows up as that parent's child
+        count instead.
+        """
+        runs_table = delegation_runs_table
+        stmt = (
+            select(runs_table)
+            .where(runs_table.c.conversation_id == conversation_id)
+            .where(runs_table.c.source_subconversation_id.is_(None))
+            .where(runs_table.c.handed_off_at.is_not(None))
+            .where(runs_table.c.notified_at.is_(None))
+            .order_by(runs_table.c.created_at.asc())
+        )
+        runs = [self._row_to_dict(row) for row in await self._db.fetch_all(stmt)]
+        if not runs:
+            return []
+
+        child_stmt = select(
+            runs_table.c.source_subconversation_id,
+            runs_table.c.status,
+        ).where(
+            runs_table.c.source_subconversation_id.in_([
+                run["subconversation_id"] for run in runs
+            ])
+        )
+        children: dict[str, list[str]] = {}
+        for row in await self._db.fetch_all(child_stmt):
+            children.setdefault(row["source_subconversation_id"], []).append(
+                row["status"]
+            )
+
+        summaries: list[PendingDelegationSummary] = []
+        for run in runs:
+            child_statuses = children.get(run["subconversation_id"], [])
+            summaries.append(
+                PendingDelegationSummary(
+                    run=run,
+                    children_total=len(child_statuses),
+                    children_finished=sum(
+                        1
+                        for child_status in child_statuses
+                        if child_status in TERMINAL_DELEGATION_STATUSES
+                    ),
+                )
+            )
+        return summaries
 
     async def has_active_run_for_subconversation(
         self,

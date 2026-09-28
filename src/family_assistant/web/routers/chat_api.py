@@ -568,6 +568,35 @@ class ConversationMessagesResponse(BaseModel):
     )
 
 
+class PendingDelegation(BaseModel):
+    """Background work a conversation is waiting to hear back from."""
+
+    delegation_id: str
+    target_profile_id: str
+    status: str = Field(
+        description=(
+            "queued | running | awaiting_remote | awaiting_children, or "
+            "completed | failed while the reply about it is still being written."
+        )
+    )
+    request_preview: str = Field(
+        description="The start of what the assistant asked the delegate to do."
+    )
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    cancel_requested: bool
+    children_total: int = Field(
+        description="Delegations this one started itself, e.g. council members."
+    )
+    children_finished: int
+
+
+class PendingDelegationsResponse(BaseModel):
+    conversation_id: str
+    delegations: list[PendingDelegation]
+
+
 class ConversationShareResponse(BaseModel):
     """New active share link for a conversation."""
 
@@ -2984,6 +3013,48 @@ async def get_conversation_messages(
         has_more_after=has_more_after,
         latest_user_profile_id=latest_user_profile_id,
         active_turns=active_turns,
+    )
+
+
+_REQUEST_PREVIEW_CHARS = 200
+
+
+@chat_api_router.get("/v1/chat/conversations/{conversation_id}/pending-delegations")
+async def get_pending_delegations(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> PendingDelegationsResponse:
+    """Delegations this conversation is still waiting to hear back from.
+
+    A delegation is listed from when it is handed off to the background until
+    its result has been delivered into the conversation. Clients refetch this
+    whenever the conversation stream reports a change.
+    """
+    await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=True
+    )
+    pending = await db_context.delegation_runs.list_pending_for_conversation(
+        conversation_id=conversation_id
+    )
+    return PendingDelegationsResponse(
+        conversation_id=conversation_id,
+        delegations=[
+            PendingDelegation(
+                delegation_id=entry["run"]["delegation_id"],
+                target_profile_id=entry["run"]["target_service_id"],
+                status=entry["run"]["status"],
+                request_preview=entry["run"]["request_text"][:_REQUEST_PREVIEW_CHARS],
+                created_at=entry["run"]["created_at"],
+                started_at=entry["run"]["started_at"],
+                completed_at=entry["run"]["completed_at"],
+                cancel_requested=entry["run"]["cancel_requested_at"] is not None,
+                children_total=entry["children_total"],
+                children_finished=entry["children_finished"],
+            )
+            for entry in pending
+        ],
     )
 
 

@@ -182,8 +182,11 @@ emoji), but it doesn't belong to this change.
    line in the automations user guide. *Verified by:* an eval set of automation wakes with "nothing
    to report" and "must report" cases.
 3. **Pending delegation surface.** Web/iOS chip and Telegram reaction, driven by `delegation_runs`.
-   *Verified by:* Playwright test that the chip appears on handoff and clears on the result, plus a
-   Telegram interface test for the reaction.
+   The read side is `GET /api/v1/chat/conversations/{id}/pending-delegations`, which lists runs from
+   handoff until their result is delivered, with a child count for runs such as a council that are
+   waiting on their own delegations. *Verified by:* API tests for which runs are listed, Playwright
+   test that the chip appears on handoff and clears on the result, plus a Telegram interface test
+   for the reaction.
 4. **`defer_reply` plus the sibling-aware completion wake.** Build on PR #1295 (council of LLMs),
    which already makes a delegated run with children wait for all of them and wake once, so only its
    final turn reports back. Sibling-aware quiet wakes should reuse that rather than add a second
