@@ -1507,6 +1507,7 @@ final class ChatMockBackendURLProtocol: URLProtocol {
 
     private static let lock = NSLock()
     private static var handler: Handler?
+    private static var pendingDelegationsHandler: Handler?
 
     static func respond(with handler: @escaping Handler) {
         lock.withLock {
@@ -1514,9 +1515,19 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         }
     }
 
+    /// The chat view model refreshes a conversation's pending delegations on
+    /// every live-stream event, so that route is answered here — with an empty
+    /// list unless a test installs its own — rather than in every test's handler.
+    static func respondToPendingDelegations(with handler: @escaping Handler) {
+        lock.withLock {
+            pendingDelegationsHandler = handler
+        }
+    }
+
     static func reset() {
         lock.withLock {
             handler = nil
+            pendingDelegationsHandler = nil
         }
     }
 
@@ -1568,6 +1579,21 @@ final class ChatMockBackendURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
+        if request.url?.path.hasSuffix("/pending-delegations") == true {
+            let installed = Self.lock.withLock { Self.pendingDelegationsHandler }
+            let handler: Handler = installed ?? { _ in
+                .json(#"{"conversation_id":"","delegations":[]}"#)
+            }
+            do {
+                let response = try handler(request)
+                client?.urlProtocol(self, didReceive: response.urlResponse(for: request), cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: response.data)
+                client?.urlProtocolDidFinishLoading(self)
+            } catch {
+                client?.urlProtocol(self, didFailWithError: error)
+            }
+            return
+        }
         guard let handler = Self.lock.withLock({ Self.handler }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return

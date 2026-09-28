@@ -88,6 +88,14 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatConversationShareStatusResponse.self, from: data).active
     }
 
+    func listPendingDelegations(conversationID: String) async throws -> [ChatPendingDelegation] {
+        let encodedID = Self.encodedPathComponent(conversationID)
+        let url = try apiURL("/api/v1/chat/conversations/\(encodedID)/pending-delegations")
+        let (data, response) = try await authorizedGETWithAuthRetry(url: url)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(ChatPendingDelegationsResponse.self, from: data).delegations
+    }
+
     /// Rotate the conversation's active share and return its absolute URL.
     func createConversationShare(conversationID: String) async throws -> URL {
         let capturedAuthEpoch = authManager.authEpoch

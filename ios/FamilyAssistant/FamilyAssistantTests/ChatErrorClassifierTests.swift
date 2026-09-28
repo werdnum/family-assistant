@@ -38,6 +38,7 @@ final class ChatErrorClassifierTests: XCTestCase {
             .messagesMerge,
             .profilesLoad,
             .pendingApprovalsPoll,
+            .pendingDelegationsPoll,
         ]
         let errors: [Error] = [
             URLError(.timedOut),
