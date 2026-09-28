@@ -1381,6 +1381,10 @@ class AnthropicClient(BaseLLMClient):
                 tool_choice=tool_choice,
                 streaming=True,
             )
+        except BaseException:
+            span.end()
+            raise
+        try:
 
             async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
                 processed_messages = self._process_tool_messages(list(messages))

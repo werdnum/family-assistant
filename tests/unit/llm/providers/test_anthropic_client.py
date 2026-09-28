@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from anthropic.types import TextBlockParam
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -16,6 +19,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.providers import anthropic_client as anthropic_client_module
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 
@@ -596,3 +600,28 @@ class TestConversationCacheBreakpoints:
             else 0
         )
         assert system_breakpoints + len(_breakpoint_positions(api_messages)) <= 4
+
+
+@pytest.mark.no_db
+async def test_stream_setup_failure_surfaces_original_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request that fails to serialize raises its own error, not UnboundLocalError."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(anthropic_client_module, "tracer", provider.get_tracer("test"))
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-6")
+    malformed = cast("LLMMessage", object())
+
+    stream = cast(
+        "AsyncGenerator[LLMStreamEvent]",
+        client.generate_response_stream([UserMessage(content="hello"), malformed]),
+    )
+
+    with pytest.raises(TypeError, match="Unsupported message type for serialization"):
+        await anext(stream)
+
+    assert [span.name for span in exporter.get_finished_spans()] == [
+        "llm.provider.generate_stream"
+    ]
