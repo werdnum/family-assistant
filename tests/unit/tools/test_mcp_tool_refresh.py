@@ -95,8 +95,8 @@ def _register(
     )
 
 
-def _tool_names(provider: MCPToolsProvider) -> set[str]:
-    return {descriptor.name for descriptor in provider._descriptors}
+async def _tool_names(provider: MCPToolsProvider) -> set[str]:
+    return {descriptor.name for descriptor in await provider.get_tool_descriptors()}
 
 
 @pytest.mark.asyncio
@@ -107,7 +107,7 @@ async def test_tools_appear_when_a_server_starts_reporting_them() -> None:
 
     await provider._run_health_checks()
 
-    assert _tool_names(provider) == {"search"}
+    assert await _tool_names(provider) == {"search"}
     assert provider.get_tool_to_server_mapping() == {"search": SERVER_ID}
 
 
@@ -126,9 +126,10 @@ async def test_a_server_that_starts_reporting_a_broken_schema_is_retired() -> No
 
     await provider._run_health_checks()
 
-    assert _tool_names(provider) == {"other"}
-    assert provider._server_statuses[SERVER_ID] == MCP_SERVER_STATUS_FAILED
-    assert SERVER_ID not in provider._sessions
+    assert await _tool_names(provider) == {"other"}
+    statuses = provider.get_server_statuses()
+    assert statuses[SERVER_ID]["status"] == MCP_SERVER_STATUS_FAILED
+    assert statuses[SERVER_ID]["session_active"] is False
 
 
 @pytest.mark.asyncio
@@ -142,7 +143,7 @@ async def test_a_paginated_tool_list_is_read_to_the_end() -> None:
 
     await provider._run_health_checks()
 
-    assert _tool_names(provider) == {"search", "fetch"}
+    assert await _tool_names(provider) == {"search", "fetch"}
 
 
 @pytest.mark.asyncio
@@ -154,7 +155,7 @@ async def test_tools_that_vanish_from_the_server_are_dropped() -> None:
 
     await provider._run_health_checks()
 
-    assert _tool_names(provider) == {"search"}
+    assert await _tool_names(provider) == {"search"}
     assert provider.get_tool_to_server_mapping() == {"search": SERVER_ID}
 
 
@@ -216,7 +217,7 @@ async def test_a_reordered_tool_list_is_not_a_change() -> None:
     await provider._run_health_checks()
 
     assert provider.descriptors_version == version
-    assert _tool_names(provider) == {"search", "fetch"}
+    assert await _tool_names(provider) == {"search", "fetch"}
 
 
 @pytest.mark.asyncio
@@ -261,4 +262,4 @@ async def test_failed_health_check_does_not_drop_the_cached_tools() -> None:
 
     await provider._run_health_checks()
 
-    assert _tool_names(provider) == {"search"}
+    assert await _tool_names(provider) == {"search"}

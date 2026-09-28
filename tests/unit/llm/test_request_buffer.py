@@ -177,6 +177,7 @@ class TestLLMRequestBuffer:
     def test_clear(self) -> None:
         """Test clearing the buffer."""
         buffer = LLMRequestBuffer(max_size=10)
+        assert len(buffer) == 0
 
         buffer.add(create_test_record())
         buffer.add(create_test_record())
@@ -188,20 +189,8 @@ class TestLLMRequestBuffer:
         assert len(buffer) == 0
         assert buffer.get_recent() == []
 
-    def test_len(self) -> None:
-        """Test __len__ method."""
-        buffer = LLMRequestBuffer(max_size=10)
-
-        assert len(buffer) == 0
-
-        buffer.add(create_test_record())
-        assert len(buffer) == 1
-
-        buffer.add(create_test_record())
-        assert len(buffer) == 2
-
     def test_thread_safety(self) -> None:
-        """Test that buffer is thread-safe for concurrent writes."""
+        """Test that concurrent writes preserve every request record."""
         buffer = LLMRequestBuffer(max_size=100)
         num_threads = 10
         records_per_thread = 10
@@ -219,8 +208,14 @@ class TestLLMRequestBuffer:
         for t in threads:
             t.join()
 
-        # All records should be added (no data corruption)
-        assert len(buffer) == num_threads * records_per_thread
+        assert {
+            record.request_id
+            for record in buffer.get_recent(limit=num_threads * records_per_thread)
+        } == {
+            f"t{thread_id}_r{i}"
+            for thread_id in range(num_threads)
+            for i in range(records_per_thread)
+        }
 
 
 class TestGlobalBuffer:

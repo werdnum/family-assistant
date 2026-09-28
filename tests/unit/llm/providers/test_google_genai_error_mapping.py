@@ -1,7 +1,5 @@
 """Tests for Google GenAI error mapping and retry parsing."""
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from family_assistant.llm.base import (
@@ -39,68 +37,67 @@ class TestParseRetryAfter:
 @pytest.mark.no_db
 class TestMapErrorToTypedException:
     @pytest.fixture
-    def client(self) -> MagicMock:
-        c = MagicMock(spec=GoogleGenAIClient)
-        c.model_name = "models/gemini-test"
-        c._parse_retry_after = GoogleGenAIClient._parse_retry_after
-        c._map_error_to_typed_exception = (
-            GoogleGenAIClient._map_error_to_typed_exception.__get__(c)
-        )
-        return c
+    def client(self) -> GoogleGenAIClient:
+        return GoogleGenAIClient(api_key="test-key", model="gemini-test")
 
-    def test_maps_401_to_authentication_error(self, client: MagicMock) -> None:
+    def test_maps_401_to_authentication_error(self, client: GoogleGenAIClient) -> None:
         exc = Exception("401 Unauthorized: Invalid API key")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, AuthenticationError)
 
-    def test_maps_429_to_rate_limit_error(self, client: MagicMock) -> None:
+    def test_maps_429_to_rate_limit_error(self, client: GoogleGenAIClient) -> None:
         exc = Exception("429 Resource exhausted retryDelay: 36s")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, RateLimitError)
         assert result.retry_after == 36.0
 
-    def test_maps_quota_to_rate_limit_error(self, client: MagicMock) -> None:
+    def test_maps_quota_to_rate_limit_error(self, client: GoogleGenAIClient) -> None:
         exc = Exception("Quota exceeded for model")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, RateLimitError)
 
-    def test_maps_404_to_model_not_found(self, client: MagicMock) -> None:
+    def test_maps_404_to_model_not_found(self, client: GoogleGenAIClient) -> None:
         exc = Exception("404 Model not found")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, ModelNotFoundError)
 
-    def test_maps_token_limit_to_context_length(self, client: MagicMock) -> None:
+    def test_maps_token_limit_to_context_length(
+        self, client: GoogleGenAIClient
+    ) -> None:
         exc = Exception("Token limit exceeded for this model")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, ContextLengthError)
 
-    def test_maps_400_to_invalid_request(self, client: MagicMock) -> None:
+    def test_maps_400_to_invalid_request(self, client: GoogleGenAIClient) -> None:
         exc = Exception("400 Bad Request: invalid parameter")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, InvalidRequestError)
 
-    def test_maps_connection_to_connection_error(self, client: MagicMock) -> None:
+    def test_maps_connection_to_connection_error(
+        self, client: GoogleGenAIClient
+    ) -> None:
         exc = Exception("Connection refused")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, ProviderConnectionError)
 
-    def test_maps_timeout_to_timeout_error(self, client: MagicMock) -> None:
+    def test_maps_timeout_to_timeout_error(self, client: GoogleGenAIClient) -> None:
         exc = Exception("Request timeout after 30s")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, ProviderTimeoutError)
 
-    def test_maps_unknown_to_base_error(self, client: MagicMock) -> None:
+    def test_maps_unknown_to_base_error(self, client: GoogleGenAIClient) -> None:
         exc = Exception("Something completely unexpected")
         result = client._map_error_to_typed_exception(exc)
-        assert isinstance(result, LLMProviderError)
-        assert not isinstance(result, RateLimitError)
+        assert type(result) is LLMProviderError
+        assert result.provider == "google"
+        assert result.model == client.model_name
 
-    def test_maps_network_to_connection_error(self, client: MagicMock) -> None:
+    def test_maps_network_to_connection_error(self, client: GoogleGenAIClient) -> None:
         exc = Exception("Network unreachable")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, ProviderConnectionError)
 
-    def test_rate_limit_without_retry_delay(self, client: MagicMock) -> None:
+    def test_rate_limit_without_retry_delay(self, client: GoogleGenAIClient) -> None:
         exc = Exception("429 Too Many Requests")
         result = client._map_error_to_typed_exception(exc)
         assert isinstance(result, RateLimitError)

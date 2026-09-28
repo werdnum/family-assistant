@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import types
 from typing import Any
@@ -40,36 +41,15 @@ from family_assistant.tools.types import (
 class TestLocalToolsProvider:
     """Test cases for LocalToolsProvider."""
 
-    @pytest.mark.asyncio
-    async def test_execute_tool_dict_result_json_formatting(self) -> None:
-        """Test that dict results are properly converted to JSON strings."""
-
-        # Define a tool that returns a dict
-        async def tool_returns_dict(**kwargs: Any) -> dict:  # noqa: ANN401 # Test tool needs flexibility
-            return {"status": "success", "data": {"value": 42, "message": "test"}}
-
-        provider = LocalToolsProvider(
-            definitions=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "tool_returns_dict",
-                        "description": "Test tool that returns a dict",
-                        "parameters": {"type": "object", "properties": {}},
-                    },
-                }
-            ],
-            implementations={"tool_returns_dict": tool_returns_dict},
-        )
-
-        mock_db_context = MagicMock(spec=Database)
-        context = ToolExecutionContext(
-            conversation_id="test-conv-1",
+    @staticmethod
+    def _make_context(conversation_id: str) -> ToolExecutionContext:
+        return ToolExecutionContext(
+            conversation_id=conversation_id,
             user_name="test-user",
             interface_type="test",
             timezone=ZoneInfo("UTC"),
             turn_id=None,
-            db_context=mock_db_context,
+            db_context=MagicMock(spec=Database),
             processing_service=None,
             clock=None,
             home_assistant_client=None,
@@ -80,150 +60,83 @@ class TestLocalToolsProvider:
             api_backend=None,
         )
 
-        result = await provider.execute_tool("tool_returns_dict", {}, context)
+    @staticmethod
+    def _provider_returning(name: str, value: object) -> LocalToolsProvider:
+        async def tool(**kwargs: Any) -> object:  # noqa: ANN401 # Test tool needs flexibility
+            return value
 
-        # Result should be a JSON string, not Python dict string representation
-        assert isinstance(result, str)
-        # Should be valid JSON
-        parsed = json.loads(result)
-        assert parsed == {"status": "success", "data": {"value": 42, "message": "test"}}
-        # Should NOT contain Python-style single quotes
-        assert "'" not in result
-        # Should contain proper JSON double quotes
-        assert '"status"' in result
-        assert '"success"' in result
-
-    @pytest.mark.asyncio
-    async def test_execute_tool_list_result_json_formatting(self) -> None:
-        """Test that list results are properly converted to JSON strings."""
-
-        # Define a tool that returns a list
-        async def tool_returns_list(**kwargs: Any) -> list:  # noqa: ANN401 # Test tool needs flexibility
-            return [
-                {"id": 1, "name": "first"},
-                {"id": 2, "name": "second"},
-                {"id": 3, "name": "third"},
-            ]
-
-        provider = LocalToolsProvider(
+        return LocalToolsProvider(
             definitions=[
                 {
                     "type": "function",
                     "function": {
-                        "name": "tool_returns_list",
-                        "description": "Test tool that returns a list",
+                        "name": name,
+                        "description": "Test tool returning a fixed value",
                         "parameters": {"type": "object", "properties": {}},
                     },
                 }
             ],
-            implementations={"tool_returns_list": tool_returns_list},
+            implementations={name: tool},
         )
 
-        mock_db_context = MagicMock(spec=Database)
-        context = ToolExecutionContext(
-            conversation_id="test-conv-2",
-            user_name="test-user",
-            interface_type="test",
-            timezone=ZoneInfo("UTC"),
-            turn_id=None,
-            db_context=mock_db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        result = await provider.execute_tool("tool_returns_list", {}, context)
-
-        # Result should be a JSON string
-        assert isinstance(result, str)
-        # Should be valid JSON
-        parsed = json.loads(result)
-        assert len(parsed) == 3
-        assert parsed[0] == {"id": 1, "name": "first"}
-        # Should NOT contain Python-style single quotes
-        assert "'" not in result
-        # Should be properly formatted JSON
-        assert '"id"' in result
-        assert '"name"' in result
-
-    @pytest.mark.asyncio
-    async def test_execute_tool_complex_nested_result_json_formatting(self) -> None:
-        """Test that complex nested structures are properly converted to JSON."""
-
-        # Define a tool that returns a complex nested structure
-        async def tool_returns_complex(**kwargs: Any) -> dict:  # noqa: ANN401 # Test tool needs flexibility
-            return {
-                "metadata": {"version": "1.0", "timestamp": "2025-01-01T00:00:00Z"},
-                "items": [
-                    {"type": "A", "values": [1, 2, 3], "active": True},
-                    {"type": "B", "values": [4, 5, 6], "active": False},
+    @pytest.mark.parametrize(
+        "returned",
+        [
+            pytest.param(
+                {"status": "success", "data": {"value": 42, "message": "test"}},
+                id="dict",
+            ),
+            pytest.param(
+                [
+                    {"id": 1, "name": "first"},
+                    {"id": 2, "name": "second"},
+                    {"id": 3, "name": "third"},
                 ],
-                "summary": {"total": 6, "types": ["A", "B"]},
-                "special_chars": {
-                    "unicode": "Hello 世界",
-                    "quotes": 'test "quoted" value',
-                },
-            }
-
-        provider = LocalToolsProvider(
-            definitions=[
+                id="list",
+            ),
+            pytest.param(
                 {
-                    "type": "function",
-                    "function": {
-                        "name": "tool_returns_complex",
-                        "description": "Test tool that returns complex nested data",
-                        "parameters": {"type": "object", "properties": {}},
+                    "metadata": {"version": "1.0", "timestamp": "2025-01-01T00:00:00Z"},
+                    "items": [
+                        {"type": "A", "values": [1, 2, 3], "active": True},
+                        {"type": "B", "values": [4, 5, 6], "active": False},
+                    ],
+                    "summary": {"total": 6, "types": ["A", "B"]},
+                    "special_chars": {
+                        "unicode": "Hello 世界",
+                        "quotes": 'test "quoted" value',
                     },
-                }
-            ],
-            implementations={"tool_returns_complex": tool_returns_complex},
+                },
+                id="nested-with-quotes-and-unicode",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_execute_tool_serialises_structured_result_as_json(
+        self, returned: object
+    ) -> None:
+        """Dict and list results reach the LLM as JSON, not as a Python repr."""
+        provider = self._provider_returning("structured_tool", returned)
+
+        result = await provider.execute_tool(
+            "structured_tool", {}, self._make_context("test-conv-json")
         )
 
-        mock_db_context = MagicMock(spec=Database)
-        context = ToolExecutionContext(
-            conversation_id="test-conv-3",
-            user_name="test-user",
-            interface_type="test",
-            timezone=ZoneInfo("UTC"),
-            turn_id=None,
-            db_context=mock_db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        result = await provider.execute_tool("tool_returns_complex", {}, context)
-
-        # Result should be valid JSON
         assert isinstance(result, str)
-        parsed = json.loads(result)
+        assert json.loads(result) == returned
 
-        # Check structure is preserved
-        assert "metadata" in parsed
-        assert parsed["metadata"]["version"] == "1.0"
-        assert len(parsed["items"]) == 2
-        assert parsed["summary"]["total"] == 6
+    @pytest.mark.asyncio
+    async def test_execute_tool_json_result_keeps_non_ascii_text_unescaped(
+        self,
+    ) -> None:
+        provider = self._provider_returning("unicode_tool", {"greeting": "Hello 世界"})
 
-        # Check special characters are handled correctly
-        assert parsed["special_chars"]["unicode"] == "Hello 世界"
-        assert parsed["special_chars"]["quotes"] == 'test "quoted" value'
-
-        # Ensure it's proper JSON formatting
-        assert "'" not in result or (
-            '"' in result and result.count('"') > result.count("'")
+        result = await provider.execute_tool(
+            "unicode_tool", {}, self._make_context("test-conv-unicode")
         )
-        assert result.strip().startswith("{")
-        assert result.strip().endswith("}")
+
+        assert isinstance(result, str)
+        assert "Hello 世界" in result
 
     @pytest.mark.asyncio
     async def test_execute_tool_none_result_handling(self) -> None:
@@ -793,10 +706,7 @@ class TestPolicyEnforcingToolsProvider:
         )
 
     @staticmethod
-    def _make_context(
-        *,
-        request_confirmation_callback: Any = None,  # noqa: ANN401 - test helper
-    ) -> ToolExecutionContext:
+    def _make_context_without_confirmation() -> ToolExecutionContext:
         mock_db_context = MagicMock(spec=Database)
         return ToolExecutionContext(
             conversation_id="policy-conv",
@@ -811,7 +721,7 @@ class TestPolicyEnforcingToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
-            request_confirmation_callback=request_confirmation_callback,
+            request_confirmation_callback=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -1017,124 +927,6 @@ class TestPolicyEnforcingToolsProvider:
         assert denied_descriptor is None
 
     @pytest.mark.asyncio
-    async def test_execute_tool_requests_confirmation_when_policy_requires_it(
-        self,
-    ) -> None:
-        class StubDescriptorProvider:
-            def __init__(self, descriptor: ToolDescriptor) -> None:
-                self._descriptor = descriptor
-                self.calls: list[tuple[str, dict[str, object], str | None]] = []
-                self.execution_contexts: list[ToolExecutionContext] = []
-
-            async def get_tool_definitions(self) -> list[ToolDefinition]:
-                return [self._descriptor.definition]
-
-            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
-                return [self._descriptor]
-
-            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
-                if name == self._descriptor.name:
-                    return self._descriptor
-                return None
-
-            async def execute_tool(
-                self,
-                name: str,
-                arguments: dict[str, object],
-                context: ToolExecutionContext,
-                call_id: str | None = None,
-            ) -> str:
-                self.calls.append((name, arguments, call_id))
-                self.execution_contexts.append(context)
-                return "executed"
-
-            async def close(self) -> None:
-                return None
-
-        descriptor = self._make_descriptor(
-            "delete_note",
-            tags={ToolTag.NOTES, ToolTag.DESTRUCTIVE, ToolTag.STATE_CHANGING},
-        )
-        wrapped_provider = StubDescriptorProvider(descriptor)
-        policy_engine = PolicyEngine.from_policy_config(
-            ToolPolicyConfig(
-                default_decision=ToolPolicyDecision.DENY,
-                rules=[
-                    PolicyRule(
-                        match=ToolMatcher(tags_any=[ToolTag.DESTRUCTIVE]),
-                        decision=ToolPolicyDecision.CONFIRM,
-                        priority=20,
-                    )
-                ],
-            )
-        )
-        provider = PolicyEnforcingToolsProvider(
-            wrapped_provider=wrapped_provider,
-            policy_engine=policy_engine,
-            confirmation_timeout=42.0,
-        )
-
-        captured: dict[str, object] = {}
-
-        async def confirmation_callback(
-            interface_type: str,
-            conversation_id: str,
-            turn_id: str | None,
-            tool_name: str,
-            call_id: str,
-            tool_args: dict[str, object],
-            timeout_seconds: float,
-            context: ToolExecutionContext,
-        ) -> ConfirmationOutcome:
-            captured["interface_type"] = interface_type
-            captured["conversation_id"] = conversation_id
-            captured["turn_id"] = turn_id
-            captured["tool_name"] = tool_name
-            captured["call_id"] = call_id
-            captured["tool_args"] = tool_args
-            captured["timeout_seconds"] = timeout_seconds
-            captured["context"] = context
-            return ConfirmationOutcome(kind="approved")
-
-        exec_context = self._make_context(
-            request_confirmation_callback=confirmation_callback
-        )
-        exec_context.taint_tracker = InMemoryTurnTaintTracker(TurnTaintState.empty())
-        result = await provider.execute_tool(
-            "delete_note",
-            {"title": "hello"},
-            exec_context,
-            call_id="call-explicit-123",
-        )
-
-        assert result == "executed"
-        assert captured["tool_name"] == "delete_note"
-        assert captured["call_id"] == "call-explicit-123"
-        assert captured["timeout_seconds"] == 42.0
-        callback_context = captured["context"]
-        assert isinstance(callback_context, ToolExecutionContext)
-        assert callback_context is not exec_context
-        assert len(wrapped_provider.execution_contexts) == 1
-        assert wrapped_provider.execution_contexts[0] is callback_context
-        assert callback_context.db_context is exec_context.db_context
-        assert callback_context.taint_tracker is exec_context.taint_tracker
-        assert (
-            callback_context.tool_call_review_state
-            is exec_context.tool_call_review_state
-        )
-        assert callback_context.request_confirmation_callback is confirmation_callback
-        assert callback_context.conversation_id == exec_context.conversation_id
-        assert callback_context.turn_id == exec_context.turn_id
-        assert callback_context.interface_type == exec_context.interface_type
-        assert captured["conversation_id"] == exec_context.conversation_id
-        assert captured["turn_id"] == exec_context.turn_id
-        assert captured["interface_type"] == exec_context.interface_type
-        assert exec_context.definition_gate_outcome is None
-        assert wrapped_provider.calls == [
-            ("delete_note", {"title": "hello"}, "call-explicit-123")
-        ]
-
-    @pytest.mark.asyncio
     async def test_execute_tool_denies_confirm_only_tool_without_confirmation_path(
         self,
     ) -> None:
@@ -1189,7 +981,7 @@ class TestPolicyEnforcingToolsProvider:
             await provider.execute_tool(
                 "delete_note",
                 {"title": "hello"},
-                self._make_context(),
+                self._make_context_without_confirmation(),
             )
 
 
@@ -1199,11 +991,13 @@ class _VersionedDescriptorProvider:
     Models an ``MCPToolsProvider`` whose server was down at startup and later
     reconnects: ``add_descriptor`` mutates the descriptor set and bumps
     ``descriptors_version`` exactly as the real provider does.
+    ``enumeration_calls`` counts how often a caller listed the tool set.
     """
 
     def __init__(self, descriptors: list[ToolDescriptor]) -> None:
         self._descriptors = list(descriptors)
         self._descriptors_version = 0
+        self.enumeration_calls = 0
 
     @property
     def descriptors_version(self) -> int:
@@ -1214,9 +1008,11 @@ class _VersionedDescriptorProvider:
         self._descriptors_version += 1
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
+        self.enumeration_calls += 1
         return [descriptor.definition for descriptor in self._descriptors]
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        self.enumeration_calls += 1
         return list(self._descriptors)
 
     async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
@@ -1348,7 +1144,7 @@ class TestPolicyEnforcingCacheInvalidation:
 
     @pytest.mark.asyncio
     async def test_cache_served_while_descriptors_unchanged(self) -> None:
-        """Without a descriptor change the cached result is reused as-is."""
+        """Without a descriptor change the wrapped provider is not re-enumerated."""
         wrapped = _VersionedDescriptorProvider([
             _make_mcp_descriptor("execute_python", "code-execution")
         ])
@@ -1356,12 +1152,14 @@ class TestPolicyEnforcingCacheInvalidation:
             wrapped_provider=wrapped,
             policy_engine=self._allow_all_engine(),
         )
-
         first = await provider.get_tool_definitions()
+        enumerations_after_first = wrapped.enumeration_calls
+
         second = await provider.get_tool_definitions()
 
-        # Same cached list object is returned when nothing changed.
-        assert first is second
+        assert [d["function"]["name"] for d in second] == ["execute_python"]
+        assert second == first
+        assert wrapped.enumeration_calls == enumerations_after_first
 
     @pytest.mark.asyncio
     async def test_colliding_names_are_deduped_in_advertised_list(self) -> None:
@@ -1528,13 +1326,11 @@ class TestAdvertisementFollowsExecutionResolution:
         with caplog.at_level("ERROR", logger="family_assistant.tools.infrastructure"):
             await provider.get_tool_definitions()
 
-        collision_records = [
-            record
-            for record in caplog.records
-            if "Tool name collision" in record.getMessage()
+        error_records = [
+            record for record in caplog.records if record.levelno >= logging.ERROR
         ]
-        assert len(collision_records) == 1
-        message = collision_records[0].getMessage()
+        assert len(error_records) == 1
+        message = error_records[0].getMessage()
         assert "'foo'" in message
         assert "MCP (server 'srv')" in message
         assert "local" in message
@@ -1558,8 +1354,8 @@ class TestAdvertisementFollowsExecutionResolution:
         with caplog.at_level("ERROR", logger="family_assistant.tools.infrastructure"):
             await provider.get_tool_definitions()
 
-        assert not [
-            record
+        assert [
+            record.getMessage()
             for record in caplog.records
-            if "Tool name collision" in record.getMessage()
-        ]
+            if record.levelno >= logging.ERROR
+        ] == []

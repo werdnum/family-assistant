@@ -10,10 +10,9 @@ from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, MQTTConfig
 from family_assistant.storage.database import Database
-from family_assistant.tools.mqtt import (
-    MQTT_TOOLS_DEFINITION,
-    mqtt_publish_tool,
-)
+from family_assistant.tools import TOOLS_DEFINITION
+from family_assistant.tools.argument_schema import argument_schema_errors
+from family_assistant.tools.mqtt import mqtt_publish_tool
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -55,19 +54,31 @@ def exec_context_no_mqtt() -> ToolExecutionContext:
     return _make_exec_context(MQTTConfig())
 
 
-def test_tool_definition_structure() -> None:
-    assert len(MQTT_TOOLS_DEFINITION) == 1
-    tool_def = MQTT_TOOLS_DEFINITION[0]
+def test_mqtt_publish_advertised_argument_schema() -> None:
+    definitions = [
+        tool for tool in TOOLS_DEFINITION if tool["function"]["name"] == "mqtt_publish"
+    ]
+    assert len(definitions) == 1
+    params = cast("dict[str, Any]", definitions[0]["function"]["parameters"])
 
-    assert tool_def["type"] == "function"
-    assert tool_def["function"]["name"] == "mqtt_publish"
-
-    params = cast("dict[str, Any]", tool_def["function"]["parameters"])
-    assert params["type"] == "object"
-    assert "topic" in params["properties"]
-    assert "payload" in params["properties"]
-    assert "retain" in params["properties"]
-    assert params["required"] == ["topic", "payload"]
+    assert (
+        argument_schema_errors(
+            params, {"topic": "home/status", "payload": {"online": True}}
+        )
+        == []
+    )
+    assert (
+        argument_schema_errors(
+            params, {"topic": "home/status", "payload": "ON", "retain": False}
+        )
+        == []
+    )
+    assert argument_schema_errors(params, {"payload": "ON"})
+    assert argument_schema_errors(params, {"topic": "home/status"})
+    assert argument_schema_errors(params, {"topic": 42, "payload": "ON"})
+    assert argument_schema_errors(
+        params, {"topic": "home/status", "payload": "ON", "retain": "false"}
+    )
 
 
 @pytest.mark.asyncio

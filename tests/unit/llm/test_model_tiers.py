@@ -2,10 +2,12 @@
 
 The load-bearing property is ordering: the global ``llm_parameters`` map is
 matched by *substring* in insertion order, so a per-entry override only wins if
-its exact model key is re-inserted after every global pattern. Asserting the
-resolved dict alone would not catch a merge that put it first, so the parameter
-tests go through the provider client's own resolution.
+its exact model key is re-inserted after every global pattern. The request sent
+to the provider must carry the override, even when a later global pattern matches.
 """
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +23,7 @@ from family_assistant.config_models import (
     ServiceProfile,
 )
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.model_tiers import (
     resolve_entry_client_config,
     resolve_profile_llm_model,
@@ -97,7 +100,7 @@ def test_entry_without_a_provider_leaves_detection_to_the_factory() -> None:
     assert "provider" not in resolve_tier_client_config(tier, GLOBAL_PARAMS)
 
 
-def test_per_entry_override_is_applied_after_every_global_pattern() -> None:
+async def test_per_entry_override_is_applied_after_every_global_pattern() -> None:
     """The overlay must win over a global entry for the same model.
 
     Resolution walks the map in insertion order and updates on every substring
@@ -123,12 +126,27 @@ def test_per_entry_override_is_applied_after_every_global_pattern() -> None:
     client = LLMClientFactory.create_client({
         **resolve_tier_client_config(tier, global_params),
         "api_key": "test-key",
+        "base_url": "https://api.openai.com/v1",
     })
 
     assert isinstance(client, OpenAIClient)
-    assert client._get_model_specific_params("gpt-5.6-sol") == {
-        "reasoning_effort": "xhigh"
-    }
+    response = SimpleNamespace(
+        output_text="Ready",
+        output=[],
+        model="gpt-5.6-sol",
+        id="resp_test",
+        status="completed",
+        usage=None,
+    )
+    with patch.object(
+        client.client.responses, "create", new=AsyncMock(return_value=response)
+    ) as create:
+        output = await client.generate_response([UserMessage(content="Hello")])
+
+    assert output.content == "Ready"
+    request = create.await_args
+    assert request is not None
+    assert request.kwargs["reasoning"] == {"effort": "xhigh"}
 
 
 def test_per_entry_override_merges_with_the_global_entry_for_that_model() -> None:

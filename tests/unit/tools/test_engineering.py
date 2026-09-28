@@ -21,7 +21,6 @@ from family_assistant.llm.request_buffer import (
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_METADATA_BY_NAME,
-    TOOLS_DEFINITION,
 )
 from family_assistant.tools.engineering import (
     ENGINEERING_TOOLS_DEFINITION,
@@ -256,11 +255,14 @@ class TestSearchSourceCode:
         self, exec_context: ToolExecutionContext
     ) -> None:
         """Patterns starting with - should not be treated as rg options."""
-        result = await search_source_code(exec_context, "-e", "src/")
+        result = await search_source_code(
+            exec_context, "-e", "src/family_assistant/services/backends/docker.py"
+        )
         data = result.get_data()
         assert isinstance(data, dict)
-        # Should succeed or find no matches, not return an error about bad flags
         assert "error" not in data
+        assert data["match_count"] > 0
+        assert any('cmd.extend(["-e",' in match for match in data["matches"])
 
 
 # --- create_github_issue tests ---
@@ -394,11 +396,34 @@ class TestGetLlmRequestHistory:
 
     @pytest.mark.anyio
     async def test_limit_clamped_to_min(self) -> None:
+        buffer = get_request_buffer()
+        buffer.add(
+            LLMRequestRecord(
+                timestamp=datetime.now(tz=UTC),
+                request_id="req-1",
+                model_id="gpt-4",
+                messages=[],
+                response={"text": "Hello"},
+                duration_ms=150,
+            )
+        )
+        buffer.add(
+            LLMRequestRecord(
+                timestamp=datetime.now(tz=UTC),
+                request_id="req-2",
+                model_id="gpt-4",
+                messages=[],
+                response={"text": "World"},
+                duration_ms=150,
+            )
+        )
+
         result = await get_llm_request_history(limit=0)
 
         data = result.get_data()
         assert isinstance(data, dict)
         assert data["filters"]["limit"] == 1
+        assert data["count"] == 1
 
 
 # --- read_frontend_telemetry tests ---
@@ -508,8 +533,3 @@ class TestToolDefinitions:
             assert tool_name in AVAILABLE_FUNCTIONS, (
                 f"{tool_name} not in AVAILABLE_FUNCTIONS"
             )
-
-    def test_tools_in_tools_definition(self) -> None:
-        all_tool_names = {t["function"]["name"] for t in TOOLS_DEFINITION}
-        for tool_name in _ENGINEERING_TOOL_NAMES:
-            assert tool_name in all_tool_names, f"{tool_name} not in TOOLS_DEFINITION"

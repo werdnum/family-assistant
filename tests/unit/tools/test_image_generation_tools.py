@@ -55,21 +55,23 @@ class TestMockImageBackend:
     async def test_generate_image_with_keywords(
         self, mock_backend: MockImageBackend
     ) -> None:
-        """Test image generation with various keywords."""
-        # Test sunset
-        sunset_bytes = await mock_backend.generate_image(
-            "sunset over mountains", "photorealistic"
-        )
-        assert len(sunset_bytes) > 0
+        """Test image generation background colour reflects prompt keywords."""
+        sunset_bytes = await mock_backend.generate_image("colorful sunset", "auto")
+        sunset_img = Image.open(io.BytesIO(sunset_bytes)).convert("RGB")
 
-        # Test city
-        city_bytes = await mock_backend.generate_image(
-            "cyberpunk city at night", "artistic"
+        night_bytes = await mock_backend.generate_image(
+            "a quiet scene at night", "auto"
         )
-        assert len(city_bytes) > 0
-
-        # Verify different prompts produce different images
-        assert sunset_bytes != city_bytes
+        night_img = Image.open(io.BytesIO(night_bytes)).convert("RGB")
+        sunset_background = sunset_img.getpixel((
+            sunset_img.width // 2,
+            sunset_img.height * 3 // 4,
+        ))
+        night_background = night_img.getpixel((
+            night_img.width // 2,
+            night_img.height * 3 // 4,
+        ))
+        assert sunset_background != night_background
 
     @pytest.mark.asyncio
     async def test_transform_image_basic(self, mock_backend: MockImageBackend) -> None:
@@ -91,29 +93,23 @@ class TestMockImageBackend:
     async def test_transform_image_grayscale(
         self, mock_backend: MockImageBackend
     ) -> None:
-        """Test grayscale transformation."""
+        """Test grayscale transformation actually desaturates the image."""
         original_bytes = await mock_backend.generate_image("colorful sunset", "auto")
+        original_img = Image.open(io.BytesIO(original_bytes)).convert("RGB")
+        sample = (original_img.width // 2, original_img.height * 3 // 4)
+        original_pixel = original_img.getpixel(sample)
+        assert isinstance(original_pixel, tuple)
+        assert len(set(original_pixel)) > 1
+
         transformed_bytes = await mock_backend.transform_image(
             original_bytes, "convert to black and white"
         )
+        transformed_img = Image.open(io.BytesIO(transformed_bytes)).convert("RGB")
 
-        # Load both images
-        Image.open(io.BytesIO(original_bytes))
-        Image.open(io.BytesIO(transformed_bytes))
-
-        # Verify transformation applied (can't easily test exact grayscale, but should be different)
-        assert transformed_bytes != original_bytes
-
-    @pytest.mark.asyncio
-    async def test_transform_image_blur(self, mock_backend: MockImageBackend) -> None:
-        """Test blur transformation."""
-        original_bytes = await mock_backend.generate_image("sharp image", "auto")
-        transformed_bytes = await mock_backend.transform_image(
-            original_bytes, "add blur effect"
-        )
-
-        assert len(transformed_bytes) > 0
-        assert transformed_bytes != original_bytes
+        pixel = transformed_img.getpixel(sample)
+        assert isinstance(pixel, tuple)
+        r, g, b = pixel
+        assert r == g == b
 
 
 class TestImageGenerationTools:
@@ -171,16 +167,6 @@ class TestImageGenerationTools:
         assert isinstance(result, ToolResult)
         assert result.attachments and len(result.attachments) > 0
         assert "Generated image: a city skyline" in result.attachments[0].description
-
-    @pytest.mark.asyncio
-    async def test_generate_image_tool_artistic(self, mock_exec_context: Mock) -> None:
-        """Test artistic image generation."""
-        result = await generate_image_tool(
-            mock_exec_context, prompt="abstract art", style="artistic"
-        )
-
-        assert isinstance(result, ToolResult)
-        assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
     async def test_generate_image_tool_long_prompt(
@@ -289,48 +275,6 @@ class TestImageGenerationTools:
             "Transformed: convert to black and white"
             in result.attachments[0].description
         )
-
-    @pytest.mark.asyncio
-    async def test_transform_image_tool_remove_object(
-        self, mock_exec_context: Mock, mock_script_attachment: AsyncMock
-    ) -> None:
-        """Test object removal transformation."""
-        result = await transform_image_tool(
-            mock_exec_context,
-            image=mock_script_attachment,
-            instruction="remove the car from the image",
-        )
-
-        assert isinstance(result, ToolResult)
-        assert result.attachments and len(result.attachments) > 0
-
-    @pytest.mark.asyncio
-    async def test_transform_image_tool_add_object(
-        self, mock_exec_context: Mock, mock_script_attachment: AsyncMock
-    ) -> None:
-        """Test object addition transformation."""
-        result = await transform_image_tool(
-            mock_exec_context,
-            image=mock_script_attachment,
-            instruction="add clouds to the sky",
-        )
-
-        assert isinstance(result, ToolResult)
-        assert result.attachments and len(result.attachments) > 0
-
-    @pytest.mark.asyncio
-    async def test_transform_image_tool_style_change(
-        self, mock_exec_context: Mock, mock_script_attachment: AsyncMock
-    ) -> None:
-        """Test style transformation."""
-        result = await transform_image_tool(
-            mock_exec_context,
-            image=mock_script_attachment,
-            instruction="make it look like a watercolor painting",
-        )
-
-        assert isinstance(result, ToolResult)
-        assert result.attachments and len(result.attachments) > 0
 
     @pytest.mark.asyncio
     async def test_transform_image_tool_no_content(
@@ -715,18 +659,23 @@ class TestOpenAIImageBackend:
         with pytest.raises(ValueError, match="No image data"):
             await openai_backend.transform_image(src_bytes, "make it red")
 
-    def test_style_prompt_injection(self) -> None:
-        """Test style is injected into prompt text."""
-        photo = OpenAIImageBackend._apply_style_to_prompt("a cat", "photorealistic")
-        assert "photorealistic" in photo
-        assert "a cat" in photo
+    @pytest.mark.asyncio
+    async def test_generate_image_artistic_style_reaches_the_prompt(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test that the artistic style is folded into the prompt sent to the API."""
+        png_b64 = _make_png_b64()
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=png_b64)]
+        mock_response.usage = None
 
-        artistic = OpenAIImageBackend._apply_style_to_prompt("a cat", "artistic")
-        assert "artistic" in artistic
-        assert "a cat" in artistic
+        openai_backend.client.images.generate = AsyncMock(return_value=mock_response)
 
-        auto = OpenAIImageBackend._apply_style_to_prompt("a cat", "auto")
-        assert auto == "a cat"
+        await openai_backend.generate_image("a cat", "artistic")
+
+        call_kwargs = openai_backend.client.images.generate.call_args.kwargs
+        assert "artistic" in call_kwargs["prompt"]
+        assert "a cat" in call_kwargs["prompt"]
 
 
 class TestGeminiImageBackend:

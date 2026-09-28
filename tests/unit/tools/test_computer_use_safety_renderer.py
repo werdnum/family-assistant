@@ -92,11 +92,3 @@ def test_long_computer_use_arguments_are_not_blocked() -> None:
         )
         is None
     )
-
-
-def test_block_reason_allows_ordinary_arguments() -> None:
-    reason = confirmation_arguments_block_reason(
-        "type",
-        {"text": "hello world"},
-    )
-    assert reason is None

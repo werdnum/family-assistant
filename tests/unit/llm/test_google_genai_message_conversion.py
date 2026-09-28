@@ -247,50 +247,10 @@ class TestThoughtSignatureConversion:
             "Should have dummy thought signature when none provided"
         )
 
-    @pytest.mark.skip(
-        reason="Text-only thought signatures not currently supported. "
-        "Thought signatures are only attached to function calls in the current implementation. "
-        "If needed in the future, implement support in _generate_response_stream and "
-        "_convert_messages_to_genai_format for text-only messages with thought signatures."
-    )
-    def test_text_content_with_thought_signature(
-        self, google_client: GoogleGenAIClient
-    ) -> None:
-        """Test that thought signatures can be attached to text parts too.
-
-        While less common, text responses from thinking models can also have
-        thought signatures for context preservation.
-
-        NOTE: This test is currently skipped because we don't support thought
-        signatures on text-only messages. The current implementation only
-        associates thought signatures with function calls.
-        """
-        test_signature = b"thought_for_text_response"
-
-        messages: list[LLMMessage] = [
-            AssistantMessage(
-                role="assistant",
-                content="Based on my analysis, the answer is 42.",
-            )
-        ]
-
-        contents = google_client._convert_messages_to_genai_format(messages)
-
-        assert len(contents) == 1
-        content = cast("types.Content", contents[0])
-        assert content.parts is not None
-        assert len(content.parts) == 1
-
-        part = cast("types.Part", content.parts[0])
-        assert hasattr(part, "text")
-        assert part.text == "Based on my analysis, the answer is 42."
-        assert hasattr(part, "thought_signature")
-        assert part.thought_signature == test_signature
-
     def test_empty_provider_metadata_handled_gracefully(
         self, google_client: GoogleGenAIClient
     ) -> None:
-        """Test that empty or invalid provider_metadata doesn't break conversion."""
+        """Assistant text is preserved when provider metadata is absent."""
         messages: list[LLMMessage] = [
             AssistantMessage(
                 role="assistant",
@@ -306,17 +266,22 @@ class TestThoughtSignatureConversion:
             ),
         ]
 
-        # Should not raise exceptions
         contents = google_client._convert_messages_to_genai_format(messages)
 
-        # Should create 3 content objects, all with text parts
         assert len(contents) == 3
+        assert [cast("types.Content", content).role for content in contents] == [
+            "model",
+            "model",
+            "model",
+        ]
+        converted_texts: list[str | None] = []
         for content_union in contents:
             content = cast("types.Content", content_union)
             assert content.parts is not None
             assert len(content.parts) == 1
             part = cast("types.Part", content.parts[0])
-            assert hasattr(part, "text")
+            converted_texts.append(part.text)
+        assert converted_texts == ["Hello", "World", "Test"]
 
     async def test_end_to_end_thought_signature_workflow(
         self, google_client: GoogleGenAIClient

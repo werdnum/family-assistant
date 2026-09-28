@@ -6,8 +6,9 @@ in the configured timezone before being returned as tool results.
 
 from __future__ import annotations
 
-import time
+import os
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,10 @@ from family_assistant.tools.camera import (
 )
 from family_assistant.tools.events import _format_event_timestamp  # noqa: PLC2701
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.workspace_files import workspace_glob_tool
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SYDNEY = ZoneInfo("Australia/Sydney")
 NEW_YORK = ZoneInfo("America/New_York")
@@ -228,8 +233,10 @@ class TestCameraTimezoneConsistency:
         assert isinstance(result, ToolResult)
         data = result.get_data()
         assert isinstance(data, dict)
-        warning = data.get("warning", "")
-        # Warning should NOT contain "UTC"
+        warning = data["warning"]
+        assert isinstance(warning, str)
+        assert "more than 30 days in the past" in warning
+        assert any(zone in warning for zone in ("AEST", "AEDT"))
         assert "UTC" not in warning
 
 
@@ -239,13 +246,38 @@ class TestCameraTimezoneConsistency:
 class TestWorkspaceFilesTimezone:
     """Test that workspace file timestamps are timezone-aware."""
 
-    def test_fromtimestamp_with_timezone_produces_offset(self) -> None:
-        """datetime.fromtimestamp with tz= should produce an offset in isoformat."""
-        ts = time.time()
-        dt = datetime.fromtimestamp(ts, tz=SYDNEY)
-        iso_str = dt.isoformat()
-        # Should contain timezone offset like +11:00 or +10:00
-        assert "+" in iso_str
+    @pytest.mark.asyncio
+    async def test_workspace_glob_reports_local_modified_time(
+        self,
+        tmp_path: Path,
+        sydney_exec_context: ToolExecutionContext,
+    ) -> None:
+        """File metadata in a glob result should use the user's timezone."""
+        workspace_file = tmp_path / "report.txt"
+        workspace_file.write_text("report")
+        modified_at = datetime(2025, 1, 15, tzinfo=UTC).timestamp()
+        os.utime(workspace_file, (modified_at, modified_at))
+        processing_service = Mock()
+        processing_service.app_config.ai_worker_config.workspace_mount_path = str(
+            tmp_path
+        )
+        sydney_exec_context.processing_service = processing_service
+
+        result = await workspace_glob_tool(
+            sydney_exec_context, pattern="report.txt", include_info=True
+        )
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 1
+        assert data["matches"] == [
+            {
+                "path": "report.txt",
+                "is_file": True,
+                "size": len("report"),
+                "modified": "2025-01-15T11:00:00+11:00",
+            }
+        ]
 
 
 # --- Automations: _to_isoformat should convert to local timezone ---

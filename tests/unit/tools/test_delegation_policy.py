@@ -861,7 +861,8 @@ def _delegate_descriptor() -> ToolDescriptor:
     raise AssertionError("delegate_to_service descriptor not found")
 
 
-def test_the_synthetic_self_delegation_allow_does_not_bypass_the_tier_gate(
+@pytest.mark.asyncio
+async def test_the_synthetic_self_delegation_allow_does_not_bypass_the_tier_gate(
     shipped_config: AppConfig,
 ) -> None:
     """A profile delegating to itself is still held to its `auto_model_tiers`.
@@ -901,3 +902,48 @@ def test_the_synthetic_self_delegation_allow_does_not_bypass_the_tier_gate(
         profile_id=profile.id,
     )
     assert admitted.tier == "deep"
+
+    self_delegation_handler = AsyncMock()
+    target_service = _Namespace(
+        service_config=_Namespace(
+            id=profile.id,
+            allowed_delegation_sources=None,
+            tier_eligibility=eligibility,
+            tools_config=_Namespace(confirmation_timeout_seconds=10.0),
+        ),
+        handle_chat_interaction=self_delegation_handler,
+    )
+    source_service = _Namespace(
+        service_config=_Namespace(
+            id=profile.id,
+            tools_config=_Namespace(confirmation_timeout_seconds=10.0),
+        ),
+        processing_services_registry={profile.id: target_service},
+    )
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id=None,
+        db_context=_db_without_history(),
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id=profile.id,
+        user_request="think hard",
+        model_tier="frontier",
+    )
+
+    assert result.text is not None
+    assert result.text.startswith("Error:")
+    self_delegation_handler.assert_not_awaited()

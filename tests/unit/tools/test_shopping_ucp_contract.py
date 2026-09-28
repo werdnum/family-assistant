@@ -737,28 +737,50 @@ def test_checkout_response_fixture_conforms_to_checkout_schema() -> None:
     _assert_response_conforms("checkout.json", _spec_checkout())
 
 
-def test_cart_parser_reads_spec_shaped_response_and_rejects_legacy_wrapper() -> None:
-    # The cart is the structuredContent itself (cart_result = oneOf[cart,
-    # error_response]); a legacy ``{"cart": {...}}`` wrapper is not spec-valid
-    # and the parser must not accept it. This couples the parser to the spec so
-    # the wrapper bug cannot return unnoticed.
+async def test_get_cart_reads_spec_shaped_response(monkeypatch: MonkeyPatch) -> None:
+    spec_cart = _spec_cart()
+    _reset_client(
+        monkeypatch,
+        post_responses=[_cart_response()],
+        profile_responses=[_mcp_cart_profile()],
+    )
+
+    result = await shopping.ucp_get_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com",
+        cart_id="gid://shopify/Cart/requested",
+    )
+
+    assert cast("str", spec_cart["id"]) in result.get_text()
+    assert cast("str", spec_cart["continue_url"]) in result.get_text()
+
+
+async def test_get_cart_rejects_legacy_wrapper(monkeypatch: MonkeyPatch) -> None:
     spec_cart = _spec_cart()
     with pytest.raises(ValidationError):
         _assert_response_conforms("cart.json", {"cart": spec_cart})
 
-    response: dict[str, object] = {
-        "response": {"result": {"structuredContent": spec_cart}}
-    }
-    # SLF001: this test deliberately pins the module-private response parser to
-    # the spec, so calling it directly is the point of the test.
-    assert shopping._cart_from_response(response)["id"] == spec_cart["id"]
+    _reset_client(
+        monkeypatch,
+        post_responses=[
+            httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "rpc",
+                    "result": {"structuredContent": {"cart": spec_cart}},
+                },
+            )
+        ],
+        profile_responses=[_mcp_cart_profile()],
+    )
 
-    wrapped: dict[str, object] = {
-        "response": {"result": {"structuredContent": {"cart": spec_cart}}}
-    }
     with pytest.raises(ValueError, match="did not include a cart"):
-        # SLF001: same rationale — exercise the private parser directly.
-        shopping._cart_from_response(wrapped)
+        await shopping.ucp_get_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            cart_id=cast("str", spec_cart["id"]),
+        )
 
 
 async def test_rest_create_cart_request_conforms_to_spec(

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import family_assistant.tools.computer_use as cu_module
+from family_assistant.tools.browser_session import denormalize_coordinate
 from family_assistant.tools.computer_use import (
     computer_use_click,
     computer_use_double_click,
@@ -164,60 +165,56 @@ def exec_context(
     return ctx
 
 
+KEY_MAPPING_CASES = [
+    ("a", "a"),
+    ("Z", "Z"),
+    ("1", "1"),
+    ("ctrl", "Control"),
+    ("control", "Control"),
+    ("Ctrl", "Control"),
+    ("CTRL", "Control"),
+    ("meta", "Meta"),
+    ("cmd", "Meta"),
+    ("command", "Meta"),
+    ("win", "Meta"),
+    ("super", "Meta"),
+    ("alt", "Alt"),
+    ("option", "Alt"),
+    ("enter", "Enter"),
+    ("return", "Enter"),
+    ("ENTER", "Enter"),
+    ("esc", "Escape"),
+    ("escape", "Escape"),
+    ("Escape", "Escape"),
+    ("up", "ArrowUp"),
+    ("arrowup", "ArrowUp"),
+    ("arrow_up", "ArrowUp"),
+    ("down", "ArrowDown"),
+    ("left", "ArrowLeft"),
+    ("right", "ArrowRight"),
+    ("pageup", "PageUp"),
+    ("page_up", "PageUp"),
+    ("pagedown", "PageDown"),
+    ("page_down", "PageDown"),
+    *[(f"f{i}", f"F{i}") for i in range(1, 13)],
+]
+
+
 class TestKeyMapping:
-    """Test key name mapping from model names to Playwright names."""
+    """Test key name mapping from model names to Playwright names, observed via the public tool."""
 
-    def test_single_character_keys_pass_through(self) -> None:
-        assert cu_module._map_key_name("a") == "a"
-        assert cu_module._map_key_name("Z") == "Z"
-        assert cu_module._map_key_name("1") == "1"
-
-    def test_control_key_variants(self) -> None:
-        assert cu_module._map_key_name("ctrl") == "Control"
-        assert cu_module._map_key_name("control") == "Control"
-        assert cu_module._map_key_name("Ctrl") == "Control"
-
-    def test_meta_key_variants(self) -> None:
-        assert cu_module._map_key_name("meta") == "Meta"
-        assert cu_module._map_key_name("cmd") == "Meta"
-        assert cu_module._map_key_name("command") == "Meta"
-        assert cu_module._map_key_name("win") == "Meta"
-        assert cu_module._map_key_name("super") == "Meta"
-
-    def test_alt_key_variants(self) -> None:
-        assert cu_module._map_key_name("alt") == "Alt"
-        assert cu_module._map_key_name("option") == "Alt"
-
-    def test_enter_variants(self) -> None:
-        assert cu_module._map_key_name("enter") == "Enter"
-        assert cu_module._map_key_name("return") == "Enter"
-
-    def test_escape_variants(self) -> None:
-        assert cu_module._map_key_name("esc") == "Escape"
-        assert cu_module._map_key_name("escape") == "Escape"
-
-    def test_arrow_key_variants(self) -> None:
-        assert cu_module._map_key_name("up") == "ArrowUp"
-        assert cu_module._map_key_name("arrowup") == "ArrowUp"
-        assert cu_module._map_key_name("arrow_up") == "ArrowUp"
-        assert cu_module._map_key_name("down") == "ArrowDown"
-        assert cu_module._map_key_name("left") == "ArrowLeft"
-        assert cu_module._map_key_name("right") == "ArrowRight"
-
-    def test_page_key_variants(self) -> None:
-        assert cu_module._map_key_name("pageup") == "PageUp"
-        assert cu_module._map_key_name("page_up") == "PageUp"
-        assert cu_module._map_key_name("pagedown") == "PageDown"
-        assert cu_module._map_key_name("page_down") == "PageDown"
-
-    def test_function_keys(self) -> None:
-        for i in range(1, 13):
-            assert cu_module._map_key_name(f"f{i}") == f"F{i}"
-
-    def test_case_insensitivity(self) -> None:
-        assert cu_module._map_key_name("ENTER") == "Enter"
-        assert cu_module._map_key_name("Escape") == "Escape"
-        assert cu_module._map_key_name("CTRL") == "Control"
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("model_key", "playwright_key"), KEY_MAPPING_CASES)
+    async def test_press_key_maps_to_playwright_key(
+        self,
+        exec_context: ToolExecutionContext,
+        fake_backend: FakeBrowserBackend,
+        model_key: str,
+        playwright_key: str,
+    ) -> None:
+        await computer_use_press_key(exec_context, model_key)
+        press_calls = [c for c in fake_backend.calls if c[0] == "keyboard_press"]
+        assert press_calls[-1][1]["keys"] == playwright_key
 
 
 class TestClickActions:
@@ -238,6 +235,14 @@ class TestClickActions:
         # Check that mouse_click was called with correct denormalized coordinates
         calls = [c for c in fake_backend.calls if c[0] == "mouse_click"]
         assert len(calls) == 1
+        assert calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
+        assert calls[0][1]["x"] == 640
+        assert calls[0][1]["y"] == 251
         assert calls[0][1]["button"] == "left"
         assert calls[0][1]["click_count"] == 1
 
@@ -248,6 +253,12 @@ class TestClickActions:
         await computer_use_double_click(exec_context, 500, 350)
         calls = [c for c in fake_backend.calls if c[0] == "mouse_click"]
         assert len(calls) == 1
+        assert calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert calls[0][1]["click_count"] == 2
 
     @pytest.mark.asyncio
@@ -257,6 +268,12 @@ class TestClickActions:
         await computer_use_triple_click(exec_context, 500, 350)
         calls = [c for c in fake_backend.calls if c[0] == "mouse_click"]
         assert len(calls) == 1
+        assert calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert calls[0][1]["click_count"] == 3
 
     @pytest.mark.asyncio
@@ -266,6 +283,12 @@ class TestClickActions:
         await computer_use_middle_click(exec_context, 500, 350)
         calls = [c for c in fake_backend.calls if c[0] == "mouse_click"]
         assert len(calls) == 1
+        assert calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert calls[0][1]["button"] == "middle"
 
     @pytest.mark.asyncio
@@ -275,6 +298,12 @@ class TestClickActions:
         await computer_use_right_click(exec_context, 500, 350)
         calls = [c for c in fake_backend.calls if c[0] == "mouse_click"]
         assert len(calls) == 1
+        assert calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert calls[0][1]["button"] == "right"
 
 
@@ -289,6 +318,12 @@ class TestMouseActions:
         move_calls = [c for c in fake_backend.calls if c[0] == "mouse_move"]
         down_calls = [c for c in fake_backend.calls if c[0] == "mouse_down"]
         assert len(move_calls) == 1
+        assert move_calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert move_calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert len(down_calls) == 1
 
     @pytest.mark.asyncio
@@ -299,6 +334,12 @@ class TestMouseActions:
         move_calls = [c for c in fake_backend.calls if c[0] == "mouse_move"]
         up_calls = [c for c in fake_backend.calls if c[0] == "mouse_up"]
         assert len(move_calls) == 1
+        assert move_calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert move_calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert len(up_calls) == 1
 
     @pytest.mark.asyncio
@@ -308,6 +349,12 @@ class TestMouseActions:
         await computer_use_move(exec_context, 500, 350)
         move_calls = [c for c in fake_backend.calls if c[0] == "mouse_move"]
         assert len(move_calls) == 1
+        assert move_calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert move_calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
 
 
 class TestKeyboardActions:
@@ -385,7 +432,15 @@ class TestScrollAction:
         self, exec_context: ToolExecutionContext, fake_backend: FakeBrowserBackend
     ) -> None:
         await computer_use_scroll(exec_context, 500, 350, "down", 300)
+        move_calls = [c for c in fake_backend.calls if c[0] == "mouse_move"]
         wheel_calls = [c for c in fake_backend.calls if c[0] == "mouse_wheel"]
+        assert len(move_calls) == 1
+        assert move_calls[0][1]["x"] == denormalize_coordinate(
+            500, fake_backend.screen_width
+        )
+        assert move_calls[0][1]["y"] == denormalize_coordinate(
+            350, fake_backend.screen_height
+        )
         assert len(wheel_calls) == 1
         assert wheel_calls[0][1]["delta_y"] == 300
 
@@ -433,14 +488,31 @@ class TestDragAndDrop:
     ) -> None:
         await computer_use_drag_and_drop(exec_context, 100, 100, 500, 500)
 
-        move_calls = [c for c in fake_backend.calls if c[0] == "mouse_move"]
-        down_calls = [c for c in fake_backend.calls if c[0] == "mouse_down"]
-        up_calls = [c for c in fake_backend.calls if c[0] == "mouse_up"]
+        actions = [
+            (name, args)
+            for name, args in fake_backend.calls
+            if name != "screenshot_png"
+        ]
+        action_names = [name for name, _ in actions]
 
-        assert len(down_calls) == 1
-        assert len(up_calls) == 1
-        # Initial move + 10 step moves
-        assert len(move_calls) >= 10
+        start_x = denormalize_coordinate(100, fake_backend.screen_width)
+        start_y = denormalize_coordinate(100, fake_backend.screen_height)
+        end_x = denormalize_coordinate(500, fake_backend.screen_width)
+        end_y = denormalize_coordinate(500, fake_backend.screen_height)
+
+        # move -> down -> (step moves) -> up, in that order
+        assert action_names[0] == "mouse_move"
+        assert action_names[1] == "mouse_down"
+        assert action_names[-1] == "mouse_up"
+        assert action_names.count("mouse_down") == 1
+        assert action_names.count("mouse_up") == 1
+        assert action_names.count("mouse_move") >= 10
+
+        move_calls = [args for name, args in actions if name == "mouse_move"]
+        assert move_calls[0]["x"] == start_x
+        assert move_calls[0]["y"] == start_y
+        assert move_calls[-1]["x"] == end_x
+        assert move_calls[-1]["y"] == end_y
 
 
 class TestNavigation:
