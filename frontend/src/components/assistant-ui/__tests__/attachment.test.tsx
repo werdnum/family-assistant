@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetLocalStorageMock } from '../../../test/mocks/localStorageMock';
 import { server } from '../../../test/setup.js';
@@ -115,5 +115,35 @@ describe('AttachmentUI Loading States', () => {
       prompt: 'look at this',
       attachments: [{ name: 'test.png', content: '/api/attachments/server-uuid-456' }],
     });
+  }, 35000);
+
+  // A failed upload must not reach the thread as a message: the send is refused
+  // and the draft comes back with the upload error shown on its file.
+  it('keeps the draft and shows the error when the upload fails at send', async () => {
+    const turnRequests: unknown[] = [];
+    server.use(
+      http.post('/api/attachments/upload', () =>
+        HttpResponse.json({ detail: 'Disk full' }, { status: 500 })
+      ),
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        turnRequests.push(await request.clone().json());
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'look at this' } });
+    fireEvent.change(await screen.findByTestId('file-input'), {
+      target: { files: [new File(['test content'], 'test.png', { type: 'image/png' })] },
+    });
+    await screen.findByTestId('remove-attachment-button', {}, { timeout: 15000 });
+
+    fireEvent.click(screen.getByTestId('send-button'));
+
+    expect(
+      await screen.findByTestId('attachment-error-message', {}, { timeout: 15000 })
+    ).toHaveTextContent('Failed to upload file: Disk full');
+    expect(screen.getByTestId('chat-input')).toHaveValue('look at this');
+    expect(screen.queryByTestId('user-message')).not.toBeInTheDocument();
+    expect(turnRequests).toHaveLength(0);
   }, 35000);
 });

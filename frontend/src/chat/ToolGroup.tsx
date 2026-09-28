@@ -34,9 +34,12 @@ const DEFAULT_TOOL_GROUP_STATE: ToolGroupState = {
   hasUnfinishedTool: false,
 };
 
+// `status` is the runtime's part status (from `message.parts`), which it derives
+// from the message status for a tool call without a result: so a historical
+// call whose result was never recorded is complete, not running.
 function isTerminalToolPart(part: MessagePartLike): boolean {
   return (
-    part.status?.type === 'complete' ||
+    (part.status?.type !== 'running' && part.status?.type !== 'requires-action') ||
     part.result !== undefined ||
     part.artifact !== undefined ||
     part.attachments !== undefined ||
@@ -80,7 +83,7 @@ function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupS
       return undefined;
     }
     return JSON.stringify(
-      getToolGroupState(message.content as readonly MessagePartLike[], startIndex, endIndex)
+      getToolGroupState(message.parts as readonly MessagePartLike[], startIndex, endIndex)
     );
   });
 

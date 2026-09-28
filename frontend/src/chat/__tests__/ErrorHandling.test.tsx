@@ -258,23 +258,6 @@ describe.sequential('ErrorHandling', () => {
     });
   }, 30000);
 
-  it('handles attachment upload errors', async () => {
-    // Mock attachment upload failure
-    server.use(
-      http.post('/api/attachments/upload', () => {
-        return HttpResponse.json({ error: 'Upload failed' }, { status: 500 });
-      })
-    );
-
-    await renderChatApp({ waitForReady: true });
-
-    // Wait removed - using waitForReady option
-
-    // Test attachment error handling if the UI provides file upload
-    // This would involve creating a mock file and testing the upload error
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-  });
-
   it('retries the subscribe after a network error and renders the reply', async () => {
     let ourTurnId = '';
     let streamCalls = 0;
