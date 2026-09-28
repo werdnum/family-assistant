@@ -760,3 +760,176 @@ March,200"""
         assert text  # Should not be empty
         parsed = json.loads(text)  # Should be valid JSON
         assert parsed == returned_spec  # Should match the data
+
+    @pytest.mark.asyncio
+    async def test_layered_spec_resolves_named_data_in_layers(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Named datasets referenced from layer[i].data are populated."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "layer": [
+                {
+                    "data": {"name": "temperature"},
+                    "mark": "point",
+                    "encoding": {
+                        "x": {"field": "t", "type": "quantitative"},
+                        "y": {"field": "v", "type": "quantitative"},
+                    },
+                },
+                {
+                    "data": {"name": "humidity"},
+                    "mark": "line",
+                    "encoding": {
+                        "x": {"field": "t", "type": "quantitative"},
+                        "y": {"field": "v", "type": "quantitative"},
+                    },
+                },
+            ],
+        }
+        data = {
+            "temperature": [{"t": 1, "v": 20}, {"t": 2, "v": 21}],
+            "humidity": [{"t": 1, "v": 65}, {"t": 2, "v": 68}],
+        }
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Layered",
+            debug=True,
+        )
+
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["layer"][0]["data"] == {
+            "name": "temperature",
+            "values": data["temperature"],
+        }
+        assert returned_spec["layer"][1]["data"] == {
+            "name": "humidity",
+            "values": data["humidity"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_layered_spec_renders_attachment_data(
+        self, mock_exec_context: Mock, mock_csv_attachment: Mock
+    ) -> None:
+        """A layer whose data comes from an attachment actually draws marks."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "width": 100,
+            "height": 100,
+            "layer": [
+                {
+                    "data": {"name": "data.csv"},
+                    "mark": {"type": "bar", "color": "#ff0000"},
+                    "encoding": {
+                        "x": {"field": "month", "type": "nominal"},
+                        "y": {"field": "sales", "type": "quantitative"},
+                    },
+                }
+            ],
+        }
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data_attachments=[mock_csv_attachment],
+            title="Layered attachment",
+        )
+
+        assert result.attachments
+        content = result.attachments[0].content
+        assert content is not None
+        img = Image.open(io.BytesIO(content)).convert("RGB")
+        red_pixels = sum(
+            1 for r, g, b in img.getdata() if r > 200 and g < 60 and b < 60
+        )
+        assert red_pixels > 0, "Layered chart rendered without its data"
+
+    @pytest.mark.asyncio
+    async def test_concat_and_facet_specs_resolve_named_data(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Named data inside concat views and facet inner specs is populated."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "hconcat": [
+                {
+                    "data": {"name": "left"},
+                    "mark": "bar",
+                    "encoding": {
+                        "x": {"field": "x", "type": "nominal"},
+                        "y": {"field": "y", "type": "quantitative"},
+                    },
+                },
+                {
+                    "vconcat": [
+                        {
+                            "data": {"name": "right"},
+                            "facet": {"field": "g", "type": "nominal"},
+                            "spec": {
+                                "layer": [
+                                    {
+                                        "data": {"name": "left"},
+                                        "mark": "point",
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            ],
+        }
+        data = {
+            "left": [{"x": "A", "y": 1}],
+            "right": [{"x": "B", "y": 2, "g": "g1"}],
+        }
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Concat",
+            debug=True,
+        )
+
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["hconcat"][0]["data"]["values"] == data["left"]
+        faceted = returned_spec["hconcat"][1]["vconcat"][0]
+        assert faceted["data"]["values"] == data["right"]
+        assert faceted["spec"]["layer"][0]["data"]["values"] == data["left"]
+
+    @pytest.mark.asyncio
+    async def test_vega_group_mark_data_is_resolved(
+        self, mock_exec_context: Mock
+    ) -> None:
+        """Named data declared inside a Vega group mark is populated."""
+        spec = {
+            "$schema": "https://vega.github.io/schema/vega/v5.json",
+            "data": [{"name": "outer"}],
+            "marks": [
+                {
+                    "type": "group",
+                    "data": [{"name": "inner"}],
+                    "marks": [{"type": "rect", "from": {"data": "inner"}}],
+                }
+            ],
+        }
+        data = {"outer": [{"a": 1}], "inner": [{"b": 2}]}
+
+        result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Vega groups",
+            debug=True,
+        )
+
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["data"][0]["values"] == data["outer"]
+        assert returned_spec["marks"][0]["data"][0]["values"] == data["inner"]
+        assert returned_spec["marks"][0]["marks"][0]["from"] == {"data": "inner"}
