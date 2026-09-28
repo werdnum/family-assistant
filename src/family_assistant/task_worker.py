@@ -144,6 +144,10 @@ if TYPE_CHECKING:
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
+from family_assistant.indexing.tasks import (
+    document_ready_after_task_done,
+    emit_document_ready_event,
+)
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
@@ -4712,7 +4716,6 @@ class TaskWorker:
                     # attempt already persisted.
                     turn_id=_turn_id_for_task(task["task_id"]),
                     db_context=db_context,
-                    task_id=task["task_id"],
                     task_priority=TaskPriority(task["priority"]),
                     task_attempt=TaskAttempt(
                         retry_count=task.get("retry_count", 0),
@@ -4847,12 +4850,17 @@ class TaskWorker:
                 )
 
                 # Mark task as done and handle recurrence atomically
-                async def _complete(txn: DatabaseTransaction) -> None:
+                async def _complete(txn: DatabaseTransaction) -> int | None:
                     """Mark task done and schedule next instance as one unit.
 
                     If either operation fails partway, both are rolled back. A
                     recurring automation committed as done without a successor
                     never fires again.
+
+                    Returns the document this task left ready, if any. Decided
+                    here rather than in the handler because only once its own
+                    row is done can the last task of a document see that none
+                    remain.
                     """
                     await txn.tasks.update_status(
                         task_id=task_id,
@@ -4863,8 +4871,22 @@ class TaskWorker:
                         ),
                     )
                     await self._handle_recurrence(txn, task)
+                    return await document_ready_after_task_done(
+                        txn, task["task_type"], task["payload"]
+                    )
 
-                await db_context.atomic(_complete)
+                ready_document_id = await db_context.atomic(_complete)
+                if ready_document_id is not None and self.indexing_source:
+                    # The task is committed done; a failure to announce it must
+                    # not send it back through the retry path.
+                    try:
+                        await emit_document_ready_event(
+                            db_context, self.indexing_source, ready_document_id
+                        )
+                    except Exception:
+                        logger.exception(
+                            f"Failed to emit DOCUMENT_READY for document {ready_document_id}"
+                        )
                 record_task_processed(
                     task_type=task["task_type"],
                     priority=TaskPriority(task["priority"]).label,

@@ -3,7 +3,8 @@ Task handlers related to the document indexing pipeline.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from sqlalchemy import and_, func, select
@@ -13,6 +14,7 @@ from family_assistant.indexing.types import EmbedAndStoreBatchPayload, Embedding
 from family_assistant.storage.tasks import ACTIVE_TASK_STATUSES, tasks_table
 from family_assistant.storage.vector import (
     DocumentEmbeddingRecord,
+    DocumentRecord,
     add_embedding,
     get_document_by_id,
 )
@@ -20,51 +22,77 @@ from family_assistant.storage.vector import (
 if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
-    from family_assistant.storage.database import Database
+    from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
+# Task types that work on one document, named by ``document_id`` in their
+# payload. The document is ready once none of them is left unfinished.
+DOCUMENT_INDEXING_TASK_TYPES = (
+    "process_uploaded_document",
+    "embed_and_store_batch",
+)
+
+
 async def check_document_completion(
-    db_context: "Database",
+    db_context: "Database | DatabaseTransaction",
     document_id: int,
-    exclude_task_id: str | None,
 ) -> int:
-    """
-    Count the indexing and embedding tasks for a document the queue has not finished.
+    """Count the indexing tasks for a document that the queue has not finished.
 
     A task is unfinished while it is waiting to be claimed or is running.
-    ``exclude_task_id`` names the calling task, whose own row is still running
-    while it checks; ``None`` when the caller is not a task.
-
-    Returns:
-        Number of unfinished tasks for the document, other than the excluded one
     """
-    json_extract_expr = sa.cast(
-        tasks_table.c.payload["document_id"].as_string(), sa.Integer
-    )
-
-    conditions = [
-        tasks_table.c.task_type.in_([
-            "index_document",
-            "index_email",
-            "index_note",
-            "embed_and_store_batch",
-            "process_uploaded_document",
-        ]),
-        tasks_table.c.status.in_(ACTIVE_TASK_STATUSES),
-        json_extract_expr == document_id,
-    ]
-    if exclude_task_id is not None:
-        conditions.append(tasks_table.c.task_id != exclude_task_id)
-
     result = await db_context.fetch_one(
         select(func.count().label("count"))  # pylint: disable=not-callable
         .select_from(tasks_table)
-        .where(and_(*conditions))
+        .where(
+            and_(
+                tasks_table.c.task_type.in_(DOCUMENT_INDEXING_TASK_TYPES),
+                tasks_table.c.status.in_(ACTIVE_TASK_STATUSES),
+                sa.cast(tasks_table.c.payload["document_id"].as_string(), sa.Integer)
+                == document_id,
+            )
+        )
     )
     return result["count"] if result else 0
+
+
+async def document_ready_after_task_done(
+    txn: "DatabaseTransaction",
+    task_type: str,
+    # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
+    payload: Mapping[str, Any] | None,
+) -> int | None:
+    """Decide, in the transaction marking a task done, whether its document is ready.
+
+    Returns the document id when this task was the document's last unfinished
+    indexing task, else ``None``. The caller emits DOCUMENT_READY for it once
+    the transaction has committed.
+
+    Runs after the task's own row is marked done, so the last task to finish
+    sees no unfinished siblings. The document row is locked first so that two
+    tasks finishing together are ordered: the first to take the lock still sees
+    the other unfinished, and the second sees it done. Exactly one of them
+    reports the document ready. SQLite needs no lock, since its writers are
+    already serialized.
+    """
+    if task_type not in DOCUMENT_INDEXING_TASK_TYPES or not payload:
+        return None
+    document_id = payload.get("document_id")
+    if not isinstance(document_id, int):
+        return None
+    document = await txn.fetch_one(
+        select(DocumentRecord.id)
+        .where(DocumentRecord.id == document_id)
+        .with_for_update()
+    )
+    if document is None:
+        return None
+    if await check_document_completion(txn, document_id) > 0:
+        return None
+    return document_id
 
 
 async def handle_embed_and_store_batch(
@@ -203,37 +231,6 @@ async def handle_embed_and_store_batch(
         f"{successful_embeds} embeddings generated, {storage_only_items} stored without vectors."
     )
 
-    # Check if all tasks for this document are complete
-    if indexing_source := exec_context.indexing_source:
-        try:
-            pending_count = await check_document_completion(
-                db_context, document_id, exclude_task_id=exec_context.task_id
-            )
-        except Exception as e:
-            logger.exception(
-                f"Failed to check document completion for document_id {document_id}: {e}"
-            )
-            return
-
-        if pending_count == 0:
-            logger.info(
-                f"All tasks complete for document_id {document_id}. Emitting DOCUMENT_READY event."
-            )
-
-            # Get document information for the event
-            try:
-                await _emit_document_ready_event(
-                    db_context, indexing_source, document_id
-                )
-            except Exception as e:
-                logger.exception(
-                    f"Failed to emit DOCUMENT_READY event for document {document_id}: {e}"
-                )
-        else:
-            logger.debug(
-                f"Document {document_id} still has {pending_count} pending tasks."
-            )
-
 
 async def _generate_embedding_safely(
     embedding_generator: "EmbeddingGenerator",
@@ -269,7 +266,7 @@ async def _generate_embedding(
     return None, "text_only_empty_result", False
 
 
-async def _emit_document_ready_event(
+async def emit_document_ready_event(
     db_context: "Database",
     indexing_source: "IndexingSource",
     document_id: int,
@@ -283,6 +280,15 @@ async def _emit_document_ready_event(
             ).label("embedding_types"),
         ).where(DocumentEmbeddingRecord.document_id == document_id)
     )
+    total_embeddings = embeddings_data["total_embeddings"] if embeddings_data else 0
+    if total_embeddings == 0:
+        # Nothing was embedded, so the document is not searchable: it is not
+        # ready, whichever of its tasks finished last.
+        logger.info(
+            f"Document {document_id} finished indexing with no embeddings; "
+            "not emitting DOCUMENT_READY"
+        )
+        return
     if doc_info:
         await indexing_source.emit_event({
             "event_type": IndexingEventType.DOCUMENT_READY.value,
@@ -291,9 +297,7 @@ async def _emit_document_ready_event(
             "document_title": doc_info.title,
             "document_metadata": doc_info.doc_metadata,
             "metadata": {
-                "total_embeddings": embeddings_data["total_embeddings"]
-                if embeddings_data
-                else 0,
+                "total_embeddings": total_embeddings,
                 "embedding_types": embeddings_data["embedding_types"]
                 if embeddings_data
                 else 0,

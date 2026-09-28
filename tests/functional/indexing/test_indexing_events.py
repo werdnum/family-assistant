@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,7 +30,9 @@ from family_assistant.indexing.tasks import (
 from family_assistant.storage import Database
 from family_assistant.storage.events import recent_events_table
 from family_assistant.storage.tasks import TaskPriority, tasks_table
+from family_assistant.storage.types import TaskDict
 from family_assistant.storage.vector import add_document
+from family_assistant.task_worker import TaskWorker
 from family_assistant.tools.types import ToolExecutionContext
 from tests.helpers import wait_for_condition
 
@@ -75,6 +78,36 @@ async def poll_for_document_ready_event(
     )
     assert event_data is not None
     return event_data
+
+
+def _indexing_worker(
+    db_engine: AsyncEngine,
+    indexing_source: IndexingSource,
+    embedding_generator: MockEmbeddingGenerator,
+) -> TaskWorker:
+    """A task worker wired for indexing, used to run claimed tasks to completion."""
+    worker = TaskWorker(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+        calendar_config={},
+        timezone=ZoneInfo("UTC"),
+        embedding_generator=embedding_generator,
+        indexing_source=indexing_source,
+        engine=db_engine,
+    )
+    worker.register_task_handler("embed_and_store_batch", handle_embed_and_store_batch)
+    return worker
+
+
+async def _complete_through_worker(
+    db_engine: AsyncEngine,
+    task: TaskDict,
+    indexing_source: IndexingSource,
+    embedding_generator: MockEmbeddingGenerator,
+) -> None:
+    """Run a claimed task through the worker: handler, then the done-commit."""
+    worker = _indexing_worker(db_engine, indexing_source, embedding_generator)
+    await worker._process_task(Database(engine=db_engine), task, asyncio.Event())
 
 
 @dataclass
@@ -211,31 +244,9 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
             )
             assert task is not None
 
-            task_context = ToolExecutionContext(
-                interface_type="web",
-                conversation_id="test-conv",
-                user_name="test-user",
-                turn_id=str(uuid.uuid4()),
-                task_id=task["task_id"],
-                db_context=db_ctx,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                embedding_generator=embedding_generator,
-                indexing_source=indexing_source,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
+            await _complete_through_worker(
+                db_engine, task, indexing_source, embedding_generator
             )
-
-            assert task["payload"] is not None
-            await handle_embed_and_store_batch(
-                task_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-            )
-            await db_ctx.tasks.update_status(task["task_id"], "done")
 
         await indexing_source.wait_for_pending_events()
 
@@ -338,31 +349,9 @@ async def test_document_ready_not_emitted_with_pending_tasks(
     indexing_source.emit_event = track_emit
 
     # Process first task
-    exec_context = ToolExecutionContext(
-        interface_type="web",
-        conversation_id="test-conv",
-        user_name="test-user",
-        turn_id=str(uuid.uuid4()),
-        task_id=first_task["task_id"],
-        db_context=db_ctx,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        camera_backend=None,
-        embedding_generator=embedding_generator,
-        indexing_source=indexing_source,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
+    await _complete_through_worker(
+        db_engine, first_task, indexing_source, embedding_generator
     )
-
-    assert first_task["payload"] is not None
-    await handle_embed_and_store_batch(
-        exec_context, cast("EmbedAndStoreBatchPayload", first_task["payload"])
-    )
-    await db_ctx.tasks.update_status(first_task["task_id"], "done")
 
     # Event should NOT have been emitted since second task is pending
     assert not event_emitted, "DOCUMENT_READY was emitted with pending tasks!"
@@ -385,24 +374,16 @@ def _embed_batch_payload(
     }
 
 
-@pytest.mark.asyncio
-async def test_document_ready_not_emitted_while_sibling_batch_processing(
-    db_engine: AsyncEngine,
-) -> None:
-    """A sibling batch claimed by another worker keeps the document not ready.
-
-    Both batches are dequeued, so both rows are ``processing``; the first
-    finishing must not declare the document ready while the second is still
-    embedding.
-    """
-    indexing_source = IndexingSource()
-    db_ctx = Database(engine=db_engine)
+async def _enqueue_and_claim_two_batches(
+    db_ctx: Database, title: str
+) -> tuple[int, TaskDict, TaskDict]:
+    """Enqueue two embedding batches for a new document and claim both."""
     doc_id = await add_document(
         db_context=db_ctx,
         doc=MockDocument(
             source_type="test_upload",
             source_id=f"test-{uuid.uuid4()}",
-            title="Concurrent Batches",
+            title=title,
             content="Two batches",
             metadata={},
         ),
@@ -414,19 +395,58 @@ async def test_document_ready_not_emitted_while_sibling_batch_processing(
             payload=_embed_batch_payload(doc_id, i, f"Part {i}"),
             priority=TaskPriority.INTERACTIVE,
         )
+    claimed: list[TaskDict] = []
+    for worker_id in ("worker-a", "worker-b"):
+        task = await db_ctx.tasks.dequeue(
+            task_types=["embed_and_store_batch"],
+            worker_id=worker_id,
+            current_time=datetime.now(UTC),
+        )
+        assert task is not None
+        claimed.append(task)
+    return doc_id, claimed[0], claimed[1]
 
-    first_task = await db_ctx.tasks.dequeue(
-        task_types=["embed_and_store_batch"],
-        worker_id="worker-a",
-        current_time=datetime.now(UTC),
+
+def _track_document_ready(indexing_source: IndexingSource) -> list[int]:
+    """Record the document id of every DOCUMENT_READY the source emits."""
+    ready_document_ids: list[int] = []
+    original_emit = indexing_source.emit_event
+
+    # ast-grep-ignore: no-dict-any - Mocking event handler signature
+    async def track_emit(event_data: dict[str, Any]) -> asyncio.Future[None]:
+        if event_data["event_type"] == IndexingEventType.DOCUMENT_READY.value:
+            ready_document_ids.append(event_data["document_id"])
+        return await original_emit(event_data)
+
+    indexing_source.emit_event = track_emit
+    return ready_document_ids
+
+
+@pytest.mark.asyncio
+async def test_document_ready_not_emitted_while_sibling_batch_processing(
+    db_engine: AsyncEngine,
+) -> None:
+    """A sibling batch claimed by another worker keeps the document not ready.
+
+    Both batches are claimed, so both rows are ``processing``; the first to
+    finish must not declare the document ready while the second is still
+    embedding.
+    """
+    indexing_source = IndexingSource()
+    db_ctx = Database(engine=db_engine)
+    doc_id, first_task, sibling_task = await _enqueue_and_claim_two_batches(
+        db_ctx, "Concurrent Batches"
     )
-    sibling_task = await db_ctx.tasks.dequeue(
-        task_types=["embed_and_store_batch"],
-        worker_id="worker-b",
-        current_time=datetime.now(UTC),
+    assert await check_document_completion(db_ctx, doc_id) == 2
+    ready_document_ids = _track_document_ready(indexing_source)
+    embedding_generator = MockEmbeddingGenerator(
+        model_name="test-model", dimensions=128
     )
-    assert first_task is not None
-    assert sibling_task is not None
+
+    await _complete_through_worker(
+        db_engine, first_task, indexing_source, embedding_generator
+    )
+
     sibling_row = await db_ctx.fetch_one(
         select(tasks_table.c.status).where(
             tasks_table.c.task_id == sibling_task["task_id"]
@@ -434,51 +454,168 @@ async def test_document_ready_not_emitted_while_sibling_batch_processing(
     )
     assert sibling_row is not None
     assert sibling_row["status"] == "processing"
+    assert ready_document_ids == []
 
-    assert (
-        await check_document_completion(
-            db_ctx, doc_id, exclude_task_id=first_task["task_id"]
+
+@pytest.mark.asyncio
+async def test_document_ready_emitted_once_when_two_batches_finish_together(
+    db_engine: AsyncEngine,
+) -> None:
+    """Two batches whose handlers both finish before either is marked done.
+
+    Neither handler can see the other finished, so the decision has to wait
+    for the done-commits, and exactly one of the two may announce the document.
+    """
+    indexing_source = IndexingSource()
+    db_ctx = Database(engine=db_engine)
+    doc_id, first_task, second_task = await _enqueue_and_claim_two_batches(
+        db_ctx, "Batches Finishing Together"
+    )
+    ready_document_ids = _track_document_ready(indexing_source)
+
+    both_handlers_finished = asyncio.Barrier(2)
+
+    async def handler_then_wait_for_sibling(
+        exec_context: ToolExecutionContext, payload: EmbedAndStoreBatchPayload
+    ) -> None:
+        await handle_embed_and_store_batch(exec_context, payload)
+        await both_handlers_finished.wait()
+
+    worker = _indexing_worker(
+        db_engine,
+        indexing_source,
+        MockEmbeddingGenerator(model_name="test-model", dimensions=128),
+    )
+    worker.register_task_handler("embed_and_store_batch", handler_then_wait_for_sibling)
+
+    await asyncio.gather(
+        worker._process_task(db_ctx, first_task, asyncio.Event()),
+        worker._process_task(db_ctx, second_task, asyncio.Event()),
+    )
+
+    statuses = await db_ctx.fetch_all(
+        select(tasks_table.c.status).where(
+            tasks_table.c.task_id.in_([first_task["task_id"], second_task["task_id"]])
         )
-        == 1
     )
+    assert [row["status"] for row in statuses] == ["done", "done"]
+    assert ready_document_ids == [doc_id]
 
-    emitted_types: list[str] = []
-    original_emit = indexing_source.emit_event
 
-    # ast-grep-ignore: no-dict-any - Mocking event handler signature
-    async def track_emit(event_data: dict[str, Any]) -> asyncio.Future[None]:
-        emitted_types.append(event_data["event_type"])
-        return await original_emit(event_data)
+@pytest.mark.asyncio
+async def test_document_ready_emitted_when_parent_task_finishes_last(
+    db_engine: AsyncEngine,
+) -> None:
+    """The processing task that enqueued a batch can be marked done after it.
 
-    indexing_source.emit_event = track_emit
-
-    exec_context = ToolExecutionContext(
-        interface_type="web",
-        conversation_id="test-conv",
-        user_name="test-user",
-        turn_id=str(uuid.uuid4()),
-        task_id=first_task["task_id"],
+    Its batch then finishes while it is still running and must not announce
+    the document; the parent's own completion does.
+    """
+    indexing_source = IndexingSource()
+    db_ctx = Database(engine=db_engine)
+    doc_id = await add_document(
         db_context=db_ctx,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        camera_backend=None,
-        embedding_generator=MockEmbeddingGenerator(
-            model_name="test-model", dimensions=128
+        doc=MockDocument(
+            source_type="test_upload",
+            source_id=f"test-{uuid.uuid4()}",
+            title="Parent Finishes Last",
+            content="One batch",
+            metadata={},
         ),
-        indexing_source=indexing_source,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
     )
-    assert first_task["payload"] is not None
-    await handle_embed_and_store_batch(
-        exec_context, cast("EmbedAndStoreBatchPayload", first_task["payload"])
+    await db_ctx.tasks.enqueue(
+        task_id=f"process_doc_{doc_id}",
+        task_type="process_uploaded_document",
+        payload={"document_id": doc_id},
+        priority=TaskPriority.INTERACTIVE,
+    )
+    parent_task = await db_ctx.tasks.dequeue(
+        task_types=["process_uploaded_document"],
+        worker_id="worker-a",
+        current_time=datetime.now(UTC),
+    )
+    assert parent_task is not None
+    await db_ctx.tasks.enqueue(
+        task_id=f"embed_batch_{doc_id}",
+        task_type="embed_and_store_batch",
+        payload=_embed_batch_payload(doc_id, 0, "Only part"),
+        priority=TaskPriority.INTERACTIVE,
+    )
+    batch_task = await db_ctx.tasks.dequeue(
+        task_types=["embed_and_store_batch"],
+        worker_id="worker-b",
+        current_time=datetime.now(UTC),
+    )
+    assert batch_task is not None
+    ready_document_ids = _track_document_ready(indexing_source)
+    worker = _indexing_worker(
+        db_engine,
+        indexing_source,
+        MockEmbeddingGenerator(model_name="test-model", dimensions=128),
     )
 
-    assert IndexingEventType.DOCUMENT_READY.value not in emitted_types
+    async def parent_already_enqueued_its_batch(
+        exec_context: ToolExecutionContext, payload: object
+    ) -> None:
+        pass
+
+    worker.register_task_handler(
+        "process_uploaded_document", parent_already_enqueued_its_batch
+    )
+
+    await worker._process_task(db_ctx, batch_task, asyncio.Event())
+    assert ready_document_ids == []
+
+    await worker._process_task(db_ctx, parent_task, asyncio.Event())
+    assert ready_document_ids == [doc_id]
+
+
+@pytest.mark.asyncio
+async def test_document_ready_not_emitted_without_embeddings(
+    db_engine: AsyncEngine,
+) -> None:
+    """A document whose processing produced nothing to embed is never ready."""
+    indexing_source = IndexingSource()
+    db_ctx = Database(engine=db_engine)
+    doc_id = await add_document(
+        db_context=db_ctx,
+        doc=MockDocument(
+            source_type="test_upload",
+            source_id=f"test-{uuid.uuid4()}",
+            title="Nothing To Embed",
+            content="",
+            metadata={},
+        ),
+    )
+    await db_ctx.tasks.enqueue(
+        task_id=f"process_empty_doc_{doc_id}",
+        task_type="process_uploaded_document",
+        payload={"document_id": doc_id},
+        priority=TaskPriority.INTERACTIVE,
+    )
+    task = await db_ctx.tasks.dequeue(
+        task_types=["process_uploaded_document"],
+        worker_id="worker-a",
+        current_time=datetime.now(UTC),
+    )
+    assert task is not None
+    ready_document_ids = _track_document_ready(indexing_source)
+    worker = _indexing_worker(
+        db_engine,
+        indexing_source,
+        MockEmbeddingGenerator(model_name="test-model", dimensions=128),
+    )
+
+    async def enqueues_nothing(
+        exec_context: ToolExecutionContext, payload: object
+    ) -> None:
+        pass
+
+    worker.register_task_handler("process_uploaded_document", enqueues_nothing)
+
+    await worker._process_task(db_ctx, task, asyncio.Event())
+
+    assert ready_document_ids == []
 
 
 @pytest.mark.asyncio
@@ -560,37 +697,9 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
 
         assert task is not None
 
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id="test-conv",
-            user_name="test-user",
-            turn_id=str(uuid.uuid4()),
-            task_id=task["task_id"],
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            embedding_generator=embedding_generator,
-            indexing_source=indexing_source,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
+        await _complete_through_worker(
+            db_engine, task, indexing_source, embedding_generator
         )
-
-        # Process embedding task - should emit event
-        assert task["payload"] is not None
-        await handle_embed_and_store_batch(
-            exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-        )
-
-        # The handler's transaction has committed here. Only wait for event
-        # persistence AFTER the commit: the event processor stores events on
-        # its own connection, and on SQLite that write must wait for this
-        # transaction's writer lock — awaiting it inside the `async with`
-        # block deadlocks until the busy timeout.
         await indexing_source.wait_for_pending_events()
 
         callback_tasks = await Database(engine=db_engine).tasks.get_all(
@@ -692,32 +801,9 @@ async def test_document_ready_event_includes_rich_metadata(
 
         assert task is not None
 
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id="test-conv",
-            user_name="test-user",
-            turn_id=str(uuid.uuid4()),
-            task_id=task["task_id"],
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            embedding_generator=embedding_generator,
-            indexing_source=indexing_source,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
+        await _complete_through_worker(
+            db_engine, task, indexing_source, embedding_generator
         )
-
-        # Process task - should emit event with rich metadata
-        assert task["payload"] is not None
-        await handle_embed_and_store_batch(
-            exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-        )
-        await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
@@ -819,32 +905,9 @@ async def test_document_ready_event_handles_none_metadata(
 
         assert task is not None
 
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id="test-conv",
-            user_name="test-user",
-            turn_id=str(uuid.uuid4()),
-            task_id=task["task_id"],
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            embedding_generator=embedding_generator,
-            indexing_source=indexing_source,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
+        await _complete_through_worker(
+            db_engine, task, indexing_source, embedding_generator
         )
-
-        # Process task - should emit event even with None metadata
-        assert task["payload"] is not None
-        await handle_embed_and_store_batch(
-            exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-        )
-        await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
@@ -888,13 +951,11 @@ async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
         )
 
     # Test that it correctly counts pending tasks
-    pending_count = await check_document_completion(
-        db_ctx, test_doc_id, exclude_task_id=None
-    )
+    pending_count = await check_document_completion(db_ctx, test_doc_id)
     assert pending_count == 2, f"Expected 2 pending tasks, got {pending_count}"
 
     # Test with non-existent document
-    pending_count = await check_document_completion(db_ctx, 777, exclude_task_id=None)
+    pending_count = await check_document_completion(db_ctx, 777)
     assert pending_count == 0, (
         f"Expected 0 pending tasks for non-existent doc, got {pending_count}"
     )
