@@ -82,8 +82,7 @@ def _completing_stream(interaction_id: str, text: str) -> AsyncGenerator[MagicMo
 
 def _accept_submissions(mock_genai_client: MagicMock) -> AsyncMock:
     """Make the SDK's create() accept a submit-path request, and return it."""
-    interaction = MagicMock()
-    interaction.id = "inter_ag_submitted"
+    interaction = Interaction(id="inter_ag_submitted", status="in_progress")
     create = AsyncMock(return_value=interaction)
     mock_genai_client.aio.interactions.create = create
     return create
