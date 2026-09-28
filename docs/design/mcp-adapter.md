@@ -144,8 +144,10 @@ here.
   its current access token expires, which the issuer keeps short, rather than immediately.
 
 - **A running turn is known only to the process running it.** The deployment runs one replica, and a
-  restart ends every running turn anyway. A conversation whose latest question has no reply and no
-  running turn (it was interrupted) is an error telling the client to ask again.
+  restart ends every running turn anyway. A turn that fails after the first call has returned is not
+  kept for the follow-up call to report: in production its error is a generic internal error anyway,
+  so the follow-up reads the conversation, finds no reply, and says the request failed or was
+  interrupted and that anything it did before stopping still stands.
 
 - **One scope.** No profile picker, no attachments, no streaming. A caller that wants a different
   profile is a configuration change (`mcp_adapter.profile_id`), not a tool argument.

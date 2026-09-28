@@ -287,7 +287,7 @@ async def test_conversation_without_a_reply_is_reported(
         )
 
     assert result.isError
-    assert "ask_family_assistant" in _reply_text(result.content)
+    assert "ended without a reply" in _reply_text(result.content)
 
 
 @pytest.mark.asyncio

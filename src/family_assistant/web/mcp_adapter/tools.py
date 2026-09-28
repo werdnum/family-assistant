@@ -194,7 +194,12 @@ def register_tools(mcp: FastMCP, running_turns: RunningTurns) -> None:
         current_user = await get_current_user(request)
         processing_service = _select_processing_service(request)
         conversation_id = conversation_id or f"mcp-{uuid.uuid4()}"
+        user_id = str(current_user["user_identifier"])
         if running_turns.is_running(conversation_id):
+            if running_turns.get(conversation_id, user_id) is None:
+                raise _tool_error_for(
+                    HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+                )
             raise ToolError(
                 "A request is still running in this conversation. Call "
                 "get_family_assistant_reply with this conversation_id for its reply, "
@@ -205,7 +210,6 @@ def register_tools(mcp: FastMCP, running_turns: RunningTurns) -> None:
             conversation_id=conversation_id,
             interface_type=MCP_INTERFACE_TYPE,
         )
-        user_id = str(current_user["user_identifier"])
         task = running_turns.start(
             conversation_id,
             user_id,
@@ -259,9 +263,9 @@ def register_tools(mcp: FastMCP, running_turns: RunningTurns) -> None:
             raise _tool_error_for(exc) from exc
         if reply is None:
             raise ToolError(
-                "The latest request in this conversation ended without a reply; it "
-                "may have been interrupted by a restart. Ask again with "
-                "ask_family_assistant and the same conversation_id."
+                "The latest request in this conversation ended without a reply: it "
+                "failed or was interrupted. Anything it did before stopping still "
+                "stands, so ask whether it finished before repeating an action."
             )
         return AskFamilyAssistantResult(
             status="complete", reply=reply, conversation_id=conversation_id

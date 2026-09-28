@@ -34,9 +34,9 @@ Some requests take the assistant a few minutes, such as a search across many doc
 several steps. Claude does not wait on one call that long. If the assistant is still working after
 about 45 seconds, Claude is told so and checks back for the answer, repeating until it arrives; you
 may see it call the assistant a few times for a single question. The finished reply also appears in
-**History** in the web app. If Family Assistant restarts while a request is still running, that
-request stops and Claude is told to ask again; check **History** before repeating anything that
-changes your data.
+**History** in the web app. If a request fails partway, or Family Assistant restarts while it is
+running, Claude is told it ended without a reply. Anything it did before stopping still stands, so
+check **History** before repeating anything that changes your data.
 
 ## Approving actions
 
