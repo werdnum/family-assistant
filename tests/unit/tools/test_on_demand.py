@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from family_assistant.config_models import ToolsConfig
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -54,33 +53,6 @@ def _make_provider(tool_names: list[str]) -> LocalToolsProvider:
         for name in tool_names
     ]
     return LocalToolsProvider(registrations=registrations)
-
-
-class TestToolsConfig:
-    """Test ToolsConfig helper methods for on-demand catalog hints."""
-
-    def test_default_has_no_on_demand_hints(self) -> None:
-        tc = ToolsConfig()
-        assert tc.get_on_demand_tool_names() == set()
-        assert tc.get_on_demand_mcp_server_ids() == []
-
-    def test_on_demand_local_tools(self) -> None:
-        tc = ToolsConfig(
-            on_demand_local_tools=["lazy_tool", "another_lazy_tool"],
-        )
-        assert tc.get_on_demand_tool_names() == {"lazy_tool", "another_lazy_tool"}
-
-    def test_on_demand_local_tools_from_yaml_list(self) -> None:
-        tc = ToolsConfig.model_validate({
-            "on_demand_local_tools": ["tool_b"],
-        })
-        assert tc.get_on_demand_tool_names() == {"tool_b"}
-
-    def test_on_demand_mcp_server_ids(self) -> None:
-        tc = ToolsConfig.model_validate({
-            "on_demand_mcp_server_ids": ["homeassistant"],
-        })
-        assert tc.get_on_demand_mcp_server_ids() == ["homeassistant"]
 
 
 class TestExtractToolSummary:

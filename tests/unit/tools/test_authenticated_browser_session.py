@@ -294,12 +294,14 @@ async def test_autofill_carries_the_step_key_and_never_a_secret() -> None:
     assert response["status"] == "filled"
     request = next(r for r in seen if r.url.path.endswith("/autofill"))
     body = json.loads(request.content)
-    assert body["step_key"] == "password-2"
-    assert body["fields"] == [{"ref": "e12", "kind": "password"}]
-    # Nothing credential-shaped is sent: the alias is pinned on the session and
-    # the value is browser-server's business.
-    assert "alias" not in body
-    assert "password" not in json.dumps(body["context"])
+    # Exact wire shape: proves no alias, secret or other credential-shaped key
+    # is added beyond what the caller supplied.
+    assert body == {
+        "step_key": "password-2",
+        "fields": [{"ref": "e12", "kind": "password"}],
+        "wait_seconds": 25,
+        "context": {"site": "hellofresh", "acting_user": "andrew"},
+    }
     await backend.close()
 
 

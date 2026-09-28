@@ -49,10 +49,13 @@ from tests.unit.conftest import shipped_profile
 _HANDOFF_PROFILE_ID = "media_analyst"
 # The profile users send attachments to from Telegram and web chat.
 _MEDIA_RECEIVING_PROFILE_ID = "default_assistant"
+_DIRECT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 def _unreadable_media_note() -> str:
-    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
+    client = OpenAIClient(
+        api_key="test-key", model="gpt-5.6-terra", base_url=_DIRECT_OPENAI_BASE_URL
+    )
     items = client._messages_to_responses_input([
         UserMessage(
             content=[
@@ -345,7 +348,9 @@ def test_an_exclusion_matching_a_confirm_rule_is_accepted(tmp_path: Path) -> Non
 
 
 def _injected(mime_type: str, *, attachment_id: str | None = "att-7") -> UserMessage:
-    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
+    client = OpenAIClient(
+        api_key="test-key", model="gpt-5.6-terra", base_url=_DIRECT_OPENAI_BASE_URL
+    )
     attachment = ToolAttachment(
         mime_type=mime_type,
         content=b"\0" * 2048,
@@ -463,7 +468,7 @@ def test_the_openai_fallback_still_learns_what_arrived() -> None:
     message = _google_injected("audio/ogg")
 
     items = OpenAIClient(
-        api_key="test-key", model="gpt-5.6-terra"
+        api_key="test-key", model="gpt-5.6-terra", base_url=_DIRECT_OPENAI_BASE_URL
     )._messages_to_responses_input([message])
 
     # The Gemini `parts` are invisible here, so the string content is the whole

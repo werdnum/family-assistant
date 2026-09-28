@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
+import caldav
 import httpx
 import pytest
 
@@ -25,7 +27,6 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
-    CalendarSearchResult,
     add_calendar_event_tool,
     check_for_duplicate_events,
     delete_calendar_event_tool,
@@ -44,6 +45,21 @@ from family_assistant.tools.types import (
     CalendarEvent,
     ToolExecutionContext,
 )
+
+
+async def _get_radicale_event_by_summary(
+    radicale_server: tuple[str, str, str, str], summary: str
+) -> caldav.objects.Event | None:
+    """Fetches an event by its summary from the fixture's calendar on Radicale."""
+    base_url, user, passwd, calendar_url = radicale_server
+    client = caldav.DAVClient(url=base_url, username=user, password=passwd, timeout=30)
+    target_calendar = await asyncio.to_thread(client.calendar, url=calendar_url)
+    events = await asyncio.to_thread(target_calendar.events)
+    for event in events:
+        vevent = event.vobject_instance.vevent
+        if vevent.summary.value == summary:
+            return event
+    return None
 
 
 def _create_mock_context() -> ToolExecutionContext:
@@ -411,10 +427,7 @@ async def test_duplicate_detection_checks_ical_feeds(
 
 
 @pytest.mark.asyncio
-async def test_add_calendar_event_targeting_and_read_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ctx = _create_mock_context()
+async def test_add_calendar_event_targeting_and_read_only() -> None:
     config: CalendarConfig = {
         "caldav": {
             "username": "user",
@@ -443,6 +456,7 @@ async def test_add_calendar_event_targeting_and_read_only(
             ]
         },
     }
+    ctx = _create_mock_context()
 
     # 1. Reject read-only iCal source
     ro_result = await add_calendar_event_tool(
@@ -471,35 +485,50 @@ async def test_add_calendar_event_targeting_and_read_only(
     assert "personal" in unknown_result
     assert "work" in unknown_result
 
-    # 3. Successful targeting of specific CalDAV calendar
-    mock_client_inst = MagicMock()
-    mock_cal = MagicMock()
-    mock_cal.save_event.return_value.icalendar_component.to_ical.return_value = b"event"
-    mock_client_inst.calendar.return_value = mock_cal
-    mock_client_inst.__enter__.return_value = mock_client_inst
 
-    mock_dav_client = MagicMock(return_value=mock_client_inst)
-    monkeypatch.setattr("caldav.DAVClient", mock_dav_client)
+@pytest.mark.asyncio
+async def test_add_calendar_event_targeting_succeeds_on_named_calendar(
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    base_url, user, passwd, calendar_url = radicale_server
+    config: CalendarConfig = {
+        "caldav": {
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [
+                {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": f"{base_url}/missing-personal/",
+                },
+                {"id": "work", "name": "Work", "url": calendar_url},
+            ],
+        },
+    }
+    ctx = _create_mock_context()
+    summary = f"Work Meeting {uuid.uuid4()}"
 
     success_result = await add_calendar_event_tool(
         exec_context=ctx,
         calendar_config=config,
-        summary="Work Meeting",
+        summary=summary,
         start_time="2026-05-01T10:00:00Z",
         end_time="2026-05-01T11:00:00Z",
         calendar_id="work",
         bypass_duplicate_check=True,
     )
-    assert "Work Meeting" in success_result
+    assert summary in success_result
     assert "added to the calendar" in success_result
-    mock_client_inst.calendar.assert_called_with(url="https://caldav.example.com/work")
-    mock_cal.save_event.assert_called_once()
+
+    radicale_event = await _get_radicale_event_by_summary(radicale_server, summary)
+    assert radicale_event is not None, (
+        f"Event '{summary}' not found in the targeted Radicale calendar after add_calendar_event_tool."
+    )
 
 
 @pytest.mark.asyncio
-async def test_modify_calendar_event_targeting_and_read_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_modify_calendar_event_targeting_and_read_only() -> None:
     ctx = _create_mock_context()
     config: CalendarConfig = {
         "caldav": {
@@ -573,52 +602,70 @@ async def test_modify_calendar_event_targeting_and_read_only(
     )
     assert "Error: Calendar 'missing' not found." in err_unknown
 
-    # 5. Successful targeting by calendar_id
-    import vobject  # noqa: PLC0415
 
-    mock_client_inst = MagicMock()
-    mock_cal = MagicMock()
-    mock_event = MagicMock()
-    ics_text = (
-        "BEGIN:VCALENDAR\r\n"
-        "VERSION:2.0\r\n"
-        "PRODID:-//Test//EN\r\n"
-        "BEGIN:VEVENT\r\n"
-        "UID:evt-1\r\n"
-        "SUMMARY:Old\r\n"
-        "DTSTART:20260501T100000Z\r\n"
-        "DTEND:20260501T110000Z\r\n"
-        "END:VEVENT\r\n"
-        "END:VCALENDAR\r\n"
+@pytest.mark.asyncio
+async def test_modify_calendar_event_targeting_succeeds_on_named_calendar(
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    base_url, user, passwd, calendar_url = radicale_server
+    config: CalendarConfig = {
+        "caldav": {
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [
+                {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": f"{base_url}/missing-personal/",
+                },
+                {"id": "work", "name": "Work", "url": calendar_url},
+            ],
+        },
+    }
+    ctx = _create_mock_context()
+    original_summary = f"Old {uuid.uuid4()}"
+    new_summary = f"New Work Title {uuid.uuid4()}"
+
+    add_result = await add_calendar_event_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        summary=original_summary,
+        start_time="2026-05-01T10:00:00Z",
+        end_time="2026-05-01T11:00:00Z",
+        calendar_id="work",
+        bypass_duplicate_check=True,
     )
-    mock_event.data = ics_text
-    mock_event.vobject_instance = vobject.readOne(ics_text)
-    from icalendar import Calendar  # noqa: PLC0415
-
-    mock_event.icalendar_component = Calendar.from_ical(ics_text).subcomponents[0]
-    mock_cal.events.return_value = [mock_event]
-    mock_client_inst.calendar.return_value = mock_cal
-    mock_client_inst.__enter__.return_value = mock_client_inst
-
-    mock_dav_client = MagicMock(return_value=mock_client_inst)
-    monkeypatch.setattr("caldav.DAVClient", mock_dav_client)
+    assert "added to the calendar" in add_result
+    radicale_event = await _get_radicale_event_by_summary(
+        radicale_server, original_summary
+    )
+    assert radicale_event is not None
+    event_uid = str(radicale_event.vobject_instance.vevent.uid.value)
 
     ok_res = await modify_calendar_event_tool(
         exec_context=ctx,
         calendar_config=config,
-        uid="evt-1",
+        uid=event_uid,
         calendar_id="work",
-        new_summary="New Work Title",
+        new_summary=new_summary,
     )
-    assert "OK. Event 'Old' updated: title to 'New Work Title'." in ok_res
-    mock_client_inst.calendar.assert_called_with(url="https://caldav.example.com/work")
-    mock_event.save.assert_called_once()
+    assert (
+        f"OK. Event '{original_summary}' updated: title to '{new_summary}'." in ok_res
+    )
+
+    renamed_event = await _get_radicale_event_by_summary(radicale_server, new_summary)
+    assert renamed_event is not None, (
+        f"Event was not retitled to '{new_summary}' in the targeted Radicale calendar."
+    )
+    stale_event = await _get_radicale_event_by_summary(
+        radicale_server, original_summary
+    )
+    assert stale_event is None
 
 
 @pytest.mark.asyncio
-async def test_delete_calendar_event_targeting_and_read_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_delete_calendar_event_targeting_and_read_only() -> None:
     ctx = _create_mock_context()
     config: CalendarConfig = {
         "caldav": {
@@ -688,33 +735,56 @@ async def test_delete_calendar_event_targeting_and_read_only(
     )
     assert "Error: Calendar 'missing' not found." in err_unknown
 
-    # 5. Successful deletion by calendar_id
-    mock_client_inst = MagicMock()
-    mock_cal = MagicMock()
-    mock_event = MagicMock()
-    mock_event.vobject_instance.vevent.uid.value = "evt-1"
-    from icalendar import Event  # noqa: PLC0415
 
-    component = Event()
-    component.add("uid", "evt-1")
-    component.add("summary", "Meeting")
-    mock_event.icalendar_component = component
-    mock_cal.events.return_value = [mock_event]
-    mock_client_inst.calendar.return_value = mock_cal
-    mock_client_inst.__enter__.return_value = mock_client_inst
+@pytest.mark.asyncio
+async def test_delete_calendar_event_targeting_succeeds_on_named_calendar(
+    radicale_server: tuple[str, str, str, str],
+) -> None:
+    base_url, user, passwd, calendar_url = radicale_server
+    config: CalendarConfig = {
+        "caldav": {
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [
+                {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": f"{base_url}/missing-personal/",
+                },
+                {"id": "work", "name": "Work", "url": calendar_url},
+            ],
+        },
+    }
+    ctx = _create_mock_context()
+    summary = f"Meeting {uuid.uuid4()}"
 
-    mock_dav_client = MagicMock(return_value=mock_client_inst)
-    monkeypatch.setattr("caldav.DAVClient", mock_dav_client)
+    add_result = await add_calendar_event_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        summary=summary,
+        start_time="2026-05-01T10:00:00Z",
+        end_time="2026-05-01T11:00:00Z",
+        calendar_id="work",
+        bypass_duplicate_check=True,
+    )
+    assert "added to the calendar" in add_result
+    radicale_event = await _get_radicale_event_by_summary(radicale_server, summary)
+    assert radicale_event is not None
+    event_uid = str(radicale_event.vobject_instance.vevent.uid.value)
 
     ok_res = await delete_calendar_event_tool(
         exec_context=ctx,
         calendar_config=config,
-        uid="evt-1",
+        uid=event_uid,
         calendar_id="work",
     )
-    assert "OK. Event 'Meeting' deleted from calendar." in ok_res
-    mock_client_inst.calendar.assert_called_with(url="https://caldav.example.com/work")
-    mock_event.delete.assert_called_once()
+    assert f"OK. Event '{summary}' deleted from calendar." in ok_res
+
+    deleted_event = await _get_radicale_event_by_summary(radicale_server, summary)
+    assert deleted_event is None, (
+        f"Event '{summary}' still present in the targeted Radicale calendar after delete_calendar_event_tool."
+    )
 
 
 @pytest.mark.asyncio
@@ -885,54 +955,80 @@ async def test_resolve_target_caldav_url_conflict_rejection() -> None:
 
 async def test_search_calendar_events_chronological_sorting(
     monkeypatch: pytest.MonkeyPatch,
+    radicale_server: tuple[str, str, str, str],
 ) -> None:
     ctx = _create_mock_context()
+    base_url, user, passwd, calendar_url = radicale_server
     config: CalendarConfig = {
         "caldav": {
-            "username": "user",
-            "password": "pwd",
-            "calendar_urls": ["https://caldav.example.com/cal"],
+            "username": user,
+            "password": passwd,
+            "base_url": base_url,
+            "calendar_urls": [{"id": "work", "name": "Work", "url": calendar_url}],
         },
         "ical": {
-            "urls": ["https://example.com/feed.ics"],
+            "urls": [
+                {
+                    "id": "later-feed",
+                    "name": "Later Feed",
+                    "url": "https://example.com/later.ics",
+                },
+                {
+                    "id": "earlier-feed",
+                    "name": "Earlier Feed",
+                    "url": "https://example.com/earlier.ics",
+                },
+            ],
         },
     }
-
-    # Simulate CalDAV returning event at 14:00 and iCal returning event at 10:00
-    async def fake_search_events(
-        exec_context: ToolExecutionContext,
-        calendar_config: CalendarConfig,
-        search_start: datetime,
-        search_end: datetime,
-        sources: list[Any] | None = None,
-        google_client: object = None,
-        notes: list[str] | None = None,
-    ) -> list[CalendarSearchResult]:
-        # Return unordered list
-        return [
-            {
-                "summary": "Later CalDAV Event",
-                "uid": "uid-later",
-                "start": "2026-05-01 14:00 UTC",
-                "end": "2026-05-01 15:00 UTC",
-                "calendar_url": "https://caldav.example.com/cal",
-                "start_dt": datetime(2026, 5, 1, 14, 0, tzinfo=UTC),
-            },
-            {
-                "summary": "Earlier iCal Event",
-                "uid": "uid-earlier",
-                "start": "2026-05-01 10:00 UTC",
-                "end": "2026-05-01 11:00 UTC",
-                "calendar_url": None,
-                "source_name": "Flight Feed",
-                "start_dt": datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
-            },
-        ]
-
-    monkeypatch.setattr(
-        "family_assistant.tools.calendar._search_events_in_range",
-        fake_search_events,
+    added = await add_calendar_event_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        summary="Latest CalDAV Event",
+        start_time="2026-05-01T16:00:00Z",
+        end_time="2026-05-01T17:00:00Z",
+        calendar_id="work",
+        bypass_duplicate_check=True,
     )
+    assert "added to the calendar" in added
+
+    # Feeds are registered later-first, but their events must still come out
+    # sorted chronologically by start time, not by feed registration order.
+    feed_responses = {
+        "https://example.com/later.ics": "\r\n".join([
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Test//EN",
+            "BEGIN:VEVENT",
+            "UID:uid-later",
+            "DTSTART:20260501T140000Z",
+            "DTEND:20260501T150000Z",
+            "SUMMARY:Later Feed Event",
+            "END:VEVENT",
+            "END:VCALENDAR",
+            "",
+        ]),
+        "https://example.com/earlier.ics": "\r\n".join([
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Test//EN",
+            "BEGIN:VEVENT",
+            "UID:uid-earlier",
+            "DTSTART:20260501T100000Z",
+            "DTEND:20260501T110000Z",
+            "SUMMARY:Earlier Feed Event",
+            "END:VEVENT",
+            "END:VCALENDAR",
+            "",
+        ]),
+    }
+
+    async def fake_get(
+        self: httpx.AsyncClient, url: str, **kwargs: object
+    ) -> httpx.Response:
+        return httpx.Response(200, text=feed_responses[url])
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
 
     result = await search_calendar_events_tool(
         exec_context=ctx,
@@ -942,8 +1038,11 @@ async def test_search_calendar_events_chronological_sorting(
     )
 
     # When search_text is not provided, results are sorted chronologically
-    pos_earlier = result.find("Earlier iCal Event")
-    pos_later = result.find("Later CalDAV Event")
+    # across feeds, not by feed registration order.
+    pos_earlier = result.find("Earlier Feed Event")
+    pos_later = result.find("Later Feed Event")
+    pos_caldav = result.find("Latest CalDAV Event")
     assert pos_earlier != -1
     assert pos_later != -1
-    assert pos_earlier < pos_later
+    assert pos_caldav != -1
+    assert pos_earlier < pos_later < pos_caldav

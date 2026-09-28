@@ -72,7 +72,8 @@ class TestToolCallBatch:
         batch = _batch()
         waiter = asyncio.create_task(batch.wait_done(["call_1", "call_2"]))
         batch.mark_done("call_1")
-        assert not waiter.done()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(waiter), timeout=0.05)
         batch.mark_done("call_2")
         await asyncio.wait_for(waiter, timeout=1)
 
@@ -149,15 +150,24 @@ class TestBrowserSessionOperation:
     async def test_serialises_operations_without_a_batch(self) -> None:
         session = BrowserSession()
         recorder = _Recorder()
-        await asyncio.wait_for(
-            asyncio.gather(
-                recorder.run(session, _context(None, None), "a"),
-                recorder.run(session, _context(None, None), "b"),
-            ),
-            timeout=2,
-        )
-        # The lock means one operation completes before the next begins.
-        assert recorder.entered == recorder.left
+        gate = asyncio.Event()
+        entered = asyncio.Event()
+
+        async def _gated_first() -> None:
+            async with session.operation(_context(None, None)):
+                entered.set()
+                await gate.wait()
+
+        first = asyncio.create_task(_gated_first())
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second = asyncio.create_task(recorder.run(session, _context(None, None), "b"))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(second), timeout=0.05)
+        assert recorder.entered == []
+        gate.set()
+        await asyncio.wait_for(asyncio.gather(first, second), timeout=2)
+        assert recorder.entered == ["b"]
+        assert recorder.left == ["b"]
 
     async def test_a_sibling_that_never_ran_does_not_wedge_the_batch(self) -> None:
         """Denials and failures report completion, so the rest of the batch runs."""

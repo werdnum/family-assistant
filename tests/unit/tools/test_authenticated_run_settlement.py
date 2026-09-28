@@ -9,6 +9,7 @@ window in which the caller is told `running` for a run that has finished.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
@@ -31,9 +32,7 @@ from family_assistant.storage.repositories.delegation_runs import (
 )
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
-from family_assistant.tools.authenticated_sites import (
-    _derive_status,  # noqa: PLC2701 - settlement boundary regression
-)
+from family_assistant.tools.authenticated_sites import prepare_authenticated_run
 from family_assistant.tools.browser_backend import (
     AuthenticatedSessionBinding,
     AuthenticatedSessionSpec,
@@ -84,13 +83,20 @@ class _FakeSiteWorker:
         return ChatInteractionResult.success(text_reply=WORKER_REPLY)
 
 
-def _backend(*, unavailable: bool = False) -> RemoteBrowserBackend:
+_DEFAULT_SESSION_BODY = {"session_id": SESSION_ID, "state": "agent_active"}
+
+
+def _backend(
+    *, unavailable: bool = False, session_body: object = _DEFAULT_SESSION_BODY
+) -> RemoteBrowserBackend:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             if unavailable:
                 return httpx.Response(503, json={"detail": "browser unavailable"})
             return httpx.Response(
-                200, json={"session_id": SESSION_ID, "state": "agent_active"}
+                200,
+                content=json.dumps(session_body),
+                headers={"content-type": "application/json"},
             )
         return httpx.Response(200, json={})
 
@@ -350,11 +356,57 @@ async def test_the_envelope_is_published_with_the_terminal_run_row(
 
 
 @pytest.mark.parametrize(
-    "state", [None, [], {}, {"state": "new_parked_state"}, {"state": "expired"}]
+    "session_body", [None, [], {}, {"state": "new_parked_state"}, {"state": "expired"}]
 )
-async def test_unknown_browser_state_cannot_settle_successfully(state: object) -> None:
-    binding = AuthenticatedSessionBinding(
-        site_id="testsite", delegation_id="run", backend=_backend()
+async def test_unknown_browser_state_cannot_settle_successfully(
+    db_engine: AsyncEngine,
+    subconversation_id: str,
+    session_body: object,
+) -> None:
+    """A browser session state the code doesn't recognize must not settle a run."""
+    db = Database(engine=db_engine)
+    delegation_id = f"delegation_{uuid.uuid4().hex}"
+    await db.delegation_runs.create_run({
+        "delegation_id": delegation_id,
+        "task_id": f"task_{uuid.uuid4().hex}",
+        "source_profile_id": "default_assistant",
+        "target_service_id": "authenticated_browser_profile",
+        "interface_type": INTERFACE_TYPE,
+        "conversation_id": CONVERSATION_ID,
+        "subconversation_id": subconversation_id,
+        "request_text": "Check this week's order.",
+        "content_parts_json": [{"type": "text", "text": "Check this week's order."}],
+        "user_name": "andrew",
+        "user_id": "andrew",
+    })
+    await db.delegation_runs.mark_running(delegation_id, started_at=SystemClock().now())
+    running: AuthenticatedSiteEnvelope = {
+        "site_id": "testsite",
+        "status": "running",
+        "session_id": SESSION_ID,
+    }
+    await db.delegation_runs.set_authenticated_site_state(delegation_id, running)
+    bind_authenticated_session(
+        subconversation_id,
+        AuthenticatedSessionBinding(
+            site_id="testsite",
+            delegation_id=delegation_id,
+            backend=_backend(session_body=session_body),
+        ),
     )
+    chat_interface = cast("ChatInterface", AsyncMock(spec=ChatInterface))
+    processing_service = SimpleNamespace(
+        service_config=SimpleNamespace(id="default_assistant"),
+        processing_services_registry={},
+        home_assistant_client=None,
+        attachment_registry=None,
+    )
+    exec_context = _context(db, processing_service, chat_interface)
+
     with pytest.raises(BrowserBackendError, match="unrecognized browser session state"):
-        _derive_status(binding, state)
+        await prepare_authenticated_run(exec_context, delegation_id, failed=False)
+
+    run = await db.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "running"
+    assert run["authenticated_site_json"] == running

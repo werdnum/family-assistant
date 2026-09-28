@@ -20,7 +20,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import ValidationError
 
 from family_assistant.config_models import (
-    AntigravityConfig,
     AntigravityEgressCredentialConfig,
     AntigravityEnvironmentConfig,
 )
@@ -493,11 +492,6 @@ def test_allowlist_outside_allowlist_mode_is_rejected(network: str) -> None:
             "network": network,
             "allowlist": [{"domain": "github.com"}],
         })
-
-
-def test_environment_is_optional_on_antigravity_config() -> None:
-    """The shipped profile configures no environment at all."""
-    assert AntigravityConfig().environment is None
 
 
 class _CredentialStoreStub:

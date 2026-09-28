@@ -539,13 +539,15 @@ class TestConversationCacheBreakpoints:
             AssistantMessage(
                 content=None,
                 provider_metadata={
+                    "provider": "anthropic",
                     "thinking_blocks": [
                         {
                             "type": "thinking",
                             "thinking": "reasoning",
                             "signature": "sig",
-                        }
-                    ]
+                        },
+                        {"type": "redacted_thinking", "data": "opaque"},
+                    ],
                 },
                 tool_calls=[
                     ToolCallItem(
@@ -559,16 +561,17 @@ class TestConversationCacheBreakpoints:
 
         _, api_messages = client._convert_messages_to_anthropic_format(messages)
 
-        for message in api_messages:
-            content = message["content"]
-            if not isinstance(content, list):
-                continue
-            for blk in content:
-                if isinstance(blk, dict) and blk.get("type") in {
-                    "thinking",
-                    "redacted_thinking",
-                }:
-                    assert "cache_control" not in blk
+        assert api_messages[-1]["content"][:2] == [
+            {"type": "thinking", "thinking": "reasoning", "signature": "sig"},
+            {"type": "redacted_thinking", "data": "opaque"},
+        ]
+        assert api_messages[-1]["content"][2] == {
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "noop",
+            "input": {},
+            "cache_control": {"type": "ephemeral"},
+        }
 
     def test_total_breakpoints_stay_within_anthropic_limit(self) -> None:
         """System block plus the two conversation ones must not exceed four."""

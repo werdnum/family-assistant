@@ -10,10 +10,11 @@ Cancelling a task must show what is being stopped, not just an opaque id.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
+from family_assistant.storage.database import Database
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     confirmation_arguments_block_reason,
@@ -22,6 +23,8 @@ from family_assistant.tools.confirmation import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -30,10 +33,12 @@ def _no_context() -> ToolExecutionContext:
     return cast("ToolExecutionContext", None)
 
 
-def _context_with_task(task: dict[str, object] | None) -> ToolExecutionContext:
+def _context_for_conversation(
+    db_engine: AsyncEngine, conversation_id: str
+) -> ToolExecutionContext:
     context = MagicMock()
-    context.conversation_id = "conv-1"
-    context.db_context.worker_tasks.get_task = AsyncMock(return_value=task)
+    context.conversation_id = conversation_id
+    context.db_context = Database(db_engine)
     return cast("ToolExecutionContext", context)
 
 
@@ -81,27 +86,42 @@ async def test_spawn_worker_confirmation_shows_a_long_description_in_full() -> N
 
 
 @pytest.mark.asyncio
-async def test_cancel_worker_task_confirmation_shows_task_details() -> None:
+async def test_cancel_worker_task_confirmation_shows_task_details(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await db.worker_tasks.create_task(
+        task_id="task-123",
+        conversation_id="conv-1",
+        interface_type="test",
+        task_description="Build the report generator",
+    )
+    assert await db.worker_tasks.update_task_status("task-123", "running")
+    await db.worker_tasks.create_task(
+        task_id="task-other-conv",
+        conversation_id="conv-2",
+        interface_type="test",
+        task_description="Someone else's other task",
+    )
+
     prompt = await render_cancel_worker_task_confirmation(
         {"task_id": "task-123"},
-        _context_with_task({
-            "task_id": "task-123",
-            "conversation_id": "conv-1",
-            "status": "running",
-            "task_description": "Build the report generator",
-        }),
+        _context_for_conversation(db_engine, "conv-1"),
     )
 
     assert "task-123" in prompt
     assert "running" in prompt
     assert "Build the report generator" in prompt
+    assert "Someone else's other task" not in prompt
 
 
 @pytest.mark.asyncio
-async def test_cancel_worker_task_confirmation_handles_unknown_task() -> None:
+async def test_cancel_worker_task_confirmation_handles_unknown_task(
+    db_engine: AsyncEngine,
+) -> None:
     prompt = await render_cancel_worker_task_confirmation(
         {"task_id": "task-gone"},
-        _context_with_task(None),
+        _context_for_conversation(db_engine, "conv-1"),
     )
 
     assert "task-gone" in prompt
@@ -109,17 +129,22 @@ async def test_cancel_worker_task_confirmation_handles_unknown_task() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cancel_worker_task_confirmation_hides_other_conversations_task() -> None:
+async def test_cancel_worker_task_confirmation_hides_other_conversations_task(
+    db_engine: AsyncEngine,
+) -> None:
     # A task belonging to a different conversation is refused on cancel anyway,
     # so the prompt must not leak its details to an approver in this one.
+    db = Database(db_engine)
+    await db.worker_tasks.create_task(
+        task_id="task-999",
+        conversation_id="conv-other",
+        interface_type="test",
+        task_description="Some other conversation's private task",
+    )
+
     prompt = await render_cancel_worker_task_confirmation(
         {"task_id": "task-999"},
-        _context_with_task({
-            "task_id": "task-999",
-            "conversation_id": "conv-other",
-            "status": "running",
-            "task_description": "Some other conversation's private task",
-        }),
+        _context_for_conversation(db_engine, "conv-1"),
     )
 
     assert "not found" in prompt

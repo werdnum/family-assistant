@@ -159,6 +159,7 @@ class TestOpenAIStreamUsage:
             api_key="test",
             model="gpt-5.5",
             model_parameters={"gpt-5.5": {"use_responses_api": False, **extra_params}},
+            base_url="https://api.openai.com/v1",
         )
 
     @staticmethod

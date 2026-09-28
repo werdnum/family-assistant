@@ -342,7 +342,9 @@ async def test_a_revoked_jar_disables_autofill_as_well() -> None:
 async def test_a_deleted_jar_is_treated_as_revoked() -> None:
     backend = _jar_backend({"__missing__": True}, {"fresh": True})
     routing = await route_jar(backend, _site())
+    assert routing.jar_id is None
     assert routing.login_required is not None
+    assert "revoked" in routing.login_required
 
 
 @pytest.mark.asyncio

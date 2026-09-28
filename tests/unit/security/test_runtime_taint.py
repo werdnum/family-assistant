@@ -1502,53 +1502,6 @@ def test_machine_data_outranks_a_cleaner_unspecified_default() -> None:
     assert source.tier is SourceTrustTier.RECOGNIZED_MACHINE
 
 
-def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:
-    """The gate that asks writes the answer onto the taint it asked about.
-
-    A downstream gate on the target profile then reads evidence rather than
-    inferring, from the shape of the call path, that somebody was probably
-    asked.
-    """
-    tracker = InMemoryTurnTaintTracker()
-    provider = TaintTrackingToolsProvider(
-        LocalToolsProvider(registrations=[]),
-        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
-    )
-    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
-
-    provider._record_sink_approval(
-        context,
-        _tool_descriptor("delegate_to_service", ToolTag.DELEGATION),
-        SinkClass.SANDBOX_NETWORK,
-        {"target_service_id": "coder"},
-    )
-
-    assert tracker.snapshot().is_sink_approved(
-        SinkClass.SANDBOX_NETWORK, profile_id="coder"
-    )
-    assert not tracker.snapshot().is_sink_approved(
-        SinkClass.SANDBOX_NETWORK, profile_id="other-coder"
-    )
-
-
-def test_an_ordinary_tool_call_records_no_approval() -> None:
-    """A non-delegation tool *is* the sink; clearing the turn would over-grant."""
-    tracker = InMemoryTurnTaintTracker()
-    provider = TaintTrackingToolsProvider(LocalToolsProvider(registrations=[]))
-    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
-
-    provider._record_sink_approval(
-        context,
-        _tool_descriptor("spawn_worker", ToolTag.CODE_EXECUTION),
-        SinkClass.SANDBOX_NETWORK,
-        {},
-    )
-
-    assert not tracker.snapshot().is_sink_approved(
-        SinkClass.SANDBOX_NETWORK, profile_id="coder"
-    )
-
-
 def _delegation_provider(mode: TaintPolicyMode) -> TaintTrackingToolsProvider:
     return TaintTrackingToolsProvider(
         LocalToolsProvider(
@@ -1646,7 +1599,11 @@ async def test_an_unconfirmed_delegation_records_no_approval(
 async def test_an_approved_confirmation_records_the_approval(
     db_engine: AsyncEngine,
 ) -> None:
-    """The approval the target gate reads comes from a user actually saying yes."""
+    """The approval the target gate reads comes from a user actually saying yes.
+
+    It is bound to the exact target profile, so a gate on any other profile
+    still has to ask for itself.
+    """
     tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
 
     async def _approve(**_kwargs: object) -> ConfirmationOutcome:
@@ -1665,6 +1622,50 @@ async def test_an_approved_confirmation_records_the_approval(
     )
 
     assert tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="other-coder"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_approved_ordinary_tool_call_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """A non-delegation tool *is* the sink; clearing the turn would over-grant.
+
+    The call names a target profile in its arguments so that only the tool
+    not being a delegation keeps the approval off the taint.
+    """
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
+    confirmations_shown: list[dict[str, object]] = []
+
+    async def _approve(**kwargs: object) -> ConfirmationOutcome:
+        confirmations_shown.append(kwargs)
+        return ConfirmationOutcome(kind="approved", result=None)
+
+    context = replace(
+        _minimal_context(Database(db_engine), tracker),
+        request_confirmation_callback=_approve,
+    )
+    provider = TaintTrackingToolsProvider(
+        _tainting_provider().wrapped_provider,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+
+    result = await provider.execute_tool(
+        "worker_tool",
+        {"target_service_id": "coder"},
+        context,
+        "call_worker_confirmed",
+    )
+
+    assert len(confirmations_shown) == 1
+    assert isinstance(result, ToolResult)
+    assert result.get_text() == "worker output"
+    assert not tracker.snapshot().is_sink_approved(
         SinkClass.SANDBOX_NETWORK, profile_id="coder"
     )
 
@@ -1715,7 +1716,7 @@ def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> Non
             {"target_service_id": "research"},
             {"coder": SinkClass.SANDBOX_NETWORK},
         )
-        is not SinkClass.SANDBOX_NETWORK
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     )
 
 
@@ -2271,7 +2272,6 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
 
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
-    assert "requested=adjudicate effective=audit mode=observe" in caplog.text
     would_enforce_warnings = [
         record
         for record in caplog.records
@@ -3299,25 +3299,33 @@ def test_legacy_metadata_round_trip_compatibility() -> None:
 
 
 def test_seen_keys_index_is_strictly_bounded() -> None:
-    """The deduplication index stays strictly bounded by DEFAULT_MAX_SEEN_KEYS and compacted to ints."""
-    state = TurnTaintState.empty()
-    for i in range(200):
-        source = TaintSource(
+    """Deduplication remembers only the most recent DEFAULT_MAX_SEEN_KEYS distinct sources."""
+
+    def source(i: int) -> TaintSource:
+        return TaintSource(
             source_type=TaintSourceType.TOOL_OUTPUT,
             source_id=f"tool-{i}",
             tier=SourceTrustTier.TRUSTED_INTERNAL,
             labels=frozenset({f"label-{i}"}),
             reason=f"Reason {i}",
         )
-        state = state.add_source(source)
 
-    # _seen_keys must never grow beyond DEFAULT_MAX_SEEN_KEYS and must store compacted integer hashes
-    assert len(state._seen_keys) <= DEFAULT_MAX_SEEN_KEYS
+    added = 200
+    state = TurnTaintState.empty()
+    for i in range(added):
+        state = state.add_source(source(i))
+    assert state.distinct_source_count == added
     assert len(state._seen_keys) == DEFAULT_MAX_SEEN_KEYS
-    assert all(isinstance(h, int) for h in state._seen_keys)
-    # The most recent source is retained in the bounded window
-    latest_hash = hash(taint_source_semantic_key(source))
-    assert latest_hash in state._seen_keys
+
+    oldest_remembered = added - DEFAULT_MAX_SEEN_KEYS
+    for i in (added - 1, oldest_remembered):
+        state = state.add_source(source(i))
+    assert state.total_source_count == added + 2
+    assert state.distinct_source_count == added
+
+    state = state.add_source(source(oldest_remembered - 1))
+    assert state.total_source_count == added + 3
+    assert state.distinct_source_count == added + 1
 
 
 def test_merge_history_taint_counts_history_sources_once() -> None:

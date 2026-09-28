@@ -3,7 +3,6 @@
 import asyncio
 import contextlib
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -33,9 +32,6 @@ from family_assistant.tools.policy import (
 )
 from family_assistant.tools.types import ToolDefinition
 
-if TYPE_CHECKING:
-    from mcp import ClientSession
-
 
 def _tool_definition(name: str) -> ToolDefinition:
     return {
@@ -46,25 +42,6 @@ def _tool_definition(name: str) -> ToolDefinition:
             "parameters": {"type": "object", "properties": {}},
         },
     }
-
-
-@pytest.mark.asyncio
-async def test_mcp_provider_exposes_tool_to_server_mapping() -> None:
-    """Test that MCPToolsProvider exposes tool-to-server mapping."""
-    # Create MCPToolsProvider with mock config
-    mcp_configs: dict[str, MCPServerConfig] = {
-        "server1": {"transport": "stdio", "command": "echo"},
-        "server2": {"transport": "stdio", "command": "echo"},
-    }
-
-    provider = MCPToolsProvider(mcp_configs)
-
-    # The method should exist and return a dict
-    mapping = provider.get_tool_to_server_mapping()
-    assert isinstance(mapping, dict)
-
-    # Initially empty before initialization
-    assert len(mapping) == 0
 
 
 @pytest.mark.asyncio
@@ -84,14 +61,44 @@ async def test_get_server_statuses_returns_per_server_diagnostics() -> None:
     }
 
     provider = MCPToolsProvider(mcp_configs)
-    # Simulate two states: code-execution connected with two tools, remote-tools failed.
-    provider._server_statuses["code-execution"] = MCP_SERVER_STATUS_CONNECTED
-    provider._server_statuses["remote-tools"] = MCP_SERVER_STATUS_FAILED
-    provider._tool_map = {
-        "create_workspace": "code-execution",
-        "execute_shell": "code-execution",
-    }
-    provider._sessions = {"code-execution": cast("ClientSession", object())}
+
+    async def fake_connect_and_discover_mcp(
+        server_id: str,
+        server_conf: MCPServerConfig,
+    ) -> tuple[
+        object | None, list[ToolDefinition], list[ToolDescriptor], dict[str, str]
+    ]:
+        del server_conf
+        if server_id == "code-execution":
+            definitions = [
+                _tool_definition("create_workspace"),
+                _tool_definition("execute_shell"),
+            ]
+            descriptors = [
+                build_tool_descriptor(
+                    definition,
+                    frozenset({ToolTag.READ_ONLY}),
+                    origin="mcp",
+                    mcp_server_id=server_id,
+                )
+                for definition in definitions
+            ]
+            session = SimpleNamespace(
+                list_tools=AsyncMock(return_value=ListToolsResult(tools=[]))
+            )
+            provider._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTED
+            return (
+                session,
+                definitions,
+                descriptors,
+                {d["function"]["name"]: server_id for d in definitions},
+            )
+        provider._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+        return None, [], [], {}
+
+    provider._connect_and_discover_mcp = fake_connect_and_discover_mcp  # type: ignore[method-assign]
+    provider._health_check_enabled = False
+    await provider.initialize()
 
     statuses = provider.get_server_statuses()
 
@@ -344,37 +351,36 @@ async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None
         "server1": {"transport": "stdio", "command": "echo"},
         "server2": {"transport": "stdio", "command": "echo"},
     })
-    existing_definition: ToolDefinition = {
-        "type": "function",
-        "function": {
-            "name": "shared_tool",
-            "description": "Shared tool",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    }
-    provider._tool_map = {"shared_tool": "server2"}
-    provider._definitions = [existing_definition]
-    provider._descriptors = [
-        build_tool_descriptor(
-            existing_definition,
-            frozenset({ToolTag.READ_ONLY, ToolTag.OUTPUT_TRUSTED}),
-            origin="mcp",
-            mcp_server_id="server2",
-        )
-    ]
+    shared_definition = _tool_definition("shared_tool")
+    server1_should_report_tool = False
 
     async def fake_connect_and_discover_mcp(
         server_id: str,
         server_conf: MCPServerConfig,
-    ) -> tuple[object, list[ToolDefinition], list, dict[str, str]]:
-        assert server_id == "server1"
+    ) -> tuple[object, list[ToolDefinition], list[ToolDescriptor], dict[str, str]]:
         assert server_conf.get("command") == "echo"
+        if server_id == "server2":
+            return (
+                object(),
+                [shared_definition],
+                [
+                    build_tool_descriptor(
+                        shared_definition,
+                        frozenset({ToolTag.READ_ONLY, ToolTag.OUTPUT_TRUSTED}),
+                        origin="mcp",
+                        mcp_server_id="server2",
+                    )
+                ],
+                {"shared_tool": "server2"},
+            )
+        if not server1_should_report_tool:
+            return object(), [], [], {}
         return (
             object(),
-            [existing_definition],
+            [shared_definition],
             [
                 build_tool_descriptor(
-                    existing_definition,
+                    shared_definition,
                     frozenset({ToolTag.DESTRUCTIVE, ToolTag.OUTPUT_UNTRUSTED}),
                     origin="mcp",
                     mcp_server_id="server1",
@@ -384,18 +390,18 @@ async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None
         )
 
     provider._connect_and_discover_mcp = fake_connect_and_discover_mcp  # type: ignore[method-assign]
-    provider._close_server_connections = AsyncMock()
-    provider._sessions = cast(
-        "dict[str, ClientSession]", {"server1": SimpleNamespace()}
-    )
-    provider._connection_contexts = {"server1": AsyncMock()}
+    provider._health_check_enabled = False
+    await provider.initialize()
 
-    reconnected = await provider._reconnect_server("server1")
+    server1_should_report_tool = True
+    reconnected = await provider.reconnect_server("server1")
 
     assert reconnected is True
-    assert provider._tool_map["shared_tool"] == "server2"
-    assert len(provider._definitions) == 1
-    assert provider._descriptors[0].mcp_server_id == "server2"
+    assert provider.get_tool_to_server_mapping()["shared_tool"] == "server2"
+    descriptors = await provider.get_tool_descriptors()
+    shared_descriptors = [d for d in descriptors if d.name == "shared_tool"]
+    assert len(shared_descriptors) == 1
+    assert shared_descriptors[0].mcp_server_id == "server2"
 
 
 @pytest.mark.asyncio
@@ -410,20 +416,22 @@ async def test_reconnect_bumps_descriptors_version_and_restores_tools(
     advance so those caches rebuild instead of serving a stale list; otherwise
     the tools stay unadvertisable until the process restarts.
     """
-    provider = MCPToolsProvider({
-        "code-execution": {"transport": "stdio", "command": "echo"},
-    })
-    # Simulate "down at startup": initialised, but no descriptors discovered.
-    provider._initialized = True
-    version_while_down = provider.descriptors_version
-
+    provider = MCPToolsProvider(
+        {"code-execution": {"transport": "stdio", "command": "echo"}},
+        health_check_interval_seconds=0,
+    )
     recovered_definition = _tool_definition("execute_python")
+    connect_should_succeed = False
 
     async def fake_connect_and_discover_mcp(
         server_id: str,
         server_conf: MCPServerConfig,
-    ) -> tuple[object, list[ToolDefinition], list[ToolDescriptor], dict[str, str]]:
+    ) -> tuple[
+        object | None, list[ToolDefinition], list[ToolDescriptor], dict[str, str]
+    ]:
         del server_conf
+        if not connect_should_succeed:
+            return None, [], [], {}
         return (
             object(),
             [recovered_definition],
@@ -441,14 +449,18 @@ async def test_reconnect_bumps_descriptors_version_and_restores_tools(
     monkeypatch.setattr(
         provider, "_connect_and_discover_mcp", fake_connect_and_discover_mcp
     )
-    monkeypatch.setattr(provider, "_close_server_connections", AsyncMock())
+    provider._health_check_enabled = False
+    # Simulate "down at startup": no descriptors discovered.
+    await provider.initialize()
+    version_while_down = provider.descriptors_version
 
-    reconnected = await provider._reconnect_server("code-execution")
+    connect_should_succeed = True
+    reconnected = await provider.reconnect_server("code-execution")
 
     assert reconnected is True
     assert provider.descriptors_version > version_while_down
-    descriptor_names = {descriptor.name for descriptor in provider._descriptors}
-    assert "execute_python" in descriptor_names
+    descriptors = await provider.get_tool_descriptors()
+    assert "execute_python" in {descriptor.name for descriptor in descriptors}
 
 
 @pytest.mark.asyncio
@@ -504,8 +516,9 @@ async def test_health_check_retries_failed_and_cancelled_servers() -> None:
     # Wait for the health check to retry both failed/cancelled servers
     await asyncio.wait_for(all_retried.wait(), timeout=5.0)
 
-    assert provider._server_statuses["failed_server"] == MCP_SERVER_STATUS_CONNECTED
-    assert provider._server_statuses["cancelled_server"] == MCP_SERVER_STATUS_CONNECTED
+    statuses = provider.get_server_statuses()
+    assert statuses["failed_server"]["status"] == MCP_SERVER_STATUS_CONNECTED
+    assert statuses["cancelled_server"]["status"] == MCP_SERVER_STATUS_CONNECTED
     assert "healthy" not in retried_servers
 
     # Clean up
@@ -551,11 +564,14 @@ async def test_initialize_starts_health_check_with_no_sessions() -> None:
     # Health check task should be started even though no sessions exist
     assert provider._health_check_task is not None
     assert not provider._health_check_task.done()
-    assert len(provider._sessions) == 0
+    assert provider.get_server_statuses()["server1"]["session_active"] is False
 
     # Wait for the health check to actually reconnect the server
     await asyncio.wait_for(reconnected.wait(), timeout=5.0)
-    assert provider._server_statuses["server1"] == MCP_SERVER_STATUS_CONNECTED
+    assert (
+        provider.get_server_statuses()["server1"]["status"]
+        == MCP_SERVER_STATUS_CONNECTED
+    )
 
     # Clean up
     provider._health_check_enabled = False

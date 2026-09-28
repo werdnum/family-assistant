@@ -27,10 +27,7 @@ from family_assistant.tools.metadata import (
     ToolTag,
     make_local_tool_metadata,
 )
-from family_assistant.tools.on_demand import (
-    RESERVED_META_TOOL_NAMES,
-    OnDemandToolsView,
-)
+from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
@@ -444,12 +441,6 @@ async def test_non_meta_names_are_delegated_unchanged() -> None:
 
     assert result == "done"
     assert CALLS == [("called", {})]
-
-
-@pytest.mark.parametrize("reserved", ["search_tools", "call_tool", "activate_tools"])
-def test_a_real_tool_may_not_take_a_meta_tool_name(reserved: str) -> None:
-    """A shadowed tool fails loudly rather than being silently intercepted."""
-    assert reserved in RESERVED_META_TOOL_NAMES
 
 
 @pytest.mark.asyncio

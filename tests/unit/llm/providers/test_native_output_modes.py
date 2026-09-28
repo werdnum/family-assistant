@@ -219,7 +219,14 @@ async def test_google_generate_structured_retry_adds_feedback() -> None:
     assert result == SampleResponse(answer="ok")
     first_contents = mock_generate.await_args_list[0].kwargs["contents"]
     second_contents = mock_generate.await_args_list[1].kwargs["contents"]
-    assert len(second_contents) > len(first_contents)
+    assert len(second_contents) == len(first_contents) + 2
+    assert second_contents[:-2] == first_contents
+    assert second_contents[-2].role == "model"
+    assert second_contents[-2].parts[0].text == "not-json"
+    assert second_contents[-1].role == "user"
+    feedback = second_contents[-1].parts[0].text
+    assert "did not satisfy the required schema" in feedback
+    assert "Error:" in feedback
 
 
 @pytest.mark.no_db
@@ -269,4 +276,11 @@ async def test_google_generate_json_retry_adds_feedback() -> None:
     assert result == {"answer": "ok"}
     first_contents = mock_generate.await_args_list[0].kwargs["contents"]
     second_contents = mock_generate.await_args_list[1].kwargs["contents"]
-    assert len(second_contents) > len(first_contents)
+    assert len(second_contents) == len(first_contents) + 2
+    assert second_contents[:-2] == first_contents
+    assert second_contents[-2].role == "model"
+    assert second_contents[-2].parts[0].text == '["wrong"]'
+    assert second_contents[-1].role == "user"
+    feedback = second_contents[-1].parts[0].text
+    assert "not a valid JSON object" in feedback
+    assert "Error:" in feedback

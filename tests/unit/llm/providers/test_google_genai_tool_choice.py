@@ -351,35 +351,6 @@ class TestGoogleGenAIToolChoice:
             assert len(config.tools) > 0
 
     @pytest.mark.asyncio
-    async def test_tool_choice_parameter_passed_to_generate_response(
-        self,
-        google_client: GoogleGenAIClient,
-        sample_tools: list[ToolDefinition],
-        sample_messages: list[Any],
-    ) -> None:
-        """Test that tool_choice parameter is properly passed through."""
-        with patch.object(
-            google_client.client.aio.models, "generate_content", new_callable=AsyncMock
-        ) as mock_generate:
-            # Setup mock response
-            mock_response = MagicMock()
-            mock_response.text = "Response"
-            mock_generate.return_value = mock_response
-
-            # Test with different tool_choice values
-            tool_choice_values = ["auto", "none", "required", "attach_to_response"]
-
-            for tool_choice in tool_choice_values:
-                await google_client.generate_response(
-                    sample_messages,
-                    tools=sample_tools,
-                    tool_choice=tool_choice,
-                )
-
-                # Verify each call was made
-                assert mock_generate.called
-
-    @pytest.mark.asyncio
     async def test_automatic_function_calling_disabled(
         self,
         google_client: GoogleGenAIClient,

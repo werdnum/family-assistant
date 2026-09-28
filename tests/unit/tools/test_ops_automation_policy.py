@@ -15,6 +15,9 @@ from family_assistant.actions import (
     WakeLlmProfileError,
     assert_wake_llm_allowed,
 )
+from family_assistant.assistant import (
+    _build_profile_policy_engine,  # noqa: PLC2701 - exercise production policy assembly
+)
 from family_assistant.config_loader import load_config
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
@@ -46,14 +49,24 @@ def test_guard_refuses_wake_llm_from_confined_profile() -> None:
 # --- ops_automation shipped profile policy ---
 
 
-def _ops_policy_engine(tmp_path: Path) -> PolicyEngine:
+def _profile_policy_engine(tmp_path: Path, profile_id: str) -> PolicyEngine:
     config = load_config(
         defaults_file_path="defaults.yaml",
         config_file_path=str(tmp_path / "missing-config.yaml"),
     )
-    profile = next(p for p in config.service_profiles if p.id == "ops_automation")
-    assert profile.tools_policy is not None
-    return PolicyEngine.from_policy_config(profile.tools_policy)
+    profile = next(p for p in config.service_profiles if p.id == profile_id)
+    return _build_profile_policy_engine(
+        profile.id,
+        profile.tools_policy,
+        profile.operator_tools_policy,
+        config.global_tools_policy,
+        profile.excluded_global_tools,
+        memory_read=config.effective_memory_read(profile),
+    )
+
+
+def _ops_policy_engine(tmp_path: Path) -> PolicyEngine:
+    return _profile_policy_engine(tmp_path, "ops_automation")
 
 
 def _descriptor(name: str) -> ToolDescriptor:
@@ -136,13 +149,7 @@ def test_complex_tasks_requires_confirmation_for_ops_delegation(
     """The /complex profile is an allowed delegation source for ops_automation,
     so it must carry the same confirm gate as the default profile (the human
     approval boundary for standing up an unattended automation)."""
-    config = load_config(
-        defaults_file_path="defaults.yaml",
-        config_file_path=str(tmp_path / "missing-config.yaml"),
-    )
-    profile = next(p for p in config.service_profiles if p.id == "complex_tasks")
-    assert profile.tools_policy is not None
-    engine = PolicyEngine.from_policy_config(profile.tools_policy)
+    engine = _profile_policy_engine(tmp_path, "complex_tasks")
     evaluation = engine.evaluate(
         _descriptor("delegate_to_service"),
         arguments={"target_service_id": "ops_automation"},

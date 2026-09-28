@@ -48,14 +48,10 @@ def _configured_model_ids(config: AppConfig) -> set[str]:
     return {model for model in models if model}
 
 
-def test_no_shipped_profile_prompt_or_description_names_a_model(
-    shipped_config: AppConfig,
-) -> None:
-    model_ids = _configured_model_ids(shipped_config)
-    assert model_ids, "the shipped configuration should name some models"
-
+def _model_name_offences(config: AppConfig) -> list[str]:
+    model_ids = _configured_model_ids(config)
     offences: list[str] = []
-    for profile in shipped_config.service_profiles:
+    for profile in config.service_profiles:
         if profile.id in _ALLOWED_TO_NAME_ITS_MODEL:
             continue
         texts = {
@@ -69,6 +65,16 @@ def test_no_shipped_profile_prompt_or_description_names_a_model(
             if model.lower() in text.lower()
         )
 
+    return offences
+
+
+def test_no_shipped_profile_prompt_or_description_names_a_model(
+    shipped_config: AppConfig,
+) -> None:
+    assert _configured_model_ids(shipped_config), (
+        "the shipped configuration should name some models"
+    )
+    offences = _model_name_offences(shipped_config)
     assert not offences, (
         "A profile's prompt or description must not name the model it runs on -- "
         "the tier decides that, and the actual model surfaces from runtime "
@@ -76,11 +82,23 @@ def test_no_shipped_profile_prompt_or_description_names_a_model(
     )
 
 
-@pytest.mark.parametrize("profile_id", ["default_assistant", "complex_tasks"])
+@pytest.mark.parametrize(
+    ("profile_id", "field"),
+    [("default_assistant", "system_prompt"), ("complex_tasks", "description")],
+)
 def test_the_tiered_profiles_are_covered_by_the_scan(
-    shipped_config: AppConfig, profile_id: str
+    shipped_config: AppConfig, profile_id: str, field: str
 ) -> None:
-    """The scan is worthless if it silently stops seeing the profiles it guards."""
-    assert any(
-        profile.id == profile_id for profile in shipped_config.service_profiles
-    ), f"{profile_id} is no longer shipped; update this test's expectations"
+    """A configured tier model planted in either surface must be reported."""
+    model = shipped_config.model_tiers["standard"].chain[0].model
+    assert model is not None
+    profile = next(p for p in shipped_config.service_profiles if p.id == profile_id)
+    if field == "system_prompt":
+        prompts = profile.processing_config.prompts
+        prompts[field] = f"{prompts.get(field, '')} {model}"
+    else:
+        profile.description += f" {model}"
+
+    assert f"{profile_id}.{field} names {model!r}" in _model_name_offences(
+        shipped_config
+    )

@@ -152,13 +152,23 @@ March,200"""
     async def test_create_chart_with_json_data(
         self,
         mock_exec_context: Mock,
-        vega_lite_spec_with_named_data: str,
         mock_json_attachment: Mock,
     ) -> None:
         """Test creating a chart with JSON data from attachment."""
+        spec = json.dumps({
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "description": "Bar chart using named dataset",
+            "data": {"name": "data.json"},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "month", "type": "nominal"},
+                "y": {"field": "sales", "type": "quantitative"},
+            },
+        })
+
         result = await create_vega_chart_tool(
             mock_exec_context,
-            spec=vega_lite_spec_with_named_data,
+            spec=spec,
             data_attachments=[mock_json_attachment],
             title="Revenue Chart",
         )
@@ -167,14 +177,27 @@ March,200"""
         assert "Created visualization: Revenue Chart" in result.get_text()
         assert result.attachments and len(result.attachments) > 0
 
-        # Verify attachment was accessed
-        mock_json_attachment.get_content_async.assert_called_once()
-
         # Verify it's a valid PNG
         content = result.attachments[0].content
         assert content is not None
         img = Image.open(io.BytesIO(content))
         assert img.format == "PNG"
+
+        # Verify the JSON attachment's rows were actually merged into the spec
+        debug_result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=spec,
+            data_attachments=[mock_json_attachment],
+            title="Revenue Chart",
+            debug=True,
+        )
+        debug_spec = debug_result.get_data()
+        assert isinstance(debug_spec, dict)
+        assert debug_spec["data"]["values"] == [
+            {"month": "January", "sales": 100},
+            {"month": "February", "sales": 150},
+            {"month": "March", "sales": 200},
+        ]
 
     @pytest.mark.asyncio
     async def test_create_chart_with_custom_scale(
@@ -228,41 +251,50 @@ March,200"""
         self, mock_exec_context: Mock, vega_lite_spec_with_named_data: str
     ) -> None:
         """Test handling when attachment content cannot be retrieved."""
-        attachment = AsyncMock()
+        attachment = Mock()
         attachment.get_id.return_value = "error-attachment"
         attachment.get_filename.return_value = "data.csv"
         attachment.get_mime_type.return_value = "text/csv"
-        attachment.get_content_async.return_value = None  # Simulate no content
+        attachment.get_content_async = AsyncMock(return_value=None)  # No content
 
         result = await create_vega_chart_tool(
             mock_exec_context,
             spec=vega_lite_spec_with_named_data,
             data_attachments=[attachment],
+            debug=True,
         )
 
-        # Should still work but warn about missing attachment
+        # The attachment is skipped, so no values are merged into the named dataset
         assert isinstance(result, ToolResult)
-        # The chart may fail if it requires the data, or succeed if Vega provides defaults
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["data"] == {"name": "data.csv"}
+        assert "Error creating chart" not in result.get_text()
 
     @pytest.mark.asyncio
     async def test_unsupported_attachment_type(
         self, mock_exec_context: Mock, vega_lite_spec_with_named_data: str
     ) -> None:
         """Test handling of unsupported attachment types."""
-        attachment = AsyncMock()
+        attachment = Mock()
         attachment.get_id.return_value = "binary-attachment"
         attachment.get_filename.return_value = "data.bin"
         attachment.get_mime_type.return_value = "application/octet-stream"
-        attachment.get_content_async.return_value = b"binary data"
+        attachment.get_content_async = AsyncMock(return_value=b"binary data")
 
         result = await create_vega_chart_tool(
             mock_exec_context,
             spec=vega_lite_spec_with_named_data,
             data_attachments=[attachment],
+            debug=True,
         )
 
-        # Should complete but ignore the unsupported attachment
+        # The unsupported attachment is ignored, so no values get merged in
         assert isinstance(result, ToolResult)
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["data"] == {"name": "data.csv"}
+        assert "Error creating chart" not in result.get_text()
 
     @pytest.mark.asyncio
     async def test_default_title(
@@ -283,60 +315,79 @@ March,200"""
         self, mock_exec_context: Mock, vega_lite_spec_with_named_data: str
     ) -> None:
         """Test handling of malformed CSV data."""
-        attachment = AsyncMock()
+        attachment = Mock()
         attachment.get_id.return_value = "bad-csv"
         attachment.get_filename.return_value = "data.csv"
         attachment.get_mime_type.return_value = "text/csv"
-        attachment.get_content_async.return_value = b"not,proper,csv\ndata"
+        attachment.get_content_async = AsyncMock(return_value=b"not,proper,csv\ndata")
 
         result = await create_vega_chart_tool(
             mock_exec_context,
             spec=vega_lite_spec_with_named_data,
             data_attachments=[attachment],
+            debug=True,
         )
 
-        # Should handle gracefully
+        # csv.DictReader does not raise on ragged rows; it merges what it parsed
         assert isinstance(result, ToolResult)
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["data"]["values"] == [
+            {"not": "data", "proper": None, "csv": None}
+        ]
+        assert "Error creating chart" not in result.get_text()
 
     @pytest.mark.asyncio
     async def test_malformed_json_data(
         self, mock_exec_context: Mock, vega_lite_spec_with_named_data: str
     ) -> None:
         """Test handling of malformed JSON data."""
-        attachment = AsyncMock()
+        attachment = Mock()
         attachment.get_id.return_value = "bad-json"
         attachment.get_filename.return_value = "data.json"
         attachment.get_mime_type.return_value = "application/json"
-        attachment.get_content_async.return_value = b"{ invalid json }"
+        attachment.get_content_async = AsyncMock(return_value=b"{ invalid json }")
 
         result = await create_vega_chart_tool(
             mock_exec_context,
             spec=vega_lite_spec_with_named_data,
             data_attachments=[attachment],
+            debug=True,
         )
 
-        # Should complete (the invalid attachment is skipped)
+        # The invalid attachment is skipped, so no values are merged in
         assert isinstance(result, ToolResult)
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["data"] == {"name": "data.csv"}
+        assert "Error creating chart" not in result.get_text()
 
     @pytest.mark.asyncio
     async def test_non_utf8_attachment(
         self, mock_exec_context: Mock, vega_lite_spec_with_named_data: str
     ) -> None:
         """Test handling of non-UTF-8 attachment content."""
-        attachment = AsyncMock()
+        attachment = Mock()
         attachment.get_id.return_value = "binary"
         attachment.get_filename.return_value = "data.csv"
         attachment.get_mime_type.return_value = "text/csv"
-        attachment.get_content_async.return_value = b"\x80\x81\x82"  # Invalid UTF-8
+        attachment.get_content_async = AsyncMock(
+            return_value=b"\x80\x81\x82"
+        )  # Invalid UTF-8
 
         result = await create_vega_chart_tool(
             mock_exec_context,
             spec=vega_lite_spec_with_named_data,
             data_attachments=[attachment],
+            debug=True,
         )
 
-        # Should handle gracefully by skipping the invalid attachment
+        # The invalid attachment is skipped, so no values are merged in
         assert isinstance(result, ToolResult)
+        returned_spec = result.get_data()
+        assert isinstance(returned_spec, dict)
+        assert returned_spec["data"] == {"name": "data.csv"}
+        assert "Error creating chart" not in result.get_text()
 
     @pytest.mark.asyncio
     async def test_create_chart_with_data_dict(self, mock_exec_context: Mock) -> None:
@@ -418,6 +469,19 @@ March,200"""
         assert content is not None
         img = Image.open(io.BytesIO(content))
         assert img.format == "PNG"
+
+        # Verify the list landed under the default "data" name rather than
+        # being silently dropped
+        debug_result = await create_vega_chart_tool(
+            mock_exec_context,
+            spec=json.dumps(spec),
+            data=data,
+            title="Sales Chart",
+            debug=True,
+        )
+        debug_spec = debug_result.get_data()
+        assert isinstance(debug_spec, dict)
+        assert debug_spec["data"]["values"] == data
 
     @pytest.mark.asyncio
     async def test_create_chart_with_data_and_attachments(

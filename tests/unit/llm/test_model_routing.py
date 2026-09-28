@@ -27,6 +27,7 @@ from family_assistant.llm.model_selection import (
     ROUTING_OUTCOMES,
     ModelTierEligibility,
     ModelTierOption,
+    ResolvedModelSelection,
     RoutingOutcome,
 )
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
@@ -374,9 +375,21 @@ def test_the_shape_the_router_actually_fills_is_what_is_validated() -> None:
 
 
 def test_the_persisted_outcome_values_are_derived_from_the_type() -> None:
-    """The envelope validates a stored outcome against this set.
-
-    A hand-written second list would be free to drift from the type until a row
-    this deployment itself wrote failed to load.
-    """
+    """Every declared routing outcome must pass persistence validation."""
     assert set(get_args(RoutingOutcome.__value__)) == ROUTING_OUTCOMES
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "invalid", "error"])
+def test_a_failed_routing_outcome_survives_persistence(
+    outcome: RoutingOutcome,
+) -> None:
+    """A queued run must retain why routing fell back to its default tier."""
+    selection = ResolvedModelSelection(
+        tier="standard",
+        requested=None,
+        source="default",
+        routing_outcome=outcome,
+        classifier_model="mock-classifier",
+    )
+
+    assert ResolvedModelSelection.from_json(selection.to_json()) == selection.freeze()
