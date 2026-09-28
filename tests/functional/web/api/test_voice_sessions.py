@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
@@ -17,6 +17,9 @@ from family_assistant.tools.infrastructure import LocalToolsProvider
 from tests.helpers import wait_for_condition
 
 if TYPE_CHECKING:
+    from family_assistant.storage.repositories.delegation_runs import (
+        DelegationRunCreate,
+    )
     from family_assistant.web.web_chat_interface import WebChatInterface
 
 
@@ -36,6 +39,77 @@ class HandoffNotifier:
         metadata: NotificationMetadata | None = None,
     ) -> None:
         self.calls.append((user_identifier, title, metadata))
+
+
+@pytest.mark.asyncio
+async def test_voice_delegation_adopts_profile_without_transcript_upload(
+    web_only_assistant: Assistant,
+    db_engine: AsyncEngine,
+) -> None:
+    """A direct completion remains readable if the final voice upload fails."""
+    conversation_id = f"web_conv_{uuid4()}"
+    db = Database(db_engine)
+    started_at = datetime.now(UTC)
+    await db.message_history.add_message(
+        UserMessage.from_trusted_user(content=""),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=started_at,
+        user_id="test_user",
+        is_internal=True,
+    )
+    run: DelegationRunCreate = {
+        "delegation_id": f"delegation_{uuid4().hex}",
+        "task_id": f"task_{uuid4().hex}",
+        "source_profile_id": "test_browser",
+        "target_service_id": "default_assistant",
+        "interface_type": "web",
+        "origin_interface_type": "voice",
+        "conversation_id": conversation_id,
+        "subconversation_id": f"sub_{uuid4().hex}",
+        "request_text": "check this",
+        "content_parts_json": [],
+        "user_id": "test_user",
+    }
+    await db.delegation_runs.create_run(run)
+    await db.message_history.add_message(
+        AssistantMessage(content="The delegated result is ready."),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=started_at + timedelta(milliseconds=1),
+        processing_profile_id="test_browser",
+        user_id="test_user",
+    )
+
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages",
+            params={"include_conversation_profile": "true"},
+        )
+        assert response.status_code == 200
+        assert response.json()["latest_user_profile_id"] == "test_browser"
+        assert [message["role"] for message in response.json()["messages"]] == [
+            "assistant"
+        ]
+
+        await db.message_history.add_message(
+            UserMessage.from_trusted_user(content="Follow up"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=started_at + timedelta(milliseconds=2),
+            processing_profile_id="default_assistant",
+            user_id="test_user",
+        )
+        response = await client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages",
+            params={"include_conversation_profile": "true"},
+        )
+        assert response.status_code == 200
+        assert response.json()["latest_user_profile_id"] == "default_assistant"
 
 
 @pytest.mark.asyncio
@@ -512,3 +586,84 @@ async def test_voice_session_rejects_empty_turns(
     ) as client:
         response = await client.post("/api/v1/chat/voice-sessions", json={"turns": []})
         assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_voice_session_persists_tool_call_and_result(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "turns": [
+                    {"role": "user", "text": "Find my note"},
+                    {
+                        "role": "tool_call",
+                        "tool_call_id": "call-1",
+                        "tool_name": "search_notes",
+                        "tool_arguments": {"query": "note"},
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-1",
+                        "tool_name": "search_notes",
+                        "text": "Found one note",
+                    },
+                    {"role": "assistant", "text": "I found it."},
+                ]
+            },
+        )
+        assert response.status_code == 200
+        messages_response = await client.get(
+            f"/api/v1/chat/conversations/{response.json()['conversation_id']}/messages"
+        )
+        assert messages_response.status_code == 200
+        messages = messages_response.json()["messages"]
+        assert messages[1]["tool_calls"][0]["function"]["name"] == "search_notes"
+        assert messages[2]["role"] == "tool"
+        assert messages[2]["tool_call_id"] == "call-1"
+        assert messages[2]["content"] == "Found one note"
+
+
+@pytest.mark.asyncio
+async def test_voice_session_persists_tool_activity_without_transcription(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "turns": [
+                    {
+                        "role": "tool_call",
+                        "tool_call_id": "call-only",
+                        "tool_name": "search_notes",
+                        "tool_arguments": {},
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-only",
+                        "tool_name": "search_notes",
+                        "text": "No notes found",
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 200
+        messages = await client.get(
+            f"/api/v1/chat/conversations/{response.json()['conversation_id']}/messages"
+        )
+        assert messages.status_code == 200
+        assert [message["role"] for message in messages.json()["messages"]] == [
+            "assistant",
+            "tool",
+        ]

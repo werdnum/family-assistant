@@ -13,8 +13,8 @@ in `FamilyAssistantUITests/`.
 
 ## Error Reporting and the Telemetry Lane
 
-This is where the split between real errors and diagnostic breadcrumbs originated, and the iOS app
-is its only producer — the web frontend never sets `severity` at all.
+This is where the split between real errors and diagnostic breadcrumbs originated. The iOS app sends
+most breadcrumbs; web voice tool events also set `severity: "info"`.
 
 `ErrorReporting/ErrorReporter.swift` POSTs to `POST /api/errors/`. Each report's `severity` is
 derived from its `ErrorType`, and the backend routes on `severity` alone:
@@ -27,8 +27,8 @@ derived from its `ErrorType`, and the backend routes on `severity` alone:
   the sign-in watchdog note. The buffer is dropped on restart.
 
 **Gotcha:** `error_type` does not determine the lane; `severity` does. The web frontend also sends
-`error_type: "component_error"` for React error-boundary catches, but because it never sets
-`severity` those reports land in the *error* lane. The same `error_type` string therefore means
+`error_type: "component_error"` for React error-boundary catches. Its general error client omits
+`severity`, so those reports land in the *error* lane. The same `error_type` string therefore means
 different things depending on which client sent it — do not infer the lane from it.
 
 Hard crashes (Swift traps, signals) are deliberately out of scope, since Apple already captures

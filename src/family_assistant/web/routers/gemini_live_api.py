@@ -292,6 +292,10 @@ async def _format_system_prompt(
         "If the user asks whether you are still there while you are working, tell them "
         "you are still on it rather than starting the lookup again. Never state a "
         "result, progress or estimate you do not actually have."
+        " If you delegate work that continues after your spoken turn, tell the user "
+        "the specialist's result will appear directly in this call's Chat conversation, "
+        "with a notification when available. You will not be woken to handle that "
+        "result. Do not promise to resume speaking in this live call."
     )
     guidance = turn_context_guidance(
         includes_aggregated_context=service_config.include_aggregated_context,

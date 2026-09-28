@@ -33,6 +33,26 @@ clock skew does not shift the whole transcript away from a handoff. Upload laten
 lines close to the handoff by a few seconds. The handoff remains in Chat if the final transcript
 upload fails.
 
+A tool still running when the call ends is saved as a pending call without a fabricated failure
+result. Its eventual execution outcome is available in client telemetry when the client remains
+alive. On web, the transcript upload uses a keepalive request when its payload fits the browser's
+keepalive size limit; a larger transcript uses a regular request and may be interrupted by page
+navigation.
+
+Transcript uploads are a single attempt. A failed request is reported to the user, but the client
+does not retry it automatically: the endpoint appends turns, and a lost response or partial save
+would make a retry duplicate history. Idempotent transcript persistence is a separate change.
+
+## Delegated results
+
+Voice delegation waits briefly for a specialist result so a quick answer can return through the live
+tool call and be spoken. Once the call hands off, the worker posts the specialist result directly to
+the saved Chat conversation and requests a notification. It does not wake the web assistant to
+rewrite that result: the live voice session may have ended, and a separate web turn would have
+different conversational context. The run retains its voice origin while using the web conversation
+for durable history and delivery. A later question in Chat can use the stored result and delegation
+reference.
+
 ## Boundaries
 
 - The server derives the recipient from authentication. The model cannot name a user, conversation,
@@ -50,3 +70,6 @@ Test first-call ownership binding, refusal of another user's conversation, actio
 same-conversation transcript persistence and ordering, and notification payloads. Test iOS
 notification taps for both direct HTTPS opening and ordinary in-app navigation, then run focused
 backend and iOS checks.
+
+For delegated results, test inline delivery and a handed-off run that posts a visible result without
+waking the source profile.

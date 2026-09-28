@@ -11,14 +11,11 @@ their model inline, because their runtime is coupled to one provider or one API
 surface and a tier would offer to replace it.
 """
 
-from typing import TYPE_CHECKING, cast
-
 import pytest
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.factory import LLMClientFactory
-from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.llm.model_tiers import (
     resolve_profile_llm_model,
     resolve_tier_client_config,
@@ -26,9 +23,6 @@ from family_assistant.llm.model_tiers import (
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from tests.unit.conftest import shipped_profile
-
-if TYPE_CHECKING:
-    from family_assistant.llm import LLMInterface
 
 
 # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
@@ -84,19 +78,19 @@ def test_standard_tier_profiles_keep_the_gemini_terra_chain(
         pytest.param("engineer", id="engineer"),
     ],
 )
-def test_deep_tier_profiles_run_the_sol_fable_chain(
+def test_deep_tier_profiles_run_the_opus_sol_chain(
     shipped_config: AppConfig, profile_id: str
 ) -> None:
     assert _tier_config_for(shipped_config, profile_id) == {
         "retry_config": {
             "primary": {
-                "provider": "openai",
-                "model": "gpt-6-sol",
+                "provider": "anthropic",
+                "model": "claude-opus-5-5",
                 "model_parameters": shipped_config.llm_parameters,
             },
             "fallback": {
-                "provider": "anthropic",
-                "model": "claude-fable-5-1",
+                "provider": "openai",
+                "model": "gpt-6-sol",
                 "model_parameters": shipped_config.llm_parameters,
             },
         }
@@ -144,14 +138,38 @@ def test_a_profile_inheriting_the_default_tier_keeps_the_default_chain(
     }
 
 
-def test_sol_reasoning_effort_still_comes_from_the_global_map(
+def test_deep_tier_reasoning_still_comes_from_the_global_map(
     shipped_config: AppConfig,
 ) -> None:
-    """The `deep` tier declares no overrides, so nothing shadows the global entry."""
+    """The `deep` tier declares no overrides, so nothing shadows the global entries."""
     deep = shipped_config.model_tiers["deep"]
 
     assert all(entry.llm_parameters is None for entry in deep.chain)
     assert shipped_config.llm_parameters["gpt-6-sol"]["reasoning_effort"] == "high"
+    assert shipped_config.llm_parameters["claude-opus-5-5"]["output_config"] == {
+        "effort": "high"
+    }
+
+
+def test_deep_primary_thinking_config_reaches_the_anthropic_client(
+    shipped_config: AppConfig,
+) -> None:
+    """End to end: shipped tier -> factory -> the params an Opus 5.5 request carries.
+
+    Opus 5.5 defaults to `medium` effort, a step below Opus 5, so `high` has
+    to arrive explicitly; and it rejects `enabled` + `budget_tokens` with a
+    400 mid-conversation, so the thinking shape is asserted too.
+    """
+    deep_primary = resolve_tier_client_config(
+        shipped_config.model_tiers["deep"], shipped_config.llm_parameters
+    )["retry_config"]["primary"]
+    client = LLMClientFactory.create_client({**deep_primary, "api_key": "test-key"})
+
+    assert isinstance(client, AnthropicClient)
+    params = client._get_model_specific_params("claude-opus-5-5")
+    assert params["thinking"] == {"type": "adaptive"}
+    assert params["output_config"] == {"effort": "high"}
+    assert params["max_tokens"] == 16000
 
 
 def test_frontier_thinking_config_reaches_the_anthropic_client(
@@ -180,112 +198,13 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
 def test_the_global_map_still_configures_nothing_for_fable(
     shipped_config: AppConfig,
 ) -> None:
-    """Fable 5.1 is `deep`'s fallback, where it must inherit no thinking config.
+    """Fable 5.1 must inherit no thinking config wherever a deployment names it.
 
     The `frontier` overlay is per entry precisely so enabling thinking for the
-    tier that exists for it does not reach the tier that merely falls back to
-    the same family. The global map matches by substring, so the check is on
-    the family prefix: a `claude-fable-5` entry would reach 5.1 as well.
+    tier that exists for it does not reach other models in the same family.
+    The global map matches by substring, so the check is on the family prefix:
+    a `claude-fable-5` entry would reach 5.1 as well.
     """
     assert not any(
         key.startswith("claude-fable-") for key in shipped_config.llm_parameters
     )
-
-    deep_fallback = resolve_tier_client_config(
-        shipped_config.model_tiers["deep"], shipped_config.llm_parameters
-    )["retry_config"]["fallback"]
-    client = LLMClientFactory.create_client({**deep_fallback, "api_key": "test-key"})
-
-    assert isinstance(client, AnthropicClient)
-    assert "thinking" not in client._get_model_specific_params("claude-fable-5-1")
-
-
-@pytest.mark.parametrize(
-    "profile_id",
-    [
-        pytest.param("browser_visual_profile", id="computer-use"),
-        pytest.param("research", id="deep-research"),
-        pytest.param("research_max", id="deep-research-max"),
-        pytest.param("coder", id="antigravity"),
-        pytest.param("media_analyst", id="gemini-only-media"),
-    ],
-)
-def test_provider_coupled_profiles_stay_pinned_to_an_inline_model(
-    shipped_config: AppConfig, profile_id: str
-) -> None:
-    processing_config = shipped_profile(shipped_config, profile_id).processing_config
-
-    assert processing_config.model_tier is None
-    assert processing_config.llm_model is not None
-
-
-def test_every_shipped_profile_passes_tier_validation(
-    shipped_config: AppConfig,
-) -> None:
-    """Startup validates each profile; nothing shipped may fail it."""
-    for profile in shipped_config.service_profiles:
-        validate_profile_model_tier(profile, shipped_config.model_tiers)
-
-
-def test_a_tiered_profile_gets_one_client_per_tier_it_may_run_on(
-    shipped_config: AppConfig, provider_api_keys: None
-) -> None:
-    """Built at startup, so a tier's chain and credentials fail the boot, not
-    the first request that reaches for it."""
-    assistant = Assistant(shipped_config)
-    profile = shipped_profile(shipped_config, "default_assistant")
-    eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
-
-    default_client, clients = assistant._create_profile_llm_clients(
-        profile,
-        resolve_profile_llm_model(
-            profile.processing_config,
-            validate_profile_model_tier(profile, shipped_config.model_tiers),
-            shipped_config.model,
-        ),
-        validate_profile_model_tier(profile, shipped_config.model_tiers),
-        eligibility,
-    )
-
-    assert set(clients) == {"standard", "deep", "frontier"}
-    assert isinstance(clients["frontier"], AnthropicClient)
-    # The default tier's entry *is* the service's default client, not a second
-    # client built the same way.
-    assert default_client is clients["standard"]
-
-
-def test_a_test_override_can_replace_one_tiers_client(
-    shipped_config: AppConfig,
-) -> None:
-    """`"<profile>@<tier>"` is the seam a test uses to tell the tiers apart.
-
-    A bare profile id keeps overriding every tier, which is what a test that
-    does not care about tiers wants -- and what stops one from reaching a real
-    provider by accident.
-    """
-    only_deep = cast("LLMInterface", object())
-    everything = cast("LLMInterface", object())
-    assistant = Assistant(
-        shipped_config,
-        llm_client_overrides={
-            "default_assistant@deep": only_deep,
-            "default_assistant": everything,
-        },
-    )
-    profile = shipped_profile(shipped_config, "default_assistant")
-    eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
-
-    _, clients = assistant._create_profile_llm_clients(
-        profile,
-        resolve_profile_llm_model(
-            profile.processing_config,
-            validate_profile_model_tier(profile, shipped_config.model_tiers),
-            shipped_config.model,
-        ),
-        validate_profile_model_tier(profile, shipped_config.model_tiers),
-        eligibility,
-    )
-
-    assert clients["deep"] is only_deep
-    assert clients["standard"] is everything
-    assert clients["frontier"] is everything

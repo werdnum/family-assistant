@@ -162,6 +162,32 @@ async def _store_tool_history_example(
 
 
 @pytest.mark.asyncio
+async def test_voice_error_envelope_is_not_a_successful_tool_example(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await _store_tool_history_example(
+        db=db,
+        conversation_id="voice-failed-tool",
+        user_id="user-1",
+        tool_name="list_notes",
+        arguments={},
+        result_content=json.dumps({"error": "Tool unavailable"}),
+        interface_type="web",
+    )
+
+    examples = await db.message_history.get_recent_tool_examples(
+        interface_type="web",
+        conversation_id="voice-failed-tool",
+        subconversation_id=None,
+        tool_name="list_notes",
+        limit=5,
+        user_id="user-1",
+    )
+    assert examples == []
+
+
+@pytest.mark.asyncio
 async def test_script_testing_simulates_actions_and_keeps_reads_real(
     db_engine: AsyncEngine,
 ) -> None:

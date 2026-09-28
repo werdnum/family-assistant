@@ -67,13 +67,11 @@ for the main application router, plus feature-specific pages in `src/pages/`.
 
 `src/api/errorClient.ts` POSTs to `POST /api/errors/`, and the errors viewer UI is `src/errors/`.
 
-This client never sets `severity`, so every report it sends is treated as a genuine error and
-persisted to the backend error log — including the `error_type: "component_error"` reports that
-`ErrorBoundary.tsx` sends. Do not read `component_error` as "diagnostic": the backend routes on
-`severity`, not `error_type`, and the iOS client uses that same `error_type` for breadcrumbs that go
-to a separate telemetry lane. Setting a non-error `severity` here would silently move reports out of
-the error log, so see [src/family_assistant/web/CLAUDE.md](../src/family_assistant/web/CLAUDE.md)
-first.
+The general error client never sets `severity`, so its reports are persisted to the backend error
+log — including the `error_type: "component_error"` reports from `ErrorBoundary.tsx`. Web voice
+tool-stage breadcrumbs explicitly set `severity: "info"` and go to the telemetry lane. The backend
+routes on `severity`, not `error_type`; see
+[src/family_assistant/web/CLAUDE.md](../src/family_assistant/web/CLAUDE.md).
 
 ### Push Notifications
 

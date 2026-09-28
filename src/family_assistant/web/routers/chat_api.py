@@ -17,12 +17,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from family_assistant.llm import ToolCallItem
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
     MessageAttachmentMetadata,
     MessageReasoningInfo,
+    ToolMessage,
     UserMessage,
     attachment_content,
     image_url_content,
@@ -2965,6 +2966,14 @@ async def get_conversation_messages(
                 conversation_id, include_subconversations=False
             )
         )
+        if latest_user_profile_id is None:
+            runs = await db_context.delegation_runs.list_for_conversation(
+                conversation_id=conversation_id,
+                interface_type="web",
+                limit=1,
+            )
+            if runs and runs[0]["origin_interface_type"] == "voice":
+                latest_user_profile_id = runs[0]["source_profile_id"]
 
     return ConversationMessagesResponse(
         conversation_id=conversation_id,
@@ -3201,6 +3210,15 @@ async def api_chat_save_voice_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Voice transcript timestamps must include a timezone.",
         )
+    if any(
+        turn.role in {"tool_call", "tool"}
+        and (not turn.tool_call_id or not turn.tool_name)
+        for turn in payload.turns
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Voice tool events require an ID and name.",
+        )
     base_time = datetime.now(UTC)
     clock_offset = (
         base_time - payload.client_saved_at
@@ -3239,12 +3257,46 @@ async def api_chat_save_voice_session(
     for index, turn in enumerate(payload.turns):
         if turn.role == "user":
             turn_id = str(uuid.uuid4())
-            message: UserMessage | AssistantMessage = UserMessage(
+            message: UserMessage | AssistantMessage | ToolMessage = UserMessage(
                 content=turn.text,
                 authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
             )
+        elif turn.role == "tool_call":
+            assert turn.tool_call_id is not None and turn.tool_name is not None
+            message = AssistantMessage(
+                tool_calls=[
+                    ToolCallItem(
+                        id=turn.tool_call_id,
+                        type="function",
+                        function=ToolCallFunction(
+                            name=turn.tool_name,
+                            arguments=turn.tool_arguments or {},
+                        ),
+                    )
+                ],
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
+        elif turn.role == "tool":
+            assert turn.tool_call_id is not None and turn.tool_name is not None
+            message = ToolMessage(
+                tool_call_id=turn.tool_call_id,
+                name=turn.tool_name,
+                content=turn.text,
+                taint_metadata=TurnTaintState
+                .empty()
+                .add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.TOOL_OUTPUT,
+                        source_id=None,
+                        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                        labels=frozenset(),
+                        reason="Voice tool result without persisted session provenance.",
+                    )
+                )
+                .to_metadata(),
+            )
         else:
-            # Native voice replies may summarize tool output, but the transcript
+            # Voice replies may summarize tool output, but the transcript
             # payload does not carry the session's runtime tracker. Preserve the
             # pre-metadata conservative behavior rather than labeling model- and
             # tool-derived text as trusted.

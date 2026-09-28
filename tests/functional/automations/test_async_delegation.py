@@ -507,9 +507,10 @@ def _tool_context(
     attachment_registry: AttachmentRegistry | None = None,
     in_script: bool = False,
     taint_tracker: TurnTaintTracker | None = None,
+    interface_type: str = TEST_INTERFACE_TYPE,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
-        interface_type=TEST_INTERFACE_TYPE,
+        interface_type=interface_type,
         conversation_id=TEST_CONVERSATION_ID,
         user_name=TEST_USER_NAME,
         user_id="async-delegation-user",
@@ -535,6 +536,81 @@ def _tool_context(
         in_script=in_script,
         taint_tracker=taint_tracker,
     )
+
+
+@pytest.mark.asyncio
+async def test_voice_delegation_delivers_direct_notice_without_waking_chat(
+    db_engine: AsyncEngine,
+) -> None:
+    target_service = FakeDelegatableService()
+    source_service = FakeWakeCapableSourceService(target_service)
+    processing_service = cast("ProcessingService", source_service)
+    db_context = Database(engine=db_engine)
+    context = _tool_context(db_context, processing_service, None)
+    context.interface_type = "voice"
+    context.conversation_id = "web_conv_8d745c3c910a4d129c95f20c029a99dc"
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="do this in the background",
+        delivery_hint="background",
+    )
+    assert isinstance(result.data, dict)
+    assert result.text is not None
+    assert "delivered directly" in result.text
+    assert "live voice session will not resume" in result.text
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        result.data["delegation_id"]
+    )
+    assert run is not None
+    assert run["interface_type"] == "web"
+    assert run["origin_interface_type"] == "voice"
+    pending_status = await get_delegation_status_tool(
+        context, result.data["delegation_id"]
+    )
+    assert "Chat conversation" in (pending_status.text or "")
+
+    worker = TaskWorker(
+        processing_service=processing_service,
+        chat_interface=AsyncMock(spec=ChatInterface),
+        calendar_config={},
+        timezone=ZoneInfo("UTC"),
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+    )
+    await worker.handle_delegated_profile_run(
+        context,
+        {
+            "delegation_id": result.data["delegation_id"],
+            "interface_type": "web",
+            "conversation_id": context.conversation_id,
+            "user_name": TEST_USER_NAME,
+        },
+    )
+    assert source_service.wake_call_count == 0
+    completed = await db_context.delegation_runs.get_by_delegation_id(
+        result.data["delegation_id"]
+    )
+    assert completed is not None
+    assert completed["notified_at"] is not None
+    visible_rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == context.conversation_id,
+        )
+    )
+    assert any(
+        not row["is_internal"]
+        and "background delegation done" in (row["content"] or "")
+        and row["processing_profile_id"] == "source_profile"
+        and row["user_id"] == "async-delegation-user"
+        and row["subconversation_id"] is None
+        for row in visible_rows
+    )
+    status = await get_delegation_status_tool(context, result.data["delegation_id"])
+    assert isinstance(status.data, dict)
+    assert status.data["status"] == "completed"
+    listing = await list_delegations_tool(context)
+    assert result.data["delegation_id"] in (listing.text or "")
 
 
 @pytest.mark.asyncio
@@ -687,6 +763,7 @@ async def _create_run(
     *,
     delegation_id: str,
     interface_type: str = TEST_INTERFACE_TYPE,
+    origin_interface_type: str | None = None,
     source_subconversation_id: str | None = None,
     taint_state_json: TaintMetadata | None = None,
     model_selection: ResolvedModelSelection | None = None,
@@ -703,6 +780,7 @@ async def _create_run(
         "source_profile_id": "source_profile",
         "target_service_id": "target_profile",
         "interface_type": interface_type,
+        "origin_interface_type": origin_interface_type,
         "conversation_id": TEST_CONVERSATION_ID,
         "user_id": "async-delegation-user",
         "user_name": TEST_USER_NAME,
@@ -2315,6 +2393,40 @@ async def test_status_tools_nudge_to_stop_polling_while_pending(
     assert status_result.data["status"] == "queued"
     assert "do not poll in a loop" in (status_result.text or "").lower()
     assert "do not poll in a loop" in (list_result.text or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_delegation_status_keeps_direct_delivery_guidance_in_chat(
+    db_engine: AsyncEngine,
+) -> None:
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_from_voice",
+        interface_type="web",
+        origin_interface_type="voice",
+    )
+    context = _tool_context(db_context, processing_service, interface_type="web")
+
+    status_result = await get_delegation_status_tool(
+        context, delegation_id="delegation_from_voice"
+    )
+    list_result = await list_delegations_tool(context)
+    assert "appear in this call's Chat conversation" in (status_result.text or "")
+    assert "appear in this call's Chat conversation" in (list_result.text or "")
+    assert "wake this profile" not in (status_result.text or "")
+
+    await _create_run(
+        db_context,
+        delegation_id="delegation_from_web",
+        interface_type="web",
+        origin_interface_type="web",
+    )
+    mixed_result = await list_delegations_tool(context)
+    assert "Voice-origin results will appear directly" in (mixed_result.text or "")
+    assert "other results will wake their source profile" in (mixed_result.text or "")
 
 
 @pytest.mark.asyncio

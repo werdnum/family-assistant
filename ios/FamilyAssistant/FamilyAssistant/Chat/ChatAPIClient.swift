@@ -208,7 +208,10 @@ struct ChatAPIClient {
                     VoiceSessionTurnBody(
                         role: $0.speaker.rawValue,
                         text: $0.text,
-                        timestamp: timestampFormatter.string(from: $0.timestamp)
+                        timestamp: timestampFormatter.string(from: $0.timestamp),
+                        toolCallID: $0.toolCallID,
+                        toolName: $0.toolName,
+                        toolArguments: $0.toolArguments
                     )
                 },
                 profileID: profileID
@@ -1037,6 +1040,16 @@ private struct VoiceSessionTurnBody: Encodable {
     let role: String
     let text: String
     let timestamp: String
+    let toolCallID: String?
+    let toolName: String?
+    let toolArguments: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case role, text, timestamp
+        case toolCallID = "tool_call_id"
+        case toolName = "tool_name"
+        case toolArguments = "tool_arguments"
+    }
 }
 
 private struct VoiceSessionBody: Encodable {
