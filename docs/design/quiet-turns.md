@@ -1,6 +1,8 @@
 # Quiet turns: letting the assistant choose not to message the user
 
-**Status:** Approved. Milestone 1 (quiet ends on automation wakes) implemented. **Date:** 2026-09-28
+**Status:** Approved. Milestone 1 (quiet ends on automation wakes) implemented. Milestone 3
+implemented for web and iOS; the Telegram reaction and a cancel button are not built yet. **Date:**
+2026-09-28
 
 ## Where things stood
 
