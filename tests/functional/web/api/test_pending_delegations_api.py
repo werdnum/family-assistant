@@ -105,6 +105,11 @@ async def test_lists_only_background_work_still_owed_to_the_conversation(
     await _finish(db, finishing, delivered=False)
     delivered = await _run(db, conversation_id, "browse")
     await _finish(db, delivered, delivered=True)
+    undeliverable = await _run(db, conversation_id, "chart")
+    await _finish(db, undeliverable, delivered=False)
+    await db.delegation_runs.advance_notify_stage(
+        undeliverable, stage="gave_up", now=datetime.now(UTC)
+    )
     await _run(db, conversation_id, "quick", handed_off=False)
     await _run(db, await _start_conversation(db), "elsewhere")
 

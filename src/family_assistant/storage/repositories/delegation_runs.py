@@ -252,6 +252,9 @@ class DelegationRunsRepository(BaseRepository):
             .where(runs_table.c.source_subconversation_id.is_(None))
             .where(runs_table.c.handed_off_at.is_not(None))
             .where(runs_table.c.notified_at.is_(None))
+            # A run whose delivery gave up will never be notified; nothing
+            # more is coming for the conversation to wait on.
+            .where(runs_table.c.notify_stage != "gave_up")
             .order_by(runs_table.c.created_at.asc())
         )
         runs = [self._row_to_dict(row) for row in await self._db.fetch_all(stmt)]
