@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { getSourceIcon, getSourceLabel } from '../eventSources';
 import styles from './EventCard.module.css';
 
 const EventCard = ({ event }) => {
@@ -13,32 +14,6 @@ const EventCard = ({ event }) => {
     return new Date(timestamp).toLocaleString();
   };
 
-  const getSourceIcon = (sourceId) => {
-    switch (sourceId) {
-      case 'homeassistant':
-        return '🏠';
-      case 'indexing':
-        return '📚';
-      case 'webhook':
-        return '🔗';
-      default:
-        return '📋';
-    }
-  };
-
-  const getSourceLabel = (sourceId) => {
-    switch (sourceId) {
-      case 'homeassistant':
-        return 'Home Assistant';
-      case 'indexing':
-        return 'Indexing';
-      case 'webhook':
-        return 'Webhook';
-      default:
-        return sourceId || 'Unknown';
-    }
-  };
-
   const getEventSummary = (event) => {
     if (!event.event_data) {
       return 'No event data available';
@@ -47,9 +22,9 @@ const EventCard = ({ event }) => {
     const data = event.event_data;
 
     // Home Assistant events
-    if (event.source_id === 'homeassistant') {
+    if (event.source_id === 'home_assistant') {
       if (data.event_type) {
-        const entityId = data.data?.entity_id || 'unknown entity';
+        const entityId = data.entity_id || 'unknown entity';
         return `${data.event_type}: ${entityId}`;
       }
       return 'Home Assistant event';

@@ -72,8 +72,8 @@ const ConversationsList = ({ onLoaded }) => {
 
         const data = await response.json();
         setConversations(data.conversations || []);
-        setTotalCount(data.total || 0);
-        setTotalPages(Math.ceil((data.total || 0) / pageSize));
+        setTotalCount(data.count);
+        setTotalPages(Math.ceil(data.count / pageSize));
       } catch (err) {
         setError(err.message);
       } finally {

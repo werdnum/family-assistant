@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { EVENT_SOURCE_OPTIONS } from '../eventSources';
 import styles from './EventFilters.module.css';
 
 const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = false }) => {
@@ -55,9 +56,11 @@ const EventFilters = ({ filters, onFiltersChange, onClearFilters, loading = fals
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="_all">All Sources</SelectItem>
-                    <SelectItem value="home_assistant">Home Assistant</SelectItem>
-                    <SelectItem value="indexing">Indexing</SelectItem>
-                    <SelectItem value="webhook">Webhook</SelectItem>
+                    {EVENT_SOURCE_OPTIONS.map(({ id, label }) => (
+                      <SelectItem key={id} value={id}>
+                        {label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

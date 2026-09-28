@@ -352,8 +352,9 @@ async def test_history_page_with_conversation_data(
     await results_summary.wait_for(timeout=5000)
     summary_text = await results_summary.text_content()
     assert summary_text is not None
-    # Should find at least 1 conversation
-    assert "Found 1 conversation" in summary_text or "conversations" in summary_text
+    match = re.search(r"Found (\d+) conversation", summary_text)
+    assert match is not None
+    assert int(match.group(1)) >= 1
 
     # Check for conversation cards
     conversation_cards = page.locator("[class*='conversationCard']")

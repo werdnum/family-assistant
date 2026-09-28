@@ -190,6 +190,9 @@ async def test_events_json_formatting_in_detail_view(
     await expect(event_data).to_contain_text(
         '"friendly_name": "Living Room Temperature"'
     )
+    await expect(page.locator("[class*='sourceLabel']").first).to_have_text(
+        "Home Assistant"
+    )
 
 
 @pytest.mark.playwright
