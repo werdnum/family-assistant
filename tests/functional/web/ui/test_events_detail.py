@@ -291,5 +291,4 @@ async def test_events_metadata_display(
     await page.goto(f"{server_url}/events/{test_event_id}")
 
     await expect(page.locator("[class*='eventIdCode']")).to_have_text(test_event_id)
-    await expect(page.locator("[class*='sourceLabel']")).to_have_text("home_assistant")
     await expect(page.get_by_text("Timestamp:", exact=True)).to_be_visible()

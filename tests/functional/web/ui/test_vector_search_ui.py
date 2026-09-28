@@ -10,6 +10,7 @@ import pytest
 from playwright.async_api import expect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.storage.database import Database
 from tests.functional.web.conftest import WebTestFixture
 from tests.helpers import wait_for_tasks_to_complete
@@ -32,16 +33,22 @@ TEST_DOC_3_CONTENT = (
 TEST_DOC_3_METADATA = {"category": "methodology", "difficulty": "intermediate"}
 
 
-async def _add_search_embedding(db_engine: AsyncEngine, document_id: int) -> None:
+async def _add_search_embedding(
+    db_engine: AsyncEngine,
+    document_id: int,
+    content: str,
+    embedding_generator: EmbeddingGenerator,
+) -> None:
     """Make an uploaded document searchable with the web fixture's empty indexing pipeline."""
+    embedding_result = await embedding_generator.generate_embeddings([content])
     db = Database(engine=db_engine)
     await db.vector.add_embedding(
         document_id=document_id,
         chunk_index=0,
         embedding_type="content_chunk",
-        embedding=[0.1] * 10,
-        embedding_model="mock-deterministic-embedder",
-        content="Searchable test document",
+        embedding=embedding_result.embeddings[0],
+        embedding_model=embedding_result.model_name,
+        content=content,
     )
 
 
@@ -117,8 +124,16 @@ async def test_search_documents_via_react_ui(
             )
             document_ids.append(response.json()["document_id"])
     await wait_for_tasks_to_complete(db_engine, task_ids=None, timeout_seconds=60.0)
-    for document_id in document_ids:
-        await _add_search_embedding(db_engine, document_id)
+    embedding_generator = web_test_fixture.assistant.embedding_generator
+    assert embedding_generator is not None
+    for document_id, content in zip(
+        document_ids,
+        ("supervised", "neural networks", "data preprocessing"),
+        strict=True,
+    ):
+        await _add_search_embedding(
+            db_engine, document_id, content, embedding_generator
+        )
 
     # Step 2: Navigate to the Vector Search page
     await page.goto(f"{web_test_fixture.base_url}/vector-search")
@@ -135,7 +150,7 @@ async def test_search_documents_via_react_ui(
     assert search_response.status == 200, await search_response.text()
 
     await expect(
-        page.locator("article").get_by_role("heading", name=TEST_DOC_2_TITLE)
+        page.locator("article").first.get_by_role("heading", name=TEST_DOC_2_TITLE)
     ).to_be_visible(timeout=15000)
 
 
@@ -184,8 +199,20 @@ async def test_vector_search_with_filters(
         other_document_id = response.json()["document_id"]
 
     await wait_for_tasks_to_complete(db_engine, task_ids=None, timeout_seconds=60.0)
-    await _add_search_embedding(db_engine, matching_document_id)
-    await _add_search_embedding(db_engine, other_document_id)
+    embedding_generator = web_test_fixture.assistant.embedding_generator
+    assert embedding_generator is not None
+    await _add_search_embedding(
+        db_engine,
+        matching_document_id,
+        "This is a test document for testing filter functionality.",
+        embedding_generator,
+    )
+    await _add_search_embedding(
+        db_engine,
+        other_document_id,
+        "This is another test document for testing filter functionality.",
+        embedding_generator,
+    )
 
     # Navigate to vector search
     await page.goto(f"{web_test_fixture.base_url}/vector-search")
@@ -271,7 +298,14 @@ async def test_vector_search_result_links(
         doc_id = response.json()["document_id"]
 
     await wait_for_tasks_to_complete(db_engine, task_ids=None, timeout_seconds=60.0)
-    await _add_search_embedding(db_engine, doc_id)
+    embedding_generator = web_test_fixture.assistant.embedding_generator
+    assert embedding_generator is not None
+    await _add_search_embedding(
+        db_engine,
+        doc_id,
+        "Content for testing result links in vector search.",
+        embedding_generator,
+    )
 
     # Navigate to vector search and search for the document
     await page.goto(f"{web_test_fixture.base_url}/vector-search")
