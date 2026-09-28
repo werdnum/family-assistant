@@ -368,25 +368,24 @@ class DelegationRunsRepository(BaseRepository):
         return self._row_to_dict(row) if row is not None else None
 
     async def list_undelivered_children(
-        self,
-        *,
-        conversation_id: str,
-        parent_subconversation_id: str,
+        self, parent: DelegationRunDict
     ) -> list[DelegationRunDict]:
-        """Handed-off runs started from a delegated history, not yet delivered.
+        """Handed-off runs a run started from its history, not yet delivered.
 
-        These are the results the run owning that history still owes a turn
-        to: running ones it must wait for, and finished ones it has not yet
-        been given. A run that returned inline was never handed off, and its
-        result already reached the turn that started it.
+        These are the results the run still owes a turn to: running ones it
+        must wait for, and finished ones it has not yet been given. A run that
+        returned inline was never handed off, and its result already reached
+        the turn that started it. A resumed run shares its history with the
+        run before it, so only children created since this run count.
         """
         stmt = (
             select(delegation_runs_table)
-            .where(delegation_runs_table.c.conversation_id == conversation_id)
+            .where(delegation_runs_table.c.conversation_id == parent["conversation_id"])
             .where(
                 delegation_runs_table.c.source_subconversation_id
-                == parent_subconversation_id
+                == parent["subconversation_id"]
             )
+            .where(delegation_runs_table.c.created_at >= parent["created_at"])
             .where(delegation_runs_table.c.handed_off_at.is_not(None))
             .where(delegation_runs_table.c.notified_at.is_(None))
             .where(delegation_runs_table.c.notify_stage != "gave_up")

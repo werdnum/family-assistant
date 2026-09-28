@@ -2104,8 +2104,7 @@ class TaskWorker:
         children = [
             child
             for child in await exec_context.db_context.delegation_runs.list_undelivered_children(
-                conversation_id=run["conversation_id"],
-                parent_subconversation_id=run["subconversation_id"],
+                run
             )
             if child["status"] in TERMINAL_DELEGATION_STATUSES
         ]
@@ -2211,8 +2210,7 @@ class TaskWorker:
         if result.error_traceback is None:
             outstanding = (
                 await exec_context.db_context.delegation_runs.list_undelivered_children(
-                    conversation_id=run["conversation_id"],
-                    parent_subconversation_id=run["subconversation_id"],
+                    run
                 )
             )
             if outstanding and await self._park_until_children_finish(
@@ -2274,10 +2272,7 @@ class TaskWorker:
         priority: TaskPriority,
     ) -> bool:
         """Requeue a waiting run and enqueue its next turn, once its children are done."""
-        children = await txn.delegation_runs.list_undelivered_children(
-            conversation_id=parent["conversation_id"],
-            parent_subconversation_id=parent["subconversation_id"],
-        )
+        children = await txn.delegation_runs.list_undelivered_children(parent)
         if any(
             child["status"] not in TERMINAL_DELEGATION_STATUSES for child in children
         ):
@@ -2325,7 +2320,9 @@ class TaskWorker:
             conversation_id=run["conversation_id"],
             subconversation_id=parent_subconversation_id,
         )
-        if parent is None:
+        # A resumed run reuses its history, so a child the earlier run started
+        # is not this run's: it predates it, and is delivered the ordinary way.
+        if parent is None or run["created_at"] < parent["created_at"]:
             return False
         # Attempted whatever status was read: the requeue is conditioned on
         # the parent waiting, and it waits on a parent parking in the same
