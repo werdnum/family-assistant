@@ -22,6 +22,49 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Keys whose contents are data rather than spec structure, so never hold references.
+_DATA_PAYLOAD_KEYS = frozenset({"values", "datasets"})
+
+
+def _fill_named_source(
+    source: object,
+    # ast-grep-ignore: no-dict-any - Data can be any valid JSON structure
+    data_dict: dict[str, Any],
+) -> None:
+    if isinstance(source, dict):
+        name = source.get("name")
+        if isinstance(name, str) and name in data_dict:
+            source["values"] = data_dict[name]
+
+
+def _resolve_named_data(
+    node: object,
+    # ast-grep-ignore: no-dict-any - Data can be any valid JSON structure
+    data_dict: dict[str, Any],
+) -> None:
+    """Fill every named data source in the spec with its dataset's values.
+
+    Named data may appear at any depth: Vega-Lite `layer`, `concat`/`hconcat`/
+    `vconcat`, facet `spec`, `repeat` and lookup `from` all carry their own
+    `data`, and Vega group marks declare nested `data` arrays. A `data` value is
+    either one source object (Vega-Lite) or a list of them (Vega).
+    """
+    if isinstance(node, list):
+        for item in node:
+            _resolve_named_data(item, data_dict)
+        return
+    if not isinstance(node, dict):
+        return
+    for key, value in node.items():
+        if key in _DATA_PAYLOAD_KEYS:
+            continue
+        if key == "data":
+            sources = value if isinstance(value, list) else [value]
+            for source in sources:
+                _fill_named_source(source, data_dict)
+        _resolve_named_data(value, data_dict)
+
+
 # Tool Definitions
 DATA_VISUALIZATION_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
@@ -170,20 +213,8 @@ async def create_vega_chart_tool(
 
         # Merge data into spec if we have any
         if data_dict:
-            # Handle both Vega and Vega-Lite formats
-            if "data" in spec_dict:
-                # If data is a dict with a "name" field, replace values
-                if isinstance(spec_dict["data"], dict) and "name" in spec_dict["data"]:
-                    data_name = spec_dict["data"]["name"]
-                    if data_name in data_dict:
-                        spec_dict["data"]["values"] = data_dict[data_name]
-                # If data is a list (Vega format), look for named datasets
-                elif isinstance(spec_dict["data"], list):
-                    for data_item in spec_dict["data"]:
-                        if "name" in data_item and data_item["name"] in data_dict:
-                            data_item["values"] = data_dict[data_item["name"]]
+            _resolve_named_data(spec_dict, data_dict)
 
-            # Also check for datasets (Vega-Lite format)
             if "datasets" in spec_dict:
                 spec_dict["datasets"].update(data_dict)
 
