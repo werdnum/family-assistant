@@ -11,7 +11,6 @@ import pytest
 from google.genai import errors as genai_errors
 
 from family_assistant.eval import private_paths
-from family_assistant.eval.tool_call_review import gemini_batch as batch_module
 from family_assistant.eval.tool_call_review.gemini_batch import (
     GeminiBatchClient,
     GeminiBatchError,
@@ -25,6 +24,8 @@ pytestmark = pytest.mark.no_db
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from family_assistant.eval.tool_call_review.gemini_batch import GeminiBatchManifest
 
 
 @pytest.fixture
@@ -91,7 +92,7 @@ class _FakeClient(GeminiBatchClient):
             "name": name,
             "metadata": {"state": self.aio.batches.state},
             "response": {"responsesFile": "files/output-0"}
-            if self.aio.batches.state == "JOB_STATE_SUCCEEDED"
+            if self.aio.batches.state.endswith("_SUCCEEDED")
             else {},
         }
 
@@ -131,7 +132,7 @@ def _response_line(key: str) -> bytes:
 
 def _prepare_fake_batch(
     private_root: Path,
-) -> tuple[Path, batch_module.GeminiBatchManifest, _FakeClient]:
+) -> tuple[Path, GeminiBatchManifest, _FakeClient]:
     run_dir = private_root / "runs" / "native"
     manifest = prepare_gemini_batch(
         ["src/family_assistant/eval/tool_call_review/datasets/manual"],
@@ -146,7 +147,7 @@ def _prepare_fake_batch(
 
 async def _submit_fake_batch(
     private_root: Path,
-) -> tuple[Path, batch_module.GeminiBatchManifest, _FakeClient]:
+) -> tuple[Path, GeminiBatchManifest, _FakeClient]:
     run_dir, manifest, client = _prepare_fake_batch(private_root)
     await submit_gemini_batch(
         run_dir,
@@ -159,7 +160,7 @@ async def _submit_fake_batch(
 
 async def _complete_fake_batch(
     private_root: Path,
-) -> tuple[Path, batch_module.GeminiBatchManifest, _FakeClient]:
+) -> tuple[Path, GeminiBatchManifest, _FakeClient]:
     run_dir, manifest, client = await _submit_fake_batch(private_root)
     client.aio.batches.state = "JOB_STATE_SUCCEEDED"
     await update_gemini_batch_status(run_dir, client=client)
@@ -231,29 +232,34 @@ def test_prepare_writes_native_wire_contract(private_root: Path) -> None:
     )
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "state",
+    ("state", "expected_status"),
     [
-        "BATCH_STATE_PENDING",
-        "BATCH_STATE_RUNNING",
-        "BATCH_STATE_SUCCEEDED",
-        "BATCH_STATE_FAILED",
-        "BATCH_STATE_CANCELLED",
-        "BATCH_STATE_EXPIRED",
-        "JOB_STATE_RUNNING",
+        ("BATCH_STATE_PENDING", "pending"),
+        ("BATCH_STATE_RUNNING", "running"),
+        ("BATCH_STATE_SUCCEEDED", "succeeded"),
+        ("BATCH_STATE_FAILED", "failed"),
+        ("BATCH_STATE_CANCELLED", "cancelled"),
+        ("BATCH_STATE_EXPIRED", "expired"),
+        ("JOB_STATE_PENDING", "pending"),
+        ("JOB_STATE_RUNNING", "running"),
+        ("JOB_STATE_SUCCEEDED", "succeeded"),
+        ("JOB_STATE_FAILED", "failed"),
+        ("JOB_STATE_CANCELLED", "cancelled"),
+        ("JOB_STATE_EXPIRED", "expired"),
     ],
 )
-def test_documented_batch_and_sdk_state_vocabularies_are_accepted(
-    state: str,
+async def test_poll_maps_documented_batch_and_sdk_states(
+    private_root: Path, state: str, expected_status: str
 ) -> None:
-    assert batch_module._job_state({"state": state}) in {
-        "pending",
-        "running",
-        "succeeded",
-        "failed",
-        "cancelled",
-        "expired",
-    }
+    run_dir, _, client = await _submit_fake_batch(private_root)
+
+    client.aio.batches.state = state
+    await update_gemini_batch_status(run_dir, client=client)
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == expected_status
 
 
 @pytest.mark.asyncio
@@ -266,16 +272,6 @@ async def test_fake_submit_records_running_batch(private_root: Path) -> None:
 
     assert submitted.chunks[0].status == "running"
     assert client.aio.batches.create_calls[0]["src"] == "files/input-0"
-
-
-@pytest.mark.asyncio
-async def test_fake_poll_records_succeeded_batch(private_root: Path) -> None:
-    run_dir, _, client = await _submit_fake_batch(private_root)
-
-    client.aio.batches.state = "JOB_STATE_SUCCEEDED"
-    completed = await update_gemini_batch_status(run_dir, client=client)
-
-    assert completed.chunks[0].status == "succeeded"
 
 
 @pytest.mark.asyncio

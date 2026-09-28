@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from family_assistant.web.confirmation_manager import WebConfirmationManager
 
 
 @pytest.mark.asyncio
-async def test_web_confirmation_decision_future_is_separate_from_execution_future() -> (
-    None
-):
-    """Approving a web confirmation resolves only the local user-decision wait."""
+async def test_resolve_approved_resolves_decision_future_with_approved() -> None:
+    """Approving a web confirmation resolves the decision future exactly once."""
     manager = WebConfirmationManager()
-    execution_future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
 
     decision_future = await manager.request_confirmation(
         request_id="confirm_test",
@@ -28,13 +23,14 @@ async def test_web_confirmation_decision_future_is_separate_from_execution_futur
     )
 
     assert not decision_future.done()
-    assert not execution_future.done()
 
     assert manager.resolve_approved("confirm_test")
     decision_outcome = await decision_future
 
     assert decision_outcome.kind == "approved"
-    assert not execution_future.done()
+
+    assert not manager.resolve_approved("confirm_test")
+    assert not manager.resolve_rejected("confirm_test")
 
     manager.remove_confirmation("confirm_test")
     assert manager.pending_confirmations == {}

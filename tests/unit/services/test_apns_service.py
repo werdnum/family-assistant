@@ -269,13 +269,18 @@ async def test_expired_provider_token_refreshes_and_retries(
             return httpx.Response(403, json={"reason": "ExpiredProviderToken"})
         return httpx.Response(200)
 
-    # Distinct issue times so the refreshed token differs from the first.
-    times = iter([1000.0, 1000.0, 5000.0, 5000.0, 5000.0])
-    service = _service(handler, time_fn=lambda: next(times))
+    # A constant clock ensures the cached token never expires by age, so a
+    # differing retry token can only come from the forced JWT refresh.
+    service = _service(handler, time_fn=lambda: 1000.0)
     await service.send_notification("user-1", "t", "b", db_context)
 
     assert len(attempts) == 2
     assert attempts[0] != attempts[1]
+    first_jwt = attempts[0].removeprefix("bearer ")
+    second_jwt = attempts[1].removeprefix("bearer ")
+    first_claims = jwt.decode(first_jwt, options={"verify_signature": False})
+    second_claims = jwt.decode(second_jwt, options={"verify_signature": False})
+    assert first_claims["iat"] == second_claims["iat"] == 1000
     # Token retained after a successful retry.
     assert len(await db_context.ios_push_tokens.get_by_user("user-1")) == 1
 

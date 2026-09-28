@@ -63,13 +63,10 @@ class TestSanitizeTextForPostgres:
         assert sanitize_text_for_postgres(text) == text
 
     def test_mixed_problematic_content(self) -> None:
-        """Should handle mixed problematic content."""
-        # Null byte with normal text
-        text = "Browser output:\x00console.log('test')"
+        """A single pass should strip null bytes, replace a lone surrogate, and preserve everything else."""
+        text = "Line1\x00\tLine2\ud800\nRed:\x1b[31mtext\x1b[0m"
         result = sanitize_text_for_postgres(text)
-        assert result is not None
-        assert "\x00" not in result
-        assert result == "Browser output:console.log('test')"
+        assert result == "Line1\tLine2���\nRed:\x1b[31mtext\x1b[0m"
 
 
 class TestIsRetryable:

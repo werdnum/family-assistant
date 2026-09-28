@@ -21,12 +21,12 @@ import logging
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 from unittest import mock
 
 import pytest
 import yaml
-from pydantic import SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from family_assistant import config_loader
 from family_assistant.config_loader import (
@@ -326,7 +326,7 @@ class TestDeepMergedYamlSource:
                 "model": "default-model",
                 "gemini_live_config": {
                     "voice": {"name": "Puck"},
-                    "vad": {"automatic": True},
+                    "vad": {"automatic": True, "silence_duration_ms": 500},
                 },
             })
         )
@@ -344,6 +344,7 @@ class TestDeepMergedYamlSource:
         assert result["gemini_live_config"]["voice"]["name"] == "Kore"
         # VAD settings from defaults should be preserved
         assert result["gemini_live_config"]["vad"]["automatic"] is True
+        assert result["gemini_live_config"]["vad"]["silence_duration_ms"] == 500
 
     def test_missing_files_skipped(self, tmp_path: Path) -> None:
         """Test that missing files are silently skipped."""
@@ -519,60 +520,6 @@ class TestNestedConfigPartialOverride:
         assert pc["timezone"] == "America/New_York"
         assert pc["max_history_messages"] == 10
         assert pc["max_iterations"] == 5
-
-    def test_gemini_voice_override_preserves_vad(self, tmp_path: Path) -> None:
-        """Overriding gemini voice preserves VAD settings."""
-        defaults = tmp_path / "defaults.yaml"
-        defaults.write_text(
-            yaml.dump({
-                "gemini_live_config": {
-                    "voice": {"name": "Puck"},
-                    "vad": {"automatic": True, "silence_duration_ms": 500},
-                }
-            })
-        )
-        config = tmp_path / "config.yaml"
-        config.write_text(
-            yaml.dump({
-                "gemini_live_config": {"voice": {"name": "Aoede"}},
-            })
-        )
-
-        source = DeepMergedYamlSource(AppConfig, [str(defaults), str(config)])
-        result = source()
-        assert result["gemini_live_config"]["voice"]["name"] == "Aoede"
-        assert result["gemini_live_config"]["vad"]["automatic"] is True
-        assert result["gemini_live_config"]["vad"]["silence_duration_ms"] == 500
-
-
-class TestAppConfigBackwardCompat:
-    """Tests that existing AppConfig construction patterns still work."""
-
-    def test_no_args_gives_field_defaults(self) -> None:
-        """AppConfig() with no args produces field defaults only."""
-        config = AppConfig()
-        assert config.model == "gemini/gemini-3.8-flash"
-        assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
-        assert config.telegram_token is None
-
-    def test_init_override(self) -> None:
-        """AppConfig(field=value) overrides field defaults."""
-        config = AppConfig(telegram_token=SecretStr("test-token"))
-        assert config.telegram_token is not None
-        assert config.telegram_token.get_secret_value() == "test-token"
-        assert config.model == "gemini/gemini-3.8-flash"
-
-    def test_model_validate(self) -> None:
-        """AppConfig.model_validate({...}) works as before."""
-        config = AppConfig.model_validate({"model": "custom-model"})
-        assert config.model == "custom-model"
-
-    def test_model_copy_update(self) -> None:
-        """config.model_copy(update={...}) works as before."""
-        config = AppConfig()
-        updated = config.model_copy(update={"server_port": 9999})
-        assert updated.server_port == 9999
-        assert config.server_port == 8000
 
 
 class TestApplyEnvVarOverrides:
@@ -1286,34 +1233,6 @@ class TestResolveServiceProfile:
         assert cell.outcome is TaintPolicyOutcome.ADJUDICATE
         assert cell.verdict_floor is TaintPolicyOutcome.CONFIRM
         assert cell.fallback is TaintPolicyOutcome.DENY
-
-    def test_profile_without_processing_config_inherits_timezone(self) -> None:
-        """Profile without processing_config inherits timezone from defaults."""
-        default_settings: dict[str, Any] = {
-            "processing_config": {"timezone": "Australia/Sydney", "max_iterations": 10},
-            "tools_config": {},
-            "chat_id_to_name_map": {},
-            "slash_commands": [],
-        }
-        profile_def = {"id": "test_profile", "description": "No processing_config"}
-        result = resolve_service_profile(profile_def, default_settings, {})
-        assert result["processing_config"]["timezone"] == "Australia/Sydney"
-
-    def test_profile_with_partial_processing_config_inherits_timezone(self) -> None:
-        """Profile with processing_config but no timezone inherits from defaults."""
-        default_settings: dict[str, Any] = {
-            "processing_config": {"timezone": "Australia/Sydney", "max_iterations": 10},
-            "tools_config": {},
-            "chat_id_to_name_map": {},
-            "slash_commands": [],
-        }
-        profile_def = {
-            "id": "test_profile",
-            "processing_config": {"llm_model": "gpt-4"},
-        }
-        result = resolve_service_profile(profile_def, default_settings, {})
-        assert result["processing_config"]["timezone"] == "Australia/Sydney"
-        assert result["processing_config"]["llm_model"] == "gpt-4"
 
     def test_profile_with_explicit_timezone_overrides_default(self) -> None:
         """Profile that explicitly sets timezone uses its own value."""
@@ -2597,17 +2516,29 @@ class TestEnvVarMappingsComplete:
 
     def test_all_mappings_have_valid_paths(self) -> None:
         """Test that all env var mappings point to valid config paths."""
-        config = AppConfig()
-        defaults = config.model_dump()
         for mapping in ENV_VAR_MAPPINGS:
-            # Each path should either exist in defaults or be a nested path
-            # we can create (like pwa_config.vapid_public_key)
+            model: type[BaseModel] = AppConfig
             parts = mapping.config_path.split(".")
-            if len(parts) == 1:
-                # Top-level key should exist in defaults
-                assert parts[0] in defaults, (
-                    f"Top-level key {parts[0]} not in defaults for {mapping.env_var}"
+            for index, part in enumerate(parts):
+                assert part in model.model_fields, (
+                    f"{mapping.env_var}: {part} is not a field in {mapping.config_path}"
                 )
+                if index < len(parts) - 1:
+                    annotation = model.model_fields[part].annotation
+                    candidates = (annotation, *get_args(annotation))
+                    nested = next(
+                        (
+                            candidate
+                            for candidate in candidates
+                            if isinstance(candidate, type)
+                            and issubclass(candidate, BaseModel)
+                        ),
+                        None,
+                    )
+                    assert nested is not None, (
+                        f"{mapping.env_var}: {part} is not a nested config model"
+                    )
+                    model = nested
 
     def test_all_secrets_are_mapped(self) -> None:
         """Test that known secret env vars have mappings."""
@@ -3503,7 +3434,7 @@ keychute_config:
         assert "sentinel-fail-openai-secret" not in caplog.text
 
     def test_log_config_does_not_mutate_input_data(self) -> None:
-        """_log_config must not mutate the configuration dictionary passed to it."""
+        """Logging redacts the output without changing the caller's config data."""
         raw_config: dict[str, Any] = {
             "database_url": "postgresql+asyncpg://user:password123@host:5432/db",
             "mcp_config": {

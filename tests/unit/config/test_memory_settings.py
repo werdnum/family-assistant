@@ -88,7 +88,7 @@ def test_both_settings_survive_the_config_loader(tmp_path: Path) -> None:
 
 
 def test_only_the_household_profiles_contribute_to_memory(
-    shipped_config: AppConfig,
+    shipped_config: AppConfig, provider_api_keys: None
 ) -> None:
     """The two profiles a person talks to directly, and nothing else.
 
@@ -103,6 +103,21 @@ def test_only_the_household_profiles_contribute_to_memory(
     )
 
     assert contributing == ["complex_tasks", "default_assistant"]
+    assert (
+        sorted(
+            profile.id
+            for profile in shipped_config.service_profiles
+            if shipped_config.effective_memory_contribute(profile)
+        )
+        == contributing
+    )
+    del provider_api_keys
+    assert Assistant(
+        shipped_config, llm_client_overrides={}
+    )._memory_contributing_profiles() == {  # pylint: disable=protected-access
+        "default_assistant",
+        "complex_tasks",
+    }
 
 
 def test_the_shipped_memory_readers_are_the_household_profiles_and_the_curator(
@@ -137,73 +152,50 @@ def test_the_household_profiles_carry_both_settings_explicitly(
     assert processing_config.memory_contribute is True
 
 
-def test_the_application_counts_the_shipped_contributors(
-    shipped_config: AppConfig, provider_api_keys: None
-) -> None:
-    """The shipped defaults, read through the helper production uses.
-
-    `_memory_contributing_profiles` is what the enablement boundary and the
-    sweep are built from, so this is the statement that a deployment which
-    changes nothing contributes these two profiles and no others.
-    """
-    del provider_api_keys
-
-    assistant = Assistant(shipped_config, llm_client_overrides={})
-
-    # Reaching past the private name on purpose: asserting through the helper
-    # the application itself calls is what makes this a statement about
-    # production rather than about a re-derivation in a test.
-    contributing = assistant._memory_contributing_profiles()  # pylint: disable=protected-access
-
-    assert contributing == {"default_assistant", "complex_tasks"}
-
-
 def test_a_read_only_profile_does_not_feed_reviews(
     shipped_config: AppConfig, provider_api_keys: None
 ) -> None:
-    """Reading is not contributing, at the point the application counts them.
-
-    Turning contribution off on the household profiles leaves them reading
-    memory, and `_memory_contributing_profiles` -- what the enablement boundary
-    and the sweep are built from -- then finds nobody, so their conversations
-    produce no eligible rows and no review is enqueued for them.
-    """
-    del provider_api_keys
+    """Reading alone does not make a profile contribute to memory."""
     for profile_id in ("default_assistant", "complex_tasks"):
         shipped_profile(
             shipped_config, profile_id
         ).processing_config.memory_contribute = False
 
-    assistant = Assistant(shipped_config, llm_client_overrides={})
-
-    # Reaching past the private name on purpose: asserting through the helper
-    # the application itself calls is what makes this a statement about
-    # production rather than about a re-derivation in a test.
-    contributing = assistant._memory_contributing_profiles()  # pylint: disable=protected-access
-
-    assert contributing == set()
+    for profile_id in ("default_assistant", "complex_tasks"):
+        assert shipped_config.effective_memory_read(
+            shipped_profile(shipped_config, profile_id)
+        )
+    assert not any(
+        shipped_config.effective_memory_contribute(profile)
+        for profile in shipped_config.service_profiles
+    )
+    del provider_api_keys
+    assert not Assistant(  # pylint: disable=protected-access
+        shipped_config, llm_client_overrides={}
+    )._memory_contributing_profiles()
 
 
 def test_the_master_switch_leaves_no_contributing_profiles(
     shipped_config: AppConfig, provider_api_keys: None
 ) -> None:
-    """`memory_config.enabled: false` empties the set the sweep is built from.
-
-    The profiles keep `memory_contribute: true` -- the switch is a deployment
-    saying "not right now" rather than an edit to the profiles -- and nothing
-    contributes while it is off. The enablement boundary reads the configured
-    setting instead, so turning the switch back on resumes from the moments
-    already recorded.
-    """
-    del provider_api_keys
+    """The master switch pauses contribution without clearing profile settings."""
     shipped_config.memory_config.enabled = False
 
+    assert {
+        profile.id
+        for profile in shipped_config.service_profiles
+        if profile.processing_config.memory_contribute
+    } == {
+        "default_assistant",
+        "complex_tasks",
+    }
+    assert not any(
+        shipped_config.effective_memory_contribute(profile)
+        for profile in shipped_config.service_profiles
+    )
+    del provider_api_keys
     assistant = Assistant(shipped_config, llm_client_overrides={})
-
-    # Reaching past the private names on purpose: asserting through the helpers
-    # the application itself calls is what makes this a statement about
-    # production rather than about a re-derivation in a test.
-    assert assistant._memory_contributing_profiles() == set()  # pylint: disable=protected-access
+    assert not assistant._memory_contributing_profiles()  # pylint: disable=protected-access
     assert assistant._configured_memory_contributing_profiles() == {  # pylint: disable=protected-access
         "default_assistant",
         "complex_tasks",

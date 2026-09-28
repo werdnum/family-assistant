@@ -1,5 +1,6 @@
 """Unit tests for large tool-result handling in AttachmentProcessor."""
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, Mock
@@ -17,7 +18,11 @@ from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolExecutionContext,
+    ToolResult,
+)
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -128,66 +133,68 @@ async def test_tool_executor_propagates_large_result_registry_unavailable() -> N
 
 
 @pytest.mark.asyncio
-async def test_handle_large_result_marks_json_content_type_without_full_parse() -> None:
+async def test_handle_large_result_marks_json_content_type_without_full_parse(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
     """Large JSON-shaped output should be stored with application/json MIME type."""
-    mock_registry = Mock()
-    mock_registry.store_and_register_tool_attachment = AsyncMock(
-        return_value=Mock(attachment_id="att_json_1")
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
     )
-    processor = _create_processor(
-        attachment_registry=cast("AttachmentRegistry", mock_registry)
-    )
+    processor = _create_processor(attachment_registry=registry)
+    db = Database(engine=db_engine)
     large_json_payload = '{"data": "' + ("X" * 4096) + '"}'
 
     new_content, attachment_id = await processor.handle_large_result(
-        db_context=Mock(),
+        db_context=db,
         content=large_json_payload,
         tool_name="test_tool",
         conversation_id="conv_json",
         call_id="call_json",
     )
 
-    assert attachment_id == "att_json_1"
+    assert attachment_id is not None
     assert "saved as attachment" in new_content
-    call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
-    assert call_kwargs["content_type"] == "application/json"
+    stored = await registry.get_attachment(db, attachment_id, acting_user_id=None)
+    assert stored is not None
+    assert stored.mime_type == "application/json"
 
 
 @pytest.mark.asyncio
-async def test_handle_large_result_keeps_text_plain_for_non_json_shape() -> None:
+async def test_handle_large_result_keeps_text_plain_for_non_json_shape(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
     """Large plain text output should be stored with text/plain MIME type."""
-    mock_registry = Mock()
-    mock_registry.store_and_register_tool_attachment = AsyncMock(
-        return_value=Mock(attachment_id="att_txt_1")
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
     )
-    processor = _create_processor(
-        attachment_registry=cast("AttachmentRegistry", mock_registry)
-    )
+    processor = _create_processor(attachment_registry=registry)
+    db = Database(engine=db_engine)
     large_text_payload = "not-json-" + ("Y" * 4096)
 
     _, attachment_id = await processor.handle_large_result(
-        db_context=Mock(),
+        db_context=db,
         content=large_text_payload,
         tool_name="test_tool",
         conversation_id="conv_text",
         call_id="call_text",
     )
 
-    assert attachment_id == "att_txt_1"
-    call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
-    assert call_kwargs["content_type"] == "text/plain"
+    assert attachment_id is not None
+    stored = await registry.get_attachment(db, attachment_id, acting_user_id=None)
+    assert stored is not None
+    assert stored.mime_type == "text/plain"
 
 
 @pytest.mark.asyncio
-async def test_handle_large_result_persists_taint_metadata() -> None:
+async def test_handle_large_result_persists_taint_metadata(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
     """Auto-converted large results should carry result taint in attachment metadata."""
-    mock_registry = Mock()
-    mock_registry.store_and_register_tool_attachment = AsyncMock(
-        return_value=Mock(attachment_id="att_taint_1")
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
     )
-    processor = _create_processor(
-        attachment_registry=cast("AttachmentRegistry", mock_registry)
-    )
+    processor = _create_processor(attachment_registry=registry)
+    db = Database(engine=db_engine)
     taint_metadata = cast(
         "TaintMetadata",
         {
@@ -198,7 +205,7 @@ async def test_handle_large_result_persists_taint_metadata() -> None:
     )
 
     _, attachment_id = await processor.handle_large_result(
-        db_context=Mock(),
+        db_context=db,
         content="tainted-" + ("Z" * 4096),
         tool_name="test_tool",
         conversation_id="conv_taint",
@@ -206,30 +213,23 @@ async def test_handle_large_result_persists_taint_metadata() -> None:
         taint_metadata=taint_metadata,
     )
 
-    assert attachment_id == "att_taint_1"
-    call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
-    passed_state = call_kwargs["taint_state"]
+    assert attachment_id is not None
+    stored = await registry.get_attachment(db, attachment_id, acting_user_id=None)
+    assert stored is not None
+    passed_state = TurnTaintState.from_metadata(stored.metadata.get("taint_metadata"))
     expected_state = TurnTaintState.from_metadata(taint_metadata)
     assert passed_state.max_tier is expected_state.max_tier
     assert passed_state.sources == expected_state.sources
 
 
-@pytest.mark.asyncio
-async def test_tool_result_attachment_registration_persists_taint_metadata() -> None:
-    """Explicit ToolResult attachments should carry result taint in registry metadata."""
-    mock_registry = Mock()
-    mock_registry.store_and_register_tool_attachment = AsyncMock(
-        return_value=Mock(
-            attachment_id="att_explicit_1",
-            content_url="memory://att_explicit_1",
-        )
-    )
-    processor = _create_processor(
-        attachment_registry=cast("AttachmentRegistry", mock_registry),
-        threshold_kb=100,
-    )
-    executor = ToolExecutor(
-        tools_provider=AsyncMock(),
+def _make_executor(
+    *,
+    tools_provider: AsyncMock,
+    processor: AttachmentProcessor,
+    attachment_registry: AttachmentRegistry | None,
+) -> ToolExecutor:
+    return ToolExecutor(
+        tools_provider=tools_provider,
         config=ProcessingServiceConfig(
             id="test",
             prompts={},
@@ -240,11 +240,22 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
         ),
         attachment_processor=processor,
-        attachment_registry=cast("AttachmentRegistry", mock_registry),
+        attachment_registry=attachment_registry,
         clock=SystemClock(),
         credential_resolvers=None,
         api_backend=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_result_attachment_registration_persists_taint_metadata(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """Explicit ToolResult attachments should carry result taint in registry metadata."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    processor = _create_processor(attachment_registry=registry, threshold_kb=100)
     taint_metadata = cast(
         "TaintMetadata",
         {
@@ -254,9 +265,14 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         },
     )
 
-    output = await executor._build_output_for_tool_result(
-        db_context=Mock(),
-        result=ToolResult(
+    async def _execute_tool(
+        function_name: str,
+        arguments: dict[str, object],
+        tool_execution_context: ToolExecutionContext,
+        call_id: str,
+    ) -> ToolResult:
+        tool_execution_context.tool_result_taint_metadata[call_id] = taint_metadata
+        return ToolResult(
             text="small result",
             attachments=[
                 ToolAttachment(
@@ -265,31 +281,50 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
                     description="external text",
                 )
             ],
+        )
+
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.execute_tool.side_effect = _execute_tool
+    executor = _make_executor(
+        tools_provider=mock_tools_provider,
+        processor=processor,
+        attachment_registry=registry,
+    )
+    db = Database(engine=db_engine)
+
+    result = await executor.execute(
+        tool_call_item_obj=ToolCallItem(
+            id="call_explicit",
+            type="function",
+            function=ToolCallFunction(name="test_tool", arguments="{}"),
         ),
-        function_name="test_tool",
+        interface_type="test",
         conversation_id="conv_explicit",
-        call_id="call_explicit",
-        provider_metadata=None,
-        taint_metadata=taint_metadata,
-        acting_user_id=None,
-        arguments=None,
+        user_name="tester",
+        turn_id="turn",
+        db_context=db,
+        chat_interface=None,
+        request_confirmation_callback=None,
     )
 
-    assert output.auto_attachment_ids == ["att_explicit_1"]
-    assert output.llm_message.taint_metadata == taint_metadata
-    assert output.stream_metadata == {
+    assert result.auto_attachment_ids is not None
+    attachment_id = result.auto_attachment_ids[0]
+    assert result.llm_message.taint_metadata == taint_metadata
+    assert result.stream_event.metadata == {
         "attachments": [
             {
                 "type": "tool_result",
                 "mime_type": "text/plain",
                 "description": "external text",
-                "content_url": "memory://att_explicit_1",
-                "attachment_id": "att_explicit_1",
+                "content_url": f"/api/attachments/{attachment_id}",
+                "attachment_id": attachment_id,
             }
         ]
     }
-    call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
-    passed_state = call_kwargs["taint_state"]
+    stored = await registry.get_attachment(db, attachment_id, acting_user_id=None)
+    assert stored is not None
+    assert stored.mime_type == "text/plain"
+    passed_state = TurnTaintState.from_metadata(stored.metadata.get("taint_metadata"))
     expected_state = TurnTaintState.from_metadata(taint_metadata)
     assert passed_state.max_tier is expected_state.max_tier
     assert passed_state.sources == expected_state.sources
@@ -300,7 +335,7 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
     db_engine: AsyncEngine,
     tmp_path: Path,
 ) -> None:
-    """Derived large results keep the owner of an owned input attachment.
+    """A derived large result keeps the owner of an owned input attachment.
 
     A helper like jq_query run over an owner-scoped Gmail attachment must not
     launder its content into an ownerless attachment.
@@ -309,24 +344,6 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
         storage_path=str(tmp_path), db_engine=db_engine, config=None
     )
     processor = _create_processor(attachment_registry=registry, threshold_kb=1)
-    executor = ToolExecutor(
-        tools_provider=AsyncMock(),
-        config=ProcessingServiceConfig(
-            id="test",
-            prompts={},
-            timezone=ZoneInfo("UTC"),
-            max_history_messages=10,
-            history_max_age_hours=24,
-            tools_config=ToolsConfig(),
-            delegation_security_level=DelegationSecurityLevel.CONFIRM,
-        ),
-        attachment_processor=processor,
-        attachment_registry=registry,
-        clock=SystemClock(),
-        credential_resolvers=None,
-        api_backend=None,
-    )
-
     db = Database(engine=db_engine)
     owned = await registry.store_and_register_tool_attachment(
         file_content=b"owned gmail bytes",
@@ -338,41 +355,86 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
         taint_state=TurnTaintState.empty(),
     )
 
-    (
-        _,
-        derived_ids,
-    ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
-        db_context=db,
-        content="D" * 4096,
-        function_name="jq_query",
-        conversation_id="conv-derived",
-        call_id="call-derived",
-        taint_metadata=None,
-        acting_user_id="user-a",
-        arguments={"attachment_id": owned.attachment_id, "query": "."},
-    )
-    assert len(derived_ids) == 1
-    derived = await registry.get_attachment(db, derived_ids[0], acting_user_id="user-a")
-    assert derived is not None
-    assert derived.owner_user_id == "user-a"
-    assert (
-        await registry.get_attachment(db, derived_ids[0], acting_user_id=None) is None
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.execute_tool.return_value = "D" * 4096
+    executor = _make_executor(
+        tools_provider=mock_tools_provider,
+        processor=processor,
+        attachment_registry=registry,
     )
 
-    (
-        _,
-        plain_ids,
-    ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
-        db_context=db,
-        content="E" * 4096,
-        function_name="jq_query",
+    result = await executor.execute(
+        tool_call_item_obj=ToolCallItem(
+            id="call-derived",
+            type="function",
+            function=ToolCallFunction(
+                name="jq_query",
+                arguments=json.dumps({
+                    "attachment_id": owned.attachment_id,
+                    "query": ".",
+                }),
+            ),
+        ),
+        interface_type="test",
         conversation_id="conv-derived",
-        call_id="call-plain",
-        taint_metadata=None,
-        acting_user_id="user-a",
-        arguments={"query": "."},
+        user_name="tester",
+        turn_id="turn",
+        db_context=db,
+        chat_interface=None,
+        user_id="user-a",
+        request_confirmation_callback=None,
     )
-    assert len(plain_ids) == 1
-    plain = await registry.get_attachment(db, plain_ids[0], acting_user_id=None)
+
+    assert result.large_result_attachment_ids is not None
+    assert len(result.large_result_attachment_ids) == 1
+    derived_id = result.large_result_attachment_ids[0]
+    derived = await registry.get_attachment(db, derived_id, acting_user_id="user-a")
+    assert derived is not None
+    assert derived.owner_user_id == "user-a"
+    assert await registry.get_attachment(db, derived_id, acting_user_id=None) is None
+
+
+@pytest.mark.asyncio
+async def test_large_result_stays_ownerless_without_owned_argument_attachment(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """An ordinary large result with no owned input attachment stays ownerless."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    processor = _create_processor(attachment_registry=registry, threshold_kb=1)
+    db = Database(engine=db_engine)
+
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.execute_tool.return_value = "E" * 4096
+    executor = _make_executor(
+        tools_provider=mock_tools_provider,
+        processor=processor,
+        attachment_registry=registry,
+    )
+
+    result = await executor.execute(
+        tool_call_item_obj=ToolCallItem(
+            id="call-plain",
+            type="function",
+            function=ToolCallFunction(
+                name="jq_query", arguments=json.dumps({"query": "."})
+            ),
+        ),
+        interface_type="test",
+        conversation_id="conv-derived",
+        user_name="tester",
+        turn_id="turn",
+        db_context=db,
+        chat_interface=None,
+        user_id="user-a",
+        request_confirmation_callback=None,
+    )
+
+    assert result.large_result_attachment_ids is not None
+    assert len(result.large_result_attachment_ids) == 1
+    plain_id = result.large_result_attachment_ids[0]
+    plain = await registry.get_attachment(db, plain_id, acting_user_id=None)
     assert plain is not None
     assert plain.owner_user_id is None

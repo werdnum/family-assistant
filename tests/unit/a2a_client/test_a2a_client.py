@@ -101,6 +101,7 @@ class FakeA2AAgentHandler(BaseHTTPRequestHandler):
     streaming: ClassVar[bool] = False
     poll_count: ClassVar[int] = 0
     agent_url: ClassVar[str] = ""
+    message_params: ClassVar[dict | None] = None
 
     def log_message(self, _fmt: str, *_args: object) -> None:
         return
@@ -131,6 +132,7 @@ class FakeA2AAgentHandler(BaseHTTPRequestHandler):
         self.send_json(self.jsonrpc_error(body.get("id"), -32601, "Method not found"))
 
     def handle_message_send(self, body: dict) -> None:
+        type(self).message_params = body.get("params")
         if self.mode == "jsonrpc_error":
             self.send_json(
                 self.jsonrpc_error(body.get("id"), -32600, "Invalid request")
@@ -369,6 +371,7 @@ def fake_a2a_agent() -> Iterator[type[FakeA2AAgentHandler]]:
     FakeA2AAgentHandler.text = "Hello from remote"
     FakeA2AAgentHandler.streaming = False
     FakeA2AAgentHandler.poll_count = 0
+    FakeA2AAgentHandler.message_params = None
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeA2AAgentHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -419,19 +422,45 @@ class TestA2AAuthConfig:
         with pytest.raises(ValueError, match="not set or empty"):
             config.to_httpx_auth()
 
-    def test_bearer_auth_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.asyncio
+    async def test_bearer_auth_success(
+        self, monkeypatch: pytest.MonkeyPatch, httpx_mock: HTTPXMock
+    ) -> None:
         monkeypatch.setenv("MY_TOKEN", "secret123")
         config = A2AAuthConfig(type="bearer", token_env="MY_TOKEN")
-        auth = config.to_httpx_auth()
-        assert auth is not None
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            json=_make_agent_card(),
+        )
+        wrapper = A2AClientWrapper(agent_url="http://agent.test", auth_config=config)
 
-    def test_api_key_auth_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        card = await wrapper.discover()
+        assert card.name == "Test Agent"
+        request = httpx_mock.get_request()
+        assert request is not None
+        assert request.headers["Authorization"] == "Bearer secret123"
+        await wrapper.close()
+
+    @pytest.mark.asyncio
+    async def test_api_key_auth_success(
+        self, monkeypatch: pytest.MonkeyPatch, httpx_mock: HTTPXMock
+    ) -> None:
         monkeypatch.setenv("API_KEY", "key123")
         config = A2AAuthConfig(
             type="api_key", token_env="API_KEY", header_name="X-API-Key"
         )
-        auth = config.to_httpx_auth()
-        assert auth is not None
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            json=_make_agent_card(),
+        )
+        wrapper = A2AClientWrapper(agent_url="http://agent.test", auth_config=config)
+
+        card = await wrapper.discover()
+        assert card.name == "Test Agent"
+        request = httpx_mock.get_request()
+        assert request is not None
+        assert request.headers["X-API-Key"] == "key123"
+        await wrapper.close()
 
     def test_validate_env_vars_no_errors(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MY_TOKEN", "secret")
@@ -713,13 +742,6 @@ class TestA2AClientWrapper:
         await wrapper.close()
 
     @pytest.mark.asyncio
-    async def test_attachment_size_validation_passes(self) -> None:
-        """Small inline attachments pass validation."""
-        parts = _content_parts("hello")
-        wrapper = A2AClientWrapper(agent_url="http://agent.test")
-        await wrapper._convert_and_validate_parts(parts, acting_user_id=None)
-
-    @pytest.mark.asyncio
     async def test_attachment_size_validation_rejects_large(self) -> None:
         """Inline attachments exceeding limit are rejected."""
         large_data = "x" * (MAX_INLINE_ATTACHMENT_BYTES + 1000)
@@ -735,19 +757,27 @@ class TestA2AClientWrapper:
 
     @pytest.mark.asyncio
     async def test_close_clears_state(self, httpx_mock: HTTPXMock) -> None:
-        """Close clears the cached agent card and HTTP client."""
+        """A closed wrapper can discover a fresh agent card."""
         wrapper = A2AClientWrapper(agent_url="http://agent.test")
         httpx_mock.add_response(
             url="http://agent.test/.well-known/agent-card.json",
             json=_make_agent_card(),
         )
+        updated_card = _make_agent_card()
+        updated_card["name"] = "Updated Agent"
+        httpx_mock.add_response(
+            url="http://agent.test/.well-known/agent-card.json",
+            json=updated_card,
+        )
 
-        await wrapper.discover()
-        assert wrapper._agent_card is not None
-
+        first_card = await wrapper.discover()
         await wrapper.close()
-        assert wrapper._agent_card is None
-        assert wrapper._httpx_client is None
+        second_card = await wrapper.discover()
+
+        assert first_card.name == "Test Agent"
+        assert second_card.name == "Updated Agent"
+        assert len(httpx_mock.get_requests()) == 2
+        await wrapper.close()
 
     @pytest.mark.asyncio
     async def test_send_message_with_context_and_task_id(
@@ -763,6 +793,9 @@ class TestA2AClientWrapper:
             task_id="task-456",
         )
         assert task.status.state == TaskState.completed
+        assert fake_a2a_agent.message_params is not None
+        assert fake_a2a_agent.message_params["message"]["contextId"] == "ctx-123"
+        assert fake_a2a_agent.message_params["message"]["taskId"] == "task-456"
         await wrapper.close()
 
 

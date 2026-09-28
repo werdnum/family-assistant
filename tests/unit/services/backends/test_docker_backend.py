@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from family_assistant.config_models import DockerBackendConfig
-from family_assistant.services.backends.docker import DockerBackend, DockerTask
+from family_assistant.services.backends.docker import DockerBackend
 from family_assistant.services.worker_backend import WorkerStatus
 
 
@@ -31,29 +31,72 @@ def backend(docker_config: DockerBackendConfig, tmp_path: Path) -> DockerBackend
     return DockerBackend(config=docker_config, workspace_root=str(tmp_path))
 
 
+async def spawn_tracked_task(
+    backend: DockerBackend,
+    tmp_path: Path,
+    task_id: str = "task-123",
+    container_id: str = "container-123",
+) -> str:
+    """Spawn a task through the public API so it is tracked by the backend."""
+    (tmp_path / "tasks" / task_id).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tasks" / task_id / "output").mkdir(exist_ok=True)
+    (tmp_path / "tasks" / task_id / "prompt.md").write_text("Test prompt")
+
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate.return_value = (f"{container_id}\n".encode(), b"")
+        mock_exec.return_value = mock_proc
+
+        job_id = await backend.spawn_task(
+            task_id=task_id,
+            prompt_path=f"tasks/{task_id}/prompt.md",
+            output_dir=f"tasks/{task_id}/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+
+    assert job_id == container_id
+    return job_id
+
+
 class TestDockerBackendInit:
     """Tests for DockerBackend initialization."""
 
-    def test_init_with_config(
-        self, docker_config: DockerBackendConfig, tmp_path: Path
+    @pytest.mark.asyncio
+    async def test_init_without_config_uses_defaults_in_command(
+        self, tmp_path: Path
     ) -> None:
-        """Test backend initializes with provided config."""
-        backend = DockerBackend(config=docker_config, workspace_root=str(tmp_path))
-        assert backend.image == "test-image:latest"
-        assert backend.network == "test-network"
-
-    def test_init_without_config(self, tmp_path: Path) -> None:
-        """Test backend uses defaults when no config provided."""
+        """Test backend falls back to default image/network in the docker command."""
         backend = DockerBackend(workspace_root=str(tmp_path))
-        assert backend.image == "ghcr.io/werdnum/ai-coding-base:latest"
-        assert backend.network == "bridge"
+        cmd = await backend._build_docker_command(
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+        assert "--network=bridge" in cmd
+        assert "ghcr.io/werdnum/ai-coding-base:latest" in cmd
 
-    def test_init_without_workspace_root(
+    @pytest.mark.asyncio
+    async def test_init_without_workspace_root(
         self, docker_config: DockerBackendConfig
     ) -> None:
-        """Test backend defaults to cwd when no workspace_root provided."""
+        """Test backend defaults to cwd for the task volume mount."""
         backend = DockerBackend(config=docker_config)
-        assert backend._workspace_root == Path.cwd()
+        cmd = await backend._build_docker_command(
+            task_id="task-123",
+            prompt_path="tasks/task-123/prompt.md",
+            output_dir="tasks/task-123/output",
+            webhook_url="http://localhost:8000/webhook/event",
+            model="claude",
+            timeout_minutes=30,
+        )
+        cmd_str = " ".join(cmd)
+        assert f"{Path.cwd().resolve()}/tasks/task-123:/task" in cmd_str
 
 
 class TestDockerBackendSpawnTask:
@@ -85,8 +128,8 @@ class TestDockerBackendSpawnTask:
             )
 
             assert job_id == "abc123containerid"
-            assert job_id in backend._tasks
-            task = backend._tasks[job_id]
+            task = backend.get_task(job_id)
+            assert task is not None
             assert task.task_id == "task-123"
             assert task.status == WorkerStatus.RUNNING
             assert task.model == "claude"
@@ -259,18 +302,11 @@ class TestDockerBackendGetTaskStatus:
         assert "not found" in result.error_message.lower()
 
     @pytest.mark.asyncio
-    async def test_get_status_running(self, backend: DockerBackend) -> None:
+    async def test_get_status_running(
+        self, backend: DockerBackend, tmp_path: Path
+    ) -> None:
         """Test getting status of running container."""
-        # Add a task to track
-        backend._tasks["container-123"] = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-            status=WorkerStatus.RUNNING,
-        )
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
         with patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_proc = AsyncMock()
@@ -278,21 +314,15 @@ class TestDockerBackendGetTaskStatus:
             mock_proc.communicate.return_value = (b"running:0\n", b"")
             mock_exec.return_value = mock_proc
 
-            result = await backend.get_task_status("container-123")
+            result = await backend.get_task_status(container_id)
             assert result.status == WorkerStatus.RUNNING
 
     @pytest.mark.asyncio
-    async def test_get_status_exited_success(self, backend: DockerBackend) -> None:
+    async def test_get_status_exited_success(
+        self, backend: DockerBackend, tmp_path: Path
+    ) -> None:
         """Test getting status of successfully exited container."""
-        backend._tasks["container-123"] = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-            status=WorkerStatus.RUNNING,
-        )
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
         with patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_proc = AsyncMock()
@@ -300,22 +330,20 @@ class TestDockerBackendGetTaskStatus:
             mock_proc.communicate.return_value = (b"exited:0\n", b"")
             mock_exec.return_value = mock_proc
 
-            result = await backend.get_task_status("container-123")
+            result = await backend.get_task_status(container_id)
             assert result.status == WorkerStatus.SUCCESS
             assert result.exit_code == 0
 
+        task = backend.get_task(container_id)
+        assert task is not None
+        assert task.status == WorkerStatus.SUCCESS
+
     @pytest.mark.asyncio
-    async def test_get_status_exited_failure(self, backend: DockerBackend) -> None:
+    async def test_get_status_exited_failure(
+        self, backend: DockerBackend, tmp_path: Path
+    ) -> None:
         """Test getting status of container that exited with error."""
-        backend._tasks["container-123"] = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-            status=WorkerStatus.RUNNING,
-        )
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
         with patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_proc = AsyncMock()
@@ -323,7 +351,7 @@ class TestDockerBackendGetTaskStatus:
             mock_proc.communicate.return_value = (b"exited:1\n", b"")
             mock_exec.return_value = mock_proc
 
-            result = await backend.get_task_status("container-123")
+            result = await backend.get_task_status(container_id)
             assert result.status == WorkerStatus.FAILED
             assert result.exit_code == 1
 
@@ -332,27 +360,24 @@ class TestDockerBackendCancelTask:
     """Tests for DockerBackend.cancel_task()."""
 
     @pytest.mark.asyncio
-    async def test_cancel_running_task(self, backend: DockerBackend) -> None:
+    async def test_cancel_running_task(
+        self, backend: DockerBackend, tmp_path: Path
+    ) -> None:
         """Test cancelling a running task."""
-        backend._tasks["container-123"] = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-            status=WorkerStatus.RUNNING,
-        )
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
         with patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_proc = AsyncMock()
             mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (b"container-123\n", b"")
+            mock_proc.communicate.return_value = (f"{container_id}\n".encode(), b"")
             mock_exec.return_value = mock_proc
 
-            result = await backend.cancel_task("container-123")
+            result = await backend.cancel_task(container_id)
             assert result is True
-            assert backend._tasks["container-123"].status == WorkerStatus.CANCELLED
+
+        task = backend.get_task(container_id)
+        assert task is not None
+        assert task.status == WorkerStatus.CANCELLED
 
     @pytest.mark.asyncio
     async def test_cancel_unknown_task(self, backend: DockerBackend) -> None:
@@ -361,65 +386,56 @@ class TestDockerBackendCancelTask:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_cancel_already_completed(self, backend: DockerBackend) -> None:
+    async def test_cancel_already_completed(
+        self, backend: DockerBackend, tmp_path: Path
+    ) -> None:
         """Test cancelling already completed task returns False."""
-        backend._tasks["container-123"] = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-            status=WorkerStatus.SUCCESS,
-        )
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
-        result = await backend.cancel_task("container-123")
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.returncode = 0
+            mock_proc.communicate.return_value = (b"exited:0\n", b"")
+            mock_exec.return_value = mock_proc
+            status_result = await backend.get_task_status(container_id)
+        assert status_result.status == WorkerStatus.SUCCESS
+
+        result = await backend.cancel_task(container_id)
         assert result is False
 
 
 class TestDockerBackendHelperMethods:
     """Tests for DockerBackend helper methods."""
 
-    def test_get_task(self, backend: DockerBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_get_task(self, backend: DockerBackend, tmp_path: Path) -> None:
         """Test get_task returns task by container ID."""
-        task = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-        )
-        backend._tasks["container-123"] = task
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
-        assert backend.get_task("container-123") == task
+        task = backend.get_task(container_id)
+        assert task is not None
+        assert task.task_id == "task-123"
+        assert task.container_id == container_id
         assert backend.get_task("unknown") is None
 
-    def test_get_task_by_task_id(self, backend: DockerBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_get_task_by_task_id(
+        self, backend: DockerBackend, tmp_path: Path
+    ) -> None:
         """Test get_task_by_task_id returns task by task ID."""
-        task = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-        )
-        backend._tasks["container-123"] = task
+        container_id = await spawn_tracked_task(backend, tmp_path)
 
-        assert backend.get_task_by_task_id("task-123") == task
+        task = backend.get_task_by_task_id("task-123")
+        assert task is not None
+        assert task.container_id == container_id
         assert backend.get_task_by_task_id("unknown") is None
 
-    def test_clear(self, backend: DockerBackend) -> None:
+    @pytest.mark.asyncio
+    async def test_clear(self, backend: DockerBackend, tmp_path: Path) -> None:
         """Test clear removes all tasks."""
-        backend._tasks["container-123"] = DockerTask(
-            task_id="task-123",
-            container_id="container-123",
-            prompt_path="tasks/task-123/prompt.md",
-            output_dir="tasks/task-123/output",
-            model="claude",
-            timeout_minutes=30,
-        )
+        container_id = await spawn_tracked_task(backend, tmp_path)
+        assert backend.get_task(container_id) is not None
 
         backend.clear()
-        assert len(backend._tasks) == 0
+        assert backend.get_task(container_id) is None
+        assert backend.get_task_by_task_id("task-123") is None

@@ -69,7 +69,7 @@ async def test_init_db_fails_fast_on_deterministic_error(
     """A deterministic error propagates immediately without any retry/backoff."""
     fatal = _dbapi_error(DataError)  # e.g. StringDataRightTruncation
 
-    async def _raise_fatal(_engine: object) -> bool:
+    async def _raise_fatal(_engine: object) -> None:
         raise fatal
 
     sleep_calls: list[float] = []
@@ -77,8 +77,7 @@ async def test_init_db_fails_fast_on_deterministic_error(
     async def _record_sleep(delay: float) -> None:
         sleep_calls.append(delay)
 
-    monkeypatch.setattr(storage_module, "_get_alembic_config", lambda _engine: object())
-    monkeypatch.setattr(storage_module, "_is_alembic_managed", _raise_fatal)
+    monkeypatch.setattr(storage_module, "_initialize_db_once", _raise_fatal)
     monkeypatch.setattr(storage_module.asyncio, "sleep", _record_sleep)
 
     with pytest.raises(DataError):
@@ -93,24 +92,17 @@ async def test_init_db_retries_transient_error(
     """A transient error retries, then succeeds once the condition clears."""
     attempts = {"count": 0}
 
-    async def _flaky_is_managed(_engine: object) -> bool:
+    async def _flaky_initialize(_engine: object) -> None:
         attempts["count"] += 1
         if attempts["count"] < 3:
             raise _dbapi_error(OperationalError)  # simulate DB not ready yet
-        return True  # third attempt: treat as an existing, managed DB
-
-    async def _noop(*_args: object, **_kwargs: object) -> None:
-        return None
 
     sleep_calls: list[float] = []
 
     async def _record_sleep(delay: float) -> None:
         sleep_calls.append(delay)
 
-    monkeypatch.setattr(storage_module, "_get_alembic_config", lambda _engine: object())
-    monkeypatch.setattr(storage_module, "_is_alembic_managed", _flaky_is_managed)
-    monkeypatch.setattr(storage_module, "_log_current_revision", _noop)
-    monkeypatch.setattr(storage_module, "_run_alembic_command", _noop)
+    monkeypatch.setattr(storage_module, "_initialize_db_once", _flaky_initialize)
     monkeypatch.setattr(storage_module.asyncio, "sleep", _record_sleep)
 
     await init_db(cast("AsyncEngine", object()))

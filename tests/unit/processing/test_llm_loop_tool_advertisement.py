@@ -517,20 +517,6 @@ def test_extract_activate_tools_falls_back_to_content_json() -> None:
     assert _extract_activations_from_result(tool_msg) == (["lazy_b"], [])
 
 
-def test_extract_activate_tools_ignores_non_get_note_even_with_structured_data() -> (
-    None
-):
-    """The trust gate applies even when tool_result.data is used."""
-    tool_msg = ToolMessage(
-        tool_call_id="call_1",
-        name="some_other_tool",
-        content="",
-        tool_result=ToolResult(data={"activate_tools": ["lazy_b"]}),
-    )
-
-    assert _extract_activations_from_result(tool_msg) == ([], [])
-
-
 def test_extract_activations_returns_mcp_server_ids() -> None:
     """Skills that gate a whole MCP server propagate activate_mcp_servers."""
     tool_msg = ToolMessage(

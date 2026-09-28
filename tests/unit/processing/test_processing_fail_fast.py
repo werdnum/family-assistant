@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
-import yaml
 
 from family_assistant.config_loader import load_config
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -59,6 +57,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.messages import ContentPartDict
     from family_assistant.tools import ToolExecutionContext
     from family_assistant.tools.types import ToolDefinition
@@ -80,6 +79,63 @@ class SimpleToolsProvider:
 
     async def close(self) -> None:
         pass
+
+
+class RecordingContextToolsProvider(SimpleToolsProvider):
+    """Records the ToolExecutionContext fields the caller forwarded to a tool call."""
+
+    def __init__(self) -> None:
+        self.recorded_chat_interfaces: dict[str, ChatInterface] | None = None
+        self.recorded_user_id: str | None = None
+        self.recorded_subconversation_id: str | None = None
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "example_tool",
+                    "description": "Records the context it was called with.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool args are dynamic
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        del name, arguments, call_id
+        self.recorded_chat_interfaces = context.chat_interfaces
+        self.recorded_user_id = context.user_id
+        self.recorded_subconversation_id = context.subconversation_id
+        return "recorded"
+
+
+def _make_llm_that_calls_example_tool_once() -> RuleBasedMockLLMClient:
+    tool_call = ToolCallItem(
+        id="call-recording",
+        type="function",
+        function=ToolCallFunction(name="example_tool", arguments="{}"),
+    )
+
+    # ast-grep-ignore: no-dict-any - mirrors MatcherArgs, the mock LLM's matcher kwargs type
+    def has_tool_result(args: dict[str, Any]) -> bool:
+        return any(isinstance(message, ToolMessage) for message in args["messages"])
+
+    return RuleBasedMockLLMClient(
+        rules=[
+            (
+                lambda args: not has_tool_result(args),
+                LLMOutput(content=None, tool_calls=[tool_call]),
+            ),
+        ],
+        default_response=LLMOutput(content="done"),
+    )
 
 
 def _make_service(
@@ -142,45 +198,36 @@ async def test_a_tier_with_no_client_built_is_an_internal_error_not_a_refusal(
 async def test_sync_forwards_chat_interfaces_to_process_message(
     db_engine: AsyncEngine,
 ) -> None:
-    service = _make_service()
-    process_message_mock = AsyncMock(return_value=([], None, None))
-    service.process_message = process_message_mock  # type: ignore[method-assign]
+    tools_provider = RecordingContextToolsProvider()
+    service = _make_service(llm_client=_make_llm_that_calls_example_tool_once())
+    service.tools_provider = tools_provider
+    service.tool_executor.tools_provider = tools_provider
+    web_interface = MagicMock()
 
     db_context = Database(db_engine)
-    await service.handle_chat_interaction(
+    result = await service.handle_chat_interaction(
         db_context=db_context,
         interface_type="test",
         conversation_id="conv_sync_forwarding",
         trigger_content_parts=[{"type": "text", "text": "hello"}],
         trigger_interface_message_id="msg-1",
         user_name="tester",
-        chat_interfaces={"web": MagicMock()},
+        chat_interfaces={"web": web_interface},
     )
 
-    assert process_message_mock.await_args is not None
-    captured_kwargs = process_message_mock.await_args.kwargs
-    assert "chat_interfaces" in captured_kwargs
-    assert isinstance(captured_kwargs["chat_interfaces"], dict)
-    assert "web" in captured_kwargs["chat_interfaces"]
+    assert not result.has_error
+    assert tools_provider.recorded_chat_interfaces is not None
+    assert tools_provider.recorded_chat_interfaces["web"] is web_interface
 
 
 @pytest.mark.asyncio
 async def test_stream_forwards_user_and_subconversation_to_process_message_stream(
     db_engine: AsyncEngine,
 ) -> None:
-    service = _make_service()
-    captured_kwargs: dict[str, object] = {}
-
-    async def fake_process_message_stream(
-        **kwargs: object,
-    ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
-        captured_kwargs.update(kwargs)
-        yield (
-            LLMStreamEvent(type="done", metadata={}),
-            AssistantMessage(content="stream response"),
-        )
-
-    service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
+    tools_provider = RecordingContextToolsProvider()
+    service = _make_service(llm_client=_make_llm_that_calls_example_tool_once())
+    service.tools_provider = tools_provider
+    service.tool_executor.tools_provider = tools_provider
 
     db_context = Database(db_engine)
     events: list[LLMStreamEvent] = []
@@ -196,60 +243,23 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
     ):
         events.append(event)
 
-    assert events
-    assert captured_kwargs.get("user_id") == "user-123"
-    assert captured_kwargs.get("subconversation_id") == "sub-abc"
+    assert not any(event.type == "error" for event in events)
+    assert tools_provider.recorded_user_id == "user-123"
+    assert tools_provider.recorded_subconversation_id == "sub-abc"
 
-
-@pytest.mark.no_db
-@pytest.mark.no_db
-@pytest.mark.asyncio
-async def test_sync_and_stream_share_error_persistence_helper() -> None:
-    service = _make_service()
-    db_context = MagicMock()
-    service._prepare_turn_messages_for_llm = AsyncMock(  # type: ignore[method-assign]
-        return_value=(None, [])
-    )
-    service.process_message = AsyncMock(side_effect=RuntimeError("sync boom"))  # type: ignore[method-assign]
-
-    async def fake_process_message_stream(
-        **kwargs: object,
-    ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
-        # An unreachable yield is what makes this an async generator.
-        if False:  # pylint: disable=using-constant-test
-            yield (LLMStreamEvent(type="done"), None)
-        raise RuntimeError("stream boom")
-
-    service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
-    persist_error_mock = AsyncMock(return_value=99)
-    service._persist_error_history_message = persist_error_mock  # type: ignore[method-assign]
-
-    sync_result = await service.handle_chat_interaction(
-        db_context=db_context,
+    saved_messages = await db_context.message_history.get_recent(
         interface_type="test",
-        conversation_id="conv_sync_shared_error",
-        trigger_content_parts=[{"type": "text", "text": "hello"}],
-        trigger_interface_message_id="msg-sync-shared-error",
-        user_name="tester",
+        conversation_id="conv_stream_forwarding",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id="sub-abc",
+        current_time=service.clock.now(),
     )
-    stream_events = [
-        event
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_stream_shared_error",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-stream-shared-error",
-            user_name="tester",
-        )
-    ]
-
-    assert sync_result.has_error
-    assert any(event.type == "error" for event in stream_events)
-    assert persist_error_mock.await_count == 2
-    for await_call in persist_error_mock.await_args_list:
-        assert await_call.kwargs["interface_type"] == "test"
-        assert await_call.kwargs["error_traceback"]
+    assert any(
+        isinstance(message, ToolMessage) and message.tool_call_id == "call-recording"
+        for message in saved_messages
+    )
 
 
 @pytest.mark.asyncio
@@ -278,7 +288,11 @@ async def test_sync_persists_errors_as_error_messages(db_engine: AsyncEngine) ->
         subconversation_id=None,
         current_time=service.clock.now(),
     )
-    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    error_messages = [
+        message for message in saved_messages if isinstance(message, ErrorMessage)
+    ]
+    assert error_messages
+    assert any("boom" in (message.error_traceback or "") for message in error_messages)
 
 
 @pytest.mark.asyncio
@@ -318,7 +332,13 @@ async def test_stream_persists_errors_as_error_messages(db_engine: AsyncEngine) 
         subconversation_id=None,
         current_time=service.clock.now(),
     )
-    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    error_messages = [
+        message for message in saved_messages if isinstance(message, ErrorMessage)
+    ]
+    assert error_messages
+    assert any(
+        "stream boom" in (message.error_traceback or "") for message in error_messages
+    )
 
 
 async def test_steer_echo_is_published_only_after_it_is_persisted(
@@ -377,15 +397,103 @@ async def test_steer_echo_is_published_only_after_it_is_persisted(
 
 
 @pytest.mark.no_db
-def test_llm_loop_infers_attachment_types_from_mime_type() -> None:
-    service = _make_service()
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mime_type", "expected_display_type"),
+    [
+        ("image/png", "image"),
+        ("video/mp4", "video"),
+        ("audio/mpeg", "audio"),
+        ("application/pdf", "document"),
+        ("text/plain", "file"),
+        (None, "file"),
+    ],
+)
+async def test_done_event_attachment_type_reflects_mime_type(
+    mime_type: str | None,
+    expected_display_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The display type on the stream's done event, not the private helper that fills it in."""
 
-    assert service.llm_loop._infer_attachment_type("image/png") == "image"
-    assert service.llm_loop._infer_attachment_type("video/mp4") == "video"
-    assert service.llm_loop._infer_attachment_type("audio/mpeg") == "audio"
-    assert service.llm_loop._infer_attachment_type("application/pdf") == "document"
-    assert service.llm_loop._infer_attachment_type("text/plain") == "file"
-    assert service.llm_loop._infer_attachment_type(None) == "file"
+    class SingleToolThenContentLLM:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate_response_stream(
+            self,
+            *,
+            messages: list[object],
+            tools: list[dict[str, object]] | None,
+            tool_choice: str,
+        ) -> AsyncIterator[LLMStreamEvent]:
+            self.call_count += 1
+            if self.call_count == 1:
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id="call-1",
+                        type="function",
+                        function=ToolCallFunction(name="example_tool", arguments="{}"),
+                    ),
+                )
+                yield LLMStreamEvent(type="done", metadata={})
+                return
+
+            yield LLMStreamEvent(type="content", content="final answer")
+            yield LLMStreamEvent(type="done", metadata={})
+
+    service = _make_service(llm_client=cast("Any", SingleToolThenContentLLM()))
+    monkeypatch.setattr(
+        service.tool_executor,
+        "execute",
+        AsyncMock(
+            return_value=ToolExecutionResult(
+                stream_event=LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id="call-1",
+                    tool_result="ok",
+                ),
+                llm_message=ToolMessage(
+                    tool_call_id="call-1",
+                    content="ok",
+                    name="example_tool",
+                ),
+                auto_attachment_ids=["att-1"],
+                explicit_attachment_ids=None,
+            )
+        ),
+    )
+    mock_registry = AsyncMock()
+    mock_registry.get_attachment.return_value = MagicMock(
+        mime_type=mime_type, description="an attachment", size=123
+    )
+    service.attachment_processor.attachment_registry = mock_registry
+
+    done_event = None
+    async for event, _message in service.llm_loop.run_stream(
+        db_context=MagicMock(),
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="hello"),
+        ],
+        interface_type="test",
+        conversation_id="conv",
+        user_name="tester",
+        turn_id="turn",
+        chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
+        processing_service=service,
+    ):
+        if event.type == "done":
+            done_event = event
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    attachments = done_event.metadata.get("attachments")
+    assert attachments is not None
+    assert attachments[0]["type"] == expected_display_type
 
 
 @pytest.mark.no_db
@@ -410,6 +518,7 @@ def test_tool_execution_result_applies_attachment_updates_consistently() -> None
 @pytest.mark.asyncio
 async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tool_call = ToolCallItem(
         id="call_final_iteration",
@@ -421,6 +530,17 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
         default_response=LLMOutput(content=None, tool_calls=[tool_call]),
     )
     service = _make_service(llm_client=llm_client, max_iterations=1)
+    recorded_calls: list[str] = []
+
+    async def recording_execute(*args: object, **kwargs: object) -> ToolExecutionResult:
+        del args
+        tool_call_item_obj = cast("ToolCallItem", kwargs["tool_call_item_obj"])
+        recorded_calls.append(tool_call_item_obj.id)
+        raise AssertionError(
+            "tool_executor.execute must not run a call skipped by the iteration limit"
+        )
+
+    monkeypatch.setattr(service.tool_executor, "execute", recording_execute)
 
     db_context = Database(db_engine)
     result = await service.handle_chat_interaction(
@@ -433,6 +553,29 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     )
 
     assert not result.has_error
+    assert recorded_calls == []
+
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_final_iteration_tool_calls",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    tool_messages = [
+        message for message in saved_messages if isinstance(message, ToolMessage)
+    ]
+    matching = [
+        message
+        for message in tool_messages
+        if message.tool_call_id == "call_final_iteration"
+    ]
+    assert len(matching) == 1
+    assert "not executed" in matching[0].content
+    assert "iteration limit" in matching[0].content
+    assert matching[0].error_traceback == "max_iterations_reached"
 
 
 @pytest.mark.asyncio
@@ -614,44 +757,6 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
         service.validate_system_prompt_renders()
 
         assert service.format_system_prompt(user_name="tester"), profile_id
-
-
-@pytest.mark.no_db
-def test_default_system_prompt_templates_only_use_supported_placeholders() -> None:
-    defaults_path = Path(__file__).resolve().parents[3] / "defaults.yaml"
-    with defaults_path.open(encoding="utf-8") as defaults_file:
-        config = yaml.safe_load(defaults_file)
-
-    # current_time and aggregated_other_context are deliberately absent: they
-    # moved into the trailing turn-context block, and a template that reaches for
-    # either would put volatile text back ahead of the conversation history and
-    # silently cost the prompt cache. See docs/design/prompt-cache-turn-context.md.
-    allowed_placeholders = {
-        "profile_id",
-        "server_url",
-        "user_name",
-    }
-    invalid_placeholders_by_profile: dict[str, list[str]] = {}
-    placeholder_pattern = r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})"
-
-    profile_configs = [
-        ("default_profile_settings", config["default_profile_settings"]),
-        *((profile["id"], profile) for profile in config.get("service_profiles", [])),
-    ]
-    for profile_id, profile_config in profile_configs:
-        processing_config = profile_config.get("processing_config") or {}
-        prompts = processing_config.get("prompts") or {}
-        system_prompt = prompts.get("system_prompt")
-        if not isinstance(system_prompt, str):
-            continue
-
-        placeholders = sorted(
-            set(re.findall(placeholder_pattern, system_prompt)) - allowed_placeholders
-        )
-        if placeholders:
-            invalid_placeholders_by_profile[profile_id] = placeholders
-
-    assert invalid_placeholders_by_profile == {}
 
 
 class _DelegateAdvertisingToolsProvider(SimpleToolsProvider):

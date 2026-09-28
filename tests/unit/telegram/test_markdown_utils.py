@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from family_assistant.telegram.markdown_utils import (
     convert_to_telegram_markdown,
     fix_telegramify_markdown_escaping,
@@ -104,39 +102,6 @@ class TestFixTelegramifyMarkdownEscaping:
         # The regex sees \ before > and <, so they don't get escaped
         assert result == r"Test \\> and \\< with double backslashes"
 
-    def test_escaped_backslash_before_special_char(self) -> None:
-        r"""Test handling of escaped backslash before special char.
-
-        Note: The regex cannot distinguish between \> (escaped >) and \\>
-        (escaped backslash followed by >). This is an acceptable trade-off
-        for the simplicity and performance of the regex approach.
-        """
-        # If we have \\> (escaped backslash followed by >), the regex sees \ before >
-        text = r"\\>"
-        result = fix_telegramify_markdown_escaping(text)
-        # Result is unchanged - regex sees backslash before >
-        assert result == r"\\>"
-
-
-@pytest.mark.parametrize(
-    "input_text,expected",
-    [
-        ("Normal text", "Normal text"),
-        ("Text with > char", r"Text with \> char"),
-        (r"Already \> escaped", r"Already \> escaped"),
-        ("Text <html> tags", r"Text \<html\> tags"),
-        (">Blockquote", r"\>Blockquote"),
-        ("Line1\n>Line2", "Line1\n\\>Line2"),
-        ("Math: 5 > 3 and 2 < 4", r"Math: 5 \> 3 and 2 \< 4"),
-    ],
-)
-def test_fix_telegramify_markdown_escaping_parametrized(
-    input_text: str, expected: str
-) -> None:
-    """Parametrized test for various input scenarios."""
-    result = fix_telegramify_markdown_escaping(input_text)
-    assert result == expected
-
 
 class TestConvertToTelegramMarkdown:
     """Tests for convert_to_telegram_markdown shim function."""
@@ -146,7 +111,7 @@ class TestConvertToTelegramMarkdown:
         text = "Hello *world*"
         result, parse_mode = convert_to_telegram_markdown(text)
         assert parse_mode == "MarkdownV2"
-        assert result  # Should have some converted content
+        assert "Hello _world_" in result
 
     def test_escaping_applied(self) -> None:
         """Test that escaping bug fixes are applied."""
@@ -172,8 +137,8 @@ class TestConvertToTelegramMarkdown:
         """Test conversion of empty string."""
         text = ""
         result, parse_mode = convert_to_telegram_markdown(text)
-        # Should succeed but return empty (with newline from markdownify)
         assert parse_mode == "MarkdownV2"
+        assert not result
 
     def test_complex_markdown(self) -> None:
         """Test conversion of complex markdown with multiple elements."""

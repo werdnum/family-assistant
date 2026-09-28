@@ -14,147 +14,37 @@ class TestAttachmentSecurityBoundaries:
     """Test suite for attachment security boundaries and conversation scoping."""
 
     @pytest.mark.asyncio
-    async def test_cross_conversation_access_allowed(
+    async def test_attachment_survives_new_database_contexts(
         self, db_engine: AsyncEngine
     ) -> None:
-        """Test that attachments CAN be accessed from different conversations if ID is known."""
-
+        """An uploaded attachment remains readable by a later turn."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_registry = AttachmentRegistry(
+            registry = AttachmentRegistry(
                 storage_path=temp_dir, db_engine=db_engine, config=None
             )
-
-            # Create attachment in conversation A
-            test_content = b"test content for conversation A"
-            conversation_a_id = "conversation_a"
-
-            db_context = Database(engine=db_engine)
-            # Register attachment in conversation A
-            attachment_record = await attachment_registry.register_user_attachment(
-                db_context=db_context,
-                content=test_content,
-                mime_type="text/plain",
-                filename="test.txt",
-                conversation_id=conversation_a_id,
-                user_id="user1",
-                description="Test attachment for conversation A",
-            )
-            attachment_id = attachment_record.attachment_id
-
-            # Verify attachment exists and is accessible regardless of context
-            # Having the ID is enough.
-            retrieved = await attachment_registry.get_attachment(
-                db_context, attachment_id, acting_user_id=None
-            )
-            assert retrieved is not None
-            assert retrieved.conversation_id == conversation_a_id
-
-            # Content should also be accessible
-            content = await attachment_registry.get_attachment_content(
-                db_context, attachment_id, acting_user_id=None
-            )
-            assert content == test_content
-
-    @pytest.mark.asyncio
-    async def test_attachment_persistence_throughout_conversation(
-        self, db_engine: AsyncEngine
-    ) -> None:
-        """Test that attachments remain accessible throughout a conversation lifetime."""
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_registry = AttachmentRegistry(
-                storage_path=temp_dir, db_engine=db_engine, config=None
-            )
-
-            conversation_id = "persistent_conversation"
-            test_content = b"persistent test content"
-
-            db_context = Database(engine=db_engine)
-            # Register attachment
-            attachment_record = await attachment_registry.register_user_attachment(
-                db_context=db_context,
-                content=test_content,
+            record = await registry.register_user_attachment(
+                db_context=Database(engine=db_engine),
+                content=b"persistent test content",
                 mime_type="application/pdf",
                 filename="persistent.bin",
-                conversation_id=conversation_id,
+                conversation_id="persistent_conversation",
                 user_id="user1",
                 description="Persistent test attachment",
             )
-            attachment_id = attachment_record.attachment_id
 
-            # Simulate multiple database sessions (as would happen during conversation)
-            for _i in range(3):
-                db_context = Database(engine=db_engine)
-                # Attachment should remain accessible
-                retrieved = await attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=None
-                )
-                assert retrieved is not None
-                assert retrieved.conversation_id == conversation_id
-                assert retrieved.mime_type == "application/pdf"
-                assert retrieved.metadata.get("original_filename") == "persistent.bin"
-
-                # Content should remain accessible
-                content = await attachment_registry.get_attachment_content(
-                    db_context, attachment_id, acting_user_id=None
-                )
-                assert content == test_content
-
-    @pytest.mark.asyncio
-    async def test_reference_integrity_between_services(
-        self, db_engine: AsyncEngine
-    ) -> None:
-        """Test that attachment IDs remain valid when passed between tools/services."""
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            attachment_registry = AttachmentRegistry(
-                storage_path=temp_dir, db_engine=db_engine, config=None
+            later_context = Database(engine=db_engine)
+            retrieved = await registry.get_attachment(
+                later_context, record.attachment_id, acting_user_id=None
+            )
+            content = await registry.get_attachment_content(
+                later_context, record.attachment_id, acting_user_id=None
             )
 
-            conversation_id = "service_conversation"
-            test_content = b"content for service passing"
-
-            db_context = Database(engine=db_engine)
-            # Register attachment
-            attachment_record = await attachment_registry.register_user_attachment(
-                db_context=db_context,
-                content=test_content,
-                mime_type="image/png",
-                filename="service_test.png",
-                conversation_id=conversation_id,
-                user_id="user1",
-                description="Attachment for service testing",
-            )
-            attachment_id = attachment_record.attachment_id
-
-            # Simulate passing attachment ID between services
-            service_a_id = attachment_id
-            service_b_id = attachment_id
-
-            # Both services should be able to access the same attachment
-            attachment_from_a = await attachment_registry.get_attachment(
-                db_context, service_a_id, acting_user_id=None
-            )
-            attachment_from_b = await attachment_registry.get_attachment(
-                db_context, service_b_id, acting_user_id=None
-            )
-
-            assert attachment_from_a is not None
-            assert attachment_from_b is not None
-            assert attachment_from_a.attachment_id == attachment_from_b.attachment_id
-            assert (
-                attachment_from_a.conversation_id == attachment_from_b.conversation_id
-            )
-
-            # Content should be identical
-            content_a = await attachment_registry.get_attachment_content(
-                db_context, service_a_id, acting_user_id=None
-            )
-            content_b = await attachment_registry.get_attachment_content(
-                db_context, service_b_id, acting_user_id=None
-            )
-
-            assert content_a == content_b == test_content
+            assert retrieved is not None
+            assert retrieved.conversation_id == "persistent_conversation"
+            assert retrieved.mime_type == "application/pdf"
+            assert retrieved.metadata["original_filename"] == "persistent.bin"
+            assert content == b"persistent test content"
 
     @pytest.mark.asyncio
     async def test_invalid_attachment_id_handling(self, db_engine: AsyncEngine) -> None:

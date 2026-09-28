@@ -1,7 +1,6 @@
 """Unit tests for the PushNotificationService."""
 
 import json
-import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,15 +33,23 @@ def test_service_disabled_with_no_email() -> None:
 
 
 @pytest.mark.asyncio
+@patch("family_assistant.services.push_notification.webpush", autospec=True)
 async def test_send_notification_disabled(
-    db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
+    mock_webpush: MagicMock, db_engine: AsyncEngine
 ) -> None:
     """Test that send_notification does nothing if the service is disabled."""
     service = PushNotificationService(vapid_private_key=None, vapid_contact_email=None)
     db_context = Database(engine=db_engine)
-    with caplog.at_level(logging.DEBUG):
-        await service.send_notification("user1", "title", "body", db_context)
-        assert "Push notifications disabled" in caplog.text
+    await db_context.push_subscriptions.add(
+        user_identifier="user1",
+        subscription_json={"endpoint": "https://example.com/push"},
+    )
+
+    await service.send_notification("user1", "title", "body", db_context)
+
+    mock_webpush.assert_not_called()
+    subscriptions = await db_context.push_subscriptions.get_by_user("user1")
+    assert len(subscriptions) == 1
 
 
 @pytest.mark.asyncio
@@ -121,7 +128,7 @@ async def test_send_notification_serializes_metadata_for_service_worker(
 @pytest.mark.asyncio
 @patch("family_assistant.services.push_notification.webpush", autospec=True)
 async def test_handle_stale_subscription_410_gone(
-    mock_webpush: MagicMock, db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
+    mock_webpush: MagicMock, db_engine: AsyncEngine
 ) -> None:
     """Test that a 410 Gone response deletes the subscription."""
     mock_response = MagicMock()
@@ -138,11 +145,7 @@ async def test_handle_stale_subscription_410_gone(
     service = PushNotificationService(
         vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
     )
-    with caplog.at_level(logging.INFO):
-        await service.send_notification("user1", "title", "body", db_context)
-        assert (
-            "Subscription for user user1 is stale (410 Gone). Deleting." in caplog.text
-        )
+    await service.send_notification("user1", "title", "body", db_context)
 
     mock_webpush.assert_called_once()
 
@@ -154,7 +157,7 @@ async def test_handle_stale_subscription_410_gone(
 @pytest.mark.asyncio
 @patch("family_assistant.services.push_notification.webpush", autospec=True)
 async def test_handle_other_web_push_exception(
-    mock_webpush: MagicMock, db_engine: AsyncEngine, caplog: pytest.LogCaptureFixture
+    mock_webpush: MagicMock, db_engine: AsyncEngine
 ) -> None:
     """Test that other WebPushExceptions are logged but do not delete the subscription."""
     mock_response = MagicMock()
@@ -171,9 +174,7 @@ async def test_handle_other_web_push_exception(
     service = PushNotificationService(
         vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
     )
-    with caplog.at_level(logging.WARNING):
-        await service.send_notification("user1", "title", "body", db_context)
-        assert "Failed to send push notification" in caplog.text
+    await service.send_notification("user1", "title", "body", db_context)
 
     mock_webpush.assert_called_once()
 

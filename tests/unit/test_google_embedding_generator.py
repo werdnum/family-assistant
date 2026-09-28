@@ -1,26 +1,11 @@
-"""Unit tests for GoogleEmbeddingGenerator (protocol compliance, no API calls)."""
+"""Unit tests for GoogleEmbeddingGenerator (model name handling, no API calls)."""
 
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from family_assistant.embeddings import EmbeddingGenerator, GoogleEmbeddingGenerator
-
-
-def test_protocol_compliance() -> None:
-    """GoogleEmbeddingGenerator satisfies the EmbeddingGenerator protocol."""
-    generator = GoogleEmbeddingGenerator(
-        model="gemini-embedding-001", api_key="fake-key"
-    )
-    assert isinstance(generator, EmbeddingGenerator)
-
-
-def test_model_name_bare() -> None:
-    generator = GoogleEmbeddingGenerator(
-        model="gemini-embedding-001", api_key="fake-key"
-    )
-    assert generator.model_name == "gemini-embedding-001"
+from family_assistant.embeddings import GoogleEmbeddingGenerator
 
 
 def test_model_name_with_prefix() -> None:

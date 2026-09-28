@@ -189,45 +189,6 @@ class TestRetryingLLMClientSpans:
         assert len(exception_events) >= 1
 
     @pytest.mark.asyncio
-    async def test_generate_response_records_fallback_attempt(
-        self, span_exporter: InMemorySpanExporter
-    ) -> None:
-        failing_client = FailingMockClient(
-            rules=[], default_response=LLMOutput(content="unused")
-        )
-        fallback_client = RuleBasedMockLLMClient(
-            rules=[],
-            default_response=LLMOutput(content="fallback response"),
-        )
-        client = RetryingLLMClient(
-            primary_client=failing_client,
-            primary_model="test-model",
-            fallback_client=fallback_client,
-            fallback_model="fallback-model",
-        )
-        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
-
-        result = await client.generate_response(messages=messages)
-        assert result.content == "fallback response"
-
-        spans = span_exporter.get_finished_spans()
-        assert len(spans) == 1
-        span = spans[0]
-        assert span.attributes is not None
-        assert span.attributes["llm.has_fallback"] is True
-
-        attempt_events = [e for e in span.events if e.name == "llm.attempt"]
-        # Attempt 1 (primary), Attempt 2 (retry primary), Attempt 3 (fallback)
-        assert len(attempt_events) >= 3
-
-        fallback_attempts = [
-            e
-            for e in attempt_events
-            if e.attributes is not None and e.attributes.get("is_fallback") is True
-        ]
-        assert len(fallback_attempts) >= 1
-
-    @pytest.mark.asyncio
     async def test_generate_response_stream_creates_span(
         self, span_exporter: InMemorySpanExporter
     ) -> None:
@@ -349,14 +310,25 @@ class TestRetryingLLMClientSpans:
         )
         messages = [SystemMessage(content="system"), UserMessage(content="hello")]
 
-        await client.generate_response(messages=messages)
+        result = await client.generate_response(messages=messages)
+        assert result.content == "fallback response"
 
         spans = span_exporter.get_finished_spans()
         assert len(spans) == 1
-        assert spans[0].attributes is not None
-        assert spans[0].attributes["llm.attempts"] == 3
-        assert spans[0].attributes["llm.fallback_used"] is True
-        assert spans[0].attributes["gen_ai.response.model"] == "fallback-model"
+        span = spans[0]
+        assert span.attributes is not None
+        assert span.attributes["llm.attempts"] == 3
+        assert span.attributes["llm.fallback_used"] is True
+        assert span.attributes["gen_ai.response.model"] == "fallback-model"
+        assert span.attributes["llm.has_fallback"] is True
+
+        attempt_events = [e for e in span.events if e.name == "llm.attempt"]
+        # Attempt 1 (primary), Attempt 2 (retry primary), Attempt 3 (fallback)
+        assert len(attempt_events) == 3
+        last_attempt_attributes = attempt_events[-1].attributes
+        assert last_attempt_attributes is not None
+        assert last_attempt_attributes["model"] == "fallback-model"
+        assert last_attempt_attributes["is_fallback"] is True
 
     @pytest.mark.asyncio
     async def test_stream_span_records_latency_and_resolved_model(

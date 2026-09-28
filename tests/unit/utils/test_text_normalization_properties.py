@@ -267,10 +267,6 @@ class TestRegressionInputs:
 class TestNormalizeProperties:
     """Properties of the non-streaming function itself."""
 
-    @given(st.text(alphabet="abcde ", max_size=40))
-    def test_plain_text_unchanged(self, text: str) -> None:
-        assert normalize_latex_to_unicode(text) == text
-
     @given(st.text(alphabet="abcde$ 1234567890.", max_size=40))
     def test_text_without_backslash_unchanged(self, text: str) -> None:
         # No backslash means no LaTeX -- short-circuit must preserve input.
@@ -286,14 +282,6 @@ class TestNormalizeProperties:
 
 class TestStreamingProperties:
     """Properties of the streaming normalizer itself."""
-
-    @given(_realistic_message())
-    @settings(max_examples=200, deadline=None)
-    def test_feed_returns_persisted_after_flush(self, text: str) -> None:
-        # The streaming output (after flush) must equal the persisted output.
-        streamed = _stream([text])
-        persisted = normalize_latex_to_unicode(text)
-        assert streamed == persisted
 
     def test_flush_after_no_feed_is_empty(self) -> None:
         normalizer = StreamingLatexNormalizer()

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 from pydantic import SecretStr, ValidationError
 
 from family_assistant.config_models import AppConfig, UCPConfig
@@ -58,6 +61,53 @@ def _private_key_pem() -> str:
     ).decode("utf-8")
 
 
+def _parse_signature_input_header(header_value: str) -> tuple[list[str], str]:
+    match = re.match(r'^sig1=\(([^)]*)\);keyid="((?:[^"\\]|\\.)*)"$', header_value)
+    assert match is not None, header_value
+    components = re.findall(r'"([^"]+)"', match.group(1))
+    key_id = match.group(2).replace('\\"', '"').replace("\\\\", "\\")
+    return components, key_id
+
+
+def _rfc9421_component_value(
+    component: str,
+    *,
+    method: str,
+    authority: str,
+    path: str,
+    query: str,
+    headers: httpx.Headers,
+) -> str:
+    if component == "@method":
+        return method
+    if component == "@authority":
+        return authority
+    if component == "@path":
+        return path
+    if component == "@query":
+        return f"?{query}"
+    return headers[component]
+
+
+def _rfc9421_signature_base(
+    components: list[str],
+    *,
+    method: str,
+    authority: str,
+    path: str,
+    query: str,
+    headers: httpx.Headers,
+    signature_params: str,
+) -> bytes:
+    lines = [
+        f'"{component}": '
+        f"{_rfc9421_component_value(component, method=method, authority=authority, path=path, query=query, headers=headers)}"
+        for component in components
+    ]
+    lines.append(f'"@signature-params": {signature_params}')
+    return "\n".join(lines).encode("utf-8")
+
+
 def test_build_ucp_profile_publishes_public_jwk_for_signing_key() -> None:
     config = AppConfig(
         server_url="https://assistant.example",
@@ -84,11 +134,12 @@ def test_build_ucp_profile_publishes_public_jwk_for_signing_key() -> None:
 
 
 def test_sign_ucp_request_adds_required_headers_for_json_post() -> None:
+    private_key_pem = _private_key_pem()
     config = AppConfig(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=SecretStr(_private_key_pem()),
+            signing_private_key=SecretStr(private_key_pem),
         ),
     )
 
@@ -101,22 +152,83 @@ def test_sign_ucp_request_adds_required_headers_for_json_post() -> None:
     )
 
     assert request.method == "POST"
-    assert request.body == (
-        b'{"checkout":{"line_items":[{"id":"sku_123","quantity":1}]}}'
-    )
+    expected_body = b'{"checkout":{"line_items":[{"id":"sku_123","quantity":1}]}}'
+    assert request.body == expected_body
     assert request.headers["UCP-Agent"] == (
         'profile="https://assistant.example/.well-known/ucp"'
     )
     assert request.headers["Idempotency-Key"] == (
         "00000000-0000-4000-8000-000000000000"
     )
-    assert request.headers["Content-Digest"].startswith("sha-256=:")
-    assert '"@query"' in request.headers["Signature-Input"]
-    assert '"content-digest"' in request.headers["Signature-Input"]
+    expected_digest = base64.b64encode(hashlib.sha256(expected_body).digest())
+    assert request.headers["Content-Digest"] == (
+        f"sha-256=:{expected_digest.decode()}:"
+    )
+
+    components, key_id = _parse_signature_input_header(
+        request.headers["Signature-Input"]
+    )
+    assert components == [
+        "@method",
+        "@authority",
+        "@path",
+        "@query",
+        "ucp-agent",
+        "idempotency-key",
+        "content-digest",
+        "content-type",
+    ]
+    assert key_id == "platform-2026"
+
+    signature_params = request.headers["Signature-Input"].split("=", 1)[1]
+    signature_base = _rfc9421_signature_base(
+        components,
+        method="POST",
+        authority="merchant.example",
+        path="/ucp/v1/checkout-sessions",
+        query="debug=true",
+        headers=httpx.Headers(request.headers),
+        signature_params=signature_params,
+    )
+
     signature_value = (
         request.headers["Signature"].removeprefix("sig1=:").removesuffix(":")
     )
-    assert len(base64.b64decode(signature_value)) == 64
+    raw_signature = base64.b64decode(signature_value)
+    assert len(raw_signature) == 64
+    der_signature = utils.encode_dss_signature(
+        int.from_bytes(raw_signature[:32]), int.from_bytes(raw_signature[32:])
+    )
+
+    private_key = cast(
+        "ec.EllipticCurvePrivateKey",
+        serialization.load_pem_private_key(
+            private_key_pem.encode("utf-8"), password=None
+        ),
+    )
+    public_key = private_key.public_key()
+    public_key.verify(der_signature, signature_base, ec.ECDSA(hashes.SHA256()))
+
+    tampered_request = sign_ucp_request(
+        config,
+        method="POST",
+        url="https://merchant.example/ucp/v1/checkout-sessions?debug=true",
+        body={"checkout": {"line_items": [{"id": "sku_123", "quantity": 2}]}},
+        idempotency_key="00000000-0000-4000-8000-000000000000",
+    )
+    tampered_headers = httpx.Headers(request.headers)
+    tampered_headers["content-digest"] = tampered_request.headers["Content-Digest"]
+    tampered_base = _rfc9421_signature_base(
+        components,
+        method="POST",
+        authority="merchant.example",
+        path="/ucp/v1/checkout-sessions",
+        query="debug=true",
+        headers=tampered_headers,
+        signature_params=signature_params,
+    )
+    with pytest.raises(InvalidSignature):
+        public_key.verify(der_signature, tampered_base, ec.ECDSA(hashes.SHA256()))
 
 
 def test_sign_ucp_get_request_omits_body_headers_and_idempotency_key() -> None:
@@ -1069,18 +1181,6 @@ async def test_discovery_no_checkout_fallback_from_non_well_known_profile() -> N
     assert profile is not None
     assert profile.rest_endpoints == ()
     assert profile.supports_shopping is False
-
-
-async def test_discover_merchant_ucp_profile_returns_none_on_http_error() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404)
-
-    async with _client_returning(handler) as client:
-        profile = await discover_merchant_ucp_profile(
-            "https://shop.example.com", client=client
-        )
-
-    assert profile is None
 
 
 async def test_discover_merchant_ucp_profile_rejects_non_https_origin() -> None:

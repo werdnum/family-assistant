@@ -1,53 +1,47 @@
 """Tests for Home Assistant event source validation."""
 
-from unittest.mock import Mock
+from collections.abc import Iterable
+from unittest.mock import NonCallableMagicMock, create_autospec
 
+import homeassistant_api as ha_api
 import pytest
 
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 
+KNOWN_ENTITY_IDS = (
+    "person.alex_smith",
+    "person.taylor_smith",
+    "light.living_room",
+    "light.bedroom",
+    "switch.garage",
+    "sensor.temperature",
+    "binary_sensor.motion_detected",
+)
 
-def _create_ha_client_with_api_attrs(client: Mock) -> Mock:
-    """Add required HomeAssistantSource attributes to a mock client."""
-    client.api_url = "http://test:8123/api"
-    client.token = "test_token"
-    client.verify_ssl = True
+
+def _state(entity_id: str, state: str) -> ha_api.State:
+    return ha_api.State.model_validate({"entity_id": entity_id, "state": state})
+
+
+def _ha_client(entity_ids: Iterable[str]) -> NonCallableMagicMock:
+    """An ``ha_api.Client`` stand-in whose calls are checked against the library's signatures."""
+    client = create_autospec(ha_api.Client, instance=True)
+    client.get_states.return_value = tuple(
+        _state(entity_id, "on") for entity_id in entity_ids
+    )
     return client
+
+
+def _history(entity_id: str, *states: str) -> ha_api.History:
+    return ha_api.History(states=tuple(_state(entity_id, s) for s in states))
 
 
 class TestHomeAssistantValidation:
     """Test Home Assistant event source validation."""
 
     @pytest.fixture
-    def mock_client(self) -> Mock:
-        """Create a mock Home Assistant client."""
-        client = Mock()
-        _create_ha_client_with_api_attrs(client)
-
-        # Mock get_states to return some test entities
-        mock_states = [
-            Mock(entity_id="person.alex_smith"),
-            Mock(entity_id="person.taylor_smith"),
-            Mock(entity_id="light.living_room"),
-            Mock(entity_id="light.bedroom"),
-            Mock(entity_id="switch.garage"),
-            Mock(entity_id="sensor.temperature"),
-            Mock(entity_id="binary_sensor.motion_detected"),
-        ]
-        client.get_states = Mock(return_value=mock_states)
-        return client
-
-    @pytest.fixture
-    def ha_source(self, mock_client: Mock) -> HomeAssistantSource:
-        """Create a Home Assistant source with mock client."""
-        return HomeAssistantSource(mock_client)
-
-    @pytest.fixture
-    def basic_mock_client(self) -> Mock:
-        """Create a basic mock Home Assistant client for state validation tests."""
-        client = Mock()
-        _create_ha_client_with_api_attrs(client)
-        return client
+    def ha_source(self) -> HomeAssistantSource:
+        return HomeAssistantSource(_ha_client(KNOWN_ENTITY_IDS))
 
     @pytest.mark.asyncio
     async def test_valid_entity_id(self, ha_source: HomeAssistantSource) -> None:
@@ -74,31 +68,30 @@ class TestHomeAssistantValidation:
         assert error.similar_values is not None
         assert "person.alex_smith" in error.similar_values
 
+    @pytest.mark.parametrize(
+        "entity_id",
+        [
+            "invalid-entity",
+            "invalid_entity",
+            "invalid entity",
+            ".entity",
+            "domain.",
+            "domain..entity",
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_invalid_entity_format(self, ha_source: HomeAssistantSource) -> None:
+    async def test_invalid_entity_format(
+        self, ha_source: HomeAssistantSource, entity_id: str
+    ) -> None:
         """Test validation catches invalid entity ID format."""
-        test_cases = [
-            ("invalid-entity", "format"),  # dash instead of dot
-            ("invalid_entity", "format"),  # no domain
-            ("invalid entity", "format"),  # space
-            (".entity", "format"),  # no domain
-            ("domain.", "format"),  # no object_id
-            ("domain..entity", "format"),  # double dot
-        ]
-
-        for entity_id, error_type in test_cases:
-            result = await ha_source.validate_match_conditions({"entity_id": entity_id})
-            assert result.valid is False
-            assert len(result.errors) == 1
-            error = result.errors[0]
-            assert error.field == "entity_id"
-            if error_type == "format":
-                assert "Invalid entity ID format" in error.error
-                assert error.suggestion is not None
-                assert (
-                    "person.alex_smith" in error.suggestion
-                    or "domain.object_id" in error.error
-                )
+        result = await ha_source.validate_match_conditions({"entity_id": entity_id})
+        assert result.valid is False
+        assert len(result.errors) == 1
+        error = result.errors[0]
+        assert error.field == "entity_id"
+        assert error.error == "Invalid entity ID format. Expected: domain.object_id"
+        assert error.suggestion is not None
+        assert "person.alex_smith" in error.suggestion
 
     @pytest.mark.asyncio
     async def test_uppercase_entity_rejected_by_api(
@@ -147,10 +140,8 @@ class TestHomeAssistantValidation:
         error = result.errors[0]
         assert error.field == "entity_id"
         assert "not found" in error.error
-        assert error.similar_values is not None
-        # Should show other person entities as suggestions
-        assert "person.alex_smith" in error.similar_values
-        assert "person.taylor_smith" in error.similar_values
+        assert error.suggestion is None
+        assert error.similar_values == ["person.alex_smith", "person.taylor_smith"]
 
     @pytest.mark.asyncio
     async def test_no_entity_id_field(self, ha_source: HomeAssistantSource) -> None:
@@ -164,14 +155,13 @@ class TestHomeAssistantValidation:
         assert len(result.warnings) == 0
 
     @pytest.mark.asyncio
-    async def test_api_error_becomes_warning(
-        self, ha_source: HomeAssistantSource
-    ) -> None:
+    async def test_api_error_becomes_warning(self) -> None:
         """Test that API errors become warnings, not validation failures."""
-        # Make get_states raise an exception
-        ha_source.client.get_states.side_effect = Exception("API connection failed")  # type: ignore[attr-defined]
+        client = _ha_client(KNOWN_ENTITY_IDS)
+        client.get_states.side_effect = ConnectionError("API connection failed")
+        source = HomeAssistantSource(client)
 
-        result = await ha_source.validate_match_conditions({
+        result = await source.validate_match_conditions({
             "entity_id": "person.alex_smith"
         })
         # Should still be valid since we can't verify
@@ -179,6 +169,7 @@ class TestHomeAssistantValidation:
         assert len(result.errors) == 0
         assert len(result.warnings) == 1
         assert "Could not verify entity existence" in result.warnings[0]
+        assert "API connection failed" in result.warnings[0]
 
     @pytest.mark.asyncio
     async def test_multiple_match_conditions(
@@ -208,39 +199,33 @@ class TestHomeAssistantValidation:
         assert error.suggestion == "Did you mean 'person.taylor_smith'?"
 
     @pytest.mark.asyncio
-    async def test_similar_values_limit(self, ha_source: HomeAssistantSource) -> None:
-        """Test that similar values are limited to 5."""
-        # Add many light entities
-        ha_source.client.get_states.return_value.extend([  # type: ignore[attr-defined]
-            Mock(entity_id=f"light.room_{i}") for i in range(10)
-        ])
+    async def test_similar_values_limit(self) -> None:
+        """Test that similar values are limited to 5 entities of the same domain."""
+        source = HomeAssistantSource(
+            _ha_client([
+                *KNOWN_ENTITY_IDS,
+                *(f"light.room_{i}" for i in range(10)),
+            ])
+        )
 
-        result = await ha_source.validate_match_conditions({
+        result = await source.validate_match_conditions({
             "entity_id": "light.nonexistent"
         })
         assert result.valid is False
         assert len(result.errors) == 1
         error = result.errors[0]
         assert error.similar_values is not None
-        assert len(error.similar_values) == 5  # Should be limited to 5
+        assert len(error.similar_values) == 5
+        assert all(value.startswith("light.") for value in error.similar_values)
 
     @pytest.mark.asyncio
-    async def test_state_validation_with_valid_state(
-        self, basic_mock_client: Mock
-    ) -> None:
+    async def test_state_validation_with_valid_state(self) -> None:
         """Test validation when entity has been in the specified state."""
-        # Mock entity exists
-        mock_states = [Mock(entity_id="person.test")]
-        basic_mock_client.get_states = Mock(return_value=mock_states)
-
-        # Mock history with the state we're checking for
-        mock_history_record = Mock()
-        mock_history_record.state = "home"
-        basic_mock_client.get_entity_histories = Mock(
-            return_value={"person.test": [mock_history_record]}
-        )
-
-        source = HomeAssistantSource(basic_mock_client)
+        client = _ha_client(["person.test"])
+        client.get_entity_histories.return_value = iter([
+            _history("person.test", "home")
+        ])
+        source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
             "entity_id": "person.test",
@@ -252,28 +237,17 @@ class TestHomeAssistantValidation:
         assert len(result.warnings) == 0
 
     @pytest.mark.asyncio
-    async def test_state_validation_with_unknown_state(
-        self, basic_mock_client: Mock
-    ) -> None:
+    async def test_state_validation_with_unknown_state(self) -> None:
         """Test validation when entity has never been in the specified state."""
-        # Mock entity exists
-        mock_states = [Mock(entity_id="person.test")]
-        basic_mock_client.get_states = Mock(return_value=mock_states)
-
-        # Mock history without the state we're checking for
-        mock_history_record1 = Mock()
-        mock_history_record1.state = "home"
-        mock_history_record2 = Mock()
-        mock_history_record2.state = "away"
-        basic_mock_client.get_entity_histories = Mock(
-            return_value={"person.test": [mock_history_record1, mock_history_record2]}
-        )
-
-        source = HomeAssistantSource(basic_mock_client)
+        client = _ha_client(["person.test"])
+        client.get_entity_histories.return_value = iter([
+            _history("person.test", "home", "away")
+        ])
+        source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
             "entity_id": "person.test",
-            "new_state.state": "vacation",  # State that doesn't exist in history
+            "new_state.state": "vacation",
         })
 
         assert result.valid is True  # Still valid, just warnings
@@ -281,22 +255,16 @@ class TestHomeAssistantValidation:
         assert len(result.warnings) == 2
         assert "never been recorded" in result.warnings[0]
         assert "vacation" in result.warnings[0]
-        # Check that both states are mentioned (order not guaranteed)
         assert "Most common states for 'person.test':" in result.warnings[1]
         assert "home" in result.warnings[1]
         assert "away" in result.warnings[1]
 
     @pytest.mark.asyncio
-    async def test_state_validation_no_history(self, basic_mock_client: Mock) -> None:
+    async def test_state_validation_no_history(self) -> None:
         """Test validation when no history is available for entity."""
-        # Mock entity exists
-        mock_states = [Mock(entity_id="person.test")]
-        basic_mock_client.get_states = Mock(return_value=mock_states)
-
-        # Mock no history
-        basic_mock_client.get_entity_histories = Mock(return_value={})
-
-        source = HomeAssistantSource(basic_mock_client)
+        client = _ha_client(["person.test"])
+        client.get_entity_histories.return_value = iter([])
+        source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
             "entity_id": "person.test",
@@ -309,18 +277,11 @@ class TestHomeAssistantValidation:
         assert "No history found" in result.warnings[0]
 
     @pytest.mark.asyncio
-    async def test_state_validation_api_error(self, basic_mock_client: Mock) -> None:
+    async def test_state_validation_api_error(self) -> None:
         """Test that history API errors return warnings."""
-        # Mock entity exists
-        mock_states = [Mock(entity_id="person.test")]
-        basic_mock_client.get_states = Mock(return_value=mock_states)
-
-        # Mock history API error
-        basic_mock_client.get_entity_histories = Mock(
-            side_effect=Exception("History API Error")
-        )
-
-        source = HomeAssistantSource(basic_mock_client)
+        client = _ha_client(["person.test"])
+        client.get_entity_histories.side_effect = ConnectionError("History API Error")
+        source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
             "entity_id": "person.test",
