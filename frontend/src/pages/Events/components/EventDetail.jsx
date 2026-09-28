@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { getSourceIcon, getSourceLabel } from '../eventSources';
 import styles from './EventDetail.module.css';
 
 const EventDetail = ({ onBackToList }) => {
@@ -43,32 +44,6 @@ const EventDetail = ({ onBackToList }) => {
       return 'Unknown';
     }
     return new Date(timestamp).toLocaleString();
-  };
-
-  const getSourceIcon = (sourceId) => {
-    switch (sourceId) {
-      case 'homeassistant':
-        return '🏠';
-      case 'indexing':
-        return '📚';
-      case 'webhook':
-        return '🔗';
-      default:
-        return '📋';
-    }
-  };
-
-  const getSourceLabel = (sourceId) => {
-    switch (sourceId) {
-      case 'homeassistant':
-        return 'Home Assistant';
-      case 'indexing':
-        return 'Indexing';
-      case 'webhook':
-        return 'Webhook';
-      default:
-        return sourceId || 'Unknown';
-    }
   };
 
   const formatJson = (obj) => {
