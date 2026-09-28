@@ -4,6 +4,7 @@ Drives the mounted endpoint with the official MCP Python client against the
 mock LLM, so what is verified is what claude.ai or Claude Code would see.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
@@ -117,8 +118,13 @@ async def test_list_tools_advertises_ask_family_assistant(mcp_app: FastAPI) -> N
     assert set(tool.inputSchema["required"]) == {"question"}
     assert "conversation_id" in tool.inputSchema["properties"]
     assert tool.outputSchema is not None
-    assert set(tool.outputSchema["required"]) == {"reply", "conversation_id"}
+    assert {"status", "reply", "conversation_id", "turn_id"} <= set(
+        tool.outputSchema["required"]
+    )
     assert "conversation_id" in (tool.description or "")
+    assert "get_family_assistant_reply" in (tool.description or "")
+    poll = next(t for t in tools.tools if t.name == "get_family_assistant_reply")
+    assert set(poll.inputSchema["required"]) == {"turn_id"}
 
 
 @pytest.mark.asyncio
@@ -139,6 +145,7 @@ async def test_question_is_answered_and_persisted_as_mcp(
 
     assert not result.isError
     assert result.structuredContent is not None
+    assert result.structuredContent["status"] == "complete"
     assert result.structuredContent["reply"] == "Milk is on the shopping list."
     conversation_id = result.structuredContent["conversation_id"]
     assert conversation_id.startswith("mcp-")
@@ -187,6 +194,65 @@ async def test_conversation_id_continues_the_conversation(
     assert second.structuredContent is not None
     assert second.structuredContent["reply"] == "Second reply, with the first in view."
     assert second.structuredContent["conversation_id"] == conversation_id
+
+
+@pytest.mark.asyncio
+async def test_slow_turn_is_collected_with_get_family_assistant_reply(
+    mcp_app: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    api_db_context: Database,
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn outlasting the wait keeps running, and a follow-up call collects it."""
+    api_mock_llm_client.rules.append((
+        lambda args: "slow question" in str(args.get("messages", [])),
+        LLMOutput(content="The slow answer."),
+    ))
+    api_mock_llm_client.response_gate = asyncio.Event()
+    _configure_adapter(
+        mcp_app, db_engine, MCPAdapterConfig(enabled=True, reply_wait_seconds=0.05)
+    )
+
+    async with mcp_session(mcp_app) as session:
+        started = await session.call_tool(
+            "ask_family_assistant", {"question": "A slow question."}
+        )
+        assert not started.isError
+        assert started.structuredContent is not None
+        assert started.structuredContent["status"] == "working"
+        assert started.structuredContent["reply"] is None
+        assert "get_family_assistant_reply" in started.structuredContent["message"]
+        turn_id = started.structuredContent["turn_id"]
+
+        api_mock_llm_client.response_gate.set()
+        _configure_adapter(
+            mcp_app, db_engine, MCPAdapterConfig(enabled=True, reply_wait_seconds=30)
+        )
+        collected = await session.call_tool(
+            "get_family_assistant_reply", {"turn_id": turn_id}
+        )
+
+    assert not collected.isError
+    assert collected.structuredContent is not None
+    assert collected.structuredContent["status"] == "complete"
+    assert collected.structuredContent["reply"] == "The slow answer."
+    conversation_id = started.structuredContent["conversation_id"]
+    assert collected.structuredContent["conversation_id"] == conversation_id
+    rows = await api_db_context.message_history.get_recent_with_metadata(
+        interface_type="mcp", conversation_id=conversation_id
+    )
+    assert [row["role"] for row in rows] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_turn_id_is_reported(mcp_app: FastAPI) -> None:
+    async with mcp_session(mcp_app) as session:
+        result = await session.call_tool(
+            "get_family_assistant_reply", {"turn_id": "no-such-turn"}
+        )
+
+    assert result.isError
+    assert "ask_family_assistant" in _reply_text(result.content)
 
 
 @pytest.mark.asyncio

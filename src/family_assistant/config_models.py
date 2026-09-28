@@ -1725,6 +1725,9 @@ class MCPAdapterConfig(BaseModel):
     enabled: bool = False
     # Processing profile the tool runs under; None means the default profile.
     profile_id: str | None = None
+    # How long one tool call waits for a turn before handing back a turn id to
+    # collect the reply with. Under ChatGPT's one-minute cap on a tool call.
+    reply_wait_seconds: float = Field(default=45.0, gt=0, le=55)
     # None means the adapter's own OAuth authorization server signs clients in.
     authorization_server: MCPExternalAuthorizationServer | None = None
 
