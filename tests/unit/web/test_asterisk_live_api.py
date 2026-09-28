@@ -275,36 +275,19 @@ class TestPrecannedGreeting:
         assert not mock_websocket.send_bytes.called
 
 
-class TestPreGeminiAudioBuffering:
-    """Tests for audio buffering before Gemini session is established."""
+class TestMediaRelay:
+    """Tests for relaying caller audio to Gemini."""
 
-    async def test_audio_buffered_before_gemini_connects(
+    async def test_audio_sent_to_connected_session(
         self, handler: AsteriskLiveHandler
     ) -> None:
-        """Audio received before Gemini connects is buffered."""
-        handler.gemini_session = None
-
-        audio_chunk_1 = b"\x01\x02" * 100
-        audio_chunk_2 = b"\x03\x04" * 100
-
-        await handler._handle_media_message(audio_chunk_1)
-        await handler._handle_media_message(audio_chunk_2)
-
-        assert len(handler._audio_buffer_pre_gemini) == 2
-        assert handler._audio_buffer_pre_gemini[0] == audio_chunk_1
-        assert handler._audio_buffer_pre_gemini[1] == audio_chunk_2
-
-    async def test_audio_not_buffered_after_gemini_connects(
-        self, handler: AsteriskLiveHandler
-    ) -> None:
-        """Audio goes directly to Gemini, as the sent audio blob, after session is established."""
+        """Audio goes directly to Gemini as the sent audio blob."""
         mock_session = AsyncMock()
         handler.gemini_session = mock_session
         raw_audio = b"\x01\x02" * 100
 
         await handler._handle_media_message(raw_audio)
 
-        assert len(handler._audio_buffer_pre_gemini) == 0
         mock_session.send_realtime_input.assert_called_once()
         sent_blob = mock_session.send_realtime_input.call_args.kwargs["audio"]
         assert sent_blob.data == raw_audio
@@ -315,9 +298,9 @@ class TestGeminiConnectFlow:
     """Exercises handler.run() end-to-end against a fake Gemini client.
 
     Covers behaviour that only happens inside the connect step of run() and
-    cannot be observed by calling handler methods directly: flushing
-    pre-buffered audio to the newly-connected session, and the greeting
-    being (or not being) played while connecting.
+    cannot be observed by calling handler methods directly: caller audio sent
+    right after MEDIA_START reaching the newly-connected session, and the
+    greeting being (or not being) played while connecting.
     """
 
     @staticmethod
@@ -354,30 +337,41 @@ class TestGeminiConnectFlow:
             {"type": "websocket.disconnect"},
         ]
 
-    async def test_pre_connect_buffer_is_flushed_in_order_on_connect(
+    async def test_audio_following_media_start_reaches_gemini_in_order(
         self, mock_websocket: AsyncMock
     ) -> None:
-        """Whatever is in the pre-connect buffer is sent to Gemini, in order, on connect.
+        """Caller audio sent straight after MEDIA_START is relayed to Gemini, in order.
 
-        This covers the flush only. The buffer is seeded directly because live
-        media cannot reach it: run() awaits client.connect() before it starts
-        relaying Asterisk messages, so nothing is buffered while connecting.
+        run() does not read the websocket while Gemini connects, so these
+        frames wait in the transport and are relayed once the session is up.
         """
         session = self._make_session()
+        client = self._make_fake_client(session)
         config = GeminiLiveConfig(greeting=GeminiLiveGreetingConfig(enabled=False))
         handler = AsteriskLiveHandler(
             websocket=mock_websocket,
-            client=self._make_fake_client(session),
+            client=client,
             gemini_live_config=config,
         )
         handler.database_engine = None
         chunk1 = b"\x01\x02" * 100
         chunk2 = b"\x03\x04" * 100
-        handler._audio_buffer_pre_gemini = [chunk1, chunk2]
-        mock_websocket.receive.side_effect = self._connect_then_disconnect_messages()
+        receive_calls_before_connect: list[int] = []
+        client.connect.side_effect = lambda **_: (
+            receive_calls_before_connect.append(mock_websocket.receive.await_count)
+            or client.connect.return_value
+        )
+        media_start, disconnect = self._connect_then_disconnect_messages()
+        mock_websocket.receive.side_effect = [
+            media_start,
+            {"type": "websocket.receive", "bytes": chunk1},
+            {"type": "websocket.receive", "bytes": chunk2},
+            disconnect,
+        ]
 
         await handler.run()
 
+        assert receive_calls_before_connect == [1]
         sent_blobs = [
             call.kwargs["audio"] for call in session.send_realtime_input.call_args_list
         ]
