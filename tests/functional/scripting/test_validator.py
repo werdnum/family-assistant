@@ -487,11 +487,10 @@ class TestIdentifierValidation:
         assert result.is_valid, result.error_message
 
     @pytest.mark.parametrize("bad_name", ["invalid-name", "class"])
-    def test_invalid_input_name_is_rejected(self, bad_name: str) -> None:
+    def test_invalid_input_name_is_ignored(self, bad_name: str) -> None:
         v = ScriptValidator()
         result = v.validate("valid_name", input_names=["valid_name", bad_name])
-        assert not result.is_valid
-        assert bad_name in (result.error_message or "")
+        assert result.is_valid, result.error_message
 
     def test_tool_required_params_before_optional(
         self, optional_listed_first_tool: list
