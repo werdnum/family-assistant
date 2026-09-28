@@ -9,48 +9,12 @@ import pytest
 from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.chat_page import ChatPage
 
 
 @pytest.mark.playwright
 class TestProfileSwitchingUI:
     """Test suite for the profile switching UI functionality."""
-
-    async def test_profile_selector_renders(
-        self, web_test_fixture_readonly: WebTestFixture
-    ) -> None:
-        """Test that the profile selector renders in the chat interface."""
-        page = web_test_fixture_readonly.page
-        base_url = web_test_fixture_readonly.base_url
-
-        await page.goto(f"{base_url}/chat")
-
-        # Wait for the page to load
-
-        # Check that the profile selector is present
-        profile_selector = page.locator('[data-testid="profile-selector"]')
-        if await profile_selector.count() == 0:
-            # Fallback to looking for the Select component
-            profile_selector = page.locator('button[role="combobox"]').first
-
-        await expect(profile_selector).to_be_visible()
-
-    async def test_profile_dropdown_opens(
-        self, web_test_fixture_readonly: WebTestFixture
-    ) -> None:
-        """Test that clicking the profile selector opens the dropdown."""
-        page = web_test_fixture_readonly.page
-        base_url = web_test_fixture_readonly.base_url
-
-        await page.goto(f"{base_url}/chat")
-
-        # Find and click the profile selector
-        profile_selector = page.locator('button[role="combobox"]').first
-        await expect(profile_selector).to_be_visible()
-        await profile_selector.click()
-
-        # Check that dropdown content appears
-        dropdown_content = page.locator('[role="listbox"]')
-        await expect(dropdown_content).to_be_visible()
 
     async def test_profile_options_displayed(
         self, web_test_fixture_readonly: WebTestFixture
@@ -171,33 +135,15 @@ class TestProfileSwitchingUI:
 
         await page.goto(f"{base_url}/chat")
 
-        # Select a specific profile
-        profile_selector = page.locator('button[role="combobox"]').first
+        profile_selector = page.get_by_role("combobox", name="Processing profile")
+        await expect(profile_selector).to_have_text("Assistant")
         await profile_selector.click()
+        await page.get_by_role("option", name="Test_browser", exact=False).click()
+        await expect(profile_selector).to_have_text("Test_browser")
 
-        # Wait for dropdown and select a profile
-        await page.wait_for_selector('[role="option"]')
-        profile_options = page.locator('[role="option"]')
+        await page.reload()
 
-        # Click the first available option
-        if await profile_options.count() > 0:
-            selected_option = profile_options.first
-            await selected_option.click()
-
-            # Wait for selection to be applied by checking dropdown closes
-            dropdown = page.locator('[role="listbox"]')
-            await expect(dropdown).to_be_hidden(timeout=5000)
-
-            # Refresh the page
-            await page.reload()
-
-            # Check if the profile is still selected
-            profile_selector = page.locator('button[role="combobox"]').first
-            current_text = await profile_selector.text_content()
-
-            # Note: Profile persistence depends on localStorage implementation
-            # This test verifies the persistence mechanism works
-            assert current_text is not None, "Profile selector not found after refresh"
+        await expect(profile_selector).to_have_text("Test_browser")
 
     async def test_profile_switching_creates_new_conversation(
         self, web_test_fixture: WebTestFixture
@@ -205,31 +151,21 @@ class TestProfileSwitchingUI:
         """Test that switching profiles creates a new conversation."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
+        await chat_page.navigate_to_chat()
+        await chat_page.send_message("Conversation before profile switch")
+        await chat_page.wait_for_message_content("Test response from mock LLM")
+        original_url = page.url
 
-        # Get initial conversation ID from URL or state
-        # (Profile switching may change URL or reset conversation)
-
-        # Switch to a different profile
-        profile_selector = page.locator('button[role="combobox"]').first
+        profile_selector = page.get_by_role("combobox", name="Processing profile")
         await profile_selector.click()
+        await page.get_by_role("option", name="Test_browser", exact=False).click()
 
-        await page.wait_for_selector('[role="option"]')
-        profile_options = page.locator('[role="option"]')
-
-        if await profile_options.count() > 1:
-            # Select the second option
-            await profile_options.nth(1).click()
-
-            # Wait for dropdown to close after selection
-            dropdown = page.locator('[role="listbox"]')
-            await expect(dropdown).to_be_hidden(timeout=5000)
-
-            # Check if URL changed (indicating new conversation)
-            # URL should either change or conversation should be reset
-            # This is acceptable behavior for profile switching
-            assert True  # Profile switching behavior verified
+        await expect(page).not_to_have_url(original_url)
+        await expect(profile_selector).to_have_text("Test_browser")
+        await expect(page.locator('[data-testid="user-message"]')).to_have_count(0)
+        await expect(page.locator('[data-testid="assistant-message"]')).to_have_count(0)
 
     async def test_profile_selector_loading_state(
         self, web_test_fixture_readonly: WebTestFixture
@@ -310,20 +246,9 @@ class TestProfileSwitchingUI:
 
         await page.goto(f"{base_url}/chat")
 
-        # Open profile dropdown
-        profile_selector = page.locator('button[role="combobox"]').first
-        await profile_selector.click()
-
-        # Wait for dropdown content
-        await page.wait_for_selector('[role="listbox"]')
-
-        # Check for description text in options
-        dropdown_content = page.locator('[role="listbox"]')
-        content_text = await dropdown_content.text_content()
-
-        # Should contain descriptive text
-        content_length = len(content_text) if content_text else 0
-        assert content_length > 50, "Profile descriptions appear to be missing"
+        await page.get_by_role("combobox", name="Processing profile").click()
+        browser_option = page.get_by_role("option", name="Test_browser", exact=False)
+        await expect(browser_option).to_contain_text("Test browser profile for web UI")
 
     async def test_profile_selector_accessibility(
         self, web_test_fixture_readonly: WebTestFixture
@@ -334,9 +259,7 @@ class TestProfileSwitchingUI:
 
         await page.goto(f"{base_url}/chat")
 
-        # Check ARIA attributes
-        profile_selector = page.locator('button[role="combobox"]').first
-        await expect(profile_selector).to_have_attribute("role", "combobox")
+        profile_selector = page.get_by_role("combobox", name="Processing profile")
 
         # Wait for element to be fully interactive before testing keyboard accessibility
         await expect(profile_selector).to_be_visible()
@@ -359,60 +282,22 @@ class TestProfileSwitchingUI:
         """Test that profile switching works correctly with messaging."""
         page = web_test_fixture.page
         base_url = web_test_fixture.base_url
+        chat_page = ChatPage(page, base_url)
 
-        await page.goto(f"{base_url}/chat")
-
-        # Wait for profile selector to be ready
-        profile_selector = page.locator('button[role="combobox"]').first
-        await expect(profile_selector).to_be_visible()
-
-        # Select a profile
+        await chat_page.navigate_to_chat()
+        profile_selector = page.get_by_role("combobox", name="Processing profile")
         await profile_selector.click()
+        await page.get_by_role("option", name="Test_browser", exact=False).click()
+        await expect(profile_selector).to_have_text("Test_browser")
 
-        await page.wait_for_selector('[role="option"]', timeout=5000)
-        profile_options = page.locator('[role="option"]')
+        async with page.expect_request(
+            lambda request: (
+                request.method == "POST" and request.url.endswith("/api/v1/chat/turns")
+            )
+        ) as turn_request:
+            await chat_page.send_message("Test message with browser profile")
 
-        options_count = await profile_options.count()
-        assert options_count > 0, "Should have profile options available"
-
-        # Select the first available option
-        await profile_options.first.click()
-
-        # Wait for dropdown to close after selection
-        dropdown = page.locator('[role="listbox"]')
-        await expect(dropdown).to_be_hidden(timeout=5000)
-
-        # Wait for chat interface to be ready
-        await page.wait_for_selector('[data-testid="chat-input"]', timeout=10000)
-
-        # Try to send a test message using the correct selector
-        message_input = page.locator('[data-testid="chat-input"]')
-        await expect(message_input).to_be_visible()
-        await expect(message_input).to_be_enabled()
-
-        # Fill message to verify input works
-        await message_input.fill("Test message with profile")
-
-        # Verify the message was filled
-        input_value = await message_input.input_value()
-        assert "Test message with profile" in input_value, (
-            f"Message should be filled in input, but got: '{input_value}'"
-        )
-
-        # Verify send button is available and enabled when there's content
-        send_button = page.locator('[data-testid="send-button"]')
-        await expect(send_button).to_be_visible()
-        await expect(send_button).to_be_enabled()
-
-        # Clear the input to show the interface is responsive
-        await message_input.clear()
-        cleared_value = await message_input.input_value()
-        assert not cleared_value, (
-            f"Input should be cleared, but contains: '{cleared_value}'"
-        )
-
-        # The test verifies that:
-        # 1. Profile switching works
-        # 2. Chat interface remains functional after profile switching
-        # 3. Message input and send button are accessible and responsive
-        # This is sufficient to verify profile switching doesn't break messaging capability
+        turn_payload = (await turn_request.value).post_data_json
+        assert turn_payload is not None
+        assert turn_payload["profile_id"] == "test_browser"
+        await chat_page.wait_for_message_content("Test response from mock LLM")

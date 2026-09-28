@@ -12,6 +12,7 @@ from typing import Any, TypedDict
 
 import pytest
 from PIL import Image
+from playwright.async_api import expect
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.storage.base import attachment_metadata_table
@@ -357,28 +358,11 @@ async def test_attachment_response_with_multiple_attachments(
     await chat_page.wait_for_assistant_response(timeout=30000)
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
-    # Verify the attachment display is shown to the user.
-    await page.locator('[data-testid="attachment-preview"]').first.wait_for(
-        state="visible",
-        timeout=30000,
-    )
-
-    # Verify attachment previews are now available
-    async def attachment_preview_count() -> int:
-        await chat_page.expand_tool_groups()
-        attachment_previews = page.locator('[data-testid="attachment-preview"]')
-        count = await attachment_previews.count()
-        if count == 0:
-            return 0
-        await attachment_previews.first.wait_for(state="visible", timeout=2000)
-        return count
-
+    # Both returned attachments must be visible in the tool result.
+    await chat_page.expand_tool_groups()
+    attachment_previews = page.locator('[data-testid="attachment-preview"]')
     try:
-        preview_count = await wait_for_condition(
-            attachment_preview_count,
-            timeout=30.0,
-            description="attachment previews after wait_for_attachments_ready",
-        )
+        await expect(attachment_previews).to_have_count(2, timeout=30000)
     except Exception:
         # If attachment previews not found, get console errors to help debug
         print("Console messages captured by Playwright:")
@@ -398,20 +382,14 @@ async def test_attachment_response_with_multiple_attachments(
         print(html[:2000])
         raise
 
-    # Get attachment preview count for logging - these should already be available
-    attachment_previews = page.locator('[data-testid="attachment-preview"]')
-    preview_count = await attachment_previews.count()
-    print(f"Found {preview_count} attachment previews")
-
-    # Verify the generated attachment URLs are usable. Preview rendering is
-    # covered by the dedicated single-attachment flow test; this test focuses on
-    # attach_to_response returning multiple accessible attachments.
     for attachment_id in attachment_ids:
-        attachment_url = f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
-        response = await page.request.get(attachment_url)
-        assert response.status == 200, (
-            f"Attachment {attachment_id} should be accessible, got {response.status}"
+        await expect(
+            attachment_previews.locator(f'img[src*="{attachment_id}"]')
+        ).to_have_count(1, timeout=30000)
+        response = await page.request.get(
+            f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
         )
+        assert response.status == 200
 
     # CRITICAL: Fail test if any console errors occurred
     if console_errors:
@@ -624,16 +602,11 @@ async def test_tool_attachment_persistence_after_page_reload(
     web_test_fixture: WebTestFixture,
     mock_llm_client: RuleBasedMockLLMClient,
 ) -> None:
-    """
-    Test that tool-generated attachments persist after page reload.
-
-    This is the core test for the bug fix: tool attachments were being stored
-    but not registered in the database, causing them to 404 after page reload.
-    """
+    """Test that a tool response attachment reappears after page reload."""
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
-    # Create a test attachment to simulate a tool-generated attachment
+    # Create an attachment for the tool to include in its response.
     attachment_id = str(uuid.uuid4())
 
     # Mock the LLM to respond with attach_to_response tool call
@@ -702,25 +675,20 @@ async def test_tool_attachment_persistence_after_page_reload(
     # Wait for tool execution and attachment display
     await chat_page.wait_for_assistant_response(timeout=30000)
     await chat_page.wait_for_attachments_ready(timeout=30000)
-    print("[DEBUG] Attachment tool ready with content")
-
-    # Verify attachment is displayed initially
+    # Verify the tool displays the selected attachment before reload.
     attachment_preview = page.locator('[data-testid="attachment-preview"]').first
     await attachment_preview.wait_for(state="visible", timeout=30000)
-    print("[DEBUG] Attachment preview is visible")
-
-    # Verify the attachment actually loads (not a 404)
-    attachment_url = f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
-    img_response = await page.request.get(attachment_url)
-    assert img_response.status == 200, (
-        f"Attachment should be accessible initially, got {img_response.status}"
+    assert attachment_id in (
+        await attachment_preview.locator("img").get_attribute("src") or ""
     )
+    response = await page.request.get(
+        f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
+    )
+    assert response.status == 200
 
     # Ensure the conversation (including tool call) is persisted before reload
     await chat_page.wait_for_conversation_saved(timeout=30000)
 
-    # CRITICAL TEST: Reload the page
-    # Reloading page to test persistence...
     await page.reload()
 
     # Wait for the app shell and the known conversation content to be rehydrated.
@@ -733,34 +701,12 @@ async def test_tool_attachment_persistence_after_page_reload(
     )
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
-    # THE BUG FIX TEST: Verify attachment is still accessible after reload.
-    # This focuses on the persistence invariant that used to break: after a
-    # reload, the conversation still exposes the attachment and the attachment
-    # endpoint no longer 404s.
-    try:
-        await page.locator('[data-testid="attachment-preview"]').first.wait_for(
-            state="visible",
-            timeout=30000,
-        )
-
-        attachment_url_after_reload = (
-            f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
-        )
-        img_response_after_reload = await page.request.get(attachment_url_after_reload)
-        assert img_response_after_reload.status == 200, (
-            f"TOOL ATTACHMENT PERSISTENCE BUG! "
-            f"Got {img_response_after_reload.status} when accessing {attachment_url_after_reload} after page reload. "
-            f"This indicates the attachment was not properly registered in the database."
-        )
-
-        print(
-            "[SUCCESS] Tool attachment persisted after page reload - bug fix verified!"
-        )
-
-    except Exception as e:
-        # If we can't find the attachment after reload, that's the bug!
-        pytest.fail(
-            f"TOOL ATTACHMENT PERSISTENCE BUG! "
-            f"Tool attachment disappeared after page reload: {e}. "
-            f"This indicates tool attachments are stored as files but not registered in the database."
-        )
+    attachment_preview = page.locator('[data-testid="attachment-preview"]').first
+    await attachment_preview.wait_for(state="visible", timeout=30000)
+    assert attachment_id in (
+        await attachment_preview.locator("img").get_attribute("src") or ""
+    )
+    response = await page.request.get(
+        f"{web_test_fixture.base_url}/api/attachments/{attachment_id}"
+    )
+    assert response.status == 200

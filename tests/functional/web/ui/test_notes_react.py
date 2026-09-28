@@ -11,69 +11,6 @@ from tests.functional.web.pages.notes_page import NotesPage
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_react_notes_page_loads(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test that the React notes page loads successfully."""
-    page = web_test_fixture_readonly.page
-    notes_page = NotesPage(page, web_test_fixture_readonly.base_url)
-
-    # Navigate to the React notes page
-    await notes_page.navigate_to_notes_list()
-
-    # Verify we're on the notes page
-    await expect(page).to_have_url(f"{web_test_fixture_readonly.base_url}/notes")
-
-    # Verify page has loaded by checking for key elements
-    # The page should either show the empty state or notes table
-    await page.wait_for_selector("body", timeout=10000)
-
-    # The React app should render some content
-    content = await page.text_content("body")
-    assert content is not None and len(content.strip()) > 0, (
-        "Page content should not be empty"
-    )
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_react_create_note_full_flow(web_test_fixture: WebTestFixture) -> None:
-    """Test complete note creation flow in React implementation."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
-
-    # Start with notes list
-    await notes_page.navigate_to_notes_list()
-    initial_count = await notes_page.get_note_count()
-
-    # Navigate to add note form
-    await notes_page.navigate_to_add_note()
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes/add")
-
-    # Create a new note
-    test_title = "React Test Note"
-    test_content = "This is a test note created through the React UI."
-    await notes_page.add_note(
-        title=test_title, content=test_content, include_in_prompt=True
-    )
-
-    # Verify we're redirected back to the notes list
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
-
-    # Verify the note appears in the list
-    assert await notes_page.is_note_present(test_title), (
-        f"Note '{test_title}' should be present in the list"
-    )
-
-    # Verify note count increased
-    new_count = await notes_page.get_note_count()
-    assert new_count == initial_count + 1, (
-        f"Note count should increase from {initial_count} to {initial_count + 1}, but got {new_count}"
-    )
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
 async def test_react_view_and_navigate_to_edit(
     web_test_fixture: WebTestFixture,
 ) -> None:
@@ -111,90 +48,6 @@ async def test_react_view_and_navigate_to_edit(
         f"Content should be '{original_content}', got '{note_data['content']}'"
     )
     assert note_data["include_in_prompt"] is True, "Include in prompt should be True"
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_react_edit_note_flow(web_test_fixture: WebTestFixture) -> None:
-    """Test editing an existing note through the React UI."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
-
-    # First create a note to edit
-    original_title = "React Original Note"
-    original_content = "Original content to be changed"
-    await notes_page.add_note(
-        title=original_title, content=original_content, include_in_prompt=True
-    )
-
-    # Edit the note with new content
-    new_title = "React Updated Note"
-    new_content = "This content has been updated through React!"
-    await notes_page.edit_note(
-        original_title=original_title,
-        new_title=new_title,
-        new_content=new_content,
-        include_in_prompt=False,
-    )
-
-    # Verify we're redirected to the notes list
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
-
-    # Verify old title is gone and new title exists
-    assert not await notes_page.is_note_present(original_title), (
-        f"Old title '{original_title}' should not be present"
-    )
-    assert await notes_page.is_note_present(new_title), (
-        f"New title '{new_title}' should be present"
-    )
-
-    # Verify the content was updated by navigating to edit page again
-    note_data = await notes_page.get_note_content_from_edit_page(new_title)
-    assert note_data["title"] == new_title, (
-        f"Title should be '{new_title}', got '{note_data['title']}'"
-    )
-    assert note_data["content"] == new_content, (
-        f"Content should be '{new_content}', got '{note_data['content']}'"
-    )
-    assert note_data["include_in_prompt"] is False, "Include in prompt should be False"
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_react_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
-    """Test deleting a note through the React UI."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
-
-    # Create a note to delete
-    title_to_delete = "React Note to Delete"
-    await notes_page.add_note(
-        title=title_to_delete, content="This note will be deleted from React UI"
-    )
-
-    # Verify the note exists and get initial count
-    await notes_page.navigate_to_notes_list()
-    assert await notes_page.is_note_present(title_to_delete), (
-        f"Note '{title_to_delete}' should exist before deletion"
-    )
-    initial_count = await notes_page.get_note_count()
-
-    # Delete the note
-    await notes_page.delete_note(title_to_delete)
-
-    # Verify we're still on the notes list
-    await expect(page).to_have_url(f"{web_test_fixture.base_url}/notes")
-
-    # Verify the note is gone
-    assert not await notes_page.is_note_present(title_to_delete), (
-        f"Note '{title_to_delete}' should be deleted"
-    )
-
-    # Verify count decreased
-    new_count = await notes_page.get_note_count()
-    assert new_count == initial_count - 1, (
-        f"Note count should decrease from {initial_count} to {initial_count - 1}, but got {new_count}"
-    )
 
 
 @pytest.mark.playwright
@@ -238,87 +91,6 @@ async def test_react_navigation_between_pages(web_test_fixture: WebTestFixture) 
     assert await notes_page.is_note_present(test_title), (
         f"Note '{test_title}' should still be present after navigation"
     )
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_react_empty_state_display(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test that React UI shows appropriate empty state when no notes exist."""
-    page = web_test_fixture_readonly.page
-    notes_page = NotesPage(page, web_test_fixture_readonly.base_url)
-
-    # Navigate to notes list
-    await notes_page.navigate_to_notes_list()
-
-    # Check current note count
-    note_count = await notes_page.get_note_count()
-
-    if note_count == 0:
-        # Verify empty state is visible
-        assert await notes_page.is_empty_state_visible(), (
-            "Empty state message should be visible when no notes exist"
-        )
-    else:
-        # If there are existing notes, just verify they are displayed properly
-        assert note_count > 0, "Should have notes displayed"
-        assert not await notes_page.is_empty_state_visible(), (
-            "Empty state should not be visible when notes exist"
-        )
-
-        # Get all note titles to verify they're properly rendered
-        titles = await notes_page.get_all_note_titles()
-        assert len(titles) == note_count, (
-            f"Should have {note_count} note titles, but got {len(titles)}"
-        )
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_react_form_validation(web_test_fixture: WebTestFixture) -> None:
-    """Test form validation in the React notes UI."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
-
-    # Navigate to add note form
-    await notes_page.navigate_to_add_note()
-
-    # Try to submit empty form
-    await page.click(notes_page.SAVE_BUTTON)
-
-    # Check for HTML5 validation on title field
-    title_input = await page.wait_for_selector(notes_page.NOTE_TITLE_INPUT)
-    if title_input:
-        validation_message = await title_input.evaluate(
-            "element => element.validationMessage"
-        )
-        assert validation_message, (
-            "Title field should have validation message when empty"
-        )
-
-    # Fill only title and try to submit
-    await notes_page.fill_form_field(notes_page.NOTE_TITLE_INPUT, "Title Only")
-    await page.click(notes_page.SAVE_BUTTON)
-
-    # Check content field validation
-    content_textarea = await page.wait_for_selector(notes_page.NOTE_CONTENT_TEXTAREA)
-    if content_textarea:
-        content_validation = await content_textarea.evaluate(
-            "element => element.validationMessage"
-        )
-        assert content_validation, (
-            "Content field should have validation message when empty"
-        )
-
-    # Fill both required fields and submit
-    await notes_page.fill_form_field(
-        notes_page.NOTE_CONTENT_TEXTAREA, "Test content for validation"
-    )
-    await page.click(notes_page.SAVE_BUTTON)
-
-    # Should succeed and redirect to notes list
-    await page.wait_for_url(f"{web_test_fixture.base_url}/notes", timeout=10000)
 
 
 @pytest.mark.playwright
@@ -427,19 +199,9 @@ async def test_react_ui_error_handling(
     # Navigate directly to edit URL for non-existent note
     await notes_page.navigate_to_edit_note(non_existent_title)
 
-    # The React app should handle this gracefully (either show error or redirect)
-    # We'll verify the page doesn't crash and shows some meaningful content
-    await page.wait_for_selector("body", timeout=10000)
-
-    # Page should not be completely empty
-    content = await page.text_content("body")
-    assert content is not None and len(content.strip()) > 0, (
-        "Page should show some content even for non-existent note"
-    )
-
-    # Check that no JavaScript errors occurred
-    # (The conftest.py already sets up console error logging)
-    # This test mainly ensures the React app doesn't crash
+    await expect(page.get_by_role("heading", name="Edit Note")).to_be_visible()
+    await expect(page.get_by_role("alert")).to_contain_text("404")
+    await expect(page.get_by_label("Title *")).to_be_empty()
 
 
 @pytest.mark.playwright

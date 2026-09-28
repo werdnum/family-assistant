@@ -135,26 +135,19 @@ class HistoryPage:
             # Find combobox that's the first one in filters
             trigger = self.page.locator("details button[role='combobox']").first
 
-        try:
-            # Get text
-            text = await trigger.text_content()
-
-            # Map display text back to value
-            text_value_map = {
-                "All Interfaces": "_all",
-                "Web": "web",
-                "Telegram": "telegram",
-                "API": "api",
-                "Email": "email",
-            }
-            # Clean the text (remove any extra whitespace)
-            if text:
-                text = text.strip()
-                return text_value_map.get(text, "_all")
-            return "_all"
-        except Exception:
-            # Default to _all if element not found
-            return "_all"
+        await trigger.wait_for(state="visible", timeout=5000)
+        text = await trigger.text_content()
+        text_value_map = {
+            "All Interfaces": "_all",
+            "Web": "web",
+            "Telegram": "telegram",
+            "API": "api",
+            "Email": "email",
+        }
+        value = text.strip() if text else ""
+        if value not in text_value_map:
+            raise ValueError(f"Unrecognized interface filter text: {text!r}")
+        return text_value_map[value]
 
     async def set_conversation_id_filter(self, conversation_id: str) -> None:
         """Set the conversation ID filter.
@@ -239,10 +232,12 @@ class HistoryPage:
             index: Zero-based index of the conversation to click
         """
         conversations = await self.page.query_selector_all(self.CONVERSATION_ITEM)
-        if index < len(conversations):
-            await conversations[index].click()
-            # Wait for navigation to conversation detail
-            await self.page.wait_for_selector(
-                "h1:has-text('Conversation Details'), h1:has-text('Conversation History')",
-                timeout=5000,
+        if index < 0 or index >= len(conversations):
+            raise IndexError(
+                f"Conversation index {index} out of range ({len(conversations)})"
             )
+        await conversations[index].click()
+        await self.page.wait_for_selector(
+            "h1:has-text('Conversation Details'), h1:has-text('Conversation History')",
+            timeout=5000,
+        )

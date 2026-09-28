@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
+from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
@@ -199,19 +200,26 @@ async def test_multiple_messages_in_conversation(
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
-    # Configure different responses based on message count
+    # Require earlier prompts to be present when generating later replies.
     def response_based_on_history(args: dict) -> LLMOutput:
         messages = args.get("messages", [])
-        user_messages = [m for m in messages if m.role == "user"]
+        user_contents = [str(m.content) for m in messages if m.role == "user"]
+        prompts = ("First message", "Second message", "Third message")
+        seen_prompts = [
+            prompt
+            for prompt in prompts
+            if any(prompt in content for content in user_contents)
+        ]
 
-        if len(user_messages) == 1:
+        if seen_prompts == ["First message"]:
             return LLMOutput(content="This is my first response.")
-        elif len(user_messages) == 2:
+        if seen_prompts == ["First message", "Second message"]:
             return LLMOutput(
                 content="This is my second response, I remember our conversation."
             )
-        else:
-            return LLMOutput(content=f"This is response number {len(user_messages)}.")
+        if seen_prompts == list(prompts):
+            return LLMOutput(content="This is response number 3.")
+        return LLMOutput(content="Conversation history was incomplete.")
 
     mock_llm_client.rules = [(lambda args: True, response_based_on_history)]
 
@@ -220,15 +228,17 @@ async def test_multiple_messages_in_conversation(
 
     # Send first message
     await chat_page.send_message("First message")
-    await chat_page.wait_for_message_count(2)  # 1 user + 1 assistant
+    await chat_page.wait_for_message_content("This is my first response.")
 
     # Send second message
     await chat_page.send_message("Second message")
-    await chat_page.wait_for_message_count(4)  # 2 user + 2 assistant
+    await chat_page.wait_for_message_content(
+        "This is my second response, I remember our conversation."
+    )
 
     # Send third message
     await chat_page.send_message("Third message")
-    await chat_page.wait_for_message_count(6)  # 3 user + 3 assistant
+    await chat_page.wait_for_message_content("This is response number 3.")
 
     # Verify we have multiple messages
     all_messages = await chat_page.get_all_messages()
@@ -242,37 +252,42 @@ async def test_multiple_messages_in_conversation(
         f"Expected 3 assistant messages, got {len(assistant_messages)}"
     )
 
-    # Verify message content patterns
-    if user_messages[0]["content"]:
-        assert "First" in user_messages[0]["content"]
-    if user_messages[1]["content"]:
-        assert "Second" in user_messages[1]["content"]
-    if user_messages[2]["content"]:
-        assert "Third" in user_messages[2]["content"]
-
-    # For now, just verify we have 3 assistant messages
-    # Content extraction seems to be an issue with the assistant-ui library
-    assert len(assistant_messages) == 3
+    assert [m["content"] for m in user_messages] == [
+        "First message",
+        "Second message",
+        "Third message",
+    ]
+    assert [m["content"] for m in assistant_messages] == [
+        "This is my first response.",
+        "This is my second response, I remember our conversation.",
+        "This is response number 3.",
+    ]
 
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_empty_conversation_state(
-    web_test_fixture_readonly: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+    web_test_fixture: WebTestFixture,
 ) -> None:
     """Test the chat UI in empty state with no conversations."""
-    page = web_test_fixture_readonly.page
-    chat_page = ChatPage(page, web_test_fixture_readonly.base_url)
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
 
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
-    # Verify chat input is available even with no messages
-    assert await chat_page.is_chat_input_enabled()
+    await page.wait_for_function(
+        "new URLSearchParams(window.location.search).has('conversation_id')"
+    )
+    conv_id = await page.evaluate(
+        "new URLSearchParams(window.location.search).get('conversation_id')"
+    )
+    assert conv_id
 
-    # Check that a new conversation ID was generated
-    conv_id = await chat_page.get_current_conversation_id()
-    assert conv_id is not None
+    assert await chat_page.rendered_message_count() == 0
+    await expect(page.locator(ChatPage.CONVERSATION_ITEM)).to_have_count(0)
+    await expect(page.get_by_text("No conversations yet")).to_be_visible()
+    assert await chat_page.is_chat_input_enabled()
 
 
 @pytest.mark.playwright

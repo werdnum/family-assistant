@@ -1,36 +1,19 @@
 """Tests for template_utils.py that check the real manifest.json."""
 
 import json
-import logging
 import os
 import re
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from family_assistant.web import template_utils
 from family_assistant.web.template_utils import get_static_asset
-
-logger = logging.getLogger(__name__)
 
 
 class TestTemplateUtils:
     """Test the template utilities with real build artifacts."""
-
-    def test_manifest_exists(self) -> None:
-        """Test that the manifest.json file exists after npm build."""
-        manifest_path = (
-            Path(__file__).parent.parent.parent.parent.parent
-            / "src"
-            / "family_assistant"
-            / "static"
-            / "dist"
-            / ".vite"
-            / "manifest.json"
-        )
-        assert manifest_path.exists(), (
-            f"manifest.json not found at {manifest_path}. "
-            "Run 'npm run build' to generate it."
-        )
 
     def test_manifest_structure(self) -> None:
         """Test that the manifest.json has the expected structure."""
@@ -131,23 +114,32 @@ class TestTemplateUtils:
         # Should fall back to direct path
         assert result == "/static/dist/nonexistent.js"
 
-    @patch.dict(os.environ, {"DEV_MODE": "false"})
-    def test_manifest_cache_behavior(self) -> None:
-        """Test that manifest is cached and reloaded when changed."""
+    def test_manifest_reloads_when_changed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A changed manifest should update the asset path returned to callers."""
+        manifest_dir = tmp_path / ".vite"
+        manifest_dir.mkdir()
+        manifest_path = manifest_dir / "manifest.json"
+        manifest_path.write_text(
+            json.dumps({"index.html": {"file": "assets/main-first.js"}}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(template_utils, "STATIC_DIST_DIR", tmp_path)
+        monkeypatch.setattr(template_utils, "_manifest_cache", None)
+        monkeypatch.setattr(template_utils, "_manifest_last_read", 0)
 
-        # Clear cache
-        template_utils._manifest_cache = None
-        template_utils._manifest_last_read = 0
+        assert get_static_asset("main.js") == "/static/dist/assets/main-first.js"
 
-        # First call should load manifest
-        result1 = get_static_asset("main.js")
-        assert template_utils._manifest_cache is not None
-        cache_after_first_call = template_utils._manifest_cache
+        previous_mtime_ns = manifest_path.stat().st_mtime_ns
+        manifest_path.write_text(
+            json.dumps({"index.html": {"file": "assets/main-second.js"}}),
+            encoding="utf-8",
+        )
+        updated_mtime_ns = previous_mtime_ns + 1_000_000_000
+        os.utime(manifest_path, ns=(updated_mtime_ns, updated_mtime_ns))
 
-        # Second call should use cache
-        result2 = get_static_asset("main.js")
-        assert result1 == result2
-        assert template_utils._manifest_cache is cache_after_first_call
+        assert get_static_asset("main.js") == "/static/dist/assets/main-second.js"
 
     @patch.dict(os.environ, {"DEV_MODE": "false"})
     def test_manifest_error_handling(self) -> None:
@@ -196,30 +188,3 @@ class TestTemplateUtils:
                         f"CSS file {css_file} referenced in manifest "
                         f"does not exist at {css_path}"
                     )
-
-    @patch.dict(os.environ, {"DEV_MODE": "false"})
-    def test_print_actual_paths(self) -> None:
-        """Debug test to print actual paths returned by get_static_asset."""
-
-        template_utils._manifest_cache = None
-
-        # Get paths for main.js and main.css
-        js_path = get_static_asset("main.js")
-        css_path = get_static_asset("main.css", entry_name="main")
-
-        logger.info("Actual JS path: %s", js_path)
-        logger.info("Actual CSS path: %s", css_path)
-
-        # Also log what's in the manifest
-        manifest_path = (
-            Path(__file__).parent.parent.parent.parent.parent
-            / "src"
-            / "family_assistant"
-            / "static"
-            / "dist"
-            / ".vite"
-            / "manifest.json"
-        )
-        with open(manifest_path, encoding="utf-8") as f:
-            manifest = json.load(f)
-        logger.info("Manifest content:\n%s", json.dumps(manifest, indent=2))

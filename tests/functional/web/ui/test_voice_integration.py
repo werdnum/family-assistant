@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from playwright.async_api import Page, Request, Route
+from playwright.async_api import Page, Request, Route, expect
 
 from family_assistant.web.routers.gemini_live_api import (
     VOICE_SILENCE_REMINDER_AFTER_SECONDS,
@@ -79,9 +79,8 @@ async def test_tool_execution_api_list_notes(
     )
 
     assert result["status"] == 200, f"Expected 200 status, got {result['status']}"
-    assert "success" in result["data"] or "result" in result["data"], (
-        f"Expected success or result in response, got: {result['data']}"
-    )
+    assert result["data"]["success"] is True
+    assert isinstance(result["data"]["result"], list)
 
 
 @pytest.mark.playwright
@@ -108,10 +107,8 @@ async def test_tool_execution_api_nonexistent_tool(
         base_url,
     )
 
-    # API returns 500 for tool execution errors (including unknown tools)
-    assert result["status"] in {404, 500}, (
-        f"Expected 404 or 500 status for unknown tool, got {result['status']}"
-    )
+    assert result["status"] == 404
+    assert "nonexistent_tool_xyz" in result["data"]["detail"]
 
 
 async def _setup_mock_token_endpoint(
@@ -294,31 +291,22 @@ async def _setup_mock_audio_apis(page: Page) -> None:
 async def test_voice_start_fetches_token(
     web_test_fixture_readonly: WebTestFixture,
 ) -> None:
-    """Test that clicking Start fetches an ephemeral token.
-
-    Note: This only tests up to the token fetch, not the full WebSocket flow.
-    """
+    """Starting a voice call requests an ephemeral token from the backend."""
     page = web_test_fixture_readonly.page
     base_url = web_test_fixture_readonly.base_url
-
-    # Set up mock token endpoint
     await _setup_mock_token_endpoint(page, base_url)
     await _setup_mock_audio_apis(page)
-
-    # Navigate to voice page
     await page.goto(f"{base_url}/voice")
-    await page.wait_for_selector("button:has-text('Start')", timeout=10000)
 
-    # Click Start Call and wait for token request using Playwright's expect_request
-    async with page.expect_request(
-        "**/api/gemini/ephemeral-token", timeout=10000
-    ) as request_info:
-        await page.click("button:has-text('Start')")
+    async with page.expect_request("**/api/gemini/ephemeral-token") as request_info:
+        await page.get_by_role("button", name="Start").click()
 
     request = await request_info.value
-    assert "/api/gemini/ephemeral-token" in request.url, (
-        "Token request should be made when starting call"
-    )
+    assert request.method == "POST"
+    payload = request.post_data_json
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("profile_id"), str)
+    assert payload["profile_id"]
 
 
 # JavaScript code to inject a mock Gemini session factory (callback-based API)
@@ -383,12 +371,12 @@ window.__TEST_GEMINI_SESSION_FACTORY__ = async (tokenData, callbacks) => {
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> None:
-    """Test the full tool call flow: Gemini -> Frontend -> Backend -> Frontend -> Gemini.
+    """Test the tool call flow: Gemini -> frontend -> tool API -> Gemini.
 
     This test verifies that:
     1. When Gemini sends a tool call, the frontend receives it
     2. The frontend calls the backend tool execution API
-    3. The backend executes the tool and returns a result
+    3. The mocked tool API returns a result
     4. The frontend sends the tool response back to Gemini
     """
     page = web_test_fixture.page
@@ -397,32 +385,15 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
     # Inject the mock session factory BEFORE navigating to the page
     await page.add_init_script(MOCK_SESSION_FACTORY_SCRIPT)
 
-    # Also add a simple marker to verify init script runs
-    await page.add_init_script(
-        "window.__TEST_INIT_SCRIPT_RAN__ = true; console.log('[Test] Init script executed');"
-    )
-
     # Mock the audio APIs to prevent microphone permission issues
     await _setup_mock_audio_apis(page)
 
-    # Set up mock token endpoint (uses the real backend for everything else)
+    # Set up mock token endpoint
     await _setup_mock_token_endpoint(page, base_url)
 
     # Navigate to voice page
     await page.goto(f"{base_url}/voice")
     await page.wait_for_selector("button:has-text('Start')", timeout=10000)
-
-    # Verify init script ran
-    init_ran = await page.evaluate("window.__TEST_INIT_SCRIPT_RAN__")
-    assert init_ran is True, "Init script should have run"
-
-    # Verify mock factory is defined
-    factory_defined = await page.evaluate(
-        "typeof window.__TEST_GEMINI_SESSION_FACTORY__"
-    )
-    assert factory_defined == "function", (
-        f"Mock factory should be defined as function, got: {factory_defined}"
-    )
 
     # Start listening for tool execution API calls
     tool_api_called = []
@@ -479,6 +450,7 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
     assert "/api/tools/execute/list_notes" in tool_api_called[0]["url"], (
         f"Expected list_notes tool call, got: {tool_api_called[0]['url']}"
     )
+    assert json.loads(tool_api_called[0]["post_data"])["arguments"] == {}
 
     # Verify the tool response was sent back to the mock session
     tool_responses = await page.evaluate("window.__TEST_TOOL_RESPONSES__")
@@ -500,14 +472,7 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
     assert func_response["name"] == "list_notes", (
         f"Response should have correct tool name, got: {func_response['name']}"
     )
-    assert "response" in func_response, "Response should have response field"
-
-    # The response should contain a result (from the real backend executing list_notes)
-    assert (
-        "result" in func_response["response"]
-        or "error" not in func_response["response"]
-    ), f"Tool should have executed successfully, got: {func_response['response']}"
-    assert "taint_metadata" not in json.dumps(func_response["response"])
+    assert func_response["response"] == {"result": {"notes": []}}
 
     await page.wait_for_function(
         "window.__TEST_REALTIME_INPUTS__ && window.__TEST_REALTIME_INPUTS__.length > 0",
@@ -519,10 +484,7 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
         "Audio input should include base64 PCM data"
     )
 
-    mic_level = page.get_by_test_id("voice-mic-level")
-    assert await mic_level.is_visible(), (
-        "Mic level meter should be visible during capture"
-    )
+    await expect(page.get_by_test_id("voice-mic-level")).to_be_visible()
 
     async with page.expect_request("**/api/v1/chat/voice-sessions") as save_request:
         await page.get_by_role("button", name="End Call").click()

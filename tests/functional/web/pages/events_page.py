@@ -80,20 +80,20 @@ class EventsPage(BasePage):
         trigger = await self.page.wait_for_selector(
             self.TIME_FILTER_TRIGGER, state="visible", timeout=10000
         )
-        if not trigger:
-            return "24"  # Default value if trigger not found
+        if trigger is None:
+            raise AssertionError("Time filter trigger not found")
         text = await trigger.text_content()
 
-        # Parse the text to get the hours value
-        if text and "Last 1 hour" in text:
-            return "1"
-        elif text and "Last 6 hours" in text:
-            return "6"
-        elif text and "Last 24 hours" in text:
-            return "24"
-        elif text and "Last 48 hours" in text:
-            return "48"
-        return "24"  # Default
+        text_hours_map = {
+            "Last 1 hour": "1",
+            "Last 6 hours": "6",
+            "Last 24 hours": "24",
+            "Last 48 hours": "48",
+        }
+        value = text.strip() if text else ""
+        if value not in text_hours_map:
+            raise ValueError(f"Unrecognized time filter text: {text!r}")
+        return text_hours_map[value]
 
     async def set_source_filter(self, source: str) -> None:
         """Set the source filter using shadcn Select.
@@ -144,8 +144,8 @@ class EventsPage(BasePage):
         trigger = await self.page.wait_for_selector(
             self.SOURCE_FILTER_TRIGGER, state="visible", timeout=10000
         )
-        if not trigger:
-            return "_all"  # Default value if trigger not found
+        if trigger is None:
+            raise AssertionError("Source filter trigger not found")
         text = await trigger.text_content()
 
         # Parse the text to get the source ID
@@ -155,7 +155,10 @@ class EventsPage(BasePage):
             "Indexing": "indexing",
             "Test Source": "test_source",
         }
-        return text_source_map.get(text or "", "_all")
+        value = text.strip() if text else ""
+        if value not in text_source_map:
+            raise ValueError(f"Unrecognized source filter text: {text!r}")
+        return text_source_map[value]
 
     async def set_only_triggered_filter(self, checked: bool) -> None:
         """Set the only triggered filter checkbox.
@@ -195,8 +198,8 @@ class EventsPage(BasePage):
         checkbox = await self.page.wait_for_selector(
             self.ONLY_TRIGGERED_CHECKBOX, state="attached", timeout=5000
         )
-        if not checkbox:
-            return False  # Default value if checkbox not found
+        if checkbox is None:
+            raise AssertionError("Only triggered checkbox not found")
         return await checkbox.is_checked()
 
     async def open_filters(self) -> None:

@@ -1,5 +1,7 @@
 """Playwright-based functional tests for chat history React UI - Filtering and interactions."""
 
+import re
+
 import httpx
 import pytest
 from playwright.async_api import Page, expect
@@ -30,101 +32,6 @@ async def wait_for_history_page_loaded(page: Page, timeout: int = 15000) -> bool
             return page_text is not None and "Conversation History" in page_text
         except Exception:
             return False
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_history_filters_interface(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test filter form interactions on history page."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to history page
-    history_page = HistoryPage(page, server_url)
-    await history_page.navigate_to()
-
-    # Wait for filters section to be visible
-    filters_section = page.locator("details summary:has-text('Filters')")
-    await filters_section.wait_for(state="visible", timeout=5000)
-
-    # Check if filters are already open (they should be by default)
-    filters_open = await page.locator("details[open]").count() > 0
-    if not filters_open:
-        # Click the summary to open the filters if needed
-        await filters_section.click()
-
-    # Wait for filter inputs to become visible
-    await page.wait_for_selector(
-        "input[name='conversation_id']", state="visible", timeout=5000
-    )
-
-    # Test interface type filter using the page object
-    await history_page.set_interface_type_filter("web")
-    selected_value = await history_page.get_interface_type_filter_value()
-    assert selected_value == "web"
-
-    # Test conversation ID filter (should be a text input)
-    conv_input = page.locator("input[name='conversation_id']")
-    await conv_input.wait_for(state="visible", timeout=5000)
-    # Wait for input to be enabled (not loading)
-    await page.wait_for_function(
-        "document.querySelector('input[name=\"conversation_id\"]').disabled === false",
-        timeout=5000,
-    )
-    # Clear any existing value first, then fill the new value
-    await conv_input.clear()
-    await conv_input.fill("web_conv_123", force=True)
-    # Wait for the value to be set using expect
-    await expect(conv_input).to_have_value("web_conv_123", timeout=5000)
-
-    # Test date filters
-    date_from_input = page.locator("input[name='date_from']")
-    await date_from_input.wait_for(state="visible", timeout=5000)
-    # Wait for input to be enabled
-    await page.wait_for_function(
-        "document.querySelector('input[name=\"date_from\"]').disabled === false",
-        timeout=5000,
-    )
-    # For date inputs, use fill with force and wait for value to be set
-    await date_from_input.fill("2024-01-01", force=True)
-    await expect(date_from_input).to_have_value("2024-01-01", timeout=5000)
-
-    date_to_input = page.locator("input[name='date_to']")
-    await date_to_input.wait_for(state="visible", timeout=5000)
-    # Wait for input to be enabled
-    await page.wait_for_function(
-        "document.querySelector('input[name=\"date_to\"]').disabled === false",
-        timeout=5000,
-    )
-    # For date inputs, use fill with force and wait for value to be set
-    await date_to_input.fill("2024-12-31", force=True)
-    await expect(date_to_input).to_have_value("2024-12-31", timeout=5000)
-
-    # Test Clear Filters button
-    # Look for Clear Filters button within the filters form (more specific selector)
-    clear_button = page.locator("details button:has-text('Clear Filters')")
-    await clear_button.wait_for(state="visible", timeout=5000)
-    assert await clear_button.is_visible(), "Clear Filters button not found"
-    await clear_button.click()
-
-    # Wait for filters to be cleared - URL should be empty of query params
-    await page.wait_for_function(
-        "() => window.location.search === '' || window.location.search === '?'",
-        timeout=5000,
-    )
-
-    # Verify filters are cleared
-    interface_value = await history_page.get_interface_type_filter_value()
-    conv_value = await conv_input.input_value()
-    from_value_after = await date_from_input.input_value()
-    to_value_after = await date_to_input.input_value()
-
-    assert interface_value == "_all"
-    assert not conv_value
-    assert not from_value_after
-    assert not to_value_after
 
 
 @pytest.mark.playwright
@@ -219,63 +126,6 @@ async def test_history_interface_filter_functionality(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_history_date_range_filtering(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test date range filtering functionality."""
-    page = web_test_fixture_readonly.page
-    server_url = web_test_fixture_readonly.base_url
-
-    # Navigate to history page
-    await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-
-    # Wait for page content to load (not show "Loading...")
-    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
-
-    # Set date filters
-    date_from_input = page.locator("input[name='date_from']")
-    date_to_input = page.locator("input[name='date_to']")
-
-    await date_from_input.wait_for(state="visible", timeout=5000)
-    await date_to_input.wait_for(state="visible", timeout=5000)
-
-    # Set a date range that should capture recent conversations
-    await date_from_input.fill("2024-01-01", force=True)
-    await date_from_input.press("Tab")
-
-    await date_to_input.fill("2024-12-31", force=True)
-    await date_to_input.press("Tab")
-
-    # Wait for URL to update with date filters
-    await page.wait_for_url("**/history?*date_from=2024-01-01*", timeout=5000)
-
-    # Check URL contains date filters
-    current_url = page.url
-    assert "date_from=2024-01-01" in current_url
-    assert "date_to=2024-12-31" in current_url
-
-    # Clear date filters and verify they're removed from URL
-    clear_button = page.locator("details button:has-text('Clear Filters')")
-    await clear_button.click()
-
-    # Wait for URL to update without date filters
-    await page.wait_for_function(
-        """() => {
-            const url = window.location.href;
-            return !url.includes('date_from') && !url.includes('date_to');
-        }""",
-        timeout=5000,
-    )
-
-    # URL should no longer have date filters
-    cleared_url = page.url
-    assert "date_from" not in cleared_url
-    assert "date_to" not in cleared_url
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
 async def test_history_conversation_id_filter(
     web_test_fixture_readonly: WebTestFixture,
 ) -> None:
@@ -346,6 +196,10 @@ async def test_history_combined_filters_interaction(
     await date_from_input.fill("2024-08-01", force=True)
     await date_from_input.press("Tab")
 
+    date_to_input = page.locator("input[name='date_to']")
+    await date_to_input.fill("2024-12-31", force=True)
+    await date_to_input.press("Tab")
+
     conv_input = page.locator("input[name='conversation_id']")
     await conv_input.fill("web_conv", force=True)
     await conv_input.press("Tab")
@@ -357,6 +211,7 @@ async def test_history_combined_filters_interaction(
     current_url = page.url
     assert "interface_type=web" in current_url
     assert "date_from=2024-08-01" in current_url
+    assert "date_to=2024-12-31" in current_url
     assert "conversation_id=web_conv" in current_url
 
     # Clear all filters
@@ -375,16 +230,19 @@ async def test_history_combined_filters_interaction(
     # Verify all filter values are cleared
     interface_value = await history_page.get_interface_type_filter_value()
     date_value = await date_from_input.input_value()
+    date_to_value = await date_to_input.input_value()
     conv_value = await conv_input.input_value()
 
     assert interface_value == "_all"
     assert not date_value
+    assert not date_to_value
     assert not conv_value
 
     # URL should be clean
     cleared_url = page.url
     assert "interface_type" not in cleared_url
     assert "date_from" not in cleared_url
+    assert "date_to" not in cleared_url
     assert "conversation_id" not in cleared_url
 
 
@@ -397,32 +255,20 @@ async def test_history_filter_validation_and_error_handling(
     page = web_test_fixture_readonly.page
     server_url = web_test_fixture_readonly.base_url
 
-    # Navigate to history page with invalid date format in URL
-    await page.goto(f"{server_url}/history?date_from=invalid-date")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
+    async with page.expect_response(
+        lambda response: "/api/v1/chat/conversations?" in response.url
+    ) as response_info:
+        await page.goto(f"{server_url}/history?date_from=invalid-date")
+    response = await response_info.value
+    assert response.status == 200
+    assert "date_from=" not in response.url
 
-    # Page should still load (frontend handles invalid dates gracefully)
-    # The frontend should show an error message or fallback gracefully
-    has_heading = await page.locator("h1:has-text('Conversation History')").count() > 0
-
-    assert has_heading, "Page should load normally with graceful error handling"
-
-    # Test with valid date format
-    # Navigate with URL parameters to auto-expand filters
-    await page.goto(f"{server_url}/history?interface_type=all")
-    await page.wait_for_selector("h1:has-text('Conversation History')", timeout=10000)
-    await page.wait_for_selector("main:not(:has-text('Loading...'))", timeout=10000)
-
+    await expect(
+        page.get_by_text(re.compile(r"Found \d+ conversations?"))
+    ).to_be_visible()
     date_from_input = page.locator("input[name='date_from']")
-    await date_from_input.wait_for(state="visible", timeout=5000)
-
-    # HTML date inputs should handle validation automatically
-    await date_from_input.fill("2024-08-09", force=True)
-    await date_from_input.press("Tab")
-
-    # Should work without errors
-    current_value = await date_from_input.input_value()
-    assert current_value == "2024-08-09"
+    await expect(date_from_input).to_have_value("")
+    await expect(page.locator("[class*='error']")).to_have_count(0)
 
 
 @pytest.mark.playwright

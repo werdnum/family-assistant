@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from playwright.async_api import expect
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from tests.functional.web.conftest import WebTestFixture
@@ -290,74 +291,22 @@ async def test_tool_call_status_progression(
     # Send message requesting tool use
     await chat_page.send_message("Please add a note for status test")
 
-    # Wait for tool call UI to appear
+    # The note remains pending until the user approves it.
     await chat_page.wait_for_tool_call_display()
+    await chat_page.wait_for_confirmation_dialog()
+    note_tool = page.locator('[data-testid="tool-call"] .tool-note')
+    await expect(note_tool).to_be_visible()
+    await expect(note_tool.locator(".tool-success")).to_have_count(0)
 
-    # At this point, we should initially see a running/pending status (spinning icon)
-    # In a more sophisticated implementation, we would check for specific status icons
-    # For now, we verify that tool calls are displayed
-
-    # Wait for tool execution to complete
-    await chat_page.wait_for_assistant_response(timeout=15000)
-
-    # Handle tool confirmation if it appears
-    try:
-        await chat_page.wait_for_confirmation_dialog(timeout=5000)
-        await chat_page.approve_tool_confirmation()
-    except Exception:
-        pass  # No confirmation dialog appeared or approval failed
-
-    # Wait for streaming to complete
-    await chat_page.wait_for_streaming_complete(timeout=10000)
-
-    # Re-wait for tool call elements after streaming (re-render may briefly remove them)
-    await chat_page.wait_for_tool_call_display(timeout=5000)
-
-    # Get tool calls after completion
-    tool_calls = await chat_page.get_tool_calls()
-    assert len(tool_calls) > 0, (
-        "Expected at least one tool call UI element after completion"
+    await chat_page.approve_tool_confirmation()
+    await chat_page.wait_for_message_content(
+        "The note has been created successfully", timeout=20000
     )
-
-    # Verify the tool call completed successfully
-    # In a full implementation, we would check for specific status indicators
-    # such as checkmark icons vs spinning icons
-    # For now, verify the tool call is still displayed and contains expected content
-    tool_display_text = tool_calls[0].get("display_text", "")
-    assert "add_or_update_note" in tool_display_text or "Note" in tool_display_text, (
-        f"Expected completed tool UI to show note-related content, got: {tool_display_text}"
-    )
-
-    # Verify final assistant response acknowledges completion
-    all_messages = await chat_page.get_all_messages()
-    assistant_messages = [m for m in all_messages if m["role"] == "assistant"]
-    assert len(assistant_messages) >= 1
-
-    # Check that final response mentions completion - be more flexible
-    all_assistant_content = " ".join(
-        m["content"] for m in assistant_messages if m["content"]
-    )
-    if all_assistant_content:
-        # Accept either completion/success keywords OR the presence of tool execution result
-        has_completion_keywords = (
-            "complete" in all_assistant_content.lower()
-            or "success" in all_assistant_content.lower()
-            or "created" in all_assistant_content.lower()
-        )
-        # If we have tool calls displayed, that's also evidence of successful completion
-        has_tool_display = len(tool_calls) > 0 and any(
-            "add_or_update_note" in tc.get("display_text", "")
-            or "Note" in tc.get("display_text", "")
-            for tc in tool_calls
-        )
-
-        assert has_completion_keywords or has_tool_display, (
-            f"Expected completion message or tool display in assistant response. "
-            f"Content: {all_assistant_content}, Tool calls: {tool_calls}"
-        )
+    await chat_page.expand_tool_groups()
+    await expect(note_tool.locator(".tool-success")).to_be_visible()
+    await expect(note_tool).to_contain_text("Status Test Note")
 
 
-@pytest.mark.flaky(reruns=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_conversation_loading_with_tool_calls(
@@ -425,16 +374,11 @@ async def test_conversation_loading_with_tool_calls(
     # This should happen quickly since the user message is saved in its own transaction
     await chat_page.wait_for_conversation_saved()
 
-    # Wait for tool call to complete
-    await chat_page.wait_for_assistant_response(timeout=15000)
-
-    # Handle tool confirmation if it appears
-    try:
-        await chat_page.wait_for_confirmation_dialog(timeout=5000)
-        await chat_page.approve_tool_confirmation()
-    except Exception:
-        pass  # No confirmation dialog appeared or approval failed
-
+    await chat_page.wait_for_confirmation_dialog()
+    await chat_page.approve_tool_confirmation()
+    await chat_page.wait_for_message_content(
+        "Note created successfully!", timeout=20000
+    )
     await chat_page.wait_for_streaming_complete(timeout=10000)
 
     # Verify we have tool call messages
@@ -473,8 +417,12 @@ async def test_conversation_loading_with_tool_calls(
 
     # Wait for messages to load after switching
     await chat_page.wait_for_messages_with_content(
-        {"user": "note for testing"}, timeout=10000
+        {"user": "note for testing", "assistant": "Note created successfully!"},
+        timeout=10000,
     )
+    await chat_page.wait_for_tool_call_display()
+    tool_calls = await chat_page.get_tool_calls()
+    assert any("Tool Call Test Note" in call["display_text"] for call in tool_calls)
 
     # Verify messages loaded from the conversation with tool calls
     loaded_messages = await chat_page.get_all_messages()

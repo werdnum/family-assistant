@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from playwright.async_api import Page, Request, Response
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -127,10 +128,12 @@ class BasePage:
             The text content of the element
         """
         element = await self.page.wait_for_selector(selector)
-        if element:
-            text = await element.text_content()
-            return text or ""
-        return ""
+        if element is None:
+            raise AssertionError(f"Element not found: {selector}")
+        text = await element.text_content()
+        if text is None:
+            raise AssertionError(f"Element has no text content: {selector}")
+        return text
 
     async def is_element_visible(self, selector: str) -> bool:
         """Check if an element is visible on the page.
@@ -141,11 +144,12 @@ class BasePage:
         Returns:
             True if the element is visible, False otherwise
         """
+        visible_match = self.page.locator(f"{selector} >> visible=true").first
         try:
-            await self.page.wait_for_selector(selector, timeout=5000, state="visible")
-            return True
-        except Exception:
+            await visible_match.wait_for(state="visible", timeout=5000)
+        except PlaywrightTimeoutError:
             return False
+        return True
 
     async def wait_for_success_message(self, message: str | None = None) -> None:
         """Wait for a success message to appear.

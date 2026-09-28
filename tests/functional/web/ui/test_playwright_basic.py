@@ -1,8 +1,10 @@
 """Basic Playwright tests to verify the web UI loads correctly."""
 
 import pytest
+from playwright.async_api import expect
 
 from tests.functional.web.conftest import WebTestFixture
+from tests.functional.web.pages.base_page import BasePage
 
 
 @pytest.mark.playwright
@@ -21,70 +23,31 @@ async def test_homepage_loads_with_playwright(
         lambda msg: console_errors.append(msg) if msg.type == "error" else None,
     )
 
-    # Navigate to homepage
     await page.goto(base_url)
-
-    # Wait for the page to be fully loaded
-
-    # Verify page has a title
-    title = await page.title()
-    assert title is not None, "Page should have a title"
-
-    # Check for main content area - the UI should have a main element
-    # Increased timeout to 15s to handle load under parallel test execution
-    main_element = await page.wait_for_selector("main", state="visible", timeout=15000)
-    assert main_element is not None, "Page should have a visible main element"
-
-    # Wait for React to hydrate by checking for interactive elements
-    # The body should have interactive content once React has mounted
-    await page.wait_for_function(
-        "() => document.body && document.querySelector('main') && document.readyState === 'complete'",
-        timeout=15000,
-    )
+    await expect(page.locator("h1")).to_have_text("Family Assistant", timeout=15000)
+    await BasePage(page, base_url).wait_for_page_idle()
 
     assert len(console_errors) == 0, (
         f"Page should not have console errors, but found: {[err.text for err in console_errors]}"
     )
 
-    # Verify the page contains some expected content
-    body_text = await page.text_content("body")
-    assert body_text is not None and len(body_text) > 0, "Page should have content"
-
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_notes_page_accessible(web_test_fixture_readonly: WebTestFixture) -> None:
-    """Test that the notes page is accessible and renders correctly."""
+async def test_homepage_content_visible_on_mobile(
+    web_test_fixture_readonly: WebTestFixture,
+) -> None:
+    """The landing page remains usable at a narrow mobile width."""
     page = web_test_fixture_readonly.page
-    base_url = web_test_fixture_readonly.base_url
+    await page.set_viewport_size({"width": 375, "height": 667})
+    await page.goto(web_test_fixture_readonly.base_url)
 
-    # Navigate to notes page
-    await page.goto(f"{base_url}/notes")
-
-    # Check for notes-specific elements
-    # Look for "Add New Note" button or link
-    add_note_element = await page.wait_for_selector(
-        "a[href='/notes/add'], button:has-text('Add New Note'), a.add-button",
-        state="visible",
-        timeout=5000,
+    await expect(page.locator("main")).to_be_visible()
+    await expect(page.locator("main h1")).to_have_text("Family Assistant")
+    await expect(page.get_by_placeholder("How can I help you today?")).to_be_visible()
+    assert await page.evaluate(
+        "document.documentElement.scrollWidth <= window.innerWidth"
     )
-    assert add_note_element is not None, (
-        "Notes page should have an 'Add Note' link or button"
-    )
-
-    # Check for notes list container (even if empty)
-    # The page should have some container for notes
-    await page.wait_for_selector("main", state="visible")
-
-    # Verify page is interactive - click the Add Note link
-    await add_note_element.click()
-
-    # Should navigate to add note page
-    await page.wait_for_url("**/notes/add", timeout=5000)
-
-    # Verify add note form is present
-    form_element = await page.wait_for_selector("form", state="visible", timeout=5000)
-    assert form_element is not None, "Add note page should have a form"
 
 
 @pytest.mark.playwright
@@ -123,61 +86,6 @@ async def test_backend_api_accessible(
     assert proxy_data.get("status") == "healthy", (
         f"API through Vite proxy should report healthy status, got {proxy_data.get('status')}"
     )
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_page_navigation_elements(
-    web_test_fixture_readonly: WebTestFixture,
-) -> None:
-    """Test that main navigation elements are present and functional."""
-    page = web_test_fixture_readonly.page
-    base_url = web_test_fixture_readonly.base_url
-
-    # Navigate to notes page which has traditional navigation
-    await page.goto(f"{base_url}/notes")
-
-    # Wait for navigation to be rendered (indicates React app is ready)
-    await page.wait_for_selector("nav", state="visible", timeout=15000)
-
-    # Check for any navigation links - the app should have some navigation
-    # Since the exact navigation structure may vary, just verify links exist
-    links = await page.locator("a[href]").all()
-    assert len(links) > 0, "Page should have at least one navigation link"
-
-    # Get all link hrefs to verify they're valid
-    hrefs = []
-    for link in links[:5]:  # Check first 5 links
-        href = await link.get_attribute("href")
-        if href:
-            hrefs.append(href)
-
-    assert len(hrefs) > 0, "Page should have links with href attributes"
-
-    # Verify at least some links are internal (not external)
-    internal_links = [h for h in hrefs if h.startswith("/") or "localhost" in h]
-    assert len(internal_links) > 0, "Page should have internal navigation links"
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_responsive_design(web_test_fixture_readonly: WebTestFixture) -> None:
-    """Test that the UI is responsive and works on mobile viewport."""
-    page = web_test_fixture_readonly.page
-    base_url = web_test_fixture_readonly.base_url
-
-    # Set mobile viewport
-    await page.set_viewport_size({"width": 375, "height": 667})
-
-    # Navigate to homepage
-    await page.goto(base_url)
-
-    # Check that main content is still visible
-    main_element = await page.wait_for_selector("main", state="visible", timeout=5000)
-    assert main_element is not None, "Main content should be visible on mobile"
-
-    # Reset viewport
-    await page.set_viewport_size({"width": 1280, "height": 720})
 
 
 @pytest.mark.playwright
@@ -223,7 +131,7 @@ async def test_add_note_with_javascript(web_test_fixture: WebTestFixture) -> Non
     await submit_button.click()
 
     # Should redirect back to notes list after successful creation
-    await page.wait_for_url("**/", timeout=10000)
+    await page.wait_for_url("**/notes", timeout=10000)
 
     # Verify the note appears in the list
     # Wait for the note to appear (might need a moment for the page to update)
@@ -245,36 +153,11 @@ async def test_css_and_styling_loads(web_test_fixture_readonly: WebTestFixture) 
     # Navigate to homepage
     await page.goto(base_url)
 
-    # Check that CSS is loaded by verifying computed styles
-    # Get a main element to check styling
-    main_element = await page.wait_for_selector("main", state="visible")
-
-    # Check that the element has some computed styles (not just browser defaults)
-    # This verifies CSS is loaded and applied
-    assert main_element is not None, "Main element not found"
-    computed_style = await main_element.evaluate("""
-        (element) => {
-            const styles = window.getComputedStyle(element);
-            return {
-                // Check for custom properties that would only exist if CSS loaded
-                hasCustomFont: styles.fontFamily !== 'Times New Roman',
-                hasBoxSizing: styles.boxSizing === 'border-box',
-                // Check if any CSS custom properties are defined
-                hasCSSVariables: Array.from(styles).some(prop => prop.startsWith('--')),
-                // Get background color to ensure it's not default
-                backgroundColor: styles.backgroundColor,
-                // Get some indication that layout CSS is applied
-                display: styles.display,
-                margin: styles.margin,
-                padding: styles.padding
-            };
-        }
-    """)
-
-    # Verify that CSS is actually applied (not just browser defaults)
-    assert computed_style["hasCustomFont"] or computed_style["hasBoxSizing"], (
-        "CSS should be loaded and applied to elements"
+    await page.wait_for_selector("main", state="visible")
+    background = await page.evaluate(
+        "() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim()"
     )
+    assert background, "The app theme should be applied"
 
     # Check that CSS is loaded properly (either Vite dev or production build)
     style_tags = await page.evaluate("""

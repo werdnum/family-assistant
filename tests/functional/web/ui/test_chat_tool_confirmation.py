@@ -1,4 +1,4 @@
-"""Test for tool confirmation timeout behavior in the web UI."""
+"""Test tool confirmation outcomes in the web UI."""
 
 import json
 
@@ -6,6 +6,8 @@ import pytest
 from playwright.async_api import Page
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
 from tests.helpers import wait_for_condition
@@ -79,29 +81,23 @@ async def test_tool_confirmation_timeout_flow(
     # Wait for confirmation dialog to appear
     await chat_page.wait_for_confirmation_dialog()
 
-    # The test timeout is 10s (overridden from default 1hr). Since we can't wait that long in tests,
-    # let's just verify the dialog appears and has the timeout countdown.
-    # Check that the UI shows a countdown timer
-    timer_element = await page.wait_for_selector(
+    await page.wait_for_selector(
         '.tool-confirmation-container span:has-text("Expires in")',
         state="visible",
         timeout=5000,
     )
-    assert timer_element is not None, "Confirmation should show countdown timer"
 
-    # Verify the confirmation buttons are present and enabled
-    approve_button = await page.wait_for_selector(
-        '.tool-confirmation-container button:has-text("Approve")',
-        state="visible",
-        timeout=5000,
+    await chat_page.wait_for_message_content(llm_timeout_response, timeout=30000)
+    await _wait_for_no_confirmations(page)
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
+    db = Database(engine=engine)
+    assert (
+        await db.notes.get_by_title(
+            "Test Note", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
     )
-    reject_button = await page.wait_for_selector(
-        '.tool-confirmation-container button:has-text("Reject")',
-        state="visible",
-        timeout=5000,
-    )
-    assert approve_button is not None, "Approve button should be visible"
-    assert reject_button is not None, "Reject button should be visible"
 
 
 @pytest.mark.playwright
@@ -166,6 +162,18 @@ async def test_tool_confirmation_approval_flow(
     await approve_button.click()
 
     await _wait_for_no_confirmations(page)
+    await chat_page.wait_for_message_content(llm_final_response)
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
+    db = Database(engine=engine)
+    note = await wait_for_condition(
+        lambda: db.notes.get_by_title(
+            "Test Note", read_policy=NoteReadPolicy.UNRESTRICTED
+        ),
+        timeout=10.0,
+        description="approved note to be committed",
+    )
+    assert note is not None and note.content == "Test Content"
 
 
 @pytest.mark.playwright
@@ -234,6 +242,16 @@ async def test_tool_confirmation_rejection_flow(
     await reject_button.click()
 
     await _wait_for_no_confirmations(page)
+    await chat_page.wait_for_message_content(llm_final_response)
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
+    db = Database(engine=engine)
+    assert (
+        await db.notes.get_by_title(
+            "Test Note Reject", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
+    )
 
 
 @pytest.mark.playwright
@@ -328,3 +346,21 @@ async def test_multiple_tool_confirmations(
     await second_reject.click()
 
     await _wait_for_no_confirmations(page)
+    await chat_page.wait_for_message_content(llm_final_response)
+    engine = web_test_fixture.assistant.database_engine
+    assert engine is not None
+    db = Database(engine=engine)
+    first_note = await wait_for_condition(
+        lambda: db.notes.get_by_title(
+            "First Note", read_policy=NoteReadPolicy.UNRESTRICTED
+        ),
+        timeout=10.0,
+        description="first approved note to be committed",
+    )
+    assert first_note is not None and first_note.content == "First Content"
+    assert (
+        await db.notes.get_by_title(
+            "Second Note", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
+    )

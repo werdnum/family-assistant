@@ -308,38 +308,8 @@ class TestUserAttachmentProcessing:
         assert metadata_json.get("original_filename") == "db_test.png"
 
     @pytest.mark.asyncio
-    async def test_attachment_access_control(
-        self,
-        api_test_client: AsyncClient,
-        sample_image_base64: str,
-    ) -> None:
-        """Test conversation-scoped attachment access control."""
-        # Upload attachment in one conversation
-        conv1_id = "test-conv-access-1"
-        payload = {
-            "prompt": "Store this image",
-            "conversation_id": conv1_id,
-            "attachments": [
-                {
-                    "type": "image",
-                    "content": sample_image_base64,
-                    "filename": "access_test.png",
-                }
-            ],
-        }
-
-        response = await api_test_client.post("/api/v1/chat/send_message", json=payload)
-        assert response.status_code == 200
-
-        result = response.json()
-        result["attachments"][0]["attachment_id"]
-
-        # This test verifies that attachment IDs are returned correctly
-        # Access control testing will be done via direct registry testing
-
-    @pytest.mark.asyncio
     async def test_data_url_mime_type_detection(
-        self, api_test_client: AsyncClient
+        self, api_test_client: AsyncClient, db_engine: AsyncEngine
     ) -> None:
         """Test MIME type detection from data URLs."""
         # JPEG data URL
@@ -356,8 +326,12 @@ class TestUserAttachmentProcessing:
         response = await api_test_client.post("/api/v1/chat/send_message", json=payload)
         assert response.status_code == 200
 
-        result = response.json()
-        result["attachments"][0]["attachment_id"]
+        attachment = response.json()["attachments"][0]
+        assert attachment["mime_type"] == "image/jpeg"
 
-        # This test verifies that data URLs are processed correctly
-        # MIME type detection will be tested via direct service testing
+        query = select(attachment_metadata_table.c.mime_type).where(
+            attachment_metadata_table.c.attachment_id == attachment["attachment_id"]
+        )
+        metadata_row = await Database(engine=db_engine).fetch_one(query)
+        assert metadata_row is not None
+        assert metadata_row["mime_type"] == "image/jpeg"

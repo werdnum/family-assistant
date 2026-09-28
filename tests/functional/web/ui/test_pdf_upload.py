@@ -1,13 +1,15 @@
 """End-to-end tests for PDF upload functionality in the chat UI using Playwright."""
 
 import tempfile
+from pathlib import Path
 
 import anyio
 import pytest
 
+from family_assistant.llm.messages import TextContentPart, UserMessage
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 
 @pytest.mark.playwright
@@ -19,11 +21,6 @@ async def test_pdf_upload_functionality(
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
-    # Configure mock LLM to recognize PDF content
-    mock_llm_client.default_response = LLMOutput(
-        content="I received your PDF document."
-    )
-
     # Navigate to chat
     await chat_page.navigate_to_chat()
 
@@ -33,6 +30,27 @@ async def test_pdf_upload_functionality(
             b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Kids [3 0 R]\n/Count 1\n/Type /Pages\n>>\nendobj\n3 0 obj\n<<\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n/Resources <<\n/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]\n>>\n/Type /Page\n>>\nendobj\ntrailer\n<<\n/Root 1 0 R\n>>\n%%EOF"
         )
         temp_path = temp_file.name
+
+    def has_uploaded_pdf(args: MatcherArgs) -> bool:
+        for message in args["messages"]:
+            if not isinstance(message, UserMessage):
+                continue
+            content = message.content
+            text = (
+                content
+                if isinstance(content, str)
+                else "\n".join(
+                    part.text for part in content if isinstance(part, TextContentPart)
+                )
+            )
+            if Path(temp_path).name in text and "application/pdf" in text:
+                return True
+        return False
+
+    mock_llm_client.rules = [
+        (has_uploaded_pdf, LLMOutput(content="PDF attachment received."))
+    ]
+    mock_llm_client.default_response = LLMOutput(content="PDF attachment missing.")
 
     try:
         # Wait for attachment button to be visible
@@ -45,12 +63,6 @@ async def test_pdf_upload_functionality(
 
         file_chooser = await fc_info.value
         await file_chooser.set_files(temp_path)
-
-        # Wait for attachment to appear in the composer
-        # Using a more specific selector for the attachment preview container
-        await page.wait_for_selector(
-            ".flex.w-full.flex-row.gap-3.overflow-x-auto", timeout=5000
-        )
 
         # Verify attachment is displayed
         attachment_preview = page.locator('[data-testid="attachment-preview"]').first
@@ -68,8 +80,7 @@ async def test_pdf_upload_functionality(
 
         # Verify the response
         last_response = await chat_page.get_last_assistant_message()
-        assert last_response
-        assert "PDF" in last_response or "received" in last_response
+        assert last_response == "PDF attachment received."
 
     finally:
         # Clean up temp file

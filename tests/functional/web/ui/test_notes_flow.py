@@ -128,7 +128,6 @@ async def test_delete_note_flow(web_test_fixture: WebTestFixture) -> None:
     assert new_count == initial_count - 1
 
 
-@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
@@ -137,7 +136,7 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
     page = web_test_fixture.page
     notes_page = NotesPage(page, web_test_fixture.base_url)
 
-    # Use unique test ID to avoid conflicts with parallel tests
+    # Keep titles distinct from other notes while exercising partial-title search.
     test_id = str(uuid.uuid4())[:8]
 
     # Create some test notes with distinct titles for searching
@@ -155,54 +154,35 @@ async def test_search_notes_flow(web_test_fixture: WebTestFixture) -> None:
 
     # Navigate to notes list and verify all notes exist
     await notes_page.navigate_to_notes_list()
+    title_cells = page.locator("tbody tr td:first-child")
+    await expect(title_cells).to_have_count(len(test_notes))
     initial_count = await notes_page.get_note_count()
-    assert initial_count >= len(test_notes)
+    assert initial_count == len(test_notes)
 
     # Verify all notes are visible initially
     for title, _ in test_notes:
         assert await notes_page.is_note_present(title)
 
-    # Test search functionality with different queries
-    # Use the test_id to search for our specific test notes
-
-    # Search for our test notes using the unique test ID
-    await notes_page.search_notes(test_id)
-
-    # Should show only our test notes
-    filtered_count = await notes_page.get_note_count()
-    assert filtered_count == len(test_notes)
-
-    # Verify all our test notes are visible
-    for title, _ in test_notes:
-        assert await notes_page.is_note_present(title)
-
     # Search for "TestGrocery" - should show only grocery note
     await notes_page.search_notes("TestGrocery")
-
-    filtered_count = await notes_page.get_note_count()
-    assert (
-        filtered_count >= 1
-    )  # At least our grocery note, maybe others from parallel tests
-    assert await notes_page.is_note_present(f"TestGrocery{test_id}")
+    await expect(title_cells).to_have_text([f"TestGrocery{test_id}"])
+    assert await notes_page.get_note_count() == 1
 
     # Search for "TestMeeting" - should show only meeting note
     await notes_page.search_notes("TestMeeting")
-
-    filtered_count = await notes_page.get_note_count()
-    assert filtered_count >= 1  # At least our meeting note
-    assert await notes_page.is_note_present(f"TestMeeting{test_id}")
+    await expect(title_cells).to_have_text([f"TestMeeting{test_id}"])
+    assert await notes_page.get_note_count() == 1
 
     # Search for something that definitely doesn't exist
     await notes_page.search_notes(f"NonexistentNote{test_id}")
-
-    filtered_count = await notes_page.get_note_count()
-    assert filtered_count == 0
+    await expect(page.get_by_text("No notes found")).to_be_visible()
+    assert await notes_page.get_note_count() == 0
 
     # Clear search - should show all notes again
     await notes_page.search_notes("")
-
+    await expect(title_cells).to_have_count(len(test_notes))
     final_count = await notes_page.get_note_count()
-    assert final_count >= len(test_notes)
+    assert final_count == len(test_notes)
 
     # Verify all our original notes are visible again
     for title, _ in test_notes:
@@ -276,27 +256,3 @@ async def test_note_form_validation(web_test_fixture: WebTestFixture) -> None:
 
     # Should succeed now - wait for redirect to notes list
     await page.wait_for_url(f"{web_test_fixture.base_url}/notes")
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_concurrent_note_operations(web_test_fixture: WebTestFixture) -> None:
-    """Test that the UI handles concurrent operations gracefully."""
-    page = web_test_fixture.page
-    notes_page = NotesPage(page, web_test_fixture.base_url)
-
-    # Create multiple notes quickly
-    note_titles = [f"Concurrent Note {i}" for i in range(5)]
-
-    for title in note_titles:
-        await notes_page.add_note(
-            title=title, content=f"Content for {title}", include_in_prompt=True
-        )
-
-    # Verify all notes were created
-    for title in note_titles:
-        assert await notes_page.is_note_present(title)
-
-    # Get final count
-    final_count = await notes_page.get_note_count()
-    assert final_count >= len(note_titles)
