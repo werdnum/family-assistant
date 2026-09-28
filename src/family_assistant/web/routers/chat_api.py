@@ -2392,19 +2392,24 @@ async def latest_reply(
     await _ensure_user_owns_conversation(
         request, current_user, conversation_id, allow_new=False
     )
-    history = await db_context.message_history.get_recent(
-        interface_type=interface_type, conversation_id=conversation_id, limit=50
+    # Not get_recent: it drops messages older than a day, and a reply collected
+    # the next day is still the reply.
+    (
+        rows,
+        _has_more_before,
+        _has_more_after,
+    ) = await db_context.message_history.get_conversation_messages_paginated(
+        conversation_id, limit=50, include_subconversations=False
     )
     reply: str | None = None
-    for message in history:
-        if isinstance(message, UserMessage):
+    for row in rows:
+        if row.get("interface_type") != interface_type:
+            continue
+        content = row.get("content")
+        if row.get("role") == "user":
             reply = None
-        elif (
-            isinstance(message, AssistantMessage)
-            and isinstance(message.content, str)
-            and message.content
-        ):
-            reply = message.content
+        elif row.get("role") == "assistant" and isinstance(content, str) and content:
+            reply = content
     return reply
 
 

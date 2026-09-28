@@ -7,7 +7,7 @@ mock LLM, so what is verified is what claude.ai or Claude Code would see.
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, MCPAdapterConfig
 from family_assistant.llm import LLMOutput
-from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.database import Database
 from family_assistant.web.mcp_adapter import MCPAdapter, install_mcp_adapter
@@ -266,6 +266,37 @@ async def test_finished_reply_is_read_from_the_conversation(
     assert collected.structuredContent is not None
     assert collected.structuredContent["status"] == "complete"
     assert collected.structuredContent["reply"] == "The quick answer."
+
+
+@pytest.mark.asyncio
+async def test_reply_older_than_a_day_is_still_collected(
+    mcp_app: FastAPI, api_db_context: Database
+) -> None:
+    conversation_id = "mcp-answered-yesterday"
+    asked_at = datetime.now(UTC) - timedelta(days=2)
+    await api_db_context.message_history.add_message(
+        UserMessage.from_trusted_user(content="A question from two days ago."),
+        interface_type="mcp",
+        conversation_id=conversation_id,
+        timestamp=asked_at,
+        user_id="test_user",
+    )
+    await api_db_context.message_history.add_message(
+        AssistantMessage(content="The answer from two days ago."),
+        interface_type="mcp",
+        conversation_id=conversation_id,
+        timestamp=asked_at + timedelta(minutes=3),
+        user_id="test_user",
+    )
+
+    async with mcp_session(mcp_app) as session:
+        result = await session.call_tool(
+            "get_family_assistant_reply", {"conversation_id": conversation_id}
+        )
+
+    assert not result.isError
+    assert result.structuredContent is not None
+    assert result.structuredContent["reply"] == "The answer from two days ago."
 
 
 @pytest.mark.asyncio
