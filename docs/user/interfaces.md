@@ -333,6 +333,11 @@ the original assistant, which posts the follow-up in the same conversation. For 
 handoffs post their result directly in Chat. You can ask for the status of a delegation reference at
 any time.
 
+While a longer handoff is running, the web and iOS chat show a small line above the message box for
+each one — which specialist is working, how it is going (queued, working, how many of a council's
+members have answered, finishing up) and when it started. Hover it on the web, or use VoiceOver on
+iOS, to see what was asked. The line disappears once the result has been posted.
+
 Delegations can also be continued, so a specialist keeps its earlier context — useful for a
 follow-up question to a previous research delegation.
 

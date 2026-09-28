@@ -34,6 +34,7 @@ import { useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { MarkdownText } from './MarkdownText';
+import { PendingDelegationsChip } from './PendingDelegationsChip';
 import { useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
 import { TooltipIconButton } from './TooltipIconButton';
@@ -86,6 +87,7 @@ const ThreadContent: React.FC = () => {
         className="flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-4 py-3 md:px-6 md:py-4"
         data-testid="composer-container"
       >
+        <ThreadPendingDelegations />
         <Composer />
       </div>
     </ThreadPrimitive.Root>
@@ -257,6 +259,19 @@ const ThreadWelcomeSuggestions: React.FC = () => {
 // (which keeps its text so the user can retry). Deliberately NOT gated on the
 // turn still running: a turn whose stream gave up reports back here with the
 // text it could not confirm, and that has to stay readable after the turn ends.
+const ThreadPendingDelegations: React.FC = () => {
+  const controls = useChatControls();
+  const delegations = controls?.pendingDelegations ?? [];
+  if (delegations.length === 0) {
+    return null;
+  }
+  return (
+    <div className="pb-2">
+      <PendingDelegationsChip delegations={delegations} />
+    </div>
+  );
+};
+
 // Cleared when the user sends, steers again, or switches conversation.
 const SteerError: React.FC = () => {
   const controls = useChatControls();

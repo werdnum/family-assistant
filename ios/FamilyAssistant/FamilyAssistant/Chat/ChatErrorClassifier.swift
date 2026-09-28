@@ -22,6 +22,8 @@ enum ChatOperation: String {
     case profilesLoad = "profiles_load"
     /// The ~15s pending-approvals poll (`loadPendingConfirmations`). Prod cluster G.
     case pendingApprovalsPoll = "pending_approvals_poll"
+    /// The open conversation's pending-delegations read (`loadPendingDelegations`).
+    case pendingDelegationsPoll = "pending_delegations_poll"
     /// A user send / steer submission failing at the point of action.
     case sendTurn = "send_turn"
     /// A user stop request failing.
@@ -41,7 +43,8 @@ enum ChatOperation: String {
              .messagesMerge,
              .messagesLoad,
              .profilesLoad,
-             .pendingApprovalsPoll:
+             .pendingApprovalsPoll,
+             .pendingDelegationsPoll:
             true
         case .sendTurn, .stopTurn, .confirmTool, .attachmentOp:
             false
@@ -58,6 +61,7 @@ enum ChatOperation: String {
              .recentConversationsRefresh,
              .profilesLoad,
              .pendingApprovalsPoll,
+             .pendingDelegationsPoll,
              .sendTurn,
              .stopTurn,
              .confirmTool,

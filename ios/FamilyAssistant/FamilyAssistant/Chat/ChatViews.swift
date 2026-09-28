@@ -396,6 +396,7 @@ private struct ChatThreadView: View {
                 messageScrollArea
             }
 
+            PendingDelegationsChip(viewModel: viewModel)
             ThreadInlineBanner(viewModel: viewModel)
             Divider()
             ChatComposerView(viewModel: viewModel)
@@ -1497,6 +1498,41 @@ private struct PendingConfirmationsBanner: View {
             .padding(10)
             .background(Color.yellow.opacity(0.16))
             .accessibilityIdentifier("pending-confirmations-banner")
+        }
+    }
+}
+
+/// One line per background delegation the open conversation is waiting on, so a
+/// long-running handoff shows progress until its result arrives as a message.
+private struct PendingDelegationsChip: View {
+    var viewModel: ChatViewModel
+
+    var body: some View {
+        if !viewModel.pendingDelegations.isEmpty {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.pendingDelegations) { delegation in
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text(
+                                "\(Text(delegation.profileDisplayName).fontWeight(.medium)) · \(delegation.statusLabel) · \(delegation.startedAgo(now: context.date))"
+                            )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityHint(delegation.requestPreview)
+                        .accessibilityIdentifier("pending-delegation")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.08))
+            .accessibilityIdentifier("pending-delegations")
         }
     }
 }

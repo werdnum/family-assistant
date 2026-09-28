@@ -494,6 +494,90 @@ struct ChatPendingConfirmationsResponse: Decodable {
     let confirmations: [ChatPendingConfirmation]
 }
 
+/// A background delegation the conversation is still waiting to hear back from.
+/// Mirrors `PendingDelegation` in `web/routers/chat_api.py`.
+struct ChatPendingDelegation: Decodable, Equatable, Identifiable {
+    let delegationID: String
+    let targetProfileID: String
+    let status: String
+    let requestPreview: String
+    let createdAt: Date
+    let startedAt: Date?
+    let completedAt: Date?
+    let cancelRequested: Bool
+    let childrenTotal: Int
+    let childrenFinished: Int
+
+    var id: String { delegationID }
+
+    enum CodingKeys: String, CodingKey {
+        case delegationID = "delegation_id"
+        case targetProfileID = "target_profile_id"
+        case status
+        case requestPreview = "request_preview"
+        case createdAt = "created_at"
+        case startedAt = "started_at"
+        case completedAt = "completed_at"
+        case cancelRequested = "cancel_requested"
+        case childrenTotal = "children_total"
+        case childrenFinished = "children_finished"
+    }
+
+    var profileDisplayName: String {
+        switch targetProfileID {
+        case "default_assistant":
+            return "Assistant"
+        case "browser":
+            return "Browser"
+        case "research":
+            return "Research"
+        case "event_handler":
+            return "Events"
+        default:
+            return targetProfileID.prefix(1).uppercased() + targetProfileID.dropFirst()
+        }
+    }
+
+    var statusLabel: String {
+        if cancelRequested {
+            return "Cancelling"
+        }
+        switch status {
+        case "queued":
+            return "Queued"
+        case "completed", "failed":
+            // The run is done; the reply about it is still being written.
+            return "Finishing up"
+        default:
+            if childrenTotal > 0 {
+                return "\(childrenFinished) of \(childrenTotal) done"
+            }
+            return "Working on it"
+        }
+    }
+
+    func startedAgo(now: Date) -> String {
+        let minutes = Int(now.timeIntervalSince(startedAt ?? createdAt) / 60)
+        if minutes < 1 {
+            return "started just now"
+        }
+        if minutes < 60 {
+            return "started \(minutes) min ago"
+        }
+        return "started \(minutes / 60) h ago"
+    }
+}
+
+struct ChatPendingDelegationsResponse: Decodable {
+    let conversationID: String
+    let delegations: [ChatPendingDelegation]
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case delegations
+    }
+}
+
 enum ChatConfirmationStatus: String, Decodable, Equatable {
     case pending
     case approved

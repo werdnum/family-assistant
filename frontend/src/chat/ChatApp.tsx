@@ -40,6 +40,7 @@ import {
 import { useActivityStream } from './useActivityStream';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
+import { usePendingDelegations } from './usePendingDelegations';
 import { useStreamingResponse } from './useStreamingResponse';
 
 // Stable empty list for profiles that offer no choice of tier, so the
@@ -419,6 +420,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const [olderMessagesStatus, setOlderMessagesStatus] = useState<OlderMessagesStatus>('idle');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const { delegations: pendingDelegations, refresh: refreshPendingDelegations } =
+    usePendingDelegations(conversationId);
   const [persistedConversationId, setPersistedConversationId] = useState<string | null>(null);
   // Always-current mirror of conversationId, so a deferred follow-up timer can
   // synchronously check whether the conversation changed before it fires.
@@ -863,6 +866,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       if (turnId) {
         pendingOptimisticConversationsRef.current.delete(turnId);
       }
+      // The turn may have handed work off to the background.
+      refreshPendingDelegations();
       if (!kickoffFailed && conversationId) {
         setPersistedConversationId(conversationId);
       }
@@ -1171,7 +1176,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         }
       }
     },
-    [conversationId, fetchConversations]
+    [conversationId, fetchConversations, refreshPendingDelegations]
   );
 
   // A mid-turn steering message the user sent while the turn was running. Render
@@ -2068,6 +2073,12 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       // be derived here. It's fired from the background reload in
       // loadConversationMessages, where the persisted reply text is available.
 
+      // Before the self-turn and streaming skips below: a delegation handed off
+      // or delivered changes the pending list even when history needs no reload.
+      if (update.conversation_id === conversationId) {
+        refreshPendingDelegations();
+      }
+
       // Skip reload if this turn was originated by this tab — we already hold
       // the freshest state from streaming; reloading risks clobbering freshly-
       // rendered content (error banners, message bubbles, attachment previews).
@@ -2087,7 +2098,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         loadConversationMessages(conversationId, true);
       }
     },
-    [conversationId, loadConversationMessages, isStreaming]
+    [conversationId, loadConversationMessages, isStreaming, refreshPendingDelegations]
   );
 
   // Set up live message updates via SSE
@@ -2553,8 +2564,17 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       hasOlderMessages: olderHistory?.convId === conversationId && olderHistory.hasMore,
       olderMessagesStatus,
       loadOlderMessages: () => void loadOlderMessages(),
+      pendingDelegations,
     }),
-    [steerError, submitSteer, olderHistory, conversationId, olderMessagesStatus, loadOlderMessages]
+    [
+      steerError,
+      submitSteer,
+      olderHistory,
+      conversationId,
+      olderMessagesStatus,
+      loadOlderMessages,
+      pendingDelegations,
+    ]
   );
 
   // Initialize conversation ID from URL or localStorage

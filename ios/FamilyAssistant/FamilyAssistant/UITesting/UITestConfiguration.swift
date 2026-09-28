@@ -355,6 +355,12 @@ private final class UITestBackendURLProtocol: URLProtocol {
             if request.httpMethod == "GET", shareConversationID(from: request) != nil {
                 return .json(#"{"active":false}"#)
             }
+            if request.httpMethod == "GET",
+               let path = request.url?.path,
+               path.hasPrefix("/api/v1/chat/conversations/"),
+               path.hasSuffix("/pending-delegations") {
+                return .json(#"{"conversation_id":"","delegations":[]}"#)
+            }
             if request.httpMethod == "GET", let conversationID = streamConversationID(from: request) {
                 return chatStreamResponse(conversationID: conversationID)
             }

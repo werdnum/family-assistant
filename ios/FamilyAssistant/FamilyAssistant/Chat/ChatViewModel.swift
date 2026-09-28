@@ -71,6 +71,8 @@ final class ChatViewModel {
     var draftText = ""
     var draftAttachments: [ChatAttachment] = []
     var pendingConfirmations: [ChatPendingConfirmation] = []
+    /// Background delegations the open conversation is waiting on.
+    private(set) var pendingDelegations: [ChatPendingDelegation] = []
     var isLoadingConversations = false
     var isLoadingMessages = false {
         // `sendDraft` refuses to send while messages load, so a follow-up steer
@@ -217,6 +219,7 @@ final class ChatViewModel {
     // `deinit` so a discarded model's closure stops driving its dead coordinator.
     @ObservationIgnored private var authObserverToken: UUID?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingDelegationsPollTask: Task<Void, Never>?
     // Consecutive advisory-read failures tracked PER operation (list refresh,
     // recent-list refresh, approvals poll, profile load, catch-up merges). A single
     // global counter would let a persistently-failing endpoint be masked forever by
@@ -477,6 +480,14 @@ final class ChatViewModel {
         await loadPendingConfirmations()
     }
 
+    func loadPendingDelegationsForTesting() async {
+        await loadPendingDelegations()
+    }
+
+    var isPollingPendingDelegationsForTesting: Bool {
+        pendingDelegationsPollTask != nil
+    }
+
     /// Test-only: register the coordinator's auth observer (and start the path
     /// monitor) the way `bootstrap()` does, WITHOUT starting the account-global
     /// activity stream. Tests that exercise `sendDraft` in isolation (no
@@ -578,6 +589,7 @@ final class ChatViewModel {
     deinit {
         streamTask?.cancel()
         pendingConfirmationsTask?.cancel()
+        pendingDelegationsPollTask?.cancel()
         textFlushTask?.cancel()
         // The coordinator's stream tasks retain it across their open connections,
         // so its own deinit can't run; cancel them here (the owner is not in that
@@ -923,6 +935,7 @@ final class ChatViewModel {
         if isSwitchingConversation {
             draftText = ""
             persistedMessagesConversationID = nil
+            setPendingDelegations([])
         }
         conversationID = id
         conversationSelection = id
@@ -964,6 +977,7 @@ final class ChatViewModel {
             }
         }
         startLiveEvents(reason: isSwitchingConversation ? .conversationSwitch : .initial)
+        Task { [weak self] in await self?.loadPendingDelegations() }
     }
 
     /// Set the active profile from the conversation just loaded into `messages`.
@@ -994,6 +1008,7 @@ final class ChatViewModel {
         displayedMessageNewerOffset = 0
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
+        setPendingDelegations([])
         messages = []
         persistedMessagesConversationID = nil
         if !preservingDraft {
@@ -3592,6 +3607,48 @@ final class ChatViewModel {
         }
     }
 
+    /// Refetch the open conversation's pending delegations. Handoff and delivery
+    /// both reach the follow stream, which calls this; status changes and child
+    /// progress in between do not, so ``setPendingDelegations`` polls while
+    /// anything is pending.
+    private func loadPendingDelegations() async {
+        guard let conversationID = currentConversationID() else {
+            setPendingDelegations([])
+            return
+        }
+        do {
+            let delegations = try await apiClient.listPendingDelegations(conversationID: conversationID)
+            guard currentConversationID() == conversationID else {
+                return
+            }
+            setPendingDelegations(delegations)
+            recordAdvisorySuccess(operation: .pendingDelegationsPoll)
+        } catch {
+            // A progress hint; the result itself still arrives as a message, so
+            // keep the last known list and never modal.
+            handleAdvisoryReadFailure(operation: .pendingDelegationsPoll, error: error)
+            errorReporter.report(error, component: "Chat.pendingDelegations")
+        }
+    }
+
+    private func setPendingDelegations(_ delegations: [ChatPendingDelegation]) {
+        pendingDelegations = delegations
+        if delegations.isEmpty {
+            pendingDelegationsPollTask?.cancel()
+            pendingDelegationsPollTask = nil
+        } else if pendingDelegationsPollTask == nil {
+            pendingDelegationsPollTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(15))
+                    guard !Task.isCancelled else {
+                        return
+                    }
+                    await self?.loadPendingDelegations()
+                }
+            }
+        }
+    }
+
     func reconnectLiveUpdates(
         trigger: SyncCoordinator.RestartReason = .manualReconnect
     ) async {
@@ -3778,6 +3835,7 @@ final class ChatViewModel {
     /// Skipped while a send is actively streaming: the send path owns the ack
     /// cursor and the history merge then (see ``runSendTurn``).
     private func catchUpPersistedHistory(conversationID: String) async {
+        await loadPendingDelegations()
         guard !isSendActivelyStreaming else {
             return
         }
@@ -3823,6 +3881,9 @@ final class ChatViewModel {
                     Task { try? await client.acknowledge(conversationID: conversationID, ackSeq: seq) }
                 }
             }
+            // Outside the guard above: this device's own turn may have handed work
+            // off, and a delivered result clears it.
+            await loadPendingDelegations()
         case .userInput:
             // Skip a late follow-stream echo for a turn that has already ended
             // (its persisted steering row is reconciled via history), mirroring

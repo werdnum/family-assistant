@@ -11902,6 +11902,123 @@ final class ChatViewModelTests: XCTestCase {
 
     /// Build a view model wired to a spool-backed reporter with no base URL, so
     /// every breadcrumb is persisted to the spool for deterministic assertions.
+    func testPendingDelegationsShowForTheOpenConversationAndPollOnlyWhilePending() async {
+        let pending = AtomicFlag(true)
+        let requestedPaths = AtomicStringList()
+        ChatMockBackendURLProtocol.respondToPendingDelegations { request in
+            requestedPaths.append(request.url?.path ?? "")
+            guard pending.value else {
+                return .json(#"{"conversation_id":"conv-pending","delegations":[]}"#)
+            }
+            return .json(
+                """
+                {"conversation_id":"conv-pending","delegations":[{
+                  "delegation_id":"deleg-1","target_profile_id":"council","status":"awaiting_children",
+                  "request_preview":"Weigh up the options","created_at":"2026-09-28T01:00:00.123456Z",
+                  "started_at":"2026-09-28T01:00:05Z","completed_at":null,"cancel_requested":false,
+                  "children_total":3,"children_finished":2
+                }]}
+                """
+            )
+        }
+        let model = makeViewModel(conversationID: "conv-pending")
+
+        await model.loadPendingDelegationsForTesting()
+
+        XCTAssertEqual(requestedPaths.values.last, "/api/v1/chat/conversations/conv-pending/pending-delegations")
+        XCTAssertEqual(model.pendingDelegations.map(\.delegationID), ["deleg-1"])
+        XCTAssertEqual(model.pendingDelegations.first?.statusLabel, "2 of 3 done")
+        XCTAssertTrue(model.isPollingPendingDelegationsForTesting, "progress between stream events is polled")
+
+        pending.value = false
+        await model.loadPendingDelegationsForTesting()
+
+        XCTAssertEqual(model.pendingDelegations, [])
+        XCTAssertFalse(model.isPollingPendingDelegationsForTesting, "nothing pending, nothing to poll")
+    }
+
+    func testStartingANewConversationClearsPendingDelegations() async {
+        ChatMockBackendURLProtocol.respondToPendingDelegations { _ in
+            .json(
+                """
+                {"conversation_id":"conv-pending","delegations":[{
+                  "delegation_id":"deleg-1","target_profile_id":"research","status":"running",
+                  "request_preview":"Look it up","created_at":"2026-09-28T01:00:00Z",
+                  "started_at":null,"completed_at":null,"cancel_requested":false,
+                  "children_total":0,"children_finished":0
+                }]}
+                """
+            )
+        }
+        let model = makeViewModel(conversationID: "conv-pending")
+        await model.loadPendingDelegationsForTesting()
+        XCTAssertEqual(model.pendingDelegations.count, 1)
+
+        model.startNewConversation()
+
+        XCTAssertEqual(model.pendingDelegations, [])
+        XCTAssertFalse(model.isPollingPendingDelegationsForTesting)
+    }
+
+    func testPendingDelegationFailureKeepsTheLastListWithoutAnAlert() async {
+        let failing = AtomicFlag(false)
+        ChatMockBackendURLProtocol.respondToPendingDelegations { _ in
+            if failing.value {
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            }
+            return .json(
+                """
+                {"conversation_id":"conv-pending","delegations":[{
+                  "delegation_id":"deleg-1","target_profile_id":"research","status":"queued",
+                  "request_preview":"Look it up","created_at":"2026-09-28T01:00:00Z",
+                  "started_at":null,"completed_at":null,"cancel_requested":false,
+                  "children_total":0,"children_finished":0
+                }]}
+                """
+            )
+        }
+        let model = makeViewModel(conversationID: "conv-pending")
+        await model.loadPendingDelegationsForTesting()
+
+        failing.value = true
+        await model.loadPendingDelegationsForTesting()
+
+        XCTAssertEqual(model.pendingDelegations.map(\.delegationID), ["deleg-1"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testPendingDelegationLabels() throws {
+        func delegation(
+            status: String,
+            cancelRequested: Bool = false,
+            childrenTotal: Int = 0,
+            childrenFinished: Int = 0,
+            profile: String = "research"
+        ) throws -> ChatPendingDelegation {
+            let json = """
+            {"delegation_id":"d","target_profile_id":"\(profile)","status":"\(status)",
+             "request_preview":"r","created_at":"2026-09-28T01:00:00Z","started_at":null,
+             "completed_at":null,"cancel_requested":\(cancelRequested),
+             "children_total":\(childrenTotal),"children_finished":\(childrenFinished)}
+            """
+            return try JSONDecoder.chatDecoder.decode(ChatPendingDelegation.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(try delegation(status: "queued").statusLabel, "Queued")
+        XCTAssertEqual(try delegation(status: "running").statusLabel, "Working on it")
+        XCTAssertEqual(
+            try delegation(status: "awaiting_children", childrenTotal: 3, childrenFinished: 1).statusLabel,
+            "1 of 3 done"
+        )
+        XCTAssertEqual(try delegation(status: "completed").statusLabel, "Finishing up")
+        XCTAssertEqual(try delegation(status: "running", cancelRequested: true).statusLabel, "Cancelling")
+        XCTAssertEqual(try delegation(status: "running", profile: "complex_tasks").profileDisplayName, "Complex_tasks")
+
+        let started = try delegation(status: "running")
+        XCTAssertEqual(started.startedAgo(now: started.createdAt.addingTimeInterval(30)), "started just now")
+        XCTAssertEqual(started.startedAgo(now: started.createdAt.addingTimeInterval(120)), "started 2 min ago")
+        XCTAssertEqual(started.startedAgo(now: started.createdAt.addingTimeInterval(7500)), "started 2 h ago")
+    }
+
     private func makeViewModelWithSpooledReporter(
         conversationID: String?,
         spoolDirectory: URL,
