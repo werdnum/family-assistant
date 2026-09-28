@@ -172,6 +172,10 @@ export const handlers = [
     });
   }),
 
+  http.get('/api/v1/chat/conversations/:conversationId/pending-delegations', ({ params }) => {
+    return HttpResponse.json({ conversation_id: params.conversationId, delegations: [] });
+  }),
+
   // Mock pending durable confirmations endpoint
   http.get('/api/v1/chat/confirmations/pending', () => {
     return HttpResponse.json({ confirmations: [] });

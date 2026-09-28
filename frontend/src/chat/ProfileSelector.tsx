@@ -8,7 +8,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { type ServiceProfile, useProfiles } from './profilesContext';
+import { getProfileDisplayName } from './profileNames';
+import { useProfiles } from './profilesContext';
 
 interface ProfileSelectorProps {
   selectedProfileId: string;
@@ -28,22 +29,6 @@ const getProfileIcon = (profileId: string) => {
       return <Settings className="w-4 h-4" />;
     default:
       return <Bot className="w-4 h-4" />;
-  }
-};
-
-// Extract short name from profile ID for display
-const getProfileDisplayName = (profile: ServiceProfile) => {
-  switch (profile.id) {
-    case 'default_assistant':
-      return 'Assistant';
-    case 'browser':
-      return 'Browser';
-    case 'research':
-      return 'Research';
-    case 'event_handler':
-      return 'Events';
-    default:
-      return profile.id.charAt(0).toUpperCase() + profile.id.slice(1);
   }
 };
 
@@ -101,7 +86,7 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
           <div className="flex items-center gap-2">
             {selectedProfile && getProfileIcon(selectedProfile.id)}
             <SelectValue>
-              {selectedProfile ? getProfileDisplayName(selectedProfile) : 'Select Profile'}
+              {selectedProfile ? getProfileDisplayName(selectedProfile.id) : 'Select Profile'}
             </SelectValue>
           </div>
         </SelectTrigger>
@@ -111,7 +96,7 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
               <div className="flex flex-col gap-1 py-1">
                 <div className="flex items-center gap-2">
                   {getProfileIcon(profile.id)}
-                  <span className="font-medium">{getProfileDisplayName(profile)}</span>
+                  <span className="font-medium">{getProfileDisplayName(profile.id)}</span>
                 </div>
                 <div className="text-xs text-muted-foreground max-w-[250px]">
                   {profile.description}

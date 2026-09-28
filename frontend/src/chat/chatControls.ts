@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { PendingDelegation } from './usePendingDelegations';
 
 /** Outcome of submitting a steer, so the composer knows whether to clear. */
 export type SteerResult = 'accepted' | 'finished' | 'error';
@@ -26,6 +27,8 @@ export interface ChatControls {
   olderMessagesStatus: OlderMessagesStatus;
   /** Extend the loaded history of the open conversation by one page. */
   loadOlderMessages: () => void;
+  /** Background delegations the open conversation is waiting on. */
+  pendingDelegations: PendingDelegation[];
 }
 
 export type OlderMessagesStatus = 'idle' | 'loading' | 'failed';
