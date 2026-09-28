@@ -98,6 +98,7 @@ from family_assistant.security.taint import (
     unknown_external_taint_metadata,
 )
 from family_assistant.storage.delegation_runs import (
+    DELEGATION_CONTINUATION_TRIGGER,
     RECONCILABLE_FAILURE_KINDS,
     TERMINAL_DELEGATION_STATUSES,
     DelegationLocalFailureKind,
@@ -284,7 +285,7 @@ def _delegation_continuation_text(children: list[DelegationRunDict]) -> str:
         for child in children
     )
     return (
-        "System: Delegations you started have finished.\n\n"
+        f"{DELEGATION_CONTINUATION_TRIGGER}\n\n"
         f"{references}\n\n"
         "Their results are provided as lower-priority data in the message "
         "history for this turn. Continue the task you were given. If you "

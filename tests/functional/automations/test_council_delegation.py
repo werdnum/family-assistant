@@ -170,6 +170,7 @@ class Coordinator:
     """
 
     wakes: list[list[str]] = field(default_factory=list)
+    live_wake_triggers: list[int] = field(default_factory=list)
 
     def client(self) -> RuleBasedMockLLMClient:
         return RuleBasedMockLLMClient(
@@ -206,6 +207,13 @@ class Coordinator:
     def _on_wake(self, kwargs: MatcherArgs) -> LLMOutput:
         texts = _texts(kwargs["messages"])
         self.wakes.append(texts)
+        self.live_wake_triggers.append(
+            sum(
+                1
+                for message, text in zip(kwargs["messages"], texts, strict=True)
+                if message.role == "system" and text.startswith(WAKE_TRIGGER)
+            )
+        )
         latest: dict[str, tuple[str, str]] = {}
         failed: list[str] = []
         for text in texts:
@@ -486,6 +494,26 @@ async def test_the_council_runs_every_phase_and_answers_its_caller(
     [council_run] = await council.runs(COUNCIL_ID)
     assert council_run["status"] == "completed"
     assert council_run["result_text"].startswith("SYNTHESIS")
+
+
+@pytest.mark.asyncio
+async def test_earlier_phase_wakes_are_not_replayed_as_instructions(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
+) -> None:
+    """Each wake is the one live system trigger; earlier ones are history."""
+    council = _build_council(db_engine, _seats())
+
+    async with _workers(council, task_worker_manager, db_engine, mock_clock):
+        await council.convene()
+        await wait_for_condition(
+            lambda: len(council.coordinator.wakes) == len(PHASES),
+            timeout=60,
+            description="the coordinator woken for every phase",
+        )
+
+    assert council.coordinator.live_wake_triggers == [1] * len(PHASES)
 
 
 @pytest.mark.asyncio

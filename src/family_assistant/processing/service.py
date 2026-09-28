@@ -44,6 +44,10 @@ from family_assistant.security.taint import (
     TaintPolicyOutcome,
     TurnTaintState,
 )
+from family_assistant.storage.delegation_runs import (
+    historical_delegation_wake_content,
+    is_delegation_wake_trigger,
+)
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -1417,14 +1421,6 @@ class ProcessingService:
                 return
 
     @staticmethod
-    def _is_delegation_wake_trigger_content(content: str) -> bool:
-        """Return whether content is a one-shot delegation wake trigger."""
-        return content.startswith((
-            "System: Delegated profile task completed.",
-            "System: Delegated profile task failed.",
-        ))
-
-    @staticmethod
     def _replace_historical_delegation_wake_with_active_system_trigger(
         messages_for_llm: list[LLMMessage],
         trigger_content: str,
@@ -1438,17 +1434,18 @@ class ProcessingService:
             ),
             None,
         )
+        historical_trigger = historical_delegation_wake_content(trigger_content)
         for index in range(len(messages_for_llm) - 1, -1, -1):
             msg = messages_for_llm[index]
+            if not (isinstance(msg, UserMessage) and isinstance(msg.content, str)):
+                continue
             if (
                 delegation_reference_line is not None
-                and isinstance(msg, UserMessage)
-                and isinstance(msg.content, str)
                 and msg.content.startswith(
                     "Historical delegation completion event from a previous turn."
                 )
                 and delegation_reference_line in msg.content
-            ):
+            ) or msg.content == historical_trigger:
                 messages_for_llm.pop(index)
                 break
         messages_for_llm.append(SystemMessage(content=trigger_content))
@@ -1623,7 +1620,7 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             acting_user_id=user_id,
         )
-        if trigger_role == "system" and self._is_delegation_wake_trigger_content(
+        if trigger_role == "system" and is_delegation_wake_trigger(
             user_content_for_history
         ):
             self._replace_historical_delegation_wake_with_active_system_trigger(
