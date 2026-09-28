@@ -211,11 +211,21 @@ async def test_rescheduling_a_callback_leaves_its_record_alone(
         select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
     )
     task_id = str(dict(rows[0])["task_id"])
+    new_time = (datetime.now(UTC) + timedelta(hours=3)).replace(microsecond=0)
 
-    await modify_pending_callback_tool(
+    result = await modify_pending_callback_tool(
         exec_context=_exec_context(db, tracker=_tainted_tracker()),
         task_id=task_id,
-        new_callback_time=(datetime.now(UTC) + timedelta(hours=3)).isoformat(),
+        new_callback_time=new_time.isoformat(),
     )
+    assert "modified successfully" in result, result
 
+    row = await db.fetch_one(
+        select(tasks_table).where(tasks_table.c.task_id == task_id)
+    )
+    assert row is not None
+    scheduled_at = cast("datetime", row["scheduled_at"])
+    if scheduled_at.tzinfo is None:
+        scheduled_at = scheduled_at.replace(tzinfo=UTC)
+    assert scheduled_at == new_time
     assert _record(await _only_callback_payload(db_engine)) == before

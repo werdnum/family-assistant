@@ -2,22 +2,24 @@
 
 import asyncio
 import json
-import logging
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, timedelta
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import ToolMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteReadPolicy
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -40,8 +42,6 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
-
-logger = logging.getLogger(__name__)
 
 # Test configuration
 TEST_CHAT_ID = 12345
@@ -161,73 +161,50 @@ print("Script executed - note created: " + str(result))
     # Register the script execution handler
     task_worker.register_task_handler("script_execution", handle_script_execution)
 
-    try:
-        # Act - Schedule the script
-        db_context = Database(engine=db_engine)
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=mock_chat_interface,
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": "Please schedule a script to run later"}
-            ],
-            trigger_interface_message_id="501",
-            user_name=TEST_USER_NAME,
-        )
-        resp = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=mock_chat_interface,
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {"type": "text", "text": "Please schedule a script to run later"}
+        ],
+        trigger_interface_message_id="501",
+        user_name=TEST_USER_NAME,
+    )
 
-        # Assert - Script was scheduled
-        assert error is None
-        assert resp is not None
-        # The response should indicate the script was scheduled
-        assert "scheduled" in resp.lower()
+    assert result.error_traceback is None
+    task_rows = await db_context.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "script_execution")
+    )
+    assert len(task_rows) == 1
+    assert task_rows[0]["payload"]["script_code"] == test_script
+    scheduled_at = task_rows[0]["scheduled_at"]
+    if scheduled_at.tzinfo is None:
+        scheduled_at = scheduled_at.replace(tzinfo=UTC)
+    assert scheduled_at == script_dt.astimezone(UTC)
 
-        # Act - Advance time and execute the script
-        mock_clock.advance(timedelta(seconds=SCRIPT_DELAY_SECONDS + 1))
-        test_new_task_event.set()
+    mock_clock.advance(timedelta(seconds=SCRIPT_DELAY_SECONDS + 1))
+    test_new_task_event.set()
+    await wait_for_tasks_to_complete(
+        engine=db_engine, timeout_seconds=15.0, task_types={"script_execution"}
+    )
 
-        # Wait for script execution to complete (increased timeout)
-        await wait_for_tasks_to_complete(
-            engine=db_engine, timeout_seconds=15.0, task_types={"script_execution"}
-        )
-
-        # Add a small delay to ensure any async operations complete
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for async database operations to complete
-        await asyncio.sleep(0.1)
-
-        # Verify the script created the note
-        db_context = Database(engine=db_engine)
-        # First, let's check all notes to debug
-        all_notes = await db_context.notes.get_all(
-            read_policy=NoteReadPolicy.UNRESTRICTED
-        )
-        logger.info(f"All notes after script execution: {len(all_notes)}")
-        for n in all_notes:
-            logger.info(f"  Note title: '{n.title}'")
-
-        # Now look for our specific note
-        note = await db_context.notes.get_by_title(
-            test_note_title, read_policy=NoteReadPolicy.UNRESTRICTED
-        )
-        assert note is not None, (
-            f"Expected to find note with title '{test_note_title}'. Found notes: {[n.title for n in all_notes]}"
-        )
-        assert note.title == test_note_title
-        assert "scheduled script" in note.content
-    finally:
-        # Cleanup is handled by the task_worker_manager fixture
-        pass
+    note = await db_context.notes.get_by_title(
+        test_note_title, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
+    assert note is not None, f"Expected the script to create note '{test_note_title}'"
+    assert "scheduled script" in note.content
 
 
 @pytest.mark.asyncio
-async def test_schedule_script_with_invalid_syntax(
+async def test_schedule_action_rejects_script_with_syntax_error(
     db_engine: AsyncEngine,
-    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
     mock_clock: MockClock,
 ) -> None:
-    """Test that scheduling a script with invalid syntax fails appropriately."""
+    """schedule_action validates the script when called, reports the syntax
+    error back to the LLM, and enqueues nothing."""
     # Arrange
     initial_time = mock_clock.now()
     script_dt = initial_time + timedelta(seconds=1)
@@ -274,7 +251,7 @@ if True  # Missing colon
                 return True
         return False
 
-    tool_response_output = MockLLMOutput(content="The script has been scheduled.")
+    tool_response_output = MockLLMOutput(content="The script could not be scheduled.")
 
     llm_client = RuleBasedMockLLMClient(
         rules=[
@@ -317,47 +294,32 @@ if True  # Missing colon
     mock_chat_interface = AsyncMock(spec=ChatInterface)
     mock_chat_interface.send_message.return_value = "mock_message_id"
 
-    # Use the task_worker_manager fixture
-    task_worker, test_new_task_event, test_shutdown_event = task_worker_manager(
-        processing_service=processing_service,
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
         chat_interface=mock_chat_interface,
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[{"type": "text", "text": "Schedule an invalid script"}],
+        trigger_interface_message_id="701",
+        user_name=TEST_USER_NAME,
     )
 
-    # Register the script execution handler
-    task_worker.register_task_handler("script_execution", handle_script_execution)
-
-    # Task worker is already started by the fixture
-    try:
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start
-        await asyncio.sleep(0.1)  # Give worker time to start
-        # Act - Schedule the invalid script
-        db_context = Database(engine=db_engine)
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=mock_chat_interface,
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": "Schedule an invalid script"}
-            ],
-            trigger_interface_message_id="701",
-            user_name=TEST_USER_NAME,
-        )
-        error = result.error_traceback
-
-        # Assert - Script was scheduled (tool doesn't validate syntax)
-        assert error is None
-
-        # Act - Try to execute the invalid script
-        mock_clock.advance(timedelta(seconds=2))
-        test_new_task_event.set()
-
-        # Wait for task to fail
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for script with syntax error to fail
-        await asyncio.sleep(0.5)  # Give it time to fail
-
-        # The task should have failed due to syntax error
-        # We're testing that the system handles script errors gracefully
-    finally:
-        # Cleanup is handled by the task_worker_manager fixture
-        logger.info("Cleanup handled by fixture")
+    assert result.error_traceback is None
+    history = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        current_time=mock_clock.now(),
+    )
+    tool_messages = [
+        message
+        for message in history
+        if isinstance(message, ToolMessage) and message.name == "schedule_action"
+    ]
+    assert len(tool_messages) == 1
+    assert "Script validation failed" in tool_messages[0].content
+    assert "Syntax error" in tool_messages[0].content
+    task_rows = await db_context.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "script_execution")
+    )
+    assert task_rows == []

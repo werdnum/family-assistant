@@ -11,6 +11,9 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.assistant import (
+    _build_profile_policy_engine,  # noqa: PLC2701 - composes a profile's tools_policy exactly as a deployment does
+)
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.interfaces import ChatInterface
@@ -26,9 +29,6 @@ from family_assistant.processing.types import DelegationSecurityLevel
 from family_assistant.storage import message_history_table
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations_map,
-)
-from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
 from family_assistant.tools import (
@@ -36,7 +36,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
     PolicyEnforcingToolsProvider,
-    PolicyEngine,
     PolicyRule,
     ToolMatcher,
     ToolPolicyConfig,
@@ -65,6 +64,45 @@ USER_QUERY_TEMPLATE = "Please delegate this task: {task_description}"
 TEST_CHAT_ID = 123456789  # Changed to an integer
 TEST_INTERFACE_TYPE = "test_interface"
 TEST_USER_NAME = "DelegationTester"
+CONFIRMATION_TIMEOUT_SECONDS = 123.0
+CONFIRM_DELEGATION_REASON = (
+    f"Delegation to service profile '{SPECIALIZED_PROFILE_ID}' needs confirmation."
+)
+DENIED_DELEGATION_REASON = (
+    f"Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
+)
+DENIED_DELEGATION_TOOL_RESULT = (
+    f"Error: Tool 'delegate_to_service' is not allowed. {DENIED_DELEGATION_REASON}"
+)
+
+PrimaryServiceFactory = Callable[
+    [bool | None, ToolPolicyConfig], Awaitable[ProcessingService]
+]
+
+
+def allow_all_tools_policy() -> ToolPolicyConfig:
+    return ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+
+
+def delegation_rule_policy(
+    decision: ToolPolicyDecision, description: str
+) -> ToolPolicyConfig:
+    """A delegating profile's tools_policy with one rule for delegating to the target."""
+    return ToolPolicyConfig(
+        default_decision=ToolPolicyDecision.ALLOW,
+        rules=[
+            PolicyRule(
+                match=ToolMatcher(
+                    names=["delegate_to_service"],
+                    argument_equals={"target_service_id": SPECIALIZED_PROFILE_ID},
+                ),
+                decision=decision,
+                description=description,
+                priority=99,
+            )
+        ],
+    )
+
 
 # --- Fixtures ---
 
@@ -81,30 +119,28 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,
-        tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
-        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,  # Primary can delegate freely
+        tools_config=ToolsConfig(
+            delegate_handoff_after_seconds=60.0,
+            confirmation_timeout_seconds=CONFIRMATION_TIMEOUT_SECONDS,
+        ),
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
         id=PRIMARY_PROFILE_ID,
     )
 
 
 @pytest.fixture
-def specialized_service_config_factory(
+def specialized_service_config(
     dummy_prompts: dict[str, str],
-) -> Callable[[DelegationSecurityLevel], ProcessingServiceConfig]:
-    def _factory(
-        delegation_security_level: DelegationSecurityLevel,
-    ) -> ProcessingServiceConfig:
-        return ProcessingServiceConfig(
-            prompts=dummy_prompts,
-            timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
-            history_max_age_hours=24,
-            tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
-            delegation_security_level=delegation_security_level,
-            id=SPECIALIZED_PROFILE_ID,  # Add id for specialized profile
-        )
-
-    return _factory
+) -> ProcessingServiceConfig:
+    return ProcessingServiceConfig(
+        prompts=dummy_prompts,
+        timezone=ZoneInfo("UTC"),
+        max_history_messages=5,
+        history_max_age_hours=24,
+        tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        id=SPECIALIZED_PROFILE_ID,
+    )
 
 
 @pytest.fixture
@@ -189,24 +225,21 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 return False
             last_message = messages[-1]
             content_str = last_message.content or ""
-            expected_error_message = f"Error: Tool 'delegate_to_service' is not allowed. Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
             match = (
-                last_message.role == "tool" and content_str == expected_error_message
+                last_message.role == "tool"
+                and content_str == DENIED_DELEGATION_TOOL_RESULT
             )
             logger.debug(
                 "blocked_matcher: checking content='%s...' against expected='%s'. Match: %s",
                 content_str[:100],
-                expected_error_message,
+                DENIED_DELEGATION_TOOL_RESULT,
                 match,
             )
             return match
 
         def blocked_response_callable(kwargs: MatcherArgs) -> MockLLMOutput:
             messages = kwargs.get("messages", [])
-            content = (
-                messages[-1].content
-                or f"Error: Tool 'delegate_to_service' is not allowed. Delegation to service profile '{SPECIALIZED_PROFILE_ID}' is not allowed."
-            )
+            content = messages[-1].content or DENIED_DELEGATION_TOOL_RESULT
             logger.info(
                 f"blocked_response_callable: Matched! Returning content: {content[:100]}..."
             )
@@ -300,60 +333,25 @@ async def mock_confirmation_callback() -> AsyncMock:
 
 
 def create_tools_provider(
-    _profile_tools_config: ToolsConfig,
-    delegation_security_by_target_profile_id: (
-        dict[str, DelegationSecurityLevel] | None
-    ) = None,
+    profile_id: str,
+    profile_tools_config: ToolsConfig,
+    tools_policy: ToolPolicyConfig,
 ) -> ToolsProvider:
-    """Helper to create a ToolsProvider stack for a profile."""
-    logger.info(
-        "create_tools_provider: profile_local_implementations keys=%s",
-        list(local_tool_implementations_map.keys()),
-    )
+    """Build a profile's policy-enforced tools stack the way a deployment does.
 
-    local_provider = LocalToolsProvider(
-        registrations=local_tool_registrations,
-    )
-    mcp_provider = MCPToolsProvider(mcp_server_configs={})  # Mocked
-
+    The profile's ``tools_policy`` goes through the production policy builder,
+    and the profile's confirmation timeout is what a confirm-gated call waits.
+    """
     composite_provider = CompositeToolsProvider(
-        providers=[local_provider, mcp_provider]
+        providers=[
+            LocalToolsProvider(registrations=local_tool_registrations),
+            MCPToolsProvider(mcp_server_configs={}),
+        ]
     )
-
-    delegation_rules: list[PolicyRule] = []
-    if delegation_security_by_target_profile_id:
-        for (
-            target_profile_id,
-            delegation_security,
-        ) in delegation_security_by_target_profile_id.items():
-            decision: ToolPolicyDecision | None = None
-            if delegation_security == DelegationSecurityLevel.BLOCKED:
-                decision = ToolPolicyDecision.DENY
-            elif delegation_security == DelegationSecurityLevel.CONFIRM:
-                decision = ToolPolicyDecision.CONFIRM
-
-            if decision is None:
-                continue
-
-            delegation_rules.append(
-                PolicyRule(
-                    match=ToolMatcher(
-                        names=["delegate_to_service"],
-                        argument_equals={"target_service_id": target_profile_id},
-                    ),
-                    decision=decision,
-                    description=f"Delegation to service profile '{target_profile_id}' is not allowed.",
-                    priority=99,
-                )
-            )
     return PolicyEnforcingToolsProvider(
         wrapped_provider=composite_provider,
-        policy_engine=PolicyEngine.from_policy_config(
-            ToolPolicyConfig(
-                default_decision=ToolPolicyDecision.ALLOW,
-                rules=delegation_rules,
-            )
-        ),
+        policy_engine=_build_profile_policy_engine(profile_id, tools_policy, None),
+        confirmation_timeout=profile_tools_config.confirmation_timeout_seconds,
     )
 
 
@@ -362,17 +360,21 @@ async def primary_processing_service_factory(
     primary_service_config: ProcessingServiceConfig,
     primary_llm_mock_factory: Callable[[bool | None], RuleBasedMockLLMClient],
     dummy_prompts: dict[str, str],
-) -> Callable[[bool | None], Awaitable[ProcessingService]]:
-    """Build the delegating profile around a primary LLM with a given tool arg.
+) -> PrimaryServiceFactory:
+    """Build the delegating profile from a primary LLM tool arg and a tools_policy.
 
-    A factory rather than one service whose client is swapped: the client a
-    profile runs on is fixed when the service is built, so a test that wants a
-    different one builds a different service.
+    A factory rather than one service whose client or tools are swapped: both
+    are fixed when the service is built, so a test that wants a different one
+    builds a different service.
     """
 
-    async def _factory(confirm_delegation_arg: bool | None) -> ProcessingService:
-        tools_provider = create_tools_provider(primary_service_config.tools_config)
-        await tools_provider.get_tool_definitions()  # Initialize
+    async def _factory(
+        confirm_delegation_arg: bool | None, tools_policy: ToolPolicyConfig
+    ) -> ProcessingService:
+        tools_provider = create_tools_provider(
+            PRIMARY_PROFILE_ID, primary_service_config.tools_config, tools_policy
+        )
+        await tools_provider.get_tool_definitions()
 
         known_users_provider = KnownUsersContextProvider(
             chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME}, prompts=dummy_prompts
@@ -393,47 +395,33 @@ async def primary_processing_service_factory(
 
 
 @pytest_asyncio.fixture
-async def primary_processing_service(
-    primary_processing_service_factory: Callable[
-        [bool | None], Awaitable[ProcessingService]
-    ],
-) -> ProcessingService:
-    # Default to no confirm_delegation argument for the primary LLM's tool call
-    return await primary_processing_service_factory(None)
-
-
-@pytest_asyncio.fixture
 async def specialized_processing_service(
-    specialized_service_config_factory: Callable[
-        [DelegationSecurityLevel], ProcessingServiceConfig
-    ],
+    specialized_service_config: ProcessingServiceConfig,
     specialized_llm_mock: RuleBasedMockLLMClient,
     dummy_prompts: dict[str, str],
-) -> Callable[[DelegationSecurityLevel], Awaitable[ProcessingService]]:
-    async def _factory(
-        delegation_security_level: DelegationSecurityLevel,
-    ) -> ProcessingService:
-        config = specialized_service_config_factory(delegation_security_level)
-        tools_provider = create_tools_provider(config.tools_config)
-        await tools_provider.get_tool_definitions()  # Initialize
+) -> ProcessingService:
+    tools_provider = create_tools_provider(
+        SPECIALIZED_PROFILE_ID,
+        specialized_service_config.tools_config,
+        allow_all_tools_policy(),
+    )
+    await tools_provider.get_tool_definitions()
 
-        known_users_provider = KnownUsersContextProvider(
-            chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME},
-            prompts=dummy_prompts,
-        )
+    known_users_provider = KnownUsersContextProvider(
+        chat_id_to_name_map={TEST_CHAT_ID: TEST_USER_NAME},
+        prompts=dummy_prompts,
+    )
 
-        return ProcessingService(
-            llm_client=specialized_llm_mock,
-            tools_provider=tools_provider,
-            service_config=config,
-            context_providers=[known_users_provider],
-            server_url="http://test.server",
-            app_config=AppConfig(),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-    return _factory
+    return ProcessingService(
+        llm_client=specialized_llm_mock,
+        tools_provider=tools_provider,
+        service_config=specialized_service_config,
+        context_providers=[known_users_provider],
+        server_url="http://test.server",
+        app_config=AppConfig(),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
 
 async def assert_message_history_contains(
@@ -494,35 +482,25 @@ async def assert_message_history_contains(
 async def test_delegation_unrestricted_target_no_forced_confirm(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    primary_processing_service_factory: Callable[
-        [bool | None], Awaitable[ProcessingService]
-    ],
-    specialized_processing_service: Callable[
-        [str], Awaitable[ProcessingService]
-    ],  # This is a factory
+    primary_processing_service_factory: PrimaryServiceFactory,
+    specialized_processing_service: ProcessingService,
     mock_confirmation_callback: AsyncMock,
     confirm_tool_arg: bool | None,
 ) -> None:
-    """Target is 'unrestricted', tool call confirm_delegation is False or omitted. Expect no confirmation."""
-    logger.info("--- Test: Unrestricted Target, No Forced Confirmation ---")
-
-    # Fixtures are already resolved
-    awaited_primary_service = await primary_processing_service_factory(confirm_tool_arg)
-    awaited_mock_confirmation_callback = mock_confirmation_callback
-    awaited_specialized_processing_service_factory = specialized_processing_service
-
-    target_service = await awaited_specialized_processing_service_factory(
-        DelegationSecurityLevel.UNRESTRICTED
+    """No policy rule gates delegating to the target and confirm_delegation is False or omitted: delegation runs without asking."""
+    primary_service = await primary_processing_service_factory(
+        confirm_tool_arg, allow_all_tools_policy()
     )
+    target_service = specialized_processing_service
 
     registry = {
-        PRIMARY_PROFILE_ID: awaited_primary_service,
+        PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.processing_services_registry = registry
+    primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
     task_worker_manager(
-        awaited_primary_service,
+        primary_service,
         MagicMock(spec=ChatInterface),
         register_delegation_handler=True,
     )
@@ -530,15 +508,15 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     db_context = Database(engine=db_engine)
-    result = await awaited_primary_service.handle_chat_interaction(
+    result = await primary_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=TEST_INTERFACE_TYPE,
-        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg1",
         user_name=TEST_USER_NAME,
         chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=awaited_mock_confirmation_callback,
+        request_confirmation_callback=mock_confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -547,7 +525,7 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
     assert DELEGATED_TASK_DESCRIPTION in final_reply
-    awaited_mock_confirmation_callback.assert_not_called()
+    mock_confirmation_callback.assert_not_called()
 
     # DB Assertions
     db_context = Database(engine=db_engine)
@@ -571,49 +549,26 @@ async def test_delegation_unrestricted_target_no_forced_confirm(
 async def test_delegation_confirm_target_granted(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    primary_processing_service_factory: Callable[
-        [bool | None], Awaitable[ProcessingService]
-    ],
-    specialized_processing_service: Callable[
-        [str], Awaitable[ProcessingService]
-    ],  # This is a factory
+    primary_processing_service_factory: PrimaryServiceFactory,
+    specialized_processing_service: ProcessingService,
     mock_confirmation_callback: AsyncMock,
 ) -> None:
-    """Target is 'confirm', tool confirm_delegation=False. Expect confirmation, user grants it."""
-    logger.info("--- Test: Confirm Target, Confirmation Granted ---")
-
-    # Fixtures are already resolved
-    # Explicitly set confirm_delegation=False
-    awaited_primary_service = await primary_processing_service_factory(False)
-    awaited_mock_confirmation_callback = mock_confirmation_callback
-    awaited_specialized_processing_service_factory = specialized_processing_service
-    awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
-        kind="approved"
+    """A confirm rule in the delegating profile's tools_policy asks the user even with confirm_delegation=False, waiting the profile's confirmation timeout, and delegates once approved."""
+    primary_service = await primary_processing_service_factory(
+        False,
+        delegation_rule_policy(ToolPolicyDecision.CONFIRM, CONFIRM_DELEGATION_REASON),
     )
-    awaited_primary_service.service_config.tools_config.confirmation_timeout_seconds = (
-        123.0
-    )
-
-    target_service = await awaited_specialized_processing_service_factory(
-        DelegationSecurityLevel.CONFIRM
-    )
-    awaited_primary_service.tools_provider = create_tools_provider(
-        awaited_primary_service.service_config.tools_config,
-        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.CONFIRM},
-    )
-    await awaited_primary_service.tools_provider.get_tool_definitions()
-    awaited_primary_service.tool_executor.tools_provider = (
-        awaited_primary_service.tools_provider
-    )
+    target_service = specialized_processing_service
+    mock_confirmation_callback.return_value = ConfirmationOutcome(kind="approved")
 
     registry = {
-        PRIMARY_PROFILE_ID: awaited_primary_service,
+        PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.processing_services_registry = registry
+    primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
     task_worker_manager(
-        awaited_primary_service,
+        primary_service,
         MagicMock(spec=ChatInterface),
         register_delegation_handler=True,
     )
@@ -621,15 +576,15 @@ async def test_delegation_confirm_target_granted(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     db_context = Database(engine=db_engine)
-    result = await awaited_primary_service.handle_chat_interaction(
+    result = await primary_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=TEST_INTERFACE_TYPE,
-        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg2",
         user_name=TEST_USER_NAME,
         chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=awaited_mock_confirmation_callback,
+        request_confirmation_callback=mock_confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -637,8 +592,8 @@ async def test_delegation_confirm_target_granted(
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
-    awaited_mock_confirmation_callback.assert_called_once()
-    call_kwargs = awaited_mock_confirmation_callback.call_args.kwargs
+    mock_confirmation_callback.assert_called_once()
+    call_kwargs = mock_confirmation_callback.call_args.kwargs
     assert call_kwargs.get("tool_name") == "delegate_to_service"
     assert call_kwargs.get("conversation_id") == str(TEST_CHAT_ID)
     confirmed_tool_args = call_kwargs.get("tool_args", {})
@@ -646,62 +601,44 @@ async def test_delegation_confirm_target_granted(
     assert confirmed_tool_args.get("target_service_id") == SPECIALIZED_PROFILE_ID
     assert confirmed_tool_args.get("user_request") == DELEGATED_TASK_DESCRIPTION
     assert confirmed_tool_args.get("confirm_delegation") is False
-    assert call_kwargs.get("timeout_seconds") == 3600.0
+    assert call_kwargs.get("timeout_seconds") == CONFIRMATION_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
 async def test_delegation_confirm_target_denied(
     db_engine: AsyncEngine,
-    primary_processing_service_factory: Callable[
-        [bool | None], Awaitable[ProcessingService]
-    ],
-    specialized_processing_service: Callable[
-        [str], Awaitable[ProcessingService]
-    ],  # This is a factory
+    primary_processing_service_factory: PrimaryServiceFactory,
+    specialized_processing_service: ProcessingService,
+    specialized_llm_mock: RuleBasedMockLLMClient,
     mock_confirmation_callback: AsyncMock,
 ) -> None:
-    """Target is 'confirm', user denies confirmation."""
-    logger.info("--- Test: Confirm Target, Confirmation Denied ---")
-
-    # Fixtures are already resolved
-    awaited_primary_service = await primary_processing_service_factory(False)
-    awaited_mock_confirmation_callback = mock_confirmation_callback
-    awaited_specialized_processing_service_factory = specialized_processing_service
-    awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
-        kind="rejected"
+    """A confirm rule in the delegating profile's tools_policy asks the user, and a rejection cancels the delegation."""
+    primary_service = await primary_processing_service_factory(
+        False,
+        delegation_rule_policy(ToolPolicyDecision.CONFIRM, CONFIRM_DELEGATION_REASON),
     )
-
-    target_service = await awaited_specialized_processing_service_factory(
-        DelegationSecurityLevel.CONFIRM
-    )
-    awaited_primary_service.tools_provider = create_tools_provider(
-        awaited_primary_service.service_config.tools_config,
-        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.CONFIRM},
-    )
-    await awaited_primary_service.tools_provider.get_tool_definitions()
-    awaited_primary_service.tool_executor.tools_provider = (
-        awaited_primary_service.tools_provider
-    )
+    target_service = specialized_processing_service
+    mock_confirmation_callback.return_value = ConfirmationOutcome(kind="rejected")
 
     registry = {
-        PRIMARY_PROFILE_ID: awaited_primary_service,
+        PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.processing_services_registry = registry
+    primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     db_context = Database(engine=db_engine)
-    result = await awaited_primary_service.handle_chat_interaction(
+    result = await primary_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=TEST_INTERFACE_TYPE,
-        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg3",
         user_name=TEST_USER_NAME,
         chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=awaited_mock_confirmation_callback,
+        request_confirmation_callback=mock_confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -710,61 +647,45 @@ async def test_delegation_confirm_target_denied(
     assert final_reply is not None
     assert "action cancelled by user" in final_reply.lower()
     assert "delegate_to_service" in final_reply.lower()
-    assert (
-        f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
-    )  # Specialized service should not be called
-    awaited_mock_confirmation_callback.assert_called_once()
+    assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
+    assert specialized_llm_mock.get_calls() == []
+    mock_confirmation_callback.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_delegation_blocked_target(
     db_engine: AsyncEngine,
-    primary_processing_service: ProcessingService,
-    specialized_processing_service: Callable[
-        [str], Awaitable[ProcessingService]
-    ],  # This is a factory
+    primary_processing_service_factory: PrimaryServiceFactory,
+    specialized_processing_service: ProcessingService,
+    specialized_llm_mock: RuleBasedMockLLMClient,
     mock_confirmation_callback: AsyncMock,
 ) -> None:
-    """Target is 'blocked'. Expect delegation to fail."""
-    logger.info("--- Test: Blocked Target ---")
-
-    # Fixtures are already resolved
-    awaited_primary_service = primary_processing_service
-    awaited_mock_confirmation_callback = mock_confirmation_callback
-    awaited_specialized_processing_service_factory = specialized_processing_service
-    # Primary LLM mock will attempt to delegate (confirm_delegation arg doesn't matter here)
-
-    target_service = await awaited_specialized_processing_service_factory(
-        DelegationSecurityLevel.BLOCKED
+    """A deny rule in the delegating profile's tools_policy refuses the delegation without asking the user."""
+    primary_service = await primary_processing_service_factory(
+        None,
+        delegation_rule_policy(ToolPolicyDecision.DENY, DENIED_DELEGATION_REASON),
     )
-    awaited_primary_service.tools_provider = create_tools_provider(
-        awaited_primary_service.service_config.tools_config,
-        {SPECIALIZED_PROFILE_ID: DelegationSecurityLevel.BLOCKED},
-    )
-    await awaited_primary_service.tools_provider.get_tool_definitions()
-    awaited_primary_service.tool_executor.tools_provider = (
-        awaited_primary_service.tools_provider
-    )
+    target_service = specialized_processing_service
 
     registry = {
-        PRIMARY_PROFILE_ID: awaited_primary_service,
+        PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.processing_services_registry = registry
+    primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
 
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     db_context = Database(engine=db_engine)
-    result = await awaited_primary_service.handle_chat_interaction(
+    result = await primary_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=TEST_INTERFACE_TYPE,
-        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg4",
         user_name=TEST_USER_NAME,
         chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=awaited_mock_confirmation_callback,
+        request_confirmation_callback=mock_confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -774,45 +695,33 @@ async def test_delegation_blocked_target(
     assert "error:" in final_reply.lower()
     assert "delegate_to_service" in final_reply.lower()
     assert f"Response from {SPECIALIZED_PROFILE_ID}" not in final_reply
-    awaited_mock_confirmation_callback.assert_not_called()  # Confirmation should not even be attempted
+    assert specialized_llm_mock.get_calls() == []
+    mock_confirmation_callback.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_delegation_unrestricted_confirm_arg_granted(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
-    primary_processing_service_factory: Callable[
-        [bool | None], Awaitable[ProcessingService]
-    ],
-    specialized_processing_service: Callable[
-        [str], Awaitable[ProcessingService]
-    ],  # This is a factory
+    primary_processing_service_factory: PrimaryServiceFactory,
+    specialized_processing_service: ProcessingService,
     mock_confirmation_callback: AsyncMock,
 ) -> None:
-    """Target is 'unrestricted', tool call confirm_delegation=True. Expect confirmation, user grants."""
-    logger.info("--- Test: Unrestricted Target, Confirm Argument True, Granted ---")
-
-    # Fixtures are already resolved
-    # confirm_delegation=True in tool call
-    awaited_primary_service = await primary_processing_service_factory(True)
-    awaited_mock_confirmation_callback = mock_confirmation_callback
-    awaited_specialized_processing_service_factory = specialized_processing_service
-    awaited_mock_confirmation_callback.return_value = ConfirmationOutcome(
-        kind="approved"
+    """No policy rule gates delegating to the target, but confirm_delegation=True asks the user, waiting the profile's confirmation timeout, and delegates once approved."""
+    primary_service = await primary_processing_service_factory(
+        True, allow_all_tools_policy()
     )
-
-    target_service = await awaited_specialized_processing_service_factory(
-        DelegationSecurityLevel.UNRESTRICTED
-    )
+    target_service = specialized_processing_service
+    mock_confirmation_callback.return_value = ConfirmationOutcome(kind="approved")
 
     registry = {
-        PRIMARY_PROFILE_ID: awaited_primary_service,
+        PRIMARY_PROFILE_ID: primary_service,
         SPECIALIZED_PROFILE_ID: target_service,
     }
-    awaited_primary_service.processing_services_registry = registry
+    primary_service.processing_services_registry = registry
     target_service.processing_services_registry = registry
     task_worker_manager(
-        awaited_primary_service,
+        primary_service,
         MagicMock(spec=ChatInterface),
         register_delegation_handler=True,
     )
@@ -820,15 +729,15 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
     db_context = Database(engine=db_engine)
-    result = await awaited_primary_service.handle_chat_interaction(
+    result = await primary_service.handle_chat_interaction(
         db_context=db_context,
         interface_type=TEST_INTERFACE_TYPE,
-        conversation_id=str(TEST_CHAT_ID),  # Ensure conversation_id is string
+        conversation_id=str(TEST_CHAT_ID),
         trigger_content_parts=[{"type": "text", "text": user_query}],
         trigger_interface_message_id="msg5",
         user_name=TEST_USER_NAME,
         chat_interface=MagicMock(spec=ChatInterface),
-        request_confirmation_callback=awaited_mock_confirmation_callback,
+        request_confirmation_callback=mock_confirmation_callback,
     )
     final_reply = result.text_reply
     error = result.error_traceback
@@ -836,9 +745,9 @@ async def test_delegation_unrestricted_confirm_arg_granted(
     assert error is None, f"Error during interaction: {error}"
     assert final_reply is not None
     assert f"Response from {SPECIALIZED_PROFILE_ID}" in final_reply
-    awaited_mock_confirmation_callback.assert_called_once()
-    # Assert that tool_args in the confirmation call reflect confirm_delegation=True
-    call_kwargs = awaited_mock_confirmation_callback.call_args.kwargs
+    mock_confirmation_callback.assert_called_once()
+    call_kwargs = mock_confirmation_callback.call_args.kwargs
     confirmed_tool_args = call_kwargs.get("tool_args", {})
     assert isinstance(confirmed_tool_args, dict)
     assert confirmed_tool_args.get("confirm_delegation") is True
+    assert call_kwargs.get("timeout_seconds") == CONFIRMATION_TIMEOUT_SECONDS

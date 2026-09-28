@@ -167,14 +167,16 @@ async def test_a_transient_failure_is_left_for_a_later_retry(
 
 
 @pytest.mark.asyncio
-async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -> None:
-    """A channel refusing for hours is not persuaded by asking again on the hour."""
+async def test_a_run_that_just_failed_is_not_retried_by_the_next_pass(
+    db_engine: AsyncEngine,
+) -> None:
+    """The failure a pass records holds off the pass that follows it."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.side_effect = ChatDeliveryError(
         "connection reset", transient=True
     )
-    await _terminal_run(db_engine, "delegation_backoff")
+    await _terminal_run(db_engine, "delegation_just_failed")
     await _run_cleanup(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
@@ -185,6 +187,38 @@ async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -
     )
 
     assert chat_interface.send_message.await_count == sends_after_first_failure
+
+
+@pytest.mark.asyncio
+async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -> None:
+    """A channel refusing for hours is not persuaded by asking again on the hour.
+
+    Having been failing for three and a half hours when it last tried, the run
+    waits that long again, so an hour and a half later it is not yet due -- the
+    same gap after which a momentary burst of failures is retried.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "delivered_if_it_had_been_tried"
+    await _terminal_run(db_engine, "delegation_backoff")
+    db_context = Database(engine=db_engine)
+    now = datetime.now(UTC)
+    await db_context.delegation_runs.record_notify_failure(
+        "delegation_backoff", now=now - timedelta(hours=5)
+    )
+    await db_context.delegation_runs.record_notify_failure(
+        "delegation_backoff", now=now - timedelta(minutes=90)
+    )
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+
+    chat_interface.send_message.assert_not_awaited()
+    assert processing_service.wake_call_count == 0
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_backoff")
+    assert run is not None
+    assert run["notified_at"] is None
 
 
 @pytest.mark.asyncio
@@ -533,12 +567,21 @@ async def test_a_gave_up_run_is_not_picked_up_again(db_engine: AsyncEngine) -> N
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
     sends_after_giving_up = chat_interface.send_message.await_count
+    wakes_after_giving_up = processing_service.wake_call_count
+    # Past the longest backoff, so only the gave_up stage keeps it out of the pass.
+    long_ago = datetime.now(UTC) - timedelta(hours=9)
+    await Database(engine=db_engine).execute(
+        update(delegation_runs_table)
+        .where(delegation_runs_table.c.delegation_id == "delegation_given_up")
+        .values(notify_first_failed_at=long_ago, notify_last_failed_at=long_ago)
+    )
 
     await _run_cleanup(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
 
     assert chat_interface.send_message.await_count == sends_after_giving_up
+    assert processing_service.wake_call_count == wakes_after_giving_up
 
 
 @pytest.mark.asyncio

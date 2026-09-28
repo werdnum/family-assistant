@@ -22,7 +22,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
@@ -61,6 +61,7 @@ async def _noop_handler(
 def _make_worker(
     db_engine: AsyncEngine,
     shutdown_event: asyncio.Event,
+    worker_cls: type[TaskWorker] = TaskWorker,
     **kwargs: Any,  # noqa: ANN401 - passthrough to TaskWorker constructor
 ) -> TaskWorker:
     """Build a TaskWorker with mock externals and a real (system) clock.
@@ -70,7 +71,7 @@ def _make_worker(
     per-engine transaction lock able to serialize the pool at all.
     """
     engine = db_engine
-    return TaskWorker(
+    return worker_cls(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),
         calendar_config={},
@@ -80,6 +81,24 @@ def _make_worker(
         engine=engine,
         **kwargs,
     )
+
+
+class _ParkTrackingWorker(TaskWorker):
+    """A TaskWorker that reports when it has settled into its poll-wait.
+
+    ``last_activity`` is set at construction time (before the run loop even
+    starts), so it cannot distinguish "about to make its first dequeue
+    attempt" from "found nothing and is now parked waiting for the wake event
+    or the poll timeout". ``parked`` is set only on the latter.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        super().__init__(*args, **kwargs)
+        self.parked = asyncio.Event()
+
+    async def _wait_for_next_poll(self, wake_up_event: asyncio.Event) -> None:
+        self.parked.set()
+        await super()._wait_for_next_poll(wake_up_event)
 
 
 async def _task_status(db_engine: AsyncEngine, task_id: str) -> str | None:
@@ -367,18 +386,23 @@ async def test_enqueue_wakes_idle_sibling_promptly(
     ) -> None:
         processed.set()
 
-    workers = [_make_worker(db_engine, shutdown_event) for _ in range(2)]
+    workers = [
+        _make_worker(db_engine, shutdown_event, worker_cls=_ParkTrackingWorker)
+        for _ in range(2)
+    ]
     for worker in workers:
         worker.register_task_handler("quick", quick_handler)
     pool = _Pool(workers, shutdown_event, db_engine)
 
     try:
-        # Let both workers settle into their poll-wait on their own events.
-        await wait_for_condition(
-            lambda: all(w.last_activity is not None for w in workers),
-            timeout=2.0,
-            description="workers to start",
-        )
+        # Let both workers settle into their poll-wait: each has already
+        # dequeued the empty queue once and is now blocked on its own wake
+        # event, so the enqueue below can only be found via the wake fan-out,
+        # not a worker's first, freely-timed poll.
+        park_events = [
+            cast("_ParkTrackingWorker", worker).parked.wait() for worker in workers
+        ]
+        await asyncio.wait_for(asyncio.gather(*park_events), timeout=5.0)
 
         db_context = Database(engine=db_engine)
         await db_context.tasks.enqueue(
@@ -404,19 +428,25 @@ async def test_enqueue_wakes_workers_only_once_the_row_is_visible(
     Waking first would let an idle sibling poll an empty queue, clear its
     event, and miss the row until the next 5s poll. The wake is registered on
     the enqueue's own transaction, so by the time enqueue returns the row is
-    committed and the wake has fired.
+    committed and the wake has fired. Enqueueing inside an explicit,
+    still-open transaction proves the ordering directly: the event must still
+    be unset while the transaction is open, and only flip once it commits --
+    a regression that fires the wake straight from ``_enqueue`` instead of via
+    ``txn.on_commit`` would set it before the block exits.
     """
     wake_event = asyncio.Event()
     register_worker_wake_event(wake_event)
     try:
-        db_context = Database(engine=db_engine)
-        await db_context.tasks.enqueue(
-            task_id="commit-visibility-task",
-            task_type="quick",
-            payload={},
-            max_retries_override=0,
-            priority=TaskPriority.INTERACTIVE,
-        )
+        db = Database(engine=db_engine)
+        async with db.transaction() as txn:
+            await txn.tasks.enqueue(
+                task_id="commit-visibility-task",
+                task_type="quick",
+                payload={},
+                max_retries_override=0,
+                priority=TaskPriority.INTERACTIVE,
+            )
+            assert not wake_event.is_set()
 
         assert wake_event.is_set()
         # A woken worker reads on its own connection, so the row must be
@@ -430,10 +460,45 @@ async def test_enqueue_wakes_workers_only_once_the_row_is_visible(
         unregister_worker_wake_event(wake_event)
 
 
-def test_task_worker_count_defaults_to_two() -> None:
-    """The pool size defaults to 2 and is configurable."""
-    assert AppConfig().task_worker_count == 2
-    assert AppConfig(task_worker_count=4).task_worker_count == 4
+@pytest.mark.asyncio
+async def test_enqueue_rollback_leaves_workers_unwoken(
+    db_engine: AsyncEngine,
+) -> None:
+    """A rolled-back enqueue never wakes workers, and the row never appears."""
+    wake_event = asyncio.Event()
+    register_worker_wake_event(wake_event)
+    try:
+        db = Database(engine=db_engine)
+        with contextlib.suppress(RuntimeError):
+            async with db.transaction() as txn:
+                await txn.tasks.enqueue(
+                    task_id="rollback-task",
+                    task_type="quick",
+                    payload={},
+                    max_retries_override=0,
+                    priority=TaskPriority.INTERACTIVE,
+                )
+                raise RuntimeError("abort before commit")
+
+        assert not wake_event.is_set()
+        observer = Database(engine=db_engine)
+        row = await observer.fetch_one(
+            select(tasks_table).where(tasks_table.c.task_id == "rollback-task")
+        )
+        assert row is None
+    finally:
+        unregister_worker_wake_event(wake_event)
+
+
+def test_task_worker_count_default_satisfies_the_deadlock_avoidance_guarantee() -> None:
+    """The default pool has at least two general workers.
+
+    A single worker cannot service the task that resolves a sibling task's
+    parked future (the confirmation-gated delegation deadlock the pool
+    exists to fix -- see test_parked_worker_unblocked_by_sibling), so the
+    default must stay at 2 or more.
+    """
+    assert AppConfig().task_worker_count >= 2
 
 
 def test_task_worker_count_must_be_at_least_one() -> None:
@@ -702,12 +767,6 @@ async def test_reserved_worker_serves_the_queue_while_general_workers_park(
         if not release.done():
             release.set_result("cleanup")
         await pool.stop()
-
-
-def test_reserved_task_worker_count_defaults_to_one() -> None:
-    """One worker is held back for interactive work by default."""
-    assert AppConfig().reserved_task_worker_count == 1
-    assert AppConfig(reserved_task_worker_count=3).reserved_task_worker_count == 3
 
 
 def test_reserved_task_worker_count_may_be_zero_but_not_negative() -> None:

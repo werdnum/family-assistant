@@ -272,43 +272,6 @@ async def test_update_automation_rejects_missing_stored_script(
 
 
 @pytest.mark.asyncio
-async def test_update_wake_llm_automation_skips_script_validation(
-    db_engine: AsyncEngine,
-) -> None:
-    """Updating a wake_llm automation's action_config is not routed through the
-    script validator (which would reject it for having no script fields)."""
-    db_ctx = Database(engine=db_engine)
-    exec_context = _exec_context_with_profile(
-        db_ctx,
-        conversation_id="wake_llm_update_conv",
-        processing_profile_id="complex_tasks",
-        user_id="user-789",
-    )
-    created = await create_automation_tool(
-        exec_context=exec_context,
-        name="Wake LLM Update",
-        automation_type="event",
-        trigger_config={"event_source": "home_assistant", "event_filter": {}},
-        action_type="wake_llm",
-        action_config={"context": "Original context"},
-    )
-    created_data = created.get_data()
-    assert isinstance(created_data, dict)
-    automation_id = int(created_data["id"])
-
-    result = await update_automation_tool(
-        exec_context=exec_context,
-        automation_id=automation_id,
-        automation_type="event",
-        action_config={"context": "Updated context"},
-    )
-
-    data = result.get_data()
-    assert isinstance(data, dict)
-    assert data.get("success") is True
-
-
-@pytest.mark.asyncio
 async def test_create_automation_cross_type_name_uniqueness(
     db_engine: AsyncEngine,
 ) -> None:
@@ -967,23 +930,16 @@ async def test_get_automation_not_found(db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
-    """Test updating an automation's action config."""
+    """Updating a wake_llm automation's action_config persists the new config.
+
+    wake_llm configs are not routed through the script validator, which would
+    reject them for having no script fields."""
     db_ctx = Database(engine=db_engine)
-    exec_context = ToolExecutionContext(
-        interface_type="web",
+    exec_context = _exec_context_with_profile(
+        db_ctx,
         conversation_id="update_test_conv",
-        user_name="test_user",
-        turn_id="test_turn",
-        db_context=db_ctx,
-        processing_service=None,
-        clock=None,
-        home_assistant_client=None,
-        event_sources=None,
-        attachment_registry=None,
-        camera_backend=None,
-        timezone=ZoneInfo("UTC"),
-        credential_resolvers=None,
-        api_backend=None,
+        processing_profile_id="complex_tasks",
+        user_id="user-789",
     )
 
     # Create automation
@@ -1023,6 +979,9 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
     )
 
     assert "Updated context" in result.get_text()
+    fetched = result.get_data()
+    assert isinstance(fetched, dict)
+    assert fetched["action_config"] == {"context": "Updated context"}
 
 
 @pytest.mark.asyncio
