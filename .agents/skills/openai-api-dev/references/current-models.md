@@ -1,4 +1,4 @@
-<!-- Mirrored from https://developers.openai.com/api/docs/models.md on 2026-09-08.
+<!-- Mirrored from https://developers.openai.com/api/docs/models.md on 2026-09-28.
      Fetch that URL directly if this looks out of date. -->
 
 # Models
@@ -13,10 +13,9 @@ All latest OpenAI models support text and image input, text output, multilingual
 
 ## Featured models
 
-- [GPT-6 Astra](/api/docs/models/gpt-6-astra.md): Our most capable model, built for the hardest end-to-end work
-- [GPT-5.6 Sol](/api/docs/models/gpt-5.6-sol.md): Flagship model for complex professional work
-- [GPT-5.6 Terra](/api/docs/models/gpt-5.6-terra.md): GPT-5.6 model that balances intelligence and cost
-- [GPT-5.6 Luna](/api/docs/models/gpt-5.6-luna.md): GPT-5.6 model optimized for cost-sensitive workloads
+- [GPT-6 Astra](/api/docs/models/gpt-6-astra.md): Start here for complex reasoning and coding.
+- [GPT-5.6 Terra](/api/docs/models/gpt-5.6-terra.md): Balance intelligence and cost.
+- [GPT-5.6 Luna](/api/docs/models/gpt-5.6-luna.md): Optimize cost-sensitive, high-volume workloads.
 
 ## Browse our full catalog of models
 
@@ -81,6 +80,8 @@ See [how OpenAI uses your data](/api/docs/guides/your-data.md) and review [depre
 - [GPT-5.6 Sol](/api/docs/models/gpt-5.6-sol.md): Flagship model for complex professional work
 - [GPT-5.6 Terra](/api/docs/models/gpt-5.6-terra.md): GPT-5.6 model that balances intelligence and cost
 - [GPT-6 Astra](/api/docs/models/gpt-6-astra.md): Our most capable model, built for the hardest end-to-end work
+- [GPT-6 Luna](/api/docs/models/gpt-6-luna.md): Our most efficient model for focused, high-volume tasks.
+- [GPT-6 Sol](/api/docs/models/gpt-6-sol.md): Built to power complex coding and agentic workflows.
 - [GPT-Audio](/api/docs/models/gpt-audio.md): For audio inputs and outputs with Chat Completions API
 - [GPT-Audio Mini](/api/docs/models/gpt-audio-mini.md): A cost-efficient version of GPT Audio
 - [GPT-Audio-1.5](/api/docs/models/gpt-audio-1.5.md): The best voice model for audio in, audio out with Chat Completions.
@@ -90,6 +91,7 @@ See [how OpenAI uses your data](/api/docs/guides/your-data.md) and review [depre
 - [GPT-Image-2](/api/docs/models/gpt-image-2.md): State-of-the-art image generation model
 - [GPT-Image-2.5 Flare](/api/docs/models/gpt-image-2.5-flare.md): Fast, high-quality everyday image generation
 - [GPT-Image-2.5 Sunburst](/api/docs/models/gpt-image-2.5-sunburst.md): Our most capable model for image generation and editing
+- [GPT-Live 1](/api/docs/models/gpt-live-1.md): Our premier model for natural, expressive voice conversations with smooth interruption handling.
 - [GPT-Live-Transcribe](/api/docs/models/gpt-live-transcribe.md): Low-latency speech-to-text model for realtime transcription
 - [gpt-oss-120b](/api/docs/models/gpt-oss-120b.md): Most powerful open-weight model, fits into an H100 GPU
 - [gpt-oss-20b](/api/docs/models/gpt-oss-20b.md): Medium-sized open-weight model for low latency
@@ -113,8 +115,6 @@ See [how OpenAI uses your data](/api/docs/guides/your-data.md) and review [depre
 - [o4-mini](/api/docs/models/o4-mini.md): Fast, cost-efficient reasoning model, succeeded by GPT-5 Mini
 - [o4-mini-deep-research](/api/docs/models/o4-mini-deep-research.md): Faster, more affordable deep research model
 - [omni-moderation](/api/docs/models/omni-moderation-latest.md): Identify potentially harmful content in text and images
-- [Sora 2](/api/docs/models/sora-2.md): Flagship video generation with synced audio
-- [Sora 2 Pro](/api/docs/models/sora-2-pro.md): Most advanced synced-audio video generation
 - [text-embedding-3-large](/api/docs/models/text-embedding-3-large.md): Most capable embedding model
 - [text-embedding-3-small](/api/docs/models/text-embedding-3-small.md): Small embedding model
 - [text-embedding-ada-002](/api/docs/models/text-embedding-ada-002.md): Older embedding model
@@ -123,3 +123,4 @@ See [how OpenAI uses your data](/api/docs/guides/your-data.md) and review [depre
 - [TTS-1](/api/docs/models/tts-1.md): Text-to-speech model optimized for speed
 - [TTS-1 HD](/api/docs/models/tts-1-hd.md): Text-to-speech model optimized for quality
 - [Whisper](/api/docs/models/whisper-1.md): General-purpose speech recognition model
+- [GPT-Rosalind](/api/docs/pricing#specialized-models): Life sciences reasoning for approved organizations. Model ID: `gpt-rosalind-research`.
