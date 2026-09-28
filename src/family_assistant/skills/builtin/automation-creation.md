@@ -138,6 +138,11 @@ For `wake_llm`, read your own context back as if you were the woken turn, which 
 conversation. Does it say what happened, and what to do about it? "Check the Bopple site for
 Messina's dark chocolate cake and tell me if it's available" is actionable. "Check this" is not.
 
+The woken turn can finish without messaging the user (`end_turn_quietly`) when nothing needs their
+attention, so a `wake_llm` does not have to be filtered down to only the runs worth reporting. Say
+in the context what the user wants to hear about — "tell me only if it's available" — and the woken
+turn will stay quiet otherwise.
+
 ### 5. Create it, then tell the user how to see it
 
 Call `create_automation` with the validated parameters. Then give the user the automation ID, a link

@@ -149,6 +149,7 @@ from family_assistant.indexing.tasks import (
     emit_document_ready_event,
 )
 from family_assistant.interfaces import ChatDeliveryError
+from family_assistant.processing.quiet_turn import QUIET_END_TRIGGER_HINT
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
@@ -599,6 +600,24 @@ def _script_execution_definition_refs(
     if stored_script is not None:
         refs.append(LoadedScriptRef(script=stored_script))
     return tuple(refs)
+
+
+def _callback_owes_user_reply(
+    review_trigger: TriggerReviewInput,
+    *,
+    is_reminder: bool,
+    current_attempt: int,
+) -> bool:
+    """Whether a callback turn must end in a message to the user.
+
+    The first firing of a reminder is what the user asked for, and a script
+    failure notice is the only report that an automation broke. Every other
+    wake -- automations, event listeners, scheduled checks, reminder
+    follow-ups -- may end without a message when there is nothing to say.
+    """
+    if is_reminder:
+        return current_attempt == 1
+    return review_trigger.trigger_type == "script_failure"
 
 
 def _llm_callback_review_trigger(
@@ -1511,6 +1530,13 @@ async def handle_llm_callback(
         callback_trigger_taint_sources = _unattended_trigger_taint_sources(
             payload, review_trigger
         )
+        allow_quiet_end = not _callback_owes_user_reply(
+            review_trigger,
+            is_reminder=is_reminder,
+            current_attempt=current_attempt,
+        )
+        if allow_quiet_end:
+            trigger_text = f"{trigger_text}\n\n{QUIET_END_TRIGGER_HINT}"
 
         # The owner recorded on the payload owns confirm-gated tool calls made on
         # this turn AND any nested scheduled actions the turn creates (those tools
@@ -1527,6 +1553,12 @@ async def handle_llm_callback(
         undelivered = await db_context.message_history.get_undelivered_terminal_reply(
             callback_turn_id
         )
+        if undelivered is not None and undelivered["is_internal"]:
+            logger.info(
+                f"Callback turn {callback_turn_id} already ended quietly on an "
+                "earlier attempt; nothing to deliver."
+            )
+            return
         if undelivered is not None:
             logger.info(
                 f"Resuming callback turn {callback_turn_id} at delivery; "
@@ -1632,7 +1664,17 @@ async def handle_llm_callback(
             ),
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
             tool_call_review_trigger=review_trigger,
+            allow_quiet_end=allow_quiet_end,
         )
+
+        if result.ended_quietly:
+            logger.info(
+                f"Callback turn {callback_turn_id} in {interface_type}:{conversation_id} "
+                "ended quietly; no message sent."
+            )
+            # A quiet end on a reminder follow-up is the model judging the
+            # reminder no longer needs the user, so the chain stops here too.
+            return
 
         final_llm_content_to_send = result.text_reply
         final_assistant_message_internal_id = result.assistant_message_internal_id
@@ -1706,13 +1748,16 @@ async def handle_llm_callback(
                 f"conditions not met"
             )
 
-        # Check if we should fail the task due to missing generated content
-        if not final_llm_content_to_send and not is_reminder:
-            # For non-reminder callbacks, we expect content to be generated
+        # A turn that wanted to say nothing ended quietly above, so an empty
+        # reply here is a fault. It is not retried: the turn's tool calls are
+        # already durable, and a retry would run them all again.
+        if not (final_llm_content_to_send or response_attachment_ids):
             logger.error(
-                f"No content generated for non-reminder callback in {interface_type}:{conversation_id}"
+                f"No content generated for callback in {interface_type}:{conversation_id}"
             )
-            raise RuntimeError("LLM failed to generate response content for callback.")
+            raise NonRetryableTaskError(
+                "LLM failed to generate response content for callback."
+            )
 
     try:
         await process_callback()

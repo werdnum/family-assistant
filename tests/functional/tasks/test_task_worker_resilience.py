@@ -7,7 +7,6 @@ import contextlib
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace  # pylint: disable=no-name-in-module
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -17,6 +16,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.messages import UserMessage
+from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.tasks import TasksRepository
@@ -87,7 +87,7 @@ async def _make_schedule_task_due_now(
 
 
 def _processing_service_with_callback_result(
-    result: SimpleNamespace,
+    result: ChatInteractionResult,
 ) -> MagicMock:
     processing_service = MagicMock()
     processing_service.handle_chat_interaction = AsyncMock(return_value=result)
@@ -488,12 +488,9 @@ async def test_failed_schedule_llm_callback_delivers_error_once_and_reschedules(
 ) -> None:
     """A delivered callback error fails once and still advances the schedule."""
     processing_service = _processing_service_with_callback_result(
-        SimpleNamespace(
+        ChatInteractionResult.error(
             text_reply="User-visible callback error.",
-            assistant_message_internal_id=None,
-            reasoning_info=None,
             error_traceback="callback exploded",
-            attachment_ids=[],
         )
     )
     chat_interface = AsyncMock()
@@ -1176,13 +1173,7 @@ async def test_successful_schedule_llm_callback_reschedules_once(
 ) -> None:
     """A successful schedule callback should enqueue exactly one next run."""
     processing_service = _processing_service_with_callback_result(
-        SimpleNamespace(
-            text_reply="Callback completed.",
-            assistant_message_internal_id=None,
-            reasoning_info=None,
-            error_traceback=None,
-            attachment_ids=[],
-        )
+        ChatInteractionResult.success(text_reply="Callback completed.")
     )
     chat_interface = AsyncMock()
     chat_interface.send_message.return_value = "mock-message-id"
@@ -1237,13 +1228,7 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
     callback_turn_id = "retrying-follow-up-reminder-turn"
     conversation_id = "retrying-follow-up-reminder-conversation"
     processing_service = _processing_service_with_callback_result(
-        SimpleNamespace(
-            text_reply="Reminder delivered after retry.",
-            assistant_message_internal_id=None,
-            reasoning_info=None,
-            error_traceback=None,
-            attachment_ids=[],
-        )
+        ChatInteractionResult.success(text_reply="Reminder delivered after retry.")
     )
     processing_service.service_config.allow_wake_llm = True
     successful_result = processing_service.handle_chat_interaction.return_value

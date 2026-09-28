@@ -102,6 +102,9 @@ class ChatInteractionResult:
     reasoning_info: MessageReasoningInfo | None = None
     error_traceback: str | None = None
     attachment_ids: list[str] | None = None
+    # The model ended the turn with end_turn_quietly: there is deliberately
+    # nothing to deliver, which is different from a turn that produced no reply.
+    ended_quietly: bool = False
 
     def __post_init__(self) -> None:
         """Enforce a consistent success/error contract."""
@@ -110,7 +113,14 @@ class ChatInteractionResult:
                 raise ValueError(
                     "ChatInteractionResult(status='success') cannot include error_traceback"
                 )
+            if self.ended_quietly and (self.text_reply or self.attachment_ids):
+                raise ValueError(
+                    "A quiet ChatInteractionResult cannot carry a reply to deliver"
+                )
             return
+
+        if self.ended_quietly:
+            raise ValueError("ChatInteractionResult(status='error') cannot be quiet")
 
         if self.status != ChatInteractionStatus.ERROR:
             raise ValueError(f"Invalid status: {self.status!r}")
@@ -149,6 +159,21 @@ class ChatInteractionResult:
             reasoning_info=reasoning_info,
             error_traceback=None,
             attachment_ids=attachment_ids,
+        )
+
+    @classmethod
+    def quiet(
+        cls,
+        *,
+        assistant_message_internal_id: int | None,
+        reasoning_info: MessageReasoningInfo | None = None,
+    ) -> ChatInteractionResult:
+        """A successful turn the model ended without messaging the user."""
+        return cls(
+            status=ChatInteractionStatus.SUCCESS,
+            assistant_message_internal_id=assistant_message_internal_id,
+            reasoning_info=reasoning_info,
+            ended_quietly=True,
         )
 
     @classmethod

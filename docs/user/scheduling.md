@@ -61,7 +61,8 @@ Creates a simple reminder that will notify you at the specified time.
 
 - `reminder_time`: When to send the reminder (ISO 8601 format with timezone)
 - `message`: The reminder message
-- `follow_up`: If true, sends follow-up reminders if you don't respond
+- `follow_up`: If true, sends follow-up reminders if you don't respond. A follow-up is skipped when
+  it's clear you've already dealt with it, even if you didn't reply.
 - `follow_up_interval`: Time between follow-ups (e.g., "30 minutes", "1 hour")
 - `max_follow_ups`: Maximum number of follow-up reminders
 
@@ -77,7 +78,8 @@ Creates a simple reminder that will notify you at the specified time.
 
 ### schedule_future_callback
 
-Schedules the assistant to wake up and continue a conversation or check on something.
+Schedules the assistant to wake up and continue a conversation or check on something. When it checks
+and there's nothing you need to know, it finishes without messaging you.
 
 **Parameters:**
 

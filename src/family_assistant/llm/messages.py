@@ -331,6 +331,11 @@ class AssistantMessage(BaseModel):
     # these per iteration, and attributing the last call's numbers to all of
     # them undercounts every turn that used tools.
     reasoning_info: MessageReasoningInfo | None = Field(default=None, exclude=True)
+    # Set on the row that closes a turn the model ended with end_turn_quietly.
+    # It is a note for history, never a reply, so it is persisted as internal
+    # and not delivered. It lives only in process: once saved, is_internal on
+    # the row carries the same fact.
+    ended_quietly: bool = Field(default=False, exclude=True)
 
     model_config = ConfigDict(extra="forbid")
 
