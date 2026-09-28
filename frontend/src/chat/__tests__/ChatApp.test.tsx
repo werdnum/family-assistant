@@ -31,40 +31,41 @@ describe('ChatApp', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the chat interface', async () => {
+  it('renders the chat interface with an empty, enabled composer', async () => {
     await renderChatApp({ waitForReady: true });
 
-    // Verify basic UI elements are present - use findByText to wait for async loading
-    expect(await screen.findByText('Chat')).toBeInTheDocument();
-    expect(await screen.findByText('Assistant')).toBeInTheDocument();
+    expect(screen.getByText('Chat')).toBeInTheDocument();
     expect(await screen.findByText('Conversations')).toBeInTheDocument();
+    expect(await screen.findByRole('combobox', { name: 'Processing profile' })).toHaveTextContent(
+      'Assistant'
+    );
+
+    const messageInput = screen.getByTestId('chat-input');
+    expect(messageInput).toHaveValue('');
+    expect(messageInput).toBeEnabled();
   });
 
   it('sends and receives messages', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
-    // Find the message input by placeholder text
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-    expect(messageInput).toBeInTheDocument();
-
-    // Type a message
-    await user.type(messageInput, 'Hello there!');
-
-    // For assistant-ui, we typically submit by pressing Enter rather than clicking a button
+    await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hello there!');
     await user.keyboard('{Enter}');
 
-    // Get fresh reference (input may have been re-rendered after submission).
     // Use the stable test id rather than the placeholder: while the turn runs
     // the composer doubles as the steer input and its placeholder changes.
-    const submittedInput = screen.getByTestId('chat-input');
+    await waitForMessageSent(screen.getByTestId('chat-input'));
 
-    // Verify the message was sent by checking if the input was cleared
-    await waitForMessageSent(submittedInput);
-
-    // Note: The actual message sending and response display depends on the
-    // @assistant-ui/react runtime behavior, which may not show messages
-    // in the DOM in the same way as a traditional chat UI
+    expect(await screen.findByTestId('user-message')).toHaveTextContent('Hello there!');
+    // The default mock streams this reply word by word for a greeting.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('assistant-message')).toHaveTextContent(
+          'Hi there! How can I help you today?'
+        );
+      },
+      { timeout: 10000 }
+    );
   }, 30000);
 
   it('waits for a new conversation to persist before loading share status', async () => {
@@ -121,50 +122,6 @@ describe('ChatApp', () => {
     await waitFor(() => expect(statusRequest).toHaveBeenCalledOnce());
   });
 
-  it('handles conversation loading', async () => {
-    await renderChatApp({ waitForReady: true });
-
-    // Check that conversations are loaded by looking for the sidebar
-    await waitFor(() => {
-      expect(screen.getByText('Conversations')).toBeInTheDocument();
-    });
-
-    // The MSW handler should have been called for conversations
-    // This test verifies the component makes the right API calls
-  });
-
-  it('creates new conversations', async () => {
-    const user = userEvent.setup();
-    await renderChatApp({ waitForReady: true });
-
-    // Look for a "new chat" or similar button
-    const newChatButton =
-      screen.queryByRole('button', { name: /new/i }) || screen.queryByText(/new chat/i);
-
-    if (newChatButton) {
-      await user.click(newChatButton);
-
-      // Should create a new conversation
-      await waitFor(() => {
-        expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-          'lastConversationId',
-          expect.stringMatching(/web_conv_/)
-        );
-      });
-    }
-  });
-
-  it('handles profile switching', async () => {
-    await renderChatApp({ profileId: 'browser_profile', waitForReady: true });
-
-    // Check that the profile selector is present
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Processing profile' })).toBeInTheDocument();
-    });
-
-    // This tests the basic profile switching functionality
-  });
-
   // Radix Select relies on pointer-capture and scroll APIs jsdom lacks. Stub them
   // per-test and restore afterwards: leaving them installed would give every
   // later test a defined no-op where jsdom has nothing, silently changing the
@@ -195,8 +152,11 @@ describe('ChatApp', () => {
 
   // handleNewChat is the only path that writes a conversation id to localStorage
   // after startup, so a new write is the signal that a fresh conversation began.
-  const conversationIdWrites = () =>
-    mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length;
+  const conversationIdsWritten = (): string[] =>
+    mockLocalStorage.setItem.mock.calls
+      .filter(([key]) => key === 'lastConversationId')
+      .map(([, id]) => id as string);
+  const conversationIdWrites = () => conversationIdsWritten().length;
 
   const switchProfileToResearch = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(screen.getByRole('combobox', { name: 'Processing profile' }));
@@ -257,36 +217,59 @@ describe('ChatApp', () => {
     expect(screen.getByTestId('chat-input')).toHaveValue('Draft in progress');
   }, 30000);
 
+  it('starts an empty conversation with a new id from the new chat button', async () => {
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    await user.type(screen.getByTestId('chat-input'), 'Hello there!');
+    await user.keyboard('{Enter}');
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('user-message')).toHaveTextContent('Hello there!');
+        expect(screen.getByTestId('assistant-message')).toHaveTextContent(
+          'Hi there! How can I help you today?'
+        );
+        expect(screen.getByTestId('send-button')).toBeInTheDocument();
+      },
+      { timeout: 10000 }
+    );
+
+    const idsBeforeNewChat = conversationIdsWritten();
+    const [newChatButton] = screen.getAllByTestId('new-chat-button');
+    await user.click(newChatButton);
+
+    await waitFor(() => {
+      expect(conversationIdsWritten()).toHaveLength(idsBeforeNewChat.length + 1);
+      expect(screen.queryByTestId('user-message')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('assistant-message')).not.toBeInTheDocument();
+    });
+    const newConversationId = conversationIdsWritten()[idsBeforeNewChat.length];
+    expect(newConversationId).toMatch(/^web_conv_/);
+    expect(idsBeforeNewChat).not.toContain(newConversationId);
+  }, 30000);
+
   it('handles multiple messages in a conversation', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
 
     const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
 
-    // Send first message
     await user.type(messageInput, 'First message');
     await user.keyboard('{Enter}');
-
-    // Wait for input to be cleared (message sent)
     await waitForMessageSent(messageInput);
 
-    // Wait for the assistant's response by checking that we have 2 messages total (1 user + 1 assistant)
     await waitFor(
       () => {
-        const userMessages = screen.queryAllByTestId('user-message');
-        const assistantMessages = screen.queryAllByTestId('assistant-message');
-        expect(userMessages.length + assistantMessages.length).toBe(2);
+        const userMessages = screen.getAllByTestId('user-message');
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages[0]).toHaveTextContent('First message');
+        const assistantMessages = screen.getAllByTestId('assistant-message');
+        expect(assistantMessages).toHaveLength(1);
+        expect(assistantMessages[0]).toHaveTextContent(
+          "I received your message and I'm here to help!"
+        );
       },
       { timeout: 10000 }
-    );
-
-    // Wait for any loading indicators to disappear
-    await waitFor(
-      () => {
-        const loadingIndicators = document.querySelectorAll('.animate-bounce');
-        expect(loadingIndicators.length).toBe(0);
-      },
-      { timeout: 2000 }
     );
 
     // Ensure input is ready for the next message
@@ -310,111 +293,56 @@ describe('ChatApp', () => {
     // Wait for second message to be sent
     await waitForMessageSent(input2);
 
-    // Wait for the second assistant response - we should now have 4 messages total (2 user + 2 assistant)
     await waitFor(
       () => {
-        const userMessages = screen.queryAllByTestId('user-message');
-        const assistantMessages = screen.queryAllByTestId('assistant-message');
-        expect(userMessages.length + assistantMessages.length).toBe(4);
+        const userMessages = screen.getAllByTestId('user-message');
+        expect(userMessages).toHaveLength(2);
+        expect(userMessages[0]).toHaveTextContent('First message');
+        expect(userMessages[1]).toHaveTextContent('Second message');
+        const assistantMessages = screen.getAllByTestId('assistant-message');
+        expect(assistantMessages).toHaveLength(2);
+        expect(assistantMessages[1]).toHaveTextContent(
+          "I received your message and I'm here to help!"
+        );
       },
       { timeout: 10000 }
     );
-  }, 20000); // 20s timeout for full test
+  }, 20000);
 
-  it('displays streaming responses correctly', async () => {
-    const user = userEvent.setup();
-    await renderChatApp({ waitForReady: true });
+  describe('on a mobile viewport', () => {
+    let desktopWidth: number;
+    let desktopHeight: number;
 
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    const setViewport = (width: number, height: number) => {
+      Object.defineProperty(window, 'innerWidth', {
+        writable: true,
+        configurable: true,
+        value: width,
+      });
+      Object.defineProperty(window, 'innerHeight', {
+        writable: true,
+        configurable: true,
+        value: height,
+      });
+    };
 
-    // Send a message that will trigger our streaming response
-    await user.type(messageInput, 'Hello there!');
-    await user.keyboard('{Enter}');
-
-    // Verify input cleared (message sent)
-    await waitForMessageSent(messageInput);
-
-    // The streaming response should be processed by @assistant-ui/react
-    // We can't easily test the individual chunks, but can verify the final state
-  }, 10000); // Add 10s timeout
-
-  it('handles conversation switching', async () => {
-    const user = userEvent.setup();
-    await renderChatApp({ waitForReady: true });
-
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-
-    // Send message in first conversation
-    await user.type(messageInput, 'Message in first conversation');
-    await user.keyboard('{Enter}');
-
-    await waitForMessageSent(messageInput);
-
-    // Look for new conversation button/functionality
-    // Note: The exact selector depends on how @assistant-ui/react exposes conversation controls
-    const newConversationElements = screen.queryAllByText(/new/i);
-    if (newConversationElements.length > 0) {
-      // Try to start a new conversation if UI provides this
-      const newButton = newConversationElements.find(
-        (el) => el.tagName === 'BUTTON' || el.closest('button')
-      );
-      if (newButton) {
-        await user.click(newButton);
-        // Wait for new conversation to be created
-        await waitFor(() => {
-          expect(messageInput).toBeInTheDocument();
-        });
-      }
-    }
-
-    // This test verifies the basic conversation switching flow
-    // Full validation would require accessing @assistant-ui/react's conversation state
-  }, 10000); // Add 10s timeout
-
-  it('handles empty conversation state', async () => {
-    await renderChatApp({ waitForReady: true });
-
-    // Chat input should be available even with no messages
-    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
-    expect(messageInput).toBeInTheDocument();
-    expect(messageInput).not.toBeDisabled();
-
-    // Basic chat interface should be present
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-  });
-
-  it('works on mobile viewport', async () => {
-    // Set mobile viewport size
-    Object.defineProperty(window, 'innerWidth', {
-      writable: true,
-      configurable: true,
-      value: 375, // Mobile width
-    });
-    Object.defineProperty(window, 'innerHeight', {
-      writable: true,
-      configurable: true,
-      value: 667, // Mobile height
+    beforeEach(() => {
+      desktopWidth = window.innerWidth;
+      desktopHeight = window.innerHeight;
+      setViewport(375, 667);
     });
 
-    // Dispatch resize event
-    window.dispatchEvent(new Event('resize'));
-
-    await renderChatApp({ waitForReady: true });
-
-    // Chat should still be functional on mobile
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeInTheDocument();
-
-    // Reset viewport
-    Object.defineProperty(window, 'innerWidth', {
-      writable: true,
-      configurable: true,
-      value: 1024,
+    afterEach(() => {
+      setViewport(desktopWidth, desktopHeight);
     });
-    Object.defineProperty(window, 'innerHeight', {
-      writable: true,
-      configurable: true,
-      value: 768,
+
+    it('opens on the chat view with a back button instead of the desktop sidebar', async () => {
+      await renderChatApp({ waitForReady: true });
+
+      expect(screen.getByText('Chat')).toBeInTheDocument();
+      expect(screen.getByLabelText('Back to conversations')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Toggle sidebar')).not.toBeInTheDocument();
+      expect(screen.queryByText('Conversations')).not.toBeInTheDocument();
     });
   });
 
@@ -472,16 +400,7 @@ describe('ChatApp', () => {
 
     await renderChatApp({ waitForReady: true });
 
-    // Wait for conversations to load
-    await waitFor(
-      () => {
-        expect(screen.getByText('Conversations')).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-
-    // Should see web conversations
-    expect(screen.getByText('Web conversation message')).toBeInTheDocument();
+    expect(await screen.findByText('Web conversation message')).toBeInTheDocument();
     expect(screen.getByText('Another web message')).toBeInTheDocument();
 
     // Should NOT see telegram conversations (they should be filtered out by the interface_type filter)

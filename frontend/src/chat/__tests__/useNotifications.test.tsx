@@ -34,9 +34,12 @@ describe('useNotifications', () => {
   afterEach(() => {
     // Restore original Notification API
     global.Notification = originalNotification;
+    vi.restoreAllMocks();
   });
 
-  it('should initialize with default permission state', () => {
+  it('should expose a denied browser permission and not show notifications', async () => {
+    mockNotification.permission = 'denied';
+
     const { result } = renderHook(() =>
       useNotifications({
         enabled: true,
@@ -45,9 +48,20 @@ describe('useNotifications', () => {
       })
     );
 
-    expect(result.current.isSupported).toBe(true);
-    expect(result.current.permission).toBe('default');
-    expect(result.current.isEnabled).toBe(true);
+    expect(result.current.permission).toBe('denied');
+
+    await waitFor(() => {
+      expect(result.current.isLeaderTab).toBe(true);
+    });
+
+    result.current.showNotification({
+      conversationId: 'test-conv-2',
+      messageId: 'msg-1',
+      preview: 'Test message preview',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(mockNotification).not.toHaveBeenCalled();
   });
 
   it('should request notification permission', async () => {
@@ -103,36 +117,46 @@ describe('useNotifications', () => {
     });
   });
 
-  it('should not show notification when disabled', async () => {
+  it('should not show notification once disabled', async () => {
     mockNotification.permission = 'granted';
 
-    const { result } = renderHook(() =>
-      useNotifications({
-        enabled: false, // Disabled
-        conversationId: 'test-conv',
-        onNotificationClick: vi.fn(),
-      })
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) =>
+        useNotifications({
+          enabled,
+          conversationId: 'test-conv',
+          onNotificationClick: vi.fn(),
+        }),
+      { initialProps: { enabled: true } }
     );
 
-    // Show notification
+    await waitFor(() => {
+      expect(result.current.isLeaderTab).toBe(true);
+    });
+
     result.current.showNotification({
       conversationId: 'test-conv-2',
       messageId: 'msg-1',
       preview: 'Test message preview',
       timestamp: new Date().toISOString(),
     });
+    expect(mockNotification).toHaveBeenCalledTimes(1);
 
-    // Verify Notification constructor was NOT called
-    expect(mockNotification).not.toHaveBeenCalled();
+    rerender({ enabled: false });
+
+    result.current.showNotification({
+      conversationId: 'test-conv-2',
+      messageId: 'msg-2',
+      preview: 'Second message preview',
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(mockNotification).toHaveBeenCalledTimes(1);
   });
 
   it('should not show notification for current visible conversation', async () => {
     mockNotification.permission = 'granted';
-    Object.defineProperty(document, 'visibilityState', {
-      writable: true,
-      configurable: true,
-      value: 'visible',
-    });
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
 
     const { result } = renderHook(() =>
       useNotifications({

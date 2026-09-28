@@ -6,11 +6,15 @@ import { getClientConfig, subscribeToPush, unsubscribeFromPush } from '../pushCl
 describe('pushClient', () => {
   describe('getClientConfig', () => {
     it('should fetch client config successfully', async () => {
+      server.use(
+        http.get('/api/client_config', () => {
+          return HttpResponse.json({ vapidPublicKey: 'test-vapid-public-key' });
+        })
+      );
+
       const config = await getClientConfig();
 
-      // The MSW handler returns a valid VAPID key
-      expect(config.vapidPublicKey).toBeDefined();
-      expect(typeof config.vapidPublicKey).toBe('string');
+      expect(config.vapidPublicKey).toBe('test-vapid-public-key');
     });
 
     it('should return null VAPID key when not configured', async () => {
@@ -107,7 +111,7 @@ describe('pushClient', () => {
       );
 
       await expect(subscribeToPush(mockSubscription)).rejects.toThrow(
-        'Failed to subscribe to push: 400'
+        /Failed to subscribe to push: 400 - .*Invalid subscription format/
       );
     });
 
@@ -163,7 +167,7 @@ describe('pushClient', () => {
       );
 
       await expect(unsubscribeFromPush(endpoint)).rejects.toThrow(
-        'Failed to unsubscribe from push: 500'
+        /Failed to unsubscribe from push: 500 - .*Server error/
       );
     });
 
