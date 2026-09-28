@@ -337,6 +337,16 @@ resume on that path is therefore rejected with a clear error directing the calle
 delegation. In pure synchronous mode no durable run records exist anyway, so a resume reference
 would resolve to "no such delegation" regardless.
 
+### Delegations Started From Inside a Delegation
+
+A delegated run can itself delegate in the background. Its turn then ends having produced a note
+that work is under way, not an answer, so the run does not finish on it: it parks as
+`awaiting_children`, and each child's result goes to the parent rather than to the person. When the
+last child is terminal the parent is requeued once and runs another turn with every result pinned as
+data; the turn that leaves nothing of its own outstanding is the one that finalizes the run and
+answers its caller. The council ([council.md](council.md)) is the first user, and describes the
+mechanism and its accepted residuals.
+
 ### Confirmations
 
 Phase one should fail fast if an async background delegated profile reaches a tool that requires

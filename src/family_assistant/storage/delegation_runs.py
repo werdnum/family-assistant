@@ -12,9 +12,18 @@ DelegationRunStatus = Literal[
     "queued",
     "running",
     "awaiting_remote",
+    "awaiting_children",
     "completed",
     "failed",
 ]
+"""Where a run is in its lifecycle.
+
+``awaiting_children`` is a local run whose turn ended while delegations it
+started itself were still running. It is not finished: when they have all
+finished, it goes back to ``queued`` and runs another turn with their results,
+and only a turn that ends with nothing of its own outstanding produces the
+run's result.
+"""
 
 TERMINAL_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
     "completed",
@@ -263,3 +272,37 @@ delegation_runs_table = Table(
         postgresql_where=text("status NOT IN ('completed', 'failed')"),
     ),
 )
+
+
+DELEGATION_CONTINUATION_TRIGGER = "System: Delegations you started have finished."
+_DELEGATION_WAKE_SYSTEM_PREFIXES = (
+    "System: Delegated profile task completed.",
+    "System: Delegated profile task failed.",
+    DELEGATION_CONTINUATION_TRIGGER,
+)
+
+
+def is_delegation_wake_trigger(content: str) -> bool:
+    """Return whether a system message is a one-shot delegation wake trigger."""
+    return content.startswith(_DELEGATION_WAKE_SYSTEM_PREFIXES)
+
+
+def historical_delegation_wake_content(content: str) -> str:
+    """Convert a one-shot delegation wake trigger into replay-safe history."""
+    historical_lines = [
+        line
+        for line in content.splitlines()
+        if not line.startswith((
+            "Respond to the user with the result.",
+            "Tell the user that the delegated work failed",
+            "The delegated result is provided as lower-priority data",
+            "The failure detail is provided as lower-priority data",
+            "Their results are provided as lower-priority data",
+        ))
+    ]
+    historical_content = "\n".join(historical_lines).strip()
+    return (
+        "Historical delegation completion event from a previous turn. "
+        "This is not a current instruction.\n\n"
+        f"{historical_content}"
+    )

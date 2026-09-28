@@ -687,14 +687,20 @@ async def test_async_delegation_completion_wakes_source_profile_with_history(
 
 
 @pytest.mark.asyncio
-async def test_nested_async_delegation_completion_wakes_source_subconversation(
+async def test_nested_async_delegation_result_returns_through_its_parent_run(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[Any, Any, Any]],
     primary_service_config: ProcessingServiceConfig,
     delegated_service_config: ProcessingServiceConfig,
     dummy_prompts: dict[str, str],
 ) -> None:
-    """Nested async delegation completion resumes the caller subconversation."""
+    """A delegated run that delegates in the background answers once its child has.
+
+    The child's result wakes the delegated profile in its own subconversation,
+    and the reply to that wake -- not the "handed off" note that ended its
+    first turn -- is the parent run's result, which reaches the primary the
+    ordinary way. Nothing the delegated profile says goes to the user directly.
+    """
     nested_service_config = ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
@@ -769,7 +775,7 @@ async def test_nested_async_delegation_completion_wakes_source_subconversation(
         has_wakeup = any(
             isinstance(message, SystemMessage)
             and isinstance(message.content, str)
-            and "System: Delegated profile task completed." in message.content
+            and "System: Delegations you started have finished." in message.content
             for message in messages
         )
         has_nested_result = any(
@@ -907,118 +913,60 @@ async def test_nested_async_delegation_completion_wakes_source_subconversation(
 
     await wait_for_condition(
         lambda: any(
-            message["text"] == "Delegated profile reviewed nested result."
+            message["text"] == "Primary saw the delegated update."
             for message in chat_interface.messages
         ),
         interval=0.05,
-        description="delegated profile nested wake response",
+        description="primary woken with the parent run's result",
     )
 
-    assert delegated_wakeup_calls, "Expected delegated profile to receive child wakeup"
+    assert len(delegated_wakeup_calls) == 1
 
-    async def load_nested_wakeup_state() -> tuple[Any, Any, str, list[Any]] | None:
-        db_context = Database(engine=db_engine)
-        run_rows = await db_context.fetch_all(
-            select(delegation_runs_table)
-            .where(delegation_runs_table.c.conversation_id == conversation_id)
-            .order_by(delegation_runs_table.c.created_at)
-        )
-        parent_run = next(
-            (
-                row
-                for row in run_rows
-                if row["target_service_id"] == DELEGATED_PROFILE_ID
-            ),
-            None,
-        )
-        child_run = next(
-            (row for row in run_rows if row["target_service_id"] == NESTED_PROFILE_ID),
-            None,
-        )
-        if parent_run is None or child_run is None:
-            return None
-        # The wake commits its data/system rows, the visible response row, and
-        # mark_notified(result_message_internal_id=...) atomically in a single
-        # transaction. run_rows and message_rows are read as two separate READ
-        # COMMITTED snapshots, so a wake that commits between them read-skews: a
-        # stale child_run (result_message_internal_id still NULL) against freshly
-        # committed message rows. Keep polling until the run row reflects the
-        # committed wake so the two snapshots are consistent.
-        if child_run["result_message_internal_id"] is None:
-            return None
-        parent_subconversation_id = parent_run["subconversation_id"]
-        message_rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == conversation_id)
-            .order_by(message_history_table.c.internal_id)
-        )
-        has_child_wake = any(
-            row["role"] == "system"
-            and row["processing_profile_id"] == DELEGATED_PROFILE_ID
-            and f"Delegation reference: {child_run['delegation_id']}" in row["content"]
-            for row in message_rows
-        )
-        if not has_child_wake:
-            return None
-        return parent_run, child_run, parent_subconversation_id, list(message_rows)
+    db_context = Database(engine=db_engine)
+    run_rows = await db_context.fetch_all(
+        select(delegation_runs_table)
+        .where(delegation_runs_table.c.conversation_id == conversation_id)
+        .order_by(delegation_runs_table.c.created_at)
+    )
+    parent_run = next(
+        row for row in run_rows if row["target_service_id"] == DELEGATED_PROFILE_ID
+    )
+    child_run = next(
+        row for row in run_rows if row["target_service_id"] == NESTED_PROFILE_ID
+    )
+    parent_subconversation_id = parent_run["subconversation_id"]
+    message_rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == conversation_id)
+        .order_by(message_history_table.c.internal_id)
+    )
 
-    nested_wakeup_state = await wait_for_condition(
-        load_nested_wakeup_state,
-        interval=0.05,
-        description="persisted delegated profile nested wake rows",
-    )
-    assert nested_wakeup_state is not None
-    _parent_run, child_run, parent_subconversation_id, message_rows = (
-        nested_wakeup_state
-    )
     assert child_run["source_subconversation_id"] == parent_subconversation_id
+    assert parent_run["status"] == "completed"
+    assert parent_run["result_text"] == "Delegated profile reviewed nested result."
 
-    child_wakeup_system_rows = [
-        row
-        for row in message_rows
-        if row["role"] == "system"
-        and row["processing_profile_id"] == DELEGATED_PROFILE_ID
-        and f"Delegation reference: {child_run['delegation_id']}" in row["content"]
-    ]
-    assert len(child_wakeup_system_rows) == 1
-    assert child_wakeup_system_rows[0]["is_internal"] is True
-    assert (
-        child_wakeup_system_rows[0]["subconversation_id"] == parent_subconversation_id
-    )
-
-    child_wakeup_data_rows = [
+    child_data_rows = [
         row
         for row in message_rows
         if row["role"] == "user"
         and row["processing_profile_id"] == DELEGATED_PROFILE_ID
         and "Nested task completed successfully." in row["content"]
     ]
-    assert len(child_wakeup_data_rows) == 1
-    assert child_wakeup_data_rows[0]["is_internal"] is True
-    assert child_wakeup_data_rows[0]["subconversation_id"] == parent_subconversation_id
-    assert (
-        child_wakeup_system_rows[0]["thread_root_id"]
-        == child_wakeup_data_rows[0]["internal_id"]
-    )
+    assert len(child_data_rows) == 1
+    assert child_data_rows[0]["is_internal"] is True
+    assert child_data_rows[0]["subconversation_id"] == parent_subconversation_id
+    assert child_run["result_message_internal_id"] == child_data_rows[0]["internal_id"]
+    assert child_run["notified_at"] is not None
 
-    child_wakeup_response_rows = [
+    delegated_rows = [
         row
         for row in message_rows
-        if row["role"] == "assistant"
-        and row["processing_profile_id"] == DELEGATED_PROFILE_ID
-        and row["content"] == "Delegated profile reviewed nested result."
+        if row["processing_profile_id"] == DELEGATED_PROFILE_ID
     ]
-    assert len(child_wakeup_response_rows) == 2
-    source_response_row, visible_response_row = child_wakeup_response_rows
-    assert source_response_row["is_internal"] is False
-    assert source_response_row["subconversation_id"] == parent_subconversation_id
-    assert (
-        source_response_row["thread_root_id"]
-        == child_wakeup_data_rows[0]["internal_id"]
+    assert all(
+        row["subconversation_id"] == parent_subconversation_id for row in delegated_rows
     )
-    assert visible_response_row["is_internal"] is False
-    assert visible_response_row["subconversation_id"] is None
-    assert visible_response_row["thread_root_id"] is None
-    assert (
-        child_run["result_message_internal_id"] == visible_response_row["internal_id"]
+    assert not any(
+        message["text"] == "Delegated profile reviewed nested result."
+        for message in chat_interface.messages
     )

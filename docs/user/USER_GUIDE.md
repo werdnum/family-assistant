@@ -33,6 +33,7 @@ just the part you need.
 | [smart-home.md](smart-home.md)                       | Controlling Home Assistant devices, and who's home                       |
 | [automations.md](automations.md)                     | Automations that react to events or run on a schedule                    |
 | [research-and-browsing.md](research-and-browsing.md) | Web search, page summaries, browsing sites, and deep research            |
+| [council.md](council.md)                             | Putting a hard question to a council of several models                   |
 | [media.md](media.md)                                 | Analysing photos, and generating or editing images and video             |
 | [shopping.md](shopping.md)                           | Finding products online and getting a checkout link                      |
 

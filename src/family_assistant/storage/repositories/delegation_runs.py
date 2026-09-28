@@ -303,6 +303,97 @@ class DelegationRunsRepository(BaseRepository):
         row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
+    async def mark_awaiting_children(
+        self, delegation_id: str
+    ) -> DelegationRunDict | None:
+        """Park a ``running`` run whose turn left its own delegations outstanding.
+
+        Conditioned on ``running`` so a run the reaper failed meanwhile stays
+        failed. Returns ``None`` when the row was not ``running``.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(delegation_runs_table.c.status == "running")
+            .values(status="awaiting_children", updated_at=datetime.now(UTC))
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging(
+            "mark_delegation_run_awaiting_children", stmt
+        )
+        row = result.one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
+
+    async def requeue_for_continuation(self, delegation_id: str, now: datetime) -> bool:
+        """Move an ``awaiting_children`` run back to ``queued`` (atomic CAS).
+
+        The CAS is what makes the continuation happen once: every child that
+        finishes tries it, and only the one that finds the run still waiting
+        wins. ``started_at`` restarts so the stale-run reaper measures the
+        continuation, not the whole wait for the children.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .where(delegation_runs_table.c.status == "awaiting_children")
+            .values(status="queued", started_at=now, updated_at=datetime.now(UTC))
+        )
+        result = await self._execute_with_logging(
+            "requeue_delegation_run_for_continuation", stmt
+        )
+        return result.rowcount > 0  # type: ignore[union-attr]
+
+    async def get_active_for_subconversation(
+        self,
+        *,
+        conversation_id: str,
+        subconversation_id: str,
+    ) -> DelegationRunDict | None:
+        """The non-terminal run that owns a delegated history, if any.
+
+        At most one exists, by the active-subconversation unique index.
+        """
+        stmt = (
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.conversation_id == conversation_id)
+            .where(delegation_runs_table.c.subconversation_id == subconversation_id)
+            .where(
+                delegation_runs_table.c.status.notin_(
+                    list(TERMINAL_DELEGATION_STATUSES)
+                )
+            )
+            .limit(1)
+        )
+        row = await self._db.fetch_one(stmt)
+        return self._row_to_dict(row) if row is not None else None
+
+    async def list_undelivered_children(
+        self, parent: DelegationRunDict
+    ) -> list[DelegationRunDict]:
+        """Handed-off runs a run started from its history, not yet delivered.
+
+        These are the results the run still owes a turn to: running ones it
+        must wait for, and finished ones it has not yet been given. A run that
+        returned inline was never handed off, and its result already reached
+        the turn that started it. A resumed run shares its history with the
+        run before it, so only children created since this run count.
+        """
+        stmt = (
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.conversation_id == parent["conversation_id"])
+            .where(
+                delegation_runs_table.c.source_subconversation_id
+                == parent["subconversation_id"]
+            )
+            .where(delegation_runs_table.c.created_at >= parent["created_at"])
+            .where(delegation_runs_table.c.handed_off_at.is_not(None))
+            .where(delegation_runs_table.c.notified_at.is_(None))
+            .where(delegation_runs_table.c.notify_stage != "gave_up")
+            .order_by(delegation_runs_table.c.created_at)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_dict(row) for row in rows]
+
     async def mark_awaiting_remote(
         self,
         delegation_id: str,
@@ -707,11 +798,22 @@ class DelegationRunsRepository(BaseRepository):
         )
 
     async def find_stale(self, *, created_before: datetime) -> list[DelegationRunDict]:
-        """Find stranded queued/running runs for settlement by the task worker."""
+        """Find stranded queued/running runs for settlement by the task worker.
+
+        Measured from the current attempt's start where there is one, so a run
+        that waited on its own delegations and is now running its follow-up
+        turn is judged by that turn rather than by how long the children took.
+        """
         stmt = (
             select(delegation_runs_table)
             .where(delegation_runs_table.c.status.in_(["queued", "running"]))
-            .where(delegation_runs_table.c.created_at < created_before)
+            .where(
+                func.coalesce(
+                    delegation_runs_table.c.started_at,
+                    delegation_runs_table.c.created_at,
+                )
+                < created_before
+            )
         )
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_dict(row) for row in rows]

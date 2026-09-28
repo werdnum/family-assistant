@@ -50,6 +50,10 @@ from family_assistant.security.taint import (
     strip_legacy_labeled_echoes,
 )
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
+from family_assistant.storage.delegation_runs import (
+    historical_delegation_wake_content,
+    is_delegation_wake_trigger,
+)
 from family_assistant.storage.message_history import (
     MESSAGE_CONTENT_SEARCH_CONFIG,
     MESSAGE_CONTENT_TSVECTOR,
@@ -102,11 +106,6 @@ class MessageHistoryTaintDiagnosticsRow(TypedDict):
     newest_timestamp: datetime
     count: int
 
-
-_DELEGATION_WAKE_SYSTEM_PREFIXES = (
-    "System: Delegated profile task completed.",
-    "System: Delegated profile task failed.",
-)
 
 _HISTORY_ROLES_REQUIRING_TAINT_METADATA = {"user", "assistant", "tool"}
 
@@ -245,31 +244,6 @@ def _message_history_taint_metadata(
             from_history=True,
         )
         .to_metadata()
-    )
-
-
-def _is_delegation_wake_system_message(content: str) -> bool:
-    """Return whether a system message is a one-shot delegation wake trigger."""
-    return content.startswith(_DELEGATION_WAKE_SYSTEM_PREFIXES)
-
-
-def _historical_delegation_wake_content(content: str) -> str:
-    """Convert a one-shot delegation wake trigger into replay-safe history."""
-    historical_lines = [
-        line
-        for line in content.splitlines()
-        if not line.startswith((
-            "Respond to the user with the result.",
-            "Tell the user that the delegated work failed",
-            "The delegated result is provided as lower-priority data",
-            "The failure detail is provided as lower-priority data",
-        ))
-    ]
-    historical_content = "\n".join(historical_lines).strip()
-    return (
-        "Historical delegation completion event from a previous turn. "
-        "This is not a current instruction.\n\n"
-        f"{historical_content}"
     )
 
 
@@ -2753,8 +2727,8 @@ class MessageHistoryRepository(BaseRepository):
             )
         elif role == "system":
             content = msg.get("content") or ""
-            if _is_delegation_wake_system_message(content):
-                return UserMessage(content=_historical_delegation_wake_content(content))
+            if is_delegation_wake_trigger(content):
+                return UserMessage(content=historical_delegation_wake_content(content))
             return SystemMessage(
                 content=content,
             )

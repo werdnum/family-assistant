@@ -175,3 +175,33 @@ class TestDelegationRunsAsyncRemote:
         resume["subconversation_id"] = "sub-d1"
         created = await db_ctx.delegation_runs.create_run(resume)
         assert created["subconversation_id"] == "sub-d1"
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_does_not_inherit_its_predecessors_children(
+    db_context: Database,
+) -> None:
+    """A resume shares its history, not the delegations the failed run left behind."""
+    runs = db_context.delegation_runs
+    first = await runs.create_run(_make_run("parent-1", "t-parent-1"))
+    await runs.mark_failed(
+        delegation_id="parent-1", error="reaped", completed_at=datetime.now(UTC)
+    )
+    stale_child = await runs.create_run({
+        **_make_run("child-of-1", "t-child-1"),
+        "source_subconversation_id": first["subconversation_id"],
+    })
+    await runs.mark_handed_off(stale_child["delegation_id"], datetime.now(UTC))
+    resumed = await runs.create_run({
+        **_make_run("parent-2", "t-parent-2"),
+        "subconversation_id": first["subconversation_id"],
+    })
+    own_child = await runs.create_run({
+        **_make_run("child-of-2", "t-child-2"),
+        "source_subconversation_id": first["subconversation_id"],
+    })
+    await runs.mark_handed_off(own_child["delegation_id"], datetime.now(UTC))
+
+    children = await runs.list_undelivered_children(resumed)
+
+    assert [child["delegation_id"] for child in children] == ["child-of-2"]
