@@ -4712,6 +4712,7 @@ class TaskWorker:
                     # attempt already persisted.
                     turn_id=_turn_id_for_task(task["task_id"]),
                     db_context=db_context,
+                    task_id=task["task_id"],
                     task_priority=TaskPriority(task["priority"]),
                     task_attempt=TaskAttempt(
                         retry_count=task.get("retry_count", 0),

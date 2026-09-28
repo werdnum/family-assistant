@@ -562,6 +562,13 @@ class ToolExecutionContext:
     :meth:`inherited_task_priority` when enqueueing further work of the same
     kind.
     """
+    task_id: str | None = None
+    """The queue id of the task this context is running under.
+
+    Set by the task worker from the dequeued row. ``None`` outside a task. A
+    handler that counts its siblings' unfinished work uses it to leave itself
+    out, since its own row is still ``processing`` while it runs.
+    """
     task_attempt: TaskAttempt | None = None
     """Which attempt of the running task this is, and whether it is the last.
 

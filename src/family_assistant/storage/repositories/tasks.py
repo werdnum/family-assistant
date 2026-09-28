@@ -23,6 +23,7 @@ from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import (
+    ACTIVE_TASK_STATUSES,
     TaskPriority,
     notify_workers,
     tasks_table,
@@ -557,7 +558,7 @@ class TasksRepository(BaseRepository):
                 func.count().label("count"),
                 func.min(_due_at()).label("oldest_due"),
             )
-            .where(tasks_table.c.status.in_(("pending", "processing")))
+            .where(tasks_table.c.status.in_(ACTIVE_TASK_STATUSES))
             .group_by(tasks_table.c.priority, state)
         )
 

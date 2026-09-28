@@ -10,7 +10,7 @@ from sqlalchemy import and_, func, select
 
 from family_assistant.events.indexing_source import IndexingEventType
 from family_assistant.indexing.types import EmbedAndStoreBatchPayload, EmbeddingMetadata
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import ACTIVE_TASK_STATUSES, tasks_table
 from family_assistant.storage.vector import (
     DocumentEmbeddingRecord,
     add_embedding,
@@ -29,41 +29,42 @@ logger = logging.getLogger(__name__)
 async def check_document_completion(
     db_context: "Database",
     document_id: int,
+    exclude_task_id: str | None,
 ) -> int:
     """
-    Check if there are any pending indexing or embedding tasks for a document.
+    Count the indexing and embedding tasks for a document the queue has not finished.
+
+    A task is unfinished while it is waiting to be claimed or is running.
+    ``exclude_task_id`` names the calling task, whose own row is still running
+    while it checks; ``None`` when the caller is not a task.
 
     Returns:
-        Number of pending tasks for the document
+        Number of unfinished tasks for the document, other than the excluded one
     """
-    # Use SQLAlchemy's JSON operators for cross-database compatibility
-    # Cast to integer for proper comparison
     json_extract_expr = sa.cast(
         tasks_table.c.payload["document_id"].as_string(), sa.Integer
     )
 
-    # Query for pending tasks with matching document_id
+    conditions = [
+        tasks_table.c.task_type.in_([
+            "index_document",
+            "index_email",
+            "index_note",
+            "embed_and_store_batch",
+            "process_uploaded_document",
+        ]),
+        tasks_table.c.status.in_(ACTIVE_TASK_STATUSES),
+        json_extract_expr == document_id,
+    ]
+    if exclude_task_id is not None:
+        conditions.append(tasks_table.c.task_id != exclude_task_id)
+
     result = await db_context.fetch_one(
         select(func.count().label("count"))  # pylint: disable=not-callable
         .select_from(tasks_table)
-        .where(
-            and_(
-                tasks_table.c.task_type.in_([
-                    "index_document",
-                    "index_email",
-                    "index_note",
-                    "embed_and_store_batch",
-                    "process_uploaded_document",
-                ]),
-                tasks_table.c.status.in_(["pending", "locked"]),
-                # Now both expressions return integers for proper comparison
-                json_extract_expr == document_id,
-            )
-        )
+        .where(and_(*conditions))
     )
-    # fetch_one returns a Row object (dict-like), get the count value
-    pending_count = result["count"] if result else 0
-    return pending_count
+    return result["count"] if result else 0
 
 
 async def handle_embed_and_store_batch(
@@ -205,7 +206,9 @@ async def handle_embed_and_store_batch(
     # Check if all tasks for this document are complete
     if indexing_source := exec_context.indexing_source:
         try:
-            pending_count = await check_document_completion(db_context, document_id)
+            pending_count = await check_document_completion(
+                db_context, document_id, exclude_task_id=exec_context.task_id
+            )
         except Exception as e:
             logger.exception(
                 f"Failed to check document completion for document_id {document_id}: {e}"
