@@ -492,6 +492,50 @@ describe('ChatApp', () => {
     expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
   });
 
+  // History rows carry no per-part status, so a tool call whose result was
+  // never recorded is finished history, not a tool still running.
+  it('keeps a historical tool call without a result collapsed', async () => {
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_orphan_tool_call') {
+          return HttpResponse.json({ messages: [] });
+        }
+
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: 301,
+              role: 'user',
+              content: 'Check the weather',
+              timestamp: '2026-06-24T12:00:00Z',
+            },
+            {
+              internal_id: 302,
+              role: 'assistant',
+              content: 'Checking.',
+              timestamp: '2026-06-24T12:00:01Z',
+              tool_calls: [
+                {
+                  id: 'call_orphan',
+                  type: 'function',
+                  function: { name: 'get_weather', arguments: '{"city":"Sydney"}' },
+                },
+              ],
+            },
+          ],
+        });
+      })
+    );
+    mockLocalStorage.getItem.mockImplementation((key: string) =>
+      key === 'lastConversationId' ? 'web_conv_orphan_tool_call' : null
+    );
+
+    await renderChatApp({ waitForReady: true });
+
+    expect(await screen.findByText('Checking.')).toBeInTheDocument();
+    expect(await screen.findByTestId('tool-group-content')).toHaveAttribute('data-state', 'closed');
+  });
+
   it('shows image attachments from history inline in the assistant reply', async () => {
     const { server } = await import('../../test/setup.js');
     const { http, HttpResponse } = await import('msw');
