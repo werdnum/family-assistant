@@ -1,14 +1,11 @@
-"""Integration test for Google Deep Research Agent.
-
-This test requires a valid GEMINI_API_KEY environment variable.
-It makes live API calls to a preview model which may have unstable behavior.
-"""
+"""Live integration test for the Google Deep Research Agent."""
 
 import logging
 import os
 
 import pytest
 
+from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 
@@ -25,9 +22,7 @@ async def test_deep_research_integration_simple_query() -> None:
     This test verifies that the client can successfully initiate a deep research session,
     stream events (including thoughts and content), and complete successfully.
 
-    NOTE: This test uses a preview model (deep-research-pro-preview-12-2025) which may
-    have unstable behavior. If the API returns no content, the test will be skipped
-    with a warning rather than failing.
+    This test uses a preview model (deep-research-pro-preview-12-2025).
     """
     if not os.getenv("GEMINI_API_KEY"):
         pytest.skip("GEMINI_API_KEY not set")
@@ -42,7 +37,6 @@ async def test_deep_research_integration_simple_query() -> None:
     ]
 
     events = []
-    thought_count = 0
     content_accumulated = ""
 
     try:
@@ -52,17 +46,9 @@ async def test_deep_research_integration_simple_query() -> None:
                 f"Received event: type={event.type}, content={event.content[:100] if event.content else None}..."
             )
             if event.type == "content":
-                if event.content and "*Thinking:" in event.content:
-                    thought_count += 1
-                elif event.content:
+                if event.content and "*Thinking:" not in event.content:
                     content_accumulated += event.content
             elif event.type == "error":
-                error_text = str(event.error or "").lower()
-                if "invalid_request" in error_text or "error code: 400" in error_text:
-                    pytest.skip(
-                        "Deep Research preview API returned invalid_request (400). "
-                        "This preview model can be unstable or access-restricted."
-                    )
                 pytest.fail(f"Stream returned error: {event.error}")
     finally:
         await client.close()
@@ -71,7 +57,6 @@ async def test_deep_research_integration_simple_query() -> None:
     event_types = [e.type for e in events]
     logger.info(f"Received {len(events)} events: {event_types}")
     logger.info(f"Content accumulated length: {len(content_accumulated)}")
-    logger.info(f"Thought count: {thought_count}")
 
     # Verification
     # 1. We should have received events
@@ -82,30 +67,14 @@ async def test_deep_research_integration_simple_query() -> None:
         f"Final event type was {events[-1].type}, expected 'done'"
     )
 
-    # 3. Check for content - if none received, skip with warning (API may be unstable)
-    if not content_accumulated:
-        pytest.skip(
-            "Deep Research API returned no content. This may be due to API rate limits, "
-            "service issues, or changes in the preview model behavior. "
-            f"Events received: {event_types}"
-        )
-
-    # 4. We should have some content mentioning Paris
+    # 3. We should have some content mentioning Paris
     assert "Paris" in content_accumulated, (
         f"Expected 'Paris' in response but got: {content_accumulated[:500]}..."
     )
 
-    # 5. We should have captured an interaction ID in the metadata
+    # 4. We should have captured an interaction ID in the metadata
     done_event = events[-1]
     assert done_event.metadata is not None, "Done event missing metadata"
     provider_metadata = done_event.metadata.get("provider_metadata")
-    assert provider_metadata is not None, "Missing provider_metadata in done event"
-
-    # Check if interaction_id is present (either as attribute or dict key depending on serialization)
-    if hasattr(provider_metadata, "interaction_id"):
-        assert provider_metadata.interaction_id is not None
-    elif isinstance(provider_metadata, dict):
-        assert provider_metadata.get("interaction_id") is not None
-
-    # 6. Ideally we see some thoughts, but it depends on the model's behavior
-    # assert thought_count > 0  # Optional check
+    assert isinstance(provider_metadata, GeminiProviderMetadata)
+    assert provider_metadata.interaction_id

@@ -8,8 +8,8 @@ in subsequent tool calls.
 import io
 import json
 import re
-import tempfile
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import LLMMessage, ToolMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -44,6 +45,7 @@ from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
     get_last_message_text,
+    last_real_message,
 )
 
 TEST_CHAT_ID = "attachment_id_test"
@@ -109,9 +111,24 @@ async def create_processing_service_with_image_tools(
     )
 
 
+ATTACHMENT_ID_MARKER = re.compile(r"\[Attachment ID\(s\): ([a-f0-9-]+)\]")
+
+
+def last_tool_result(messages: list[LLMMessage], tool_call_id: str) -> str | None:
+    """Content of the newest real message if it is the result of *tool_call_id*."""
+    last_message = last_real_message(messages)
+    if (
+        isinstance(last_message, ToolMessage)
+        and last_message.tool_call_id == tool_call_id
+    ):
+        return last_message.content
+    return None
+
+
 @pytest.mark.asyncio
 async def test_attachment_id_injected_and_referenceable(
     db_engine: AsyncEngine,
+    tmp_path: Path,
 ) -> None:
     """
     Test that attachment IDs are injected into tool responses and can be referenced.
@@ -120,26 +137,26 @@ async def test_attachment_id_injected_and_referenceable(
     1. User asks for a camera snapshot
     2. LLM calls get_camera_snapshot
     3. Tool returns image attachment with UUID
-    4. LLM receives tool response with [Attachment ID: uuid] in content
+    4. LLM receives tool response with [Attachment ID(s): uuid] in content
     5. LLM calls highlight_image with that UUID
     6. highlight_image successfully uses the UUID to reference the image
     """
     camera_entity_id = "camera.test_camera"
     test_image_data = create_test_image()
-    captured_attachment_id = None
+    captured_attachment_id: str | None = None
 
-    # Mock Home Assistant client
     mock_ha_client = MagicMock()
     mock_ha_client.async_get_camera_snapshot = AsyncMock(return_value=test_image_data)
 
     tool_call_id_snapshot = f"call_snapshot_{uuid.uuid4()}"
     tool_call_id_highlight = f"call_highlight_{uuid.uuid4()}"
 
-    # --- LLM Rule 1: Initial camera snapshot request ---
     def camera_snapshot_matcher(kwargs: MatcherArgs) -> bool:
+        last_message = last_real_message(kwargs.get("messages", []))
         last_text = get_last_message_text(kwargs.get("messages", [])).lower()
         return (
-            "camera" in last_text
+            isinstance(last_message, UserMessage)
+            and "camera" in last_text
             and "snapshot" in last_text
             and kwargs.get("tools") is not None
         )
@@ -158,40 +175,18 @@ async def test_attachment_id_injected_and_referenceable(
         ],
     )
 
-    # --- LLM Rule 2: After snapshot, highlight something ---
     def highlight_matcher(kwargs: MatcherArgs) -> bool:
-        """Verify the LLM receives the tool result with attachment ID."""
+        """Match only once the snapshot result carrying an attachment ID arrives."""
         nonlocal captured_attachment_id
-        messages = kwargs.get("messages", [])
-        if len(messages) < 2:
+        content = last_tool_result(kwargs.get("messages", []), tool_call_id_snapshot)
+        if content is None or kwargs.get("tools") is None:
             return False
-
-        # Find the tool response message
-        tool_message = None
-        for msg in reversed(messages):
-            if msg.role == "tool" and msg.tool_call_id == tool_call_id_snapshot:
-                tool_message = msg
-                break
-
-        if not tool_message:
-            return False
-
-        # Check that the content contains the attachment ID marker (plural form)
-        content = tool_message.content or ""
-        if "[Attachment ID(s):" not in content:
-            return False
-
-        # Extract the attachment ID using regex (handles both singular and multiple IDs)
-        match = re.search(
-            r"\[Attachment ID\(s\): ([a-f0-9-]+(?:, [a-f0-9-]+)*)\]", content
-        )
+        match = ATTACHMENT_ID_MARKER.search(content)
         if not match:
             return False
-
         captured_attachment_id = match.group(1)
         return True
 
-    # This response will use the captured attachment ID
     def create_highlight_response(kwargs: MatcherArgs) -> MockLLMOutput:
         return MockLLMOutput(
             content="I'll highlight the eagle statue in the image.",
@@ -216,27 +211,16 @@ async def test_attachment_id_injected_and_referenceable(
             ],
         )
 
-    # --- LLM Rule 3: Final response after highlighting ---
     def final_response_matcher(kwargs: MatcherArgs) -> bool:
-        """Verify the highlight tool executed successfully."""
-        messages = kwargs.get("messages", [])
-        # Look for the highlight tool result
-        for msg in reversed(messages):
-            if msg.role == "tool" and msg.tool_call_id == tool_call_id_highlight:
-                content = msg.content or ""
-                # Check for success message (not error)
-                return (
-                    "Successfully highlighted" in content
-                    or "highlighted" in content.lower()
-                )
-        return False
+        """Match only once highlight_image has reported success."""
+        content = last_tool_result(kwargs.get("messages", []), tool_call_id_highlight)
+        return content is not None and "Successfully highlighted" in content
 
     final_llm_response = MockLLMOutput(
         content="I've highlighted the eagle statue in red on the camera image.",
         tool_calls=None,
     )
 
-    # Create the mock LLM with a callable to get the dynamic highlight response
     llm_client: LLMInterface = RuleBasedMockLLMClient(
         rules=[
             (camera_snapshot_matcher, camera_snapshot_response),
@@ -245,22 +229,16 @@ async def test_attachment_id_injected_and_referenceable(
         ]
     )
 
-    # --- Setup ProcessingService ---
     processing_service = await create_processing_service_with_image_tools(
         llm_client, "test_attachment_id_profile"
     )
-
-    # Inject the mock HA client
     processing_service.home_assistant_client = mock_ha_client
 
-    # Create and inject AttachmentRegistry for attachment storage
-    attachment_temp_dir = tempfile.mkdtemp()
     attachment_registry = AttachmentRegistry(
-        storage_path=attachment_temp_dir, db_engine=db_engine, config=None
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
     )
     processing_service.attachment_registry = attachment_registry
 
-    # --- Simulate User Interaction ---
     user_message = "Get a camera snapshot and highlight the eagle statue on it"
     db_context = Database(engine=db_engine)
     result = await processing_service.handle_chat_interaction(
@@ -272,14 +250,40 @@ async def test_attachment_id_injected_and_referenceable(
         trigger_interface_message_id="msg_attachment_id_test",
         user_name=TEST_USER_NAME,
     )
-    final_reply = result.text_reply
-    error = result.error_traceback
 
-    # Assertions
-    assert error is None, f"Error during interaction: {error}"
+    assert result.error_traceback is None, (
+        f"Error during interaction: {result.error_traceback}"
+    )
     assert captured_attachment_id is not None, (
         "Attachment ID was not captured from tool response"
     )
-    assert final_reply and "highlight" in final_reply.lower(), (
-        f"Expected 'highlight' in reply: '{final_reply}'"
+    assert result.text_reply == final_llm_response.content
+
+    snapshot_metadata = await attachment_registry.get_attachment(
+        db_context, captured_attachment_id, acting_user_id=None
     )
+    assert snapshot_metadata is not None
+    assert snapshot_metadata.mime_type == "image/png"
+
+    history = await db_context.message_history.get_recent(
+        interface_type="test", conversation_id=TEST_CHAT_ID
+    )
+    highlight_results = [
+        message.content
+        for message in history
+        if isinstance(message, ToolMessage)
+        and message.tool_call_id == tool_call_id_highlight
+    ]
+    assert len(highlight_results) == 1, history
+    highlight_content = highlight_results[0]
+    assert "Successfully highlighted" in highlight_content
+    highlighted_match = ATTACHMENT_ID_MARKER.search(highlight_content)
+    assert highlighted_match is not None, highlight_content
+    highlighted_attachment_id = highlighted_match.group(1)
+    assert highlighted_attachment_id != captured_attachment_id
+
+    highlighted_metadata = await attachment_registry.get_attachment(
+        db_context, highlighted_attachment_id, acting_user_id=None
+    )
+    assert highlighted_metadata is not None
+    assert highlighted_metadata.mime_type == "image/png"

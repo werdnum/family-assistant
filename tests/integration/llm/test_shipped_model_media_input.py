@@ -231,6 +231,10 @@ async def test_media_analyst_provider_can_actually_read_audio(
 
     assert isinstance(response, LLMOutput)
     assert response.content
+    transcription = response.content.casefold()
+    assert "hello" in transcription and "help" in transcription, (
+        f"model did not transcribe the greeting; it replied: {response.content!r}"
+    )
 
 
 @pytest.mark.no_db

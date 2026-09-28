@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import os
 import signal
+from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
@@ -72,10 +74,23 @@ class MCPProxyController:
 
     async def restart(self) -> None:
         await self.stop()
-        # Wait a bit to ensure port is freed
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating wait for port release
-        await asyncio.sleep(1)
         await self.start()
+
+
+def assert_noon_new_york_converted_to_utc(result: str) -> None:
+    try:
+        conversion = json.loads(result)
+    except json.JSONDecodeError:
+        pytest.fail(f"convert_time did not return a conversion: {result!r}")
+    source = conversion["source"]
+    target = conversion["target"]
+    assert source["timezone"] == "America/New_York", conversion
+    assert target["timezone"] == "UTC", conversion
+    source_time = datetime.fromisoformat(source["datetime"])
+    target_time = datetime.fromisoformat(target["datetime"])
+    assert source_time.time() == time(12, 0), conversion
+    assert target_time.utcoffset() == timedelta(0), conversion
+    assert target_time == source_time, conversion
 
 
 @pytest_asyncio.fixture
@@ -127,7 +142,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
 
     logger.info("Executing tool before restart...")
     result1 = await mcp_provider.execute_tool("convert_time", args, context)
-    assert "Error" not in result1
+    assert_noon_new_york_converted_to_utc(result1)
     version_before_restart = mcp_provider.descriptors_version
 
     # 3. Restart Server
@@ -139,7 +154,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
     result2 = await mcp_provider.execute_tool("convert_time", args, context)
 
     # 5. Verify success
-    assert "Error" not in result2
+    assert_noon_new_york_converted_to_utc(result2)
 
     # 6. Reconnecting must advance the descriptors version so downstream caches
     #    (policy/on-demand) rebuild instead of serving a stale tool list.

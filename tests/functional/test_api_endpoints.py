@@ -387,8 +387,10 @@ async def test_vector_search_api_with_limit(
         "/api/vector-search/", json={"query_text": "query", "limit": 3}
     )
     assert resp.status_code == 200
-    results = resp.json()
-    assert len(results) <= 3
+    returned_ids = [r["document"]["id"] for r in resp.json()]
+    assert len(returned_ids) == 3
+    assert len(set(returned_ids)) == 3
+    assert set(returned_ids) <= set(doc_ids)
 
 
 @pytest.mark.asyncio

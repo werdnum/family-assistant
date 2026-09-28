@@ -122,9 +122,6 @@ async def test_single_tool_call(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test calling a single tool."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool()]
@@ -178,9 +175,6 @@ async def test_multiple_tool_options(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test choosing between multiple available tools."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool(), calculate_tool()]
@@ -223,9 +217,6 @@ async def test_no_tool_needed(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test that the model doesn't call tools when not needed."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool(), calculate_tool()]
@@ -260,9 +251,6 @@ async def test_parallel_tool_calls(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test calling multiple tools in parallel (if supported by provider)."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool(), calculate_tool()]
@@ -305,9 +293,6 @@ async def test_tool_call_with_conversation_history(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test tool calling with conversation history."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool()]
@@ -360,9 +345,6 @@ async def test_tool_response_handling(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test handling of tool responses in conversation."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [get_weather_tool()]
@@ -432,9 +414,6 @@ async def test_tool_call_id_format(
     llm_client_with_tools: Callable[[str, str], Awaitable[LLMInterface]],
 ) -> None:
     """Test that tool call IDs are properly formatted."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [calculate_tool()]
@@ -485,9 +464,6 @@ async def test_gemini_multiturn_without_thought_signature(
     See: https://ai.google.dev/gemini-api/docs/thought-signatures (FAQ section)
     The docs specify using "skip_thought_signature_validator" as a workaround.
     """
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_with_tools(provider, model)
 
     tools = [calculate_tool()]

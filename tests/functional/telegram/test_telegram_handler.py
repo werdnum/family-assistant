@@ -20,6 +20,8 @@ from telegram.error import BadRequest
 from telegram.ext import Application, ContextTypes
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import ImageUrlContentPart
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from tests.mocks.mock_llm import (
     LLMOutput,
     MatcherArgs,
@@ -307,7 +309,7 @@ async def test_add_note_tool_usage(
     # Assert
     with soft_assertions():  # type: ignore[attr-defined]
         # 1. Confirmation Manager Call (Should NOT be called for add_note)
-        fix.mock_confirmation_manager.request_confirmation.assert_not_awaited()
+        fix.mock_confirmation_manager.assert_not_awaited()
 
         # 2. LLM Calls - expect two calls: first triggers tool, second processes result
         assert_that(
@@ -328,6 +330,16 @@ async def test_add_note_tool_usage(
         assert_that(bot_message_text).described_as(
             "Final bot message text"
         ).is_equal_to(expected_final_escaped_text)
+
+        # 4. The note itself was actually saved by the tool call.
+        saved_note = await fix.database.notes.get_by_title(
+            test_note_title, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        assert_that(saved_note).described_as("Saved note").is_not_none()
+        assert saved_note is not None
+        assert_that(saved_note.content).described_as("Saved note content").is_equal_to(
+            test_note_content
+        )
 
 
 @pytest.mark.asyncio
@@ -502,37 +514,35 @@ async def test_telegram_photo_persistence_and_llm_context(
             content = msg.content or []
             if isinstance(content, list):
                 for part in content:
-                    if isinstance(part, dict) and part.get("type") == "image_url":
+                    if isinstance(part, ImageUrlContentPart):
                         return True
         return False
+
+    def mentions_remember(args: MatcherArgs) -> bool:
+        return "remember" in get_last_message_text(args.get("messages", [])).lower()
 
     # Configure mock LLM rules
     mock_llm = typing.cast("RuleBasedMockLLMClient", fix.mock_llm)
     first_response = "I can see a test image you've sent! How can I help you with it?"
-    second_response = (
-        "Yes, I still have access to the image you sent earlier. It's a test image."
-    )
+    second_response = "Yes, I still recall what you sent earlier. It was a test photo."
 
     mock_llm.rules = [
+        # Second message - LLM should still have access to historical image.
+        # This narrower rule must come before the generic image rule below,
+        # since both would otherwise match turn 2's history (which still
+        # carries the turn-1 image content).
+        (
+            lambda args: has_image_content(args) and mentions_remember(args),
+            LLMOutput(content=second_response),
+        ),
         # First message with photo - LLM should recognize the image
         (
             has_image_content,
             LLMOutput(content=first_response),
         ),
-        # Second message - LLM should still have access to historical image
-        (
-            lambda args: (
-                has_image_content(args)
-                and "remember"
-                in get_last_message_text(args.get("messages", [])).lower()
-            ),
-            LLMOutput(content=second_response),
-        ),
     ]
 
-    mock_llm.default_response = LLMOutput(
-        content="I don't see any image in the current context."
-    )
+    mock_llm.default_response = LLMOutput(content="Sorry, I'm not sure what you mean.")
 
     # Mock Telegram bot file download to write test photo bytes to buffer
     test_photo_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xdd\x8d\xb4\x1c\x00\x00\x00\x00IEND\xaeB`\x82"
@@ -559,15 +569,19 @@ async def test_telegram_photo_persistence_and_llm_context(
 
         await fix.handler.message_handler(photo_update, photo_context)
 
-        # Verify bot responded to the photo message via telegram-test-api
-        # Use assert_bot_sent_message to wait for the specific expected content
-        bot_message_t1 = await assert_bot_sent_message(
-            fix.telegram_client, "image", timeout=5.0, partial_match=True
+        # Verify the bot's exact turn-1 reply, proving the mock LLM matched
+        # has_image_content rather than falling back to the default response.
+        expected_escaped_text_1 = telegramify_markdown.markdownify(first_response)
+        bot_responses_t1 = await wait_for_bot_response(
+            fix.telegram_client, timeout=5.0, min_messages=1
         )
-        first_response_text = bot_message_t1.get("message", {}).get("text", "")
+        assert_that(bot_responses_t1).described_as("Bot responses (Turn 1)").is_length(
+            1
+        )
+        first_response_text = bot_responses_t1[0].get("message", {}).get("text", "")
         assert_that(first_response_text).described_as(
-            "First response should recognize the image"
-        ).contains("image")
+            "First response text"
+        ).is_equal_to(expected_escaped_text_1)
 
         # === TURN 2: Ask about the previous image ===
         follow_up_update = create_mock_update(
@@ -580,15 +594,25 @@ async def test_telegram_photo_persistence_and_llm_context(
 
         await fix.handler.message_handler(follow_up_update, follow_up_context)
 
-        # Verify bot responded with knowledge of the historical image
-        # Use assert_bot_sent_message to wait for the specific expected content
-        bot_message_t2 = await assert_bot_sent_message(
-            fix.telegram_client, "image", timeout=5.0, partial_match=True
+        # Wait for exactly two bot messages total, then check both exact texts
+        # are present (order-independent: the test server does not guarantee
+        # FIFO ordering of getUpdates results). Matching the exact text of
+        # each turn -- rather than a partial "image" match, which both turns'
+        # replies contain -- means this cannot pass by re-finding the turn-1
+        # response as if it were turn 2's.
+        bot_responses_t2 = await wait_for_bot_response(
+            fix.telegram_client, timeout=5.0, min_messages=2
         )
-        second_response_text = bot_message_t2.get("message", {}).get("text", "")
-        assert_that(second_response_text).described_as(
-            "Second response should reference the historical image"
-        ).matches(r".*(access|image|earlier).*")
+        assert_that(bot_responses_t2).described_as("Bot responses (Turn 2)").is_length(
+            2
+        )
+        response_texts = {
+            u.get("message", {}).get("text", "") for u in bot_responses_t2
+        }
+        expected_escaped_text_2 = telegramify_markdown.markdownify(second_response)
+        assert_that(response_texts).described_as(
+            "Bot response texts after Turn 2"
+        ).is_equal_to({expected_escaped_text_1, expected_escaped_text_2})
 
 
 @pytest.mark.asyncio

@@ -249,32 +249,33 @@ async def test_history_tool_with_entities(
             significant_changes_only=False,
         )
 
-        # Verify we got a ToolResult
-        result_text = result.get_text()
-        assert isinstance(result_text, str)
-
-        # The result may or may not have history data depending on timing
-        # (entities may not have any state changes yet in a fresh HA instance)
-        if "no history data found" in result_text.lower():
-            # Valid case: no history yet for fresh entities
-            assert result.attachments is None or len(result.attachments) == 0
+        # The checked-in SQLite recording has no history, while the PostgreSQL
+        # recording contains both requested entities.
+        if db_engine.dialect.name == "sqlite":
+            assert (
+                result.get_text()
+                == "No history data found for the specified parameters."
+            )
+            assert not result.attachments
         else:
-            # We got history data - verify attachment
-            assert "state history" in result_text.lower()
+            assert "State history for 2 entities" in result.get_text()
             assert result.attachments is not None
             assert len(result.attachments) == 1
-
-            # Verify attachment is JSON
             attachment = result.attachments[0]
             assert attachment.mime_type == "application/json"
             assert attachment.content is not None
 
-            # Parse and verify JSON structure
             json_data = json.loads(attachment.content.decode("utf-8"))
-            assert "entities" in json_data
-            assert "start_time" in json_data
-            assert "end_time" in json_data
-            assert isinstance(json_data["entities"], list)
+            assert json_data["significant_changes_only"] is False
+            assert json_data["start_time"] < json_data["end_time"]
+            states_by_entity = {
+                entity["entity_id"]: [state["state"] for state in entity["states"]]
+                for entity in json_data["entities"]
+            }
+            assert states_by_entity == {
+                "input_boolean.test_switch": ["off"],
+                "input_text.test_sensor": ["test_value"],
+            }
 
     finally:
         await ha_lib_client.async_cache_session.close()

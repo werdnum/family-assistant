@@ -205,8 +205,7 @@ async def test_get_camera_snapshot_success(
         attachment = attachments[0]
         return (
             attachment.mime_type == "image/jpeg"
-            and attachment.content
-            and len(attachment.content) == len(test_jpeg_data)
+            and attachment.content == test_jpeg_data
         )
 
     final_llm_response = MockLLMOutput(
@@ -245,8 +244,8 @@ async def test_get_camera_snapshot_success(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    assert final_reply and "snapshot" in final_reply.lower(), (
-        f"Expected 'snapshot' not in reply: '{final_reply}'"
+    assert final_reply == final_llm_response.content, (
+        f"Tool result did not carry the snapshot attachment; reply was: '{final_reply}'"
     )
 
 
@@ -326,6 +325,8 @@ async def test_get_camera_snapshot_list_cameras(
             and "Front Door Camera" in content
             and "camera.backyard" in content
             and "camera.driveway" in content
+            and "sensor.temperature" not in content
+            and "Temperature Sensor" not in content
         )
 
     cameras_list_response = MockLLMOutput(
@@ -517,11 +518,6 @@ async def test_get_camera_snapshot_api_error(
             (camera_error_matcher, camera_error_response),
             (api_error_matcher, api_error_response),
         ],
-        default_response=MockLLMOutput(
-            content="I'm having trouble accessing that camera. "
-            "It seems the camera was not found. Please check if the camera is online.",
-            tool_calls=None,
-        ),
     )
 
     # --- Setup ProcessingService ---
@@ -548,10 +544,9 @@ async def test_get_camera_snapshot_api_error(
     error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
-    assert final_reply and (
-        "camera not found" in final_reply.lower()
-        or "trouble accessing" in final_reply.lower()
-    ), f"Expected error message not in reply: '{final_reply}'"
+    assert final_reply == api_error_response.content, (
+        f"Tool result did not surface the API error; reply was: '{final_reply}'"
+    )
 
 
 # Test the helper function directly

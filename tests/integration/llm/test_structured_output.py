@@ -285,9 +285,6 @@ async def test_basic_structured_output(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test basic structured output for each provider."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -316,9 +313,6 @@ async def test_structured_output_with_system_message(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test structured output with system messages."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -354,9 +348,6 @@ async def test_google_structured_output_with_strict_schema(
     Structured output has to go through the JSON Schema field instead.
     """
     provider, model = "google", "gemini-2.5-flash-lite"
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping google test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -386,9 +377,6 @@ async def test_nested_structured_output(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test structured output with nested models."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -424,9 +412,6 @@ async def test_structured_output_with_optional_fields(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test structured output with optional fields."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     # Request without occupation to test optional field
@@ -443,7 +428,7 @@ async def test_structured_output_with_optional_fields(
     assert isinstance(result, PersonInfo)
     assert "bob" in result.name.lower()
     assert result.age == 40
-    # occupation can be None or any string value
+    assert result.occupation is None
 
 
 @pytest.mark.no_db
@@ -456,9 +441,6 @@ async def test_structured_output_with_constrained_fields(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test structured output respects field constraints."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
 
     messages = [
@@ -487,9 +469,6 @@ async def test_basic_json_output(
     llm_client_factory: Callable[[str, str, str | None], Awaitable[LLMInterface]],
 ) -> None:
     """Test native JSON-object output for each direct provider."""
-    if os.getenv("CI") and not os.getenv(f"{provider.upper()}_API_KEY"):
-        pytest.skip(f"Skipping {provider} test in CI without API key")
-
     client = await llm_client_factory(provider, model, None)
     messages = [
         create_user_message(

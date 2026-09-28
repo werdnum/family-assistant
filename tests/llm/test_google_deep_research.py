@@ -238,51 +238,6 @@ async def test_deep_research_continuation(mock_genai_client: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_deep_research_thought_summaries(mock_genai_client: MagicMock) -> None:
-    """Test thought summaries are yielded as content."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
-
-    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
-        mock_start = MagicMock()
-        mock_start.event_type = "interaction.created"
-        mock_start.interaction.id = "inter_123"
-        yield mock_start
-
-        # Yield thought
-        mock_thought = MagicMock()
-        mock_thought.event_type = "step.delta"
-        mock_thought.delta.type = "thought_summary"
-        mock_thought.delta.content.text = "Thinking about query..."
-        yield mock_thought
-
-        mock_complete = MagicMock()
-        mock_complete.event_type = "interaction.completed"
-        yield mock_complete
-
-    mock_genai_client.aio.interactions.create = AsyncMock(
-        return_value=mock_stream_generator()
-    )
-
-    messages = [UserMessage(content="Test")]
-    events = []
-    async for event in client.generate_response_stream(messages):
-        events.append(event)
-
-    # Verify thought event
-    assert events[0].type == "content"
-    assert "*Thinking: Thinking about query...*" in events[0].content
-
-    # Verify done event metadata has thoughts
-    assert events[1].type == "done"
-    assert (
-        events[1].metadata["reasoning_info"]["thought_summaries"][0]["summary"]
-        == "Thinking about query..."
-    )
-
-
-@pytest.mark.asyncio
 async def test_deep_research_pre_content_error_raises(
     mock_genai_client: MagicMock,
 ) -> None:
@@ -347,6 +302,7 @@ async def test_deep_research_post_content_error_yields_error_and_done(
 
     assert events[2].type == "done"
     assert events[2].metadata["provider_metadata"].interaction_id == "inter_789"
+    assert events[2].metadata["last_event_id"] == "evt_1"
 
 
 @pytest.mark.asyncio
@@ -539,45 +495,6 @@ async def test_deep_research_sdk_status_code_mapping(
 
 
 @pytest.mark.asyncio
-async def test_deep_research_done_event_has_last_event_id(
-    mock_genai_client: MagicMock,
-) -> None:
-    """Done event should include last_event_id for stream reconnection."""
-    client = GoogleGenAIClient(
-        api_key="test", model="deep-research-pro-preview-12-2025"
-    )
-
-    async def mock_stream() -> AsyncGenerator[MagicMock]:
-        mock_start = MagicMock()
-        mock_start.event_type = "interaction.created"
-        mock_start.interaction.id = "inter_123"
-        mock_start.event_id = "evt_0"
-        yield mock_start
-
-        mock_content = MagicMock()
-        mock_content.event_type = "step.delta"
-        mock_content.delta.type = "text"
-        mock_content.delta.text = "Result"
-        mock_content.event_id = "evt_42"
-        yield mock_content
-
-        mock_complete = MagicMock()
-        mock_complete.event_type = "interaction.completed"
-        mock_complete.event_id = "evt_43"
-        yield mock_complete
-
-    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_stream())
-
-    messages = [UserMessage(content="Test")]
-    events = []
-    async for event in client.generate_response_stream(messages):
-        events.append(event)
-
-    done_event = [e for e in events if e.type == "done"][0]
-    assert done_event.metadata["last_event_id"] == "evt_43"
-
-
-@pytest.mark.asyncio
 async def test_deep_research_unknown_error_code_yields_generic(
     mock_genai_client: MagicMock,
 ) -> None:
@@ -659,53 +576,6 @@ async def test_deep_research_agent_config_includes_visualization(
         "thinking_summaries": "auto",
         "visualization": "auto",
     }
-
-
-@pytest.mark.asyncio
-async def test_deep_research_image_delta_is_skipped(
-    mock_genai_client: MagicMock,
-) -> None:
-    """Image deltas should be ignored cleanly without breaking the stream."""
-    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
-
-    async def mock_stream_generator() -> AsyncGenerator[MagicMock]:
-        mock_start = MagicMock()
-        mock_start.event_type = "interaction.created"
-        mock_start.interaction.id = "inter_img"
-        mock_start.event_id = "evt_0"
-        yield mock_start
-
-        mock_image = MagicMock()
-        mock_image.event_type = "step.delta"
-        mock_image.delta.type = "image"
-        mock_image.event_id = "evt_1"
-        yield mock_image
-
-        mock_text = MagicMock()
-        mock_text.event_type = "step.delta"
-        mock_text.delta.type = "text"
-        mock_text.delta.text = "After image"
-        mock_text.event_id = "evt_2"
-        yield mock_text
-
-        mock_complete = MagicMock()
-        mock_complete.event_type = "interaction.completed"
-        mock_complete.event_id = "evt_3"
-        yield mock_complete
-
-    mock_genai_client.aio.interactions.create = AsyncMock(
-        return_value=mock_stream_generator()
-    )
-
-    events = []
-    async for event in client.generate_response_stream([UserMessage(content="Test")]):
-        events.append(event)
-
-    content_events = [e for e in events if e.type == "content"]
-    assert len(content_events) == 1
-    assert content_events[0].content == "After image"
-    done_events = [e for e in events if e.type == "done"]
-    assert len(done_events) == 1
 
 
 # --- Pollable-delegation primitives (submit-then-poll, no streaming) ---

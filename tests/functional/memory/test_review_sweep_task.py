@@ -9,7 +9,7 @@ task behind.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from family_assistant.task_worker import TaskWorker
+    from family_assistant.utils.clock import MockClock
 
 CONTRIBUTOR = "default_assistant"
 CONVERSATION = "conv-1"
@@ -46,6 +47,7 @@ SETTINGS = MemoryReviewSettings(
 @pytest.mark.asyncio
 async def test_a_sweep_occurrence_enqueues_a_review(
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+    mock_clock: MockClock,
 ) -> None:
     worker, new_task_event, _ = task_worker_manager(
         processing_service=MagicMock(), chat_interface=MagicMock()
@@ -60,7 +62,7 @@ async def test_a_sweep_occurrence_enqueues_a_review(
     )
 
     db = Database(engine=engine)
-    now = datetime.now(UTC)
+    now = mock_clock.now()
     await db.memory_review.record_enablement(
         profile_ids_contributing={CONTRIBUTOR}, now=now - timedelta(days=1)
     )

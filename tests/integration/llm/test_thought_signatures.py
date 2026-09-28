@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
+from google.genai import types
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.google_types import GeminiProviderMetadata
@@ -42,10 +43,11 @@ async def google_client_thinking() -> GoogleGenAIClient:
 @pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_thought_signatures_with_tool_calls(
     google_client_thinking: GoogleGenAIClient,
+    llm_record_mode: str,
 ) -> None:
     """Test that thought signatures are extracted from responses with tool calls."""
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Google test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Recording Google responses requires GEMINI_API_KEY")
 
     # Arrange: Define a simple tool
     tools: list[ToolDefinition] = [
@@ -77,21 +79,12 @@ async def test_thought_signatures_with_tool_calls(
     assert response.tool_calls is not None, "Expected tool calls from thinking model"
     assert len(response.tool_calls) > 0
 
-    # Check that at least one tool call has provider_metadata with thought signature
-    tool_call_with_thoughts = next(
-        (tc for tc in response.tool_calls if tc.provider_metadata is not None), None
-    )
-
-    if tool_call_with_thoughts and tool_call_with_thoughts.provider_metadata:
-        # Verify structure - NEW format has single thought_signature, not array
-        # provider_metadata is now a GeminiProviderMetadata object
-        metadata = tool_call_with_thoughts.provider_metadata
-        assert isinstance(metadata, GeminiProviderMetadata)
-        assert metadata.thought_signature is not None
-
-        # Verify signature is bytes
-        assert isinstance(metadata.thought_signature.to_google_format(), bytes)
-        assert len(metadata.thought_signature.to_google_format()) > 0
+    tool_call = response.tool_calls[0]
+    assert tool_call.function.name == "get_weather"
+    metadata = tool_call.provider_metadata
+    assert isinstance(metadata, GeminiProviderMetadata)
+    assert metadata.thought_signature is not None
+    assert metadata.thought_signature.to_google_format()
 
 
 @pytest.mark.no_db
@@ -99,6 +92,7 @@ async def test_thought_signatures_with_tool_calls(
 @pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_thought_signatures_without_tool_calls(
     google_client_thinking: GoogleGenAIClient,
+    llm_record_mode: str,
 ) -> None:
     """Test that responses work correctly even without tool calls.
 
@@ -106,18 +100,17 @@ async def test_thought_signatures_without_tool_calls(
     implementation. Text-only responses don't preserve thought signatures at the
     message level.
     """
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Google test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Recording Google responses requires GEMINI_API_KEY")
 
     messages = [create_user_message("What is 2+2? Think step by step.")]
 
     # Act: Call the real Gemini API without tools
     response = await google_client_thinking.generate_response(messages=messages)
 
-    # Assert: Should get a response with content
-    assert response.content is not None
-    # Message-level provider_metadata is not used in new format
-    # Thought signatures are only on tool calls
+    assert isinstance(response.content, str)
+    assert "4" in response.content
+    assert not response.tool_calls
 
 
 @pytest.mark.no_db
@@ -127,9 +120,6 @@ async def test_thought_signature_reconstruction(
     google_client_thinking: GoogleGenAIClient,
 ) -> None:
     """Test that thought signatures are reconstructed when converting history to Gemini format."""
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Google test in CI without API key")
-
     # Arrange: Create a message with provider_metadata containing thought signature
     # This simulates a message retrieved from database that had thought signatures
     # NEW format: thought_signature is on each tool call, not at message level
@@ -163,64 +153,20 @@ async def test_thought_signature_reconstruction(
     # Act: Convert messages to Gemini format (this should reconstruct thought signatures)
     genai_contents = google_client_thinking._convert_messages_to_genai_format(messages)
 
-    # Assert: Verify signature was reconstructed in the assistant message
-    # genai_contents now contains types.Content objects (Pydantic models)
-    # Filter for Content objects with role="model"
-    model_messages = []
-    for msg in genai_contents:
-        # Check if it's a dict with role="model"
-        if (
-            isinstance(msg, dict)
-            and msg.get("role") == "model"
-            or hasattr(msg, "role")
-            and getattr(msg, "role", None) == "model"
-        ):
-            model_messages.append(msg)
-
-    assert len(model_messages) > 0, "No model messages found in genai_contents"
-
-    # Find the message with parts (should be the assistant message with tool calls)
-    model_msg_with_tool = None
-    for msg in model_messages:
-        if isinstance(msg, dict):
-            if msg.get("parts"):
-                model_msg_with_tool = msg
-                break
-        elif hasattr(msg, "parts"):
-            parts = getattr(msg, "parts", None)
-            if parts:
-                model_msg_with_tool = msg
-                break
-
-    assert model_msg_with_tool is not None, "No message with parts found"
-
-    # Check that at least one part has the reconstructed thought signature
-    if isinstance(model_msg_with_tool, dict):
-        parts = model_msg_with_tool["parts"]
-        parts_with_thought_signature = [
-            part
-            for part in parts
-            if isinstance(part, dict) and "thought_signature" in part
-        ]
-        if parts_with_thought_signature:
-            assert (
-                parts_with_thought_signature[0]["thought_signature"]
-                == b"test_signature_data"
-            )
-    else:
-        # Working with types.Content object
-        parts = getattr(model_msg_with_tool, "parts", [])
-        parts_with_thought_signature = []
-        for part in parts:
-            if hasattr(part, "thought_signature"):
-                sig = getattr(part, "thought_signature", None)
-                if sig:
-                    parts_with_thought_signature.append(part)
-
-        if parts_with_thought_signature:
-            # Verify the thought_signature was reconstructed as bytes
-            sig = parts_with_thought_signature[0].thought_signature
-            assert sig == b"test_signature_data"
+    model_messages = [
+        msg
+        for msg in genai_contents
+        if isinstance(msg, types.Content) and msg.role == "model"
+    ]
+    assert len(model_messages) == 1
+    parts = model_messages[0].parts
+    assert parts is not None
+    function_call_parts = [part for part in parts if part.function_call is not None]
+    assert len(function_call_parts) == 1
+    function_call_part = function_call_parts[0]
+    assert function_call_part.function_call is not None
+    assert function_call_part.function_call.name == "get_weather"
+    assert function_call_part.thought_signature == b"test_signature_data"
 
 
 @pytest.mark.no_db
@@ -228,6 +174,7 @@ async def test_thought_signature_reconstruction(
 @pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_thought_signature_multiturn_with_api(
     google_client_thinking: GoogleGenAIClient,
+    llm_record_mode: str,
 ) -> None:
     """Test that thought signatures work in multi-turn conversations sent to the API.
 
@@ -235,8 +182,8 @@ async def test_thought_signature_multiturn_with_api(
     thought signatures. It catches bugs like using wrong field names that would
     cause API validation errors.
     """
-    if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Skipping Google test in CI without API key")
+    if llm_record_mode != "replay" and not os.getenv("GEMINI_API_KEY"):
+        pytest.skip("Recording Google responses requires GEMINI_API_KEY")
 
     # Define tools for the conversation
     tools: list[ToolDefinition] = [

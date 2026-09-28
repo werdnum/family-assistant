@@ -22,7 +22,12 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 # Import necessary components from the application
 from family_assistant.interfaces import ChatInterface  # Import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem  # Added imports
-from family_assistant.llm.messages import ContentPartDict, UserMessage, text_content
+from family_assistant.llm.messages import (
+    ContentPartDict,
+    ToolMessage,
+    UserMessage,
+    text_content,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 
@@ -44,6 +49,7 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
+    ToolExecutionContext,
 )
 from family_assistant.utils.clock import MockClock
 from tests.helpers import wait_for_tasks_to_complete
@@ -288,24 +294,7 @@ async def test_schedule_and_execute_callback(
     # --- Part 3: Verify Callback Execution ---
     logger.info("--- Part 3: Verifying Callback Execution ---")
 
-    # Assertion: Check if the mock_chat_interface_for_worker's send_message was called
-    logger.info("Checking if mock_chat_interface_for_worker.send_message was called...")
-
-    # Wait for send_message to be called with a timeout
-    for _i in range(10):  # 10 * 0.1 = 1 second timeout
-        if mock_chat_interface_for_worker.send_message.called:
-            break
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-        await asyncio.sleep(0.1)
-
-    # Wait for send_message to be called
-    for _ in range(10):  # 10 * 0.1 = 1 second timeout
-        if mock_chat_interface_for_worker.send_message.call_count >= 1:
-            break
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-        await asyncio.sleep(0.1)
-
-    # Verify it was called exactly once
+    # The handler awaits send_message before the worker marks the task done.
     assert mock_chat_interface_for_worker.send_message.call_count == 1, (
         f"Expected send_message to be called exactly once, but was called {mock_chat_interface_for_worker.send_message.call_count} times"
     )
@@ -511,8 +500,6 @@ async def test_modify_pending_callback(
         )
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-    await asyncio.sleep(0.01)  # Allow worker to start
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for modification test ---")
@@ -644,14 +631,6 @@ async def test_modify_pending_callback(
     # --- Part 4: Verify MODIFIED Callback Execution ---
     logger.info("--- Part 4: Verifying MODIFIED Callback Execution ---")
 
-    # Wait for send_message to be called with a timeout
-    for _i in range(10):  # 10 * 0.1 = 1 second timeout
-        if mock_chat_interface_for_worker.send_message.called:
-            break
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-        await asyncio.sleep(0.1)
-
-    # Verify it was called exactly once
     assert mock_chat_interface_for_worker.send_message.call_count == 1, (
         f"Expected send_message to be called exactly once, but was called {mock_chat_interface_for_worker.send_message.call_count} times"
     )
@@ -829,6 +808,11 @@ async def test_cancel_pending_callback(
         "mock_message_id_cancelled_callback"
     )
 
+    async def sentinel_handler(
+        exec_context: ToolExecutionContext, payload: object
+    ) -> None:
+        logger.info("Sentinel task ran after the cancelled callback's due time")
+
     # Use task_worker_manager fixture to create and start task worker
     task_worker_instance, test_new_task_event, test_shutdown_event = (
         task_worker_manager(
@@ -837,6 +821,9 @@ async def test_cancel_pending_callback(
         )
     )
     task_worker_instance.register_task_handler("llm_callback", handle_llm_callback)
+    task_worker_instance.register_task_handler(
+        "reminder_test_sentinel", sentinel_handler
+    )
 
     # --- Part 1: Schedule the initial callback ---
     logger.info("--- Part 1: Scheduling initial callback for cancellation test ---")
@@ -931,33 +918,47 @@ async def test_cancel_pending_callback(
         f"Callback task {scheduled_task_id_for_cancel} verified as cancelled in DB."
     )
 
-    # --- Part 3: Wait a bit to ensure worker does NOT process it ---
-    logger.info("--- Part 3: Waiting to ensure cancelled task is NOT processed ---")
-    # Advance clock past the original schedule time
+    # --- Part 3: Let the worker run past the cancelled callback's due time ---
+    logger.info("--- Part 3: Running the worker past the original schedule time ---")
     duration_to_advance_past_schedule = (
         initial_callback_dt - mock_clock.now()
     ) + timedelta(seconds=2)
     if duration_to_advance_past_schedule.total_seconds() > 0:
         mock_clock.advance(duration_to_advance_past_schedule)
-    test_new_task_event.set()  # Notify worker
-    # Give worker a small window to potentially pick up the task (it shouldn't)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-    await asyncio.sleep(0.5)
+    # The worker runs one task at a time and claims higher priority, then
+    # earlier due time, first. A BACKGROUND sentinel due when the callback was
+    # therefore completes only after the INTERACTIVE callback would have run.
+    sentinel_task_id = f"reminder_test_sentinel_{test_run_id}"
+    await Database(engine=db_engine).tasks.enqueue(
+        task_id=sentinel_task_id,
+        task_type="reminder_test_sentinel",
+        scheduled_at=initial_callback_dt,
+        priority=TaskPriority.BACKGROUND,
+    )
+    test_new_task_event.set()
+    await wait_for_tasks_to_complete(
+        engine=db_engine,
+        task_ids={sentinel_task_id},
+        timeout_seconds=30.0,
+        poll_interval_seconds=0.1,
+    )
 
     # --- Part 4: Verify Callback Was NOT Executed ---
     logger.info("--- Part 4: Verifying Cancelled Callback Was NOT Executed ---")
     mock_chat_interface_for_worker.send_message.assert_not_called()
-    logger.info(
-        "Verified mock_bot.send_message was NOT called, as expected for a cancelled task."
+    callback_triggers = [
+        call
+        for call in llm_client.get_calls()
+        if "System Callback Trigger:"
+        in get_last_message_text(call["kwargs"].get("messages", []))
+    ]
+    assert not callback_triggers, (
+        "The cancelled callback reached the LLM as a System Callback Trigger"
     )
-
-    # Check LLM client calls to ensure the "cancelled_callback_trigger_matcher" was not hit
-    # Each user interaction (schedule, then cancel) involves:
-    # 1. LLM call for initial processing + tool request
-    # 2. LLM call after tool execution for final response
-    # So, 2 interactions * 2 LLM calls/interaction = 4 calls total.
-    assert len(llm_client.get_calls()) == 4, (
-        f"LLM was called {len(llm_client.get_calls())} times, expected 4 (schedule, then cancel)"
+    final_task_data = await Database(engine=db_engine).fetch_one(stmt)
+    assert final_task_data is not None
+    assert final_task_data["status"] == "failed", (
+        "The worker changed the cancelled callback's status"
     )
 
     # --- Cleanup ---
@@ -1129,8 +1130,6 @@ async def test_schedule_reminder_with_follow_up(
         chat_interface=mock_chat_interface,
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-    await asyncio.sleep(0.01)
 
     # --- Part 1: Schedule the reminder ---
     logger.info("--- Part 1: Scheduling reminder with follow-up ---")
@@ -1185,13 +1184,6 @@ async def test_schedule_reminder_with_follow_up(
         poll_interval_seconds=0.1,
     )
 
-    # Wait for and verify initial reminder was sent
-    for _ in range(10):  # 10 * 0.1 = 1 second timeout
-        if mock_chat_interface.send_message.call_count >= 1:
-            break
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-        await asyncio.sleep(0.1)
-
     assert mock_chat_interface.send_message.call_count == 1
     call_kwargs = mock_chat_interface.send_message.call_args_list[0][1]
     assert reminder_message in call_kwargs["text"]
@@ -1227,13 +1219,6 @@ async def test_schedule_reminder_with_follow_up(
         timeout_seconds=30.0,
         poll_interval_seconds=0.1,
     )
-
-    # Wait for and verify follow-up reminder was sent
-    for _ in range(10):  # 10 * 0.1 = 1 second timeout
-        if mock_chat_interface.send_message.call_count >= 2:
-            break
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-        await asyncio.sleep(0.1)
 
     assert mock_chat_interface.send_message.call_count == 2
     call_kwargs = mock_chat_interface.send_message.call_args_list[1][1]
@@ -1280,11 +1265,7 @@ async def test_schedule_reminder_with_follow_up(
         poll_interval_seconds=0.1,
     )
 
-    # Wait a bit to ensure no additional message is sent
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing reminder scheduling timing
-    await asyncio.sleep(0.5)
-
-    # Verify final follow-up was NOT sent since user responded
+    # That task's handler is the only path that could send a third message.
     assert mock_chat_interface.send_message.call_count == 2
     logger.info("Final follow-up correctly cancelled since user responded")
 
@@ -1481,19 +1462,24 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
         trigger_interface_message_id=str(user_message_id),
         user_name=TEST_USER_NAME,
     )
-    resp = result.text_reply
     error = result.error_traceback
 
     assert error is None, f"Error listing callbacks: {error}"
-    logger.info(f"List response: {resp}")
 
-    # Verify response contains correct callbacks
-    assert resp is not None, "Response should not be None"
-    assert "First test callback" in resp
-    assert "Second test callback" in resp
-    assert "Other conversation callback" not in resp
-    # The mock LLM returns a simplified response, not the raw tool output
-    # So we don't check for task IDs in the final response
+    tool_outputs = [
+        message.content
+        for call in llm_client.get_calls()
+        for message in call["kwargs"].get("messages", [])
+        if isinstance(message, ToolMessage) and message.name == "list_pending_callbacks"
+    ]
+    assert tool_outputs, "The model never received a list_pending_callbacks result"
+    listed = tool_outputs[-1]
+    assert "First test callback" in listed
+    assert "Second test callback" in listed
+    assert f"test_callback_1_{test_run_id}" in listed
+    assert f"test_callback_2_{test_run_id}" in listed
+    assert "Other conversation callback" not in listed
+    assert f"other_callback_{test_run_id}" not in listed
 
     logger.info(
         "Verified list_pending_callbacks returns only conversation-specific callbacks"

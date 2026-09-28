@@ -65,7 +65,7 @@ class _NoToolsProvider:
         pass
 
 
-def _service() -> InteractionsAgentProcessingService:
+def _service() -> tuple[InteractionsAgentProcessingService, GoogleGenAIClient]:
     """The real profile, so the classifier under test is the shipped one."""
     client = GoogleGenAIClient(
         # Recording needs a real key; replay does not, and the cassette holds
@@ -83,7 +83,7 @@ def _service() -> InteractionsAgentProcessingService:
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="coder",
     )
-    return InteractionsAgentProcessingService(
+    service = InteractionsAgentProcessingService(
         llm_client=client,
         tools_provider=_NoToolsProvider(),
         service_config=config,
@@ -91,10 +91,11 @@ def _service() -> InteractionsAgentProcessingService:
         server_url="http://testserver",
         app_config=AppConfig(),
     )
+    return service, client
 
 
-async def _start_run(service: InteractionsAgentProcessingService) -> str:
-    interaction = await service._google_client().start_agent_interaction([
+async def _start_run(client: GoogleGenAIClient) -> str:
+    interaction = await client.start_agent_interaction([
         SystemMessage(content=_SYSTEM),
         UserMessage(content=_TASK),
     ])
@@ -126,12 +127,12 @@ async def test_a_live_run_reads_as_pending_and_records_a_bounded_reading() -> No
     "recover" an empty result from. The bounded reading matters because it is
     what gets persisted on every poll of every run.
     """
-    service = _service()
+    service, client = _service()
     try:
-        interaction_id = await _start_run(service)
+        interaction_id = await _start_run(client)
         observation = await service.observe_async(interaction_id)
     finally:
-        await service._google_client().close()
+        await client.close()
 
     assert observation.disposition is RemoteDisposition.PENDING
     assert service.result_for_observation(observation) is PENDING
@@ -177,9 +178,9 @@ async def test_cancellation_is_only_confirmed_by_the_providers_own_reading(
     folding it in with the other terminal errors -- which is what let a timed
     out run tell the user it had been cancelled when nobody had confirmed it.
     """
-    service = _service()
+    service, client = _service()
     try:
-        interaction_id = await _start_run(service)
+        interaction_id = await _start_run(client)
         before = await service.observe_async(interaction_id)
         assert before.disposition is RemoteDisposition.PENDING
 
@@ -192,7 +193,7 @@ async def test_cancellation_is_only_confirmed_by_the_providers_own_reading(
             description="the provider to report the cancelled run terminal",
         )
     finally:
-        await service._google_client().close()
+        await client.close()
 
     # wait_for_condition returns only a truthy result, so this is the reading
     # that satisfied it; the narrowing is for the type checker.
@@ -231,9 +232,9 @@ async def test_a_real_completion_is_classified_as_carrying_a_result(
     convert every successful agent run into a failure, so this is the case that
     bounds the rule from the other side.
     """
-    service = _service()
+    service, client = _service()
     try:
-        interaction_id = await _start_run(service)
+        interaction_id = await _start_run(client)
         settled = await wait_for_condition(
             lambda: _terminal_or_none(service, interaction_id),
             timeout=1800.0,
@@ -241,7 +242,7 @@ async def test_a_real_completion_is_classified_as_carrying_a_result(
             description="the agent run to reach a terminal state",
         )
     finally:
-        await service._google_client().close()
+        await client.close()
 
     assert settled is not None
     assert settled.disposition is RemoteDisposition.COMPLETED

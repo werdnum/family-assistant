@@ -1,10 +1,12 @@
 """Functional tests for image generation tools with real API usage."""
 
+import io
 import os
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from PIL import Image
 from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig
@@ -16,7 +18,9 @@ from family_assistant.tools.image_generation import (
     generate_image_tool,
     transform_image_tool,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import ToolResult
+
+TRANSIENT_GEMINI_ERROR_STATUSES = ("RESOURCE_EXHAUSTED", "UNAVAILABLE")
 
 
 @dataclass
@@ -37,6 +41,25 @@ class MockExecutionContext:
         self.processing_service = MockProcessingService(app_config or AppConfig())
         if backend:
             self.image_backend = backend
+
+
+class StyleRecordingImageBackend(MockImageBackend):
+    """Mock backend that records each generation request it receives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.generate_requests: list[tuple[str, str]] = []
+
+    async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
+        self.generate_requests.append((prompt, style))
+        return await super().generate_image(prompt, style)
+
+
+class QuotaExhaustedImageBackend(MockImageBackend):
+    """Backend whose generation fails the way an exhausted provider quota does."""
+
+    async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
+        raise RuntimeError(f"429 RESOURCE_EXHAUSTED. quota exceeded for {prompt!r}")
 
 
 @pytest.mark.skipif(
@@ -66,17 +89,20 @@ async def test_generate_image_with_real_api() -> None:
         style="auto",
     )
 
-    if result.get_text().startswith("Error generating image:"):
-        pytest.skip("Gemini image generation unavailable in test environment")
+    text = result.get_text()
+    if text.startswith("Error generating image:") and any(
+        status in text for status in TRANSIENT_GEMINI_ERROR_STATUSES
+    ):
+        pytest.skip(f"Gemini image generation temporarily unavailable: {text}")
 
-    # Verify result
-    assert isinstance(result, ToolResult)
-    assert "Generated image for:" in result.get_text()
-    assert result.attachments and len(result.attachments) > 0
-    assert isinstance(result.attachments[0], ToolAttachment)
-    assert result.attachments[0].mime_type == "image/png"
-    assert result.attachments[0].content is not None
-    assert len(result.attachments[0].content) > 1000  # Should be a real image
+    assert text == "Generated image for: a simple red circle on a white background"
+    assert result.attachments
+    attachment = result.attachments[0]
+    assert attachment.mime_type == "image/png"
+    assert attachment.content is not None
+    with Image.open(io.BytesIO(attachment.content)) as img:
+        assert img.width > 0
+        assert img.height > 0
 
 
 @pytest.mark.asyncio
@@ -158,101 +184,37 @@ async def test_transform_image_mock_mode() -> None:
     mock_attachment.get_content_async.assert_called_once()
 
 
+@pytest.mark.parametrize("style", ["auto", "photorealistic", "artistic"])
 @pytest.mark.asyncio
-async def test_various_styles() -> None:
-    """Test different image generation styles."""
-    mock_backend = MockImageBackend()
-    mock_context = MockExecutionContext(backend=mock_backend)
+async def test_generate_image_forwards_style_to_backend(style: str) -> None:
+    """The requested style reaches the backend alongside the prompt."""
+    backend = StyleRecordingImageBackend()
+    mock_context = MockExecutionContext(backend=backend)
 
-    styles = ["auto", "photorealistic", "artistic"]
-    prompts = [
-        "a simple geometric shape",
-        "a landscape with mountains",
-        "abstract art with flowing lines",
-    ]
+    result = await generate_image_tool(
+        mock_context,  # type: ignore[arg-type]  # Image tool only needs the injected backend; this fake omits unrelated context fields.
+        prompt="a landscape with mountains",
+        style=style,
+    )
 
-    for style in styles:
-        for prompt in prompts:
-            result = await generate_image_tool(mock_context, prompt=prompt, style=style)  # type: ignore[arg-type]
-
-            # Verify each result
-            assert isinstance(result, ToolResult)
-            assert result.attachments and len(result.attachments) > 0
-            assert result.attachments[0].content is not None
-            assert len(result.attachments[0].content) > 1000
-            assert prompt in result.get_text()
+    assert backend.generate_requests == [("a landscape with mountains", style)]
+    assert result.get_text() == "Generated image for: a landscape with mountains"
+    assert result.attachments
 
 
 @pytest.mark.asyncio
-async def test_error_handling() -> None:
-    """Test error handling scenarios."""
-    mock_backend = MockImageBackend()
-    mock_context = MockExecutionContext(backend=mock_backend)
+async def test_generate_image_reports_backend_failure_without_attachment() -> None:
+    """A backend failure becomes an error result naming the cause, with no image."""
+    mock_context = MockExecutionContext(backend=QuotaExhaustedImageBackend())
 
-    # Test with very long prompt
-    long_prompt = "a" * 1000  # Very long prompt
-    result = await generate_image_tool(mock_context, prompt=long_prompt, style="auto")  # type: ignore[arg-type]
+    result = await generate_image_tool(
+        mock_context,  # type: ignore[arg-type]  # Image tool only needs the injected backend; this fake omits unrelated context fields.
+        prompt="a red circle",
+        style="auto",
+    )
 
-    # Should still work
-    assert isinstance(result, ToolResult)
-    assert result.attachments and len(result.attachments) > 0
-
-    # Test with empty prompt (edge case)
-    result = await generate_image_tool(mock_context, prompt="", style="auto")  # type: ignore[arg-type]
-
-    # Should still work
-    assert isinstance(result, ToolResult)
-    assert result.attachments and len(result.attachments) > 0
-
-
-if __name__ == "__main__":
-    """Run functional tests manually."""
-    import asyncio
-
-    async def run_manual_tests() -> None:
-        """Run tests manually for development."""
-        print("Running functional image generation tests...")
-
-        # Test mock mode (always works)
-        print("\n1. Testing mock mode...")
-        await test_generate_image_mock_mode()
-        print("✓ Mock mode test passed")
-
-        # Test no API key scenario
-        print("\n2. Testing without API key...")
-        await test_generate_image_no_api_key()
-        print("✓ No API key test passed")
-
-        # Test image transformation
-        print("\n3. Testing image transformation...")
-        await test_transform_image_mock_mode()
-        print("✓ Image transformation test passed")
-
-        # Test various styles
-        print("\n4. Testing various styles...")
-        await test_various_styles()
-        print("✓ Various styles test passed")
-
-        # Test error handling
-        print("\n5. Testing error handling...")
-        await test_error_handling()
-        print("✓ Error handling test passed")
-
-        # Test with real API if available
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if api_key:
-            print(f"\n6. Testing with real API (key found: {api_key[:10]}...)...")
-            try:
-                await test_generate_image_with_real_api()
-                print("✓ Real API test passed")
-            except Exception as e:
-                print(f"✗ Real API test failed: {e}")
-        else:
-            print(
-                "\n6. Skipping real API test (no GEMINI_API_KEY or GOOGLE_API_KEY found)"
-            )
-
-        print("\nAll functional tests completed!")
-
-    # Run the tests
-    asyncio.run(run_manual_tests())
+    assert result.get_text() == (
+        "Error generating image: 429 RESOURCE_EXHAUSTED. "
+        "quota exceeded for 'a red circle'"
+    )
+    assert not result.attachments
