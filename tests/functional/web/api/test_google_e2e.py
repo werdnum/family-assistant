@@ -18,8 +18,7 @@ The journeys covered mirror the design's Testing Strategy
 4. Attachment ownership across the tool + HTTP stack (content + metadata routes).
 5. ``needs_reauth`` journey: ``invalid_grant`` on refresh flips status, notifies,
    and reconnecting restores service.
-6. Taint: a Gmail read taints the turn ``unknown_external`` (descriptor-level,
-   reusing the existing cheap pattern).
+6. Gmail reads retain their unknown-external taint registration.
 
 Only a new test file is added; no source or existing test file is modified. The
 fake Google server and per-user OAuth helpers deliberately re-use the shapes from
@@ -784,11 +783,6 @@ async def test_needs_reauth_then_reconnect(
     assert [m["subject"] for m in ok_data["messages"]] == ["Bob mailbox only"]
 
 
-# --------------------------------------------------------------------------- #
-# 6. Taint: a Gmail read taints the turn unknown_external (descriptor-level).
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.asyncio
 async def test_gmail_read_taints_turn_unknown_external(
     http: AsyncClient, e2e: _E2EApp, db_engine: AsyncEngine
@@ -808,7 +802,6 @@ async def test_gmail_read_taints_turn_unknown_external(
     db = Database(engine=db_engine)
     alice_ctx = _exec_context(db, user_id="alice", resolver=resolver, backend=backend)
     result = await gmail_search_tool(alice_ctx, query="anything")
-    # The read succeeded (real chain), and the tool's own result taints the turn.
     assert isinstance(result.get_data(), dict)
 
     registration = next(r for r in LOCAL_TOOL_REGISTRATIONS if r.name == "gmail_search")

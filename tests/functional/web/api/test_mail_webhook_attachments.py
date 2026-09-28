@@ -21,19 +21,28 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
+import anyio
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import insert, select
 from sqlalchemy import text as sa_text
 
 from family_assistant.config_models import AppConfig, EmailIntakeConfig
+from family_assistant.embeddings import HashingWordEmbeddingGenerator
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
+from family_assistant.indexing.processors.dispatch_processors import (
+    EmbeddingDispatchProcessor,
+)
+from family_assistant.indexing.processors.file_processors import PDFTextExtractor
+from family_assistant.indexing.processors.text_processors import TextChunker
+from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, received_emails_table
 from family_assistant.storage.tasks import TaskPriority, tasks_table
+from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 from family_assistant.tools.documents import (
     get_full_document_content_tool,
     reindex_email_tool,
@@ -543,7 +552,7 @@ async def test_email_indexer_dedups_on_retry(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_email_indexer_applies_chunk_index_offset_per_attachment(
+async def test_email_indexer_stores_chunks_from_both_attachments(
     db_engine: AsyncEngine,
     tmp_path: Path,
 ) -> None:
@@ -552,18 +561,27 @@ async def test_email_indexer_applies_chunk_index_offset_per_attachment(
     different attachments don't collide on the
     (document_id, chunk_index, embedding_type) unique constraint.
     """
+    pdf_bytes = await anyio.Path("tests/data/test_doc.pdf").read_bytes()
     first_pdf = tmp_path / "first.pdf"
-    first_pdf.write_bytes(b"first")
+    first_pdf.write_bytes(pdf_bytes)
     second_pdf = tmp_path / "second.pdf"
-    second_pdf.write_bytes(b"second")
+    second_pdf.write_bytes(pdf_bytes)
 
     registry = AttachmentRegistry(
         storage_path=str(tmp_path / "registry"),
         db_engine=db_engine,
         config=None,
     )
-    pipeline = MagicMock(spec=IndexingPipeline)
-    pipeline.run = AsyncMock(return_value=None)
+    pipeline = IndexingPipeline(
+        processors=[
+            PDFTextExtractor(),
+            TextChunker(chunk_size=80, chunk_overlap=10),
+            EmbeddingDispatchProcessor(
+                embedding_types_to_dispatch=["extracted_markdown_content_chunk"]
+            ),
+        ],
+        config={},
+    )
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
@@ -596,23 +614,47 @@ async def test_email_indexer_applies_chunk_index_offset_per_attachment(
     email_db_id = insert_result.scalar_one()
 
     exec_context = _build_indexer_context(db_context, registry)
+    exec_context.task_priority = TaskPriority.INTERACTIVE
     await indexer.handle_index_email(
         exec_context=exec_context,
         payload={"email_db_id": email_db_id},
     )
 
-    pipeline.run.assert_called_once()
-    pipeline_kwargs = pipeline.run.call_args.kwargs
-    initial_items = pipeline_kwargs["initial_items"]
-    attachment_items = [
-        item for item in initial_items if item.embedding_type == "email_attachment_file"
-    ]
-    assert len(attachment_items) == 2
-    offsets = [item.metadata["chunk_index_offset"] for item in attachment_items]
-    assert offsets[0] != offsets[1]
-    # Offsets must be large enough that no realistic per-attachment chunk
-    # count could bridge them.
-    assert abs(offsets[0] - offsets[1]) >= 1_000_000
+    embed_tasks = await db_context.fetch_all(
+        select(tasks_table.c.payload).where(
+            tasks_table.c.task_type == "embed_and_store_batch"
+        )
+    )
+    assert embed_tasks
+    exec_context.embedding_generator = HashingWordEmbeddingGenerator(dimensionality=10)
+    for task in embed_tasks:
+        await handle_embed_and_store_batch(exec_context, task["payload"])
+
+    stored_chunks = await db_context.fetch_all(
+        select(
+            DocumentEmbeddingRecord.chunk_index,
+            DocumentEmbeddingRecord.content,
+            DocumentEmbeddingRecord.embedding_metadata,
+        )
+        .join(DocumentRecord)
+        .where(DocumentRecord.source_type == "email")
+        .where(DocumentRecord.source_id == message_id)
+        .where(
+            DocumentEmbeddingRecord.embedding_type == "extracted_markdown_content_chunk"
+        )
+    )
+    chunks_by_filename: dict[str, list[int]] = {"first.pdf": [], "second.pdf": []}
+    for chunk in stored_chunks:
+        metadata = chunk["embedding_metadata"]
+        filename = metadata["original_filename"]
+        assert filename in chunks_by_filename
+        assert chunk["content"]
+        chunks_by_filename[filename].append(chunk["chunk_index"])
+
+    assert all(len(indexes) > 1 for indexes in chunks_by_filename.values())
+    assert set(chunks_by_filename["first.pdf"]).isdisjoint(
+        chunks_by_filename["second.pdf"]
+    )
 
 
 @pytest.mark.asyncio

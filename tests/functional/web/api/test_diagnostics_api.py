@@ -1,9 +1,10 @@
 """Functional tests for the diagnostics export API."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.request_buffer import (
     LLMRequestRecord,
@@ -19,7 +20,10 @@ def reset_llm_buffer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_export_returns_json(api_client: httpx.AsyncClient) -> None:
+async def test_diagnostics_export_returns_json(
+    api_client: httpx.AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
     """Test that the diagnostics export endpoint returns valid JSON structure."""
     response = await api_client.get("/api/diagnostics/export")
 
@@ -46,6 +50,11 @@ async def test_diagnostics_export_returns_json(api_client: httpx.AsyncClient) ->
     assert "error_count" in data["summary"]
     assert "llm_request_count" in data["summary"]
     assert "message_count" in data["summary"]
+    assert data["time_window_minutes"] == 30
+    assert data["system_info"]["database_type"] == db_engine.dialect.name
+    assert data["summary"]["error_count"] == len(data["error_logs"])
+    assert data["summary"]["llm_request_count"] == len(data["llm_requests"])
+    assert data["summary"]["message_count"] == len(data["message_history"])
 
 
 @pytest.mark.asyncio
@@ -91,12 +100,27 @@ async def test_diagnostics_export_respects_time_filter(
     api_client: httpx.AsyncClient,
 ) -> None:
     """Test that the minutes parameter filters results correctly."""
-    # Request with 5 minute window
+    now = datetime.now(UTC)
+    buffer = get_request_buffer()
+    for request_id, timestamp in (
+        ("recent", now),
+        ("old", now - timedelta(minutes=10)),
+    ):
+        buffer.add(
+            LLMRequestRecord(
+                timestamp=timestamp,
+                request_id=request_id,
+                model_id="test-model",
+                messages=[{"role": "user", "content": request_id}],
+            )
+        )
+
     response = await api_client.get("/api/diagnostics/export?minutes=5")
 
     assert response.status_code == 200
     data = response.json()
     assert data["time_window_minutes"] == 5
+    assert [record["request_id"] for record in data["llm_requests"]] == ["recent"]
 
 
 @pytest.mark.asyncio
@@ -162,10 +186,11 @@ async def test_diagnostics_export_limits_results(
     """Test that max_* parameters limit the number of results."""
     # Add multiple records to the buffer
     buffer = get_request_buffer()
+    now = datetime.now(UTC)
     for i in range(10):
         buffer.add(
             LLMRequestRecord(
-                timestamp=datetime.now(UTC),
+                timestamp=now - timedelta(seconds=9 - i),
                 request_id=f"req{i}",
                 model_id="test-model",
                 messages=[{"role": "user", "content": f"Message {i}"}],
@@ -182,8 +207,11 @@ async def test_diagnostics_export_limits_results(
     assert response.status_code == 200
     data = response.json()
 
-    # Should be limited to 3 requests
-    assert len(data["llm_requests"]) <= 3
+    assert [record["request_id"] for record in data["llm_requests"]] == [
+        "req9",
+        "req8",
+        "req7",
+    ]
 
 
 @pytest.mark.asyncio

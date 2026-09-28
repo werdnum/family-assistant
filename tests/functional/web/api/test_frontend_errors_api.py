@@ -64,31 +64,6 @@ async def frontend_error_handler(
 
 
 @pytest.mark.asyncio
-async def test_report_frontend_error_basic(web_only_assistant: Assistant) -> None:
-    """Test that the frontend error reporting endpoint accepts valid error reports."""
-    assert web_only_assistant.fastapi_app is not None
-    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        response = await client.post(
-            "/api/errors/",
-            json={
-                "message": "Test error message",
-                "url": "http://localhost:3000/chat",
-                "stack": "Error: Test error\n    at test.js:1:1",
-                "user_agent": "Mozilla/5.0 Test Browser",
-                "component_name": "ChatApp",
-                "error_type": "uncaught",
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "reported"
-
-
-@pytest.mark.asyncio
 async def test_report_frontend_error_minimal(web_only_assistant: Assistant) -> None:
     """Test that the endpoint works with only required fields."""
     assert web_only_assistant.fastapi_app is not None
@@ -101,34 +76,6 @@ async def test_report_frontend_error_minimal(web_only_assistant: Assistant) -> N
             json={
                 "message": "Minimal error",
                 "url": "http://localhost:3000/",
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "reported"
-
-
-@pytest.mark.asyncio
-async def test_report_frontend_error_with_extra_data(
-    web_only_assistant: Assistant,
-) -> None:
-    """Test that extra_data is properly included."""
-    assert web_only_assistant.fastapi_app is not None
-    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        response = await client.post(
-            "/api/errors/",
-            json={
-                "message": "Error with extra data",
-                "url": "http://localhost:3000/notes",
-                "error_type": "component_error",
-                "extra_data": {
-                    "component_stack": "    at MyComponent\n    at App",
-                    "props": {"id": 123},
-                },
             },
         )
 
@@ -328,14 +275,21 @@ async def test_reported_frontend_error_appears_in_list(
     ) as client:
         # Report a unique error
         unique_message = "Unique test error for list verification 12345"
-        await client.post(
+        stack = "Error: Test error\n    at test.js:1:1"
+        user_agent = "Mozilla/5.0 Test Browser"
+        report_response = await client.post(
             "/api/errors/",
             json={
                 "message": unique_message,
-                "url": "http://localhost:3000/test",
-                "error_type": "manual",
+                "url": "http://localhost:3000/chat",
+                "stack": stack,
+                "user_agent": user_agent,
+                "component_name": "ChatApp",
+                "error_type": "uncaught",
             },
         )
+        assert report_response.status_code == 200
+        assert report_response.json()["status"] == "reported"
 
         # Wait for async logging to complete
         await frontend_error_handler.wait_for_pending_logs()
@@ -347,11 +301,16 @@ async def test_reported_frontend_error_appears_in_list(
         )
         assert response.status_code == 200
         data = response.json()
-        error_messages = [error["message"] for error in data["errors"]]
-
-        assert unique_message in error_messages, (
-            f"Expected '{unique_message}' in error messages, got: {error_messages}"
-        )
+        matching_errors = [
+            error for error in data["errors"] if error["message"] == unique_message
+        ]
+        assert len(matching_errors) == 1
+        extra_data = matching_errors[0]["extra_data"]
+        assert extra_data["url"] == "http://localhost:3000/chat"
+        assert extra_data["stack"] == stack
+        assert extra_data["user_agent"] == user_agent
+        assert extra_data["component_name"] == "ChatApp"
+        assert extra_data["error_type"] == "uncaught"
 
 
 @pytest.mark.asyncio
@@ -368,7 +327,7 @@ async def test_frontend_error_extra_data_stored_correctly(
         unique_message = "Error with extra data verification 67890"
         test_extra_data = {"custom_field": "custom_value", "nested": {"key": "value"}}
 
-        await client.post(
+        report_response = await client.post(
             "/api/errors/",
             json={
                 "message": unique_message,
@@ -378,6 +337,8 @@ async def test_frontend_error_extra_data_stored_correctly(
                 "extra_data": test_extra_data,
             },
         )
+        assert report_response.status_code == 200
+        assert report_response.json()["status"] == "reported"
 
         # Wait for async logging to complete
         await frontend_error_handler.wait_for_pending_logs()

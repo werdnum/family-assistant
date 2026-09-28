@@ -113,40 +113,6 @@ async def test_webhook_event_missing_event_type(
 
 
 @pytest.mark.asyncio
-async def test_webhook_event_source_header_override(
-    db_engine: AsyncEngine,
-) -> None:
-    """Test that X-Webhook-Source header overrides body source."""
-    transport = ASGITransport(app=fastapi_app)
-
-    # Create a mock webhook source to verify the event data
-    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
-    mock_webhook_source.emit_event = AsyncMock(return_value="test-event-id")
-
-    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        with patch.object(
-            fastapi_app.state, "webhook_source", mock_webhook_source, create=True
-        ):
-            response = await client.post(
-                "/webhook/event",
-                headers={"X-Webhook-Source": "header_source"},
-                json={
-                    "event_type": "test",
-                    "source": "body_source",
-                },
-            )
-
-            assert response.status_code == 200
-
-            # Check that emit_event was called
-            if mock_webhook_source.emit_event.called:
-                call_args = mock_webhook_source.emit_event.call_args
-                event_data = call_args[0][0]
-                # Header source should override body source
-                assert event_data["source"] == "header_source"
-
-
-@pytest.mark.asyncio
 async def test_webhook_event_signature_required_when_secret_configured(
     db_engine: AsyncEngine,
 ) -> None:
@@ -361,22 +327,16 @@ async def test_webhook_source_emit_event_not_running() -> None:
 async def test_webhook_source_lifecycle() -> None:
     """Test WebhookEventSource start/stop lifecycle."""
     source = WebhookEventSource()
-
-    assert source.processor is None
-    assert not source._running
-
-    # Start
     mock_processor = AsyncMock()
     await source.start(mock_processor)
+    event_data = {"event_type": "test", "event_id": "event-1"}
 
-    assert source.processor is mock_processor
-    assert source._running
+    assert await source.emit_event(event_data) == "event-1"
+    mock_processor.process_event.assert_awaited_once_with("webhook", event_data)
 
-    # Stop
     await source.stop()
-
-    assert source.processor is None
-    assert not source._running
+    assert await source.emit_event(event_data) is None
+    mock_processor.process_event.assert_awaited_once_with("webhook", event_data)
 
 
 @pytest.mark.asyncio
@@ -424,11 +384,9 @@ async def test_webhook_event_type_query_param_overrides_body(
 
             assert response.status_code == 200
 
-            # Check that emit_event was called with query param event_type
-            if mock_webhook_source.emit_event.called:
-                call_args = mock_webhook_source.emit_event.call_args
-                event_data = call_args[0][0]
-                assert event_data["event_type"] == "query_type"
+            mock_webhook_source.emit_event.assert_awaited_once()
+            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert event_data["event_type"] == "query_type"
 
 
 @pytest.mark.asyncio
@@ -454,11 +412,9 @@ async def test_webhook_source_via_query_param(
 
             assert response.status_code == 200
 
-            # Check that emit_event was called with query param source
-            if mock_webhook_source.emit_event.called:
-                call_args = mock_webhook_source.emit_event.call_args
-                event_data = call_args[0][0]
-                assert event_data["source"] == "query_source"
+            mock_webhook_source.emit_event.assert_awaited_once()
+            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert event_data["source"] == "query_source"
 
 
 @pytest.mark.asyncio
@@ -486,11 +442,9 @@ async def test_webhook_source_priority_header_over_query(
 
             assert response.status_code == 200
 
-            # Check that emit_event was called with header source (highest priority)
-            if mock_webhook_source.emit_event.called:
-                call_args = mock_webhook_source.emit_event.call_args
-                event_data = call_args[0][0]
-                assert event_data["source"] == "header_source"
+            mock_webhook_source.emit_event.assert_awaited_once()
+            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert event_data["source"] == "header_source"
 
 
 @pytest.mark.asyncio
@@ -545,11 +499,8 @@ async def test_webhook_system_fields_cannot_be_overwritten(
 
             assert response.status_code == 200
 
-            # Check that emit_event was called with system-generated event_id
-            if mock_webhook_source.emit_event.called:
-                call_args = mock_webhook_source.emit_event.call_args
-                event_data = call_args[0][0]
-                # event_id should be a valid UUID, not the malicious value
-                assert event_data["event_id"] != "malicious-id"
-                # Verify it's a valid UUID
-                uuid.UUID(event_data["event_id"])
+            mock_webhook_source.emit_event.assert_awaited_once()
+            event_data = mock_webhook_source.emit_event.await_args.args[0]
+            assert event_data["event_id"] == response.json()["event_id"]
+            assert event_data["event_id"] != "malicious-id"
+            uuid.UUID(event_data["event_id"])

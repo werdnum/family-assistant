@@ -1,72 +1,23 @@
-"""
-Simplified functional tests for the profiles API endpoint.
+"""Functional contract test for the profile listing API."""
 
-Tests the /v1/profiles endpoint that provides available service profiles
-for the chat interface profile switching functionality.
-"""
+from fastapi import FastAPI
+from httpx import AsyncClient
 
-import pytest
-
-from tests.functional.web.conftest import WebTestFixture
+from family_assistant.processing import ProcessingService
 
 
-# Marked playwright because every test here drives a real browser page via
-# `web_test_fixture_readonly`. Without it these run in the backend job, whose
-# adaptive runner keeps ~12 workers busy, and the fixture's 10s wait for
-# `data-app-ready` loses that race often enough to fail CI.
-@pytest.mark.playwright
-@pytest.mark.asyncio
-class TestProfilesAPI:
-    """Test suite for the /v1/profiles API endpoint."""
+async def test_get_profiles_returns_selectable_default(
+    api_test_client: AsyncClient,
+    app_fixture: FastAPI,
+    api_test_processing_service: ProcessingService,
+) -> None:
+    profile_id = api_test_processing_service.service_config.id
+    app_fixture.state.processing_services = {profile_id: api_test_processing_service}
 
-    async def test_get_profiles_returns_success(
-        self, web_test_fixture_readonly: WebTestFixture
-    ) -> None:
-        """Test that profiles endpoint returns successful response."""
-        page = web_test_fixture_readonly.page
-        base_url = web_test_fixture_readonly.base_url
+    response = await api_test_client.get("/api/v1/profiles")
 
-        # Navigate to the profiles API endpoint and check response
-        await page.goto(f"{base_url}/api/v1/profiles")
-
-        # Get the page content (which should be JSON)
-        content = await page.text_content("body")
-
-        # Basic validation that we got a JSON response
-        assert content is not None
-        assert "profiles" in content
-        assert "default_profile_id" in content
-
-        # The page should not show an error
-        error_indicators = await page.locator("text=error").count()
-        assert error_indicators == 0
-
-    async def test_profiles_endpoint_accessible(
-        self, web_test_fixture_readonly: WebTestFixture
-    ) -> None:
-        """Test that profiles endpoint is accessible without errors."""
-        page = web_test_fixture_readonly.page
-        base_url = web_test_fixture_readonly.base_url
-
-        # Navigate to the profiles API endpoint
-        response = await page.goto(f"{base_url}/api/v1/profiles")
-
-        # Should not be a 4xx or 5xx error
-        assert response is not None
-        assert response.status < 400, f"API returned error status: {response.status}"
-
-    @pytest.mark.flaky(reruns=3, reruns_delay=2)
-    async def test_profiles_content_type(
-        self, web_test_fixture_readonly: WebTestFixture
-    ) -> None:
-        """Test that profiles endpoint returns JSON content type."""
-        page = web_test_fixture_readonly.page
-        base_url = web_test_fixture_readonly.base_url
-
-        # Navigate to the profiles API endpoint
-        response = await page.goto(f"{base_url}/api/v1/profiles")
-
-        assert response is not None
-        headers = response.headers
-        content_type = headers.get("content-type", "")
-        assert "application/json" in content_type
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    body = response.json()
+    assert body["default_profile_id"] == profile_id
+    assert [profile["id"] for profile in body["profiles"]] == [profile_id]

@@ -5,8 +5,12 @@ conversation scoping, and execution statistics for both event and
 schedule automations.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import AsyncClient
+
+from family_assistant.storage.database import Database
 
 
 @pytest.mark.asyncio
@@ -72,7 +76,10 @@ class TestUnifiedAutomationsAPI:
             "match_conditions": {"event_type": "push"},
             "conversation_id": "test_api_filter",
         }
-        await api_test_client.post("/api/automations/event", json=event_data)
+        event_create = await api_test_client.post(
+            "/api/automations/event", json=event_data
+        )
+        assert event_create.status_code == 200
 
         # Create a schedule automation
         schedule_data = {
@@ -82,33 +89,30 @@ class TestUnifiedAutomationsAPI:
             "action_config": {"message": "Mid-morning!"},
             "conversation_id": "test_api_filter",
         }
-        await api_test_client.post("/api/automations/schedule", json=schedule_data)
+        schedule_create = await api_test_client.post(
+            "/api/automations/schedule", json=schedule_data
+        )
+        assert schedule_create.status_code == 200
 
-        # Filter by event type
         event_response = await api_test_client.get(
             "/api/automations?conversation_id=test_api_filter&automation_type=event"
         )
         assert event_response.status_code == 200
-        event_data_response = event_response.json()
-        event_automations = [
-            a
-            for a in event_data_response["automations"]
-            if a["conversation_id"] == "test_api_filter"
+        event_body = event_response.json()
+        assert event_body["total_count"] == 1
+        assert [(a["name"], a["type"]) for a in event_body["automations"]] == [
+            ("Test Event For Type Filter", "event")
         ]
-        assert all(a["type"] == "event" for a in event_automations)
 
-        # Filter by schedule type
         schedule_response = await api_test_client.get(
             "/api/automations?conversation_id=test_api_filter&automation_type=schedule"
         )
         assert schedule_response.status_code == 200
-        schedule_data_response = schedule_response.json()
-        schedule_automations = [
-            a
-            for a in schedule_data_response["automations"]
-            if a["conversation_id"] == "test_api_filter"
+        schedule_body = schedule_response.json()
+        assert schedule_body["total_count"] == 1
+        assert [(a["name"], a["type"]) for a in schedule_body["automations"]] == [
+            ("Test Schedule For Type Filter", "schedule")
         ]
-        assert all(a["type"] == "schedule" for a in schedule_automations)
 
     async def test_list_automations_filter_by_enabled(
         self, api_test_client: AsyncClient
@@ -123,7 +127,10 @@ class TestUnifiedAutomationsAPI:
             "conversation_id": "test_api_enabled",
             "enabled": True,
         }
-        await api_test_client.post("/api/automations/event", json=enabled_data)
+        enabled_create = await api_test_client.post(
+            "/api/automations/event", json=enabled_data
+        )
+        assert enabled_create.status_code == 200
 
         # Create disabled automation
         disabled_data = {
@@ -134,37 +141,36 @@ class TestUnifiedAutomationsAPI:
             "conversation_id": "test_api_enabled",
             "enabled": False,
         }
-        await api_test_client.post("/api/automations/event", json=disabled_data)
+        disabled_create = await api_test_client.post(
+            "/api/automations/event", json=disabled_data
+        )
+        assert disabled_create.status_code == 200
 
-        # Filter by enabled=true
         enabled_response = await api_test_client.get(
             "/api/automations?conversation_id=test_api_enabled&enabled=true"
         )
         assert enabled_response.status_code == 200
-        enabled_automations = [
-            a
-            for a in enabled_response.json()["automations"]
-            if a["conversation_id"] == "test_api_enabled"
+        enabled_body = enabled_response.json()
+        assert enabled_body["total_count"] == 1
+        assert [(a["name"], a["enabled"]) for a in enabled_body["automations"]] == [
+            ("Test Enabled Automation", True)
         ]
-        assert all(a["enabled"] is True for a in enabled_automations)
 
-        # Filter by enabled=false
         disabled_response = await api_test_client.get(
             "/api/automations?conversation_id=test_api_enabled&enabled=false"
         )
         assert disabled_response.status_code == 200
-        disabled_automations = [
-            a
-            for a in disabled_response.json()["automations"]
-            if a["conversation_id"] == "test_api_enabled"
+        disabled_body = disabled_response.json()
+        assert disabled_body["total_count"] == 1
+        assert [(a["name"], a["enabled"]) for a in disabled_body["automations"]] == [
+            ("Test Disabled Automation", False)
         ]
-        assert all(a["enabled"] is False for a in disabled_automations)
 
     async def test_list_automations_pagination(
         self, api_test_client: AsyncClient
     ) -> None:
         """Test pagination of automations list."""
-        # Create multiple automations
+        created_names = {f"Test Event Pagination {i}" for i in range(5)}
         for i in range(5):
             event_data = {
                 "name": f"Test Event Pagination {i}",
@@ -173,24 +179,28 @@ class TestUnifiedAutomationsAPI:
                 "match_conditions": {"index": i},
                 "conversation_id": "test_api_pagination",
             }
-            await api_test_client.post("/api/automations/event", json=event_data)
+            create_response = await api_test_client.post(
+                "/api/automations/event", json=event_data
+            )
+            assert create_response.status_code == 200
 
-        # Get first page
-        page1_response = await api_test_client.get(
-            "/api/automations?conversation_id=test_api_pagination&page=1&page_size=2"
-        )
-        assert page1_response.status_code == 200
-        page1_data = page1_response.json()
+        page_names: list[list[str]] = []
+        for page in (1, 2, 3):
+            page_response = await api_test_client.get(
+                "/api/automations?conversation_id=test_api_pagination"
+                f"&page={page}&page_size=2"
+            )
+            assert page_response.status_code == 200
+            page_data = page_response.json()
+            assert page_data["page"] == page
+            assert page_data["page_size"] == 2
+            assert page_data["total_count"] == 5
+            page_names.append([a["name"] for a in page_data["automations"]])
 
-        assert page1_data["page"] == 1
-        assert page1_data["page_size"] == 2
-        assert page1_data["total_count"] >= 5
-        page1_automations = [
-            a
-            for a in page1_data["automations"]
-            if a["conversation_id"] == "test_api_pagination"
-        ]
-        assert len(page1_automations) <= 2
+        assert [len(names) for names in page_names] == [2, 2, 1]
+        all_names = [name for names in page_names for name in names]
+        assert len(all_names) == len(set(all_names))
+        assert set(all_names) == created_names
 
     async def test_cross_type_name_uniqueness(
         self, api_test_client: AsyncClient
@@ -258,17 +268,15 @@ class TestUnifiedAutomationsAPI:
         )
         assert get_response.status_code == 404
 
-        # List automations in conversation A (should only see automation A)
         list_a_response = await api_test_client.get(
             "/api/automations?conversation_id=conversation_a"
         )
         assert list_a_response.status_code == 200
-        conv_a_automations = [
-            a
-            for a in list_a_response.json()["automations"]
-            if a["conversation_id"] == "conversation_a"
-        ]
-        assert len(conv_a_automations) == 1
+        list_a_body = list_a_response.json()
+        assert list_a_body["total_count"] == 1
+        assert [
+            (a["id"], a["conversation_id"]) for a in list_a_body["automations"]
+        ] == [(automation_a_id, "conversation_a")]
 
     async def test_invalid_automation_type_in_path(
         self, api_test_client: AsyncClient
@@ -280,9 +288,10 @@ class TestUnifiedAutomationsAPI:
         assert response.status_code == 400
         assert "must be 'event' or 'schedule'" in response.json()["detail"]
 
-    async def test_get_automation_stats(self, api_test_client: AsyncClient) -> None:
-        """Test getting execution statistics for an automation."""
-        # Create an automation
+    async def test_get_automation_stats(
+        self, api_test_client: AsyncClient, api_db_context: Database
+    ) -> None:
+        """Stats for an event automation reflect the events that triggered it."""
         automation_data = {
             "name": "Test Stats Automation",
             "source_id": "webhook",
@@ -296,15 +305,37 @@ class TestUnifiedAutomationsAPI:
         assert create_response.status_code == 200
         automation_id = create_response.json()["id"]
 
-        # Get stats
+        await api_db_context.events.store_event(
+            source_id="webhook",
+            event_data={"event_type": "push", "ref": "main"},
+            triggered_listener_ids=[automation_id],
+        )
+        await api_db_context.events.store_event(
+            source_id="home_assistant",
+            event_data={"entity_id": "light.unrelated"},
+            triggered_listener_ids=[],
+        )
+        before_execution = datetime.now(UTC)
+        allowed, _ = await api_db_context.events.check_and_update_rate_limit(
+            listener_id=automation_id, conversation_id="test_api_stats"
+        )
+        after_execution = datetime.now(UTC)
+        assert allowed
+
         stats_response = await api_test_client.get(
             f"/api/automations/event/{automation_id}/stats?conversation_id=test_api_stats"
         )
         assert stats_response.status_code == 200
         stats = stats_response.json()
 
-        # Verify stats structure
-        assert "daily_executions" in stats or "execution_count" in stats
+        assert stats["total_executions"] == 1
+        assert stats["daily_executions"] == 1
+        last_execution_at = datetime.fromisoformat(stats["last_execution_at"])
+        assert before_execution <= last_execution_at <= after_execution
+        assert [
+            (event["event_data"], event["triggered_listener_ids"])
+            for event in stats["recent_events"]
+        ] == [({"event_type": "push", "ref": "main"}, [automation_id])]
 
     async def test_update_automation_name_uniqueness(
         self, api_test_client: AsyncClient

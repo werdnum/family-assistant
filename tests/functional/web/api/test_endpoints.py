@@ -4,11 +4,12 @@ Tests both basic HTTP accessibility and browser-based rendering.
 """
 
 import asyncio
+import re
 from typing import Any
 
 import httpx
 import pytest
-from playwright.async_api import Page
+from playwright.async_api import Page, expect
 
 from family_assistant.assistant import Assistant
 from family_assistant.web.app_creator import app as fastapi_app
@@ -16,9 +17,7 @@ from family_assistant.web.auth import AUTH_ENABLED
 from tests.functional.web.conftest import ConsoleErrorCollector, WebTestFixture
 from tests.functional.web.pages import BasePage
 
-# Base UI endpoints accessible regardless of auth state (or will redirect to login if auth is on)
-# For pages that expect data (e.g., editing a specific note), we test with a
-# non-existent item to ensure it returns a client error (like 404) rather than a server error (500).
+# Base UI endpoints accessible regardless of auth state.
 BASE_UI_ENDPOINTS = [
     ("/", "Root Page (Redirects to Chat)"),
     ("/notes", "Notes List Page"),
@@ -37,10 +36,7 @@ BASE_UI_ENDPOINTS = [
     ("/settings/accounts", "Connected Accounts UI Page"),
     ("/events", "Events List Page"),
     ("/events/non_existent_event", "Event Detail Page"),
-    ("/event-listeners", "Event Listeners List Page"),
-    ("/event-listeners/new", "Create Event Listener Page"),
-    ("/event-listeners/99999", "Event Listener Detail Page"),
-    ("/errors/", "Error Logs List Page"),
+    ("/errors", "Error Logs List Page"),
 ]
 
 # UI endpoints related to authentication, typically only active if AUTH_ENABLED is true
@@ -69,19 +65,11 @@ async def _test_navigation_link(
 
     target_link = test_page.locator(f'nav a[href="{link_info["href"]}"]')
     await target_link.click()
-
-    if link_info["href"] == "/chat":
-        await test_page.wait_for_selector('[data-app-ready="true"]', timeout=10000)
-        await test_page.wait_for_selector("main .flex.flex-1.flex-col", timeout=5000)
-    else:
-        await test_page.wait_for_load_state("domcontentloaded", timeout=10000)
-
-    current_url = test_page.url
-    if base_url not in current_url:
-        failures.append(
-            f"Navigation failed for link '{link_info['text']}' "
-            f"({link_info['href']}): URL is {current_url}"
-        )
+    expected_url = re.compile(
+        rf"^{re.escape(base_url + link_info['href'].rstrip('/'))}/?(?:\?.*)?$"
+    )
+    await expect(test_page).to_have_url(expected_url)
+    await expect(test_page.locator('[data-app-ready="true"]')).to_be_visible()
 
     if page_error_checker.errors:
         failures.append(
@@ -103,7 +91,7 @@ BASE_UI_ENDPOINTS_WITH_ELEMENTS = [
     ("/docs/", "Documentation Index Page", ["h1", "a"]),
     ("/docs/USER_GUIDE.md", "USER_GUIDE.md Document Page", ["h1", "p"]),
     ("/history", "Message History Page", ["h1"]),
-    ("/tools", "Available Tools Page", ["h1", "article"]),
+    ("/tools", "Available Tools Page", ["h1", "h2"]),
     ("/tasks", "Tasks List Page", ["h1"]),
     ("/vector-search", "Vector Search Page", ["h1", "form", "input"]),
     ("/documents/upload", "Document Upload Page", ["h1", "form"]),
@@ -115,21 +103,14 @@ BASE_UI_ENDPOINTS_WITH_ELEMENTS = [
         "Event Detail Page",
         ["body"],
     ),  # May show error page
-    ("/event-listeners", "Event Listeners List Page", ["main h1"]),
-    ("/event-listeners/new", "Create Event Listener Page", ["main h1", "form"]),
-    (
-        "/event-listeners/99999",
-        "Event Listener Detail Page",
-        ["body"],
-    ),  # May show error page
-    ("/errors/", "Error Logs List Page", ["main h1"]),
+    ("/errors", "Error Logs List Page", ["main h1"]),
 ]
 
 
 @pytest.mark.asyncio
 async def test_ui_endpoint_accessibility(web_only_assistant: Assistant) -> None:
     """
-    Tests that all UI endpoints are accessible and do not return server errors.
+    Tests that all supported UI endpoints serve HTML.
     This single test checks all endpoints to avoid the overhead of setting up
     the web_only_assistant fixture multiple times.
     """
@@ -137,15 +118,19 @@ async def test_ui_endpoint_accessibility(web_only_assistant: Assistant) -> None:
     # with database setup and all dependencies
     transport = httpx.ASGITransport(app=fastapi_app)
     async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
+        transport=transport, base_url="http://testserver", follow_redirects=True
     ) as client:
         failures = []
         for path, description in ALL_UI_ENDPOINTS_TO_TEST:
             try:
                 response = await client.get(path)
-                if response.status_code >= 500:
+                if (
+                    response.status_code != 200
+                    or "text/html" not in response.headers.get("content-type", "")
+                ):
                     failures.append(
-                        f"UI endpoint '{description}' at '{path}' returned {response.status_code}. "
+                        f"UI endpoint '{description}' at '{path}' returned "
+                        f"{response.status_code} {response.headers.get('content-type')}. "
                         f"Response text (first 500 chars): {response.text[:500]}"
                     )
             except Exception as e:
@@ -161,14 +146,14 @@ async def check_endpoint(
     browser: Any,  # noqa: ANN401  # playwright browser object
     base_url: str,
     endpoint_info: tuple[str, str, list[str]],
-) -> tuple[list[str], list[str]]:
-    """Check a single endpoint and return failures and warnings."""
+) -> list[str]:
+    """Check a single endpoint and return failures."""
     path, description, expected_elements = endpoint_info
     failures = []
-    warnings = []
 
     # Create a new page for this endpoint check
     page = await browser.new_page()
+    page_error_checker = ConsoleErrorCollector(page)
     try:
         base_page = BasePage(page, base_url)
 
@@ -181,7 +166,7 @@ async def check_endpoint(
         # Check response status
         if response is None:
             failures.append(f"Failed to navigate to {path}")
-            return failures, warnings
+            return failures
 
         # Log error responses for debugging
         if response.status >= 400:
@@ -189,24 +174,27 @@ async def check_endpoint(
             page_content = await page.content()
             print(f"Error Page content preview: {page_content[:500]}...")
 
-        if response.status >= 500:
+        if response.status != 200:
             failures.append(
-                f"UI endpoint '{description}' at '{path}' returned server error: "
-                f"{response.status}"
+                f"UI endpoint '{description}' at '{path}' returned: {response.status}"
             )
-            return failures, warnings
+            return failures
 
         # Check for expected elements
         for selector in expected_elements:
             is_visible = await base_page.is_element_visible(selector)
             if not is_visible:
-                warnings.append(
+                failures.append(
                     f"Expected element '{selector}' not found on {description} at {path}"
                 )
     finally:
         await page.close()
+        failures.extend(
+            f"Console error on {description} at {path}: {error}"
+            for error in page_error_checker.errors
+        )
 
-    return failures, warnings
+    return failures
 
 
 @pytest.mark.playwright
@@ -225,7 +213,6 @@ async def test_ui_endpoint_accessibility_playwright(
     # Process 5 endpoints at a time to avoid overwhelming the server
     batch_size = 5
     all_failures = []
-    all_warnings = []
 
     for i in range(0, len(BASE_UI_ENDPOINTS_WITH_ELEMENTS), batch_size):
         batch = BASE_UI_ENDPOINTS_WITH_ELEMENTS[i : i + batch_size]
@@ -236,16 +223,12 @@ async def test_ui_endpoint_accessibility_playwright(
         ])
 
         # Collect results
-        for failures, warnings in results:
+        for failures in results:
             all_failures.extend(failures)
-            all_warnings.extend(warnings)
 
-    # Report all failures and warnings
+    # Report all failures
     if all_failures:
         pytest.fail("The following endpoints failed:\n" + "\n".join(all_failures))
-
-    if all_warnings:
-        print("Warnings encountered:\n" + "\n".join(all_warnings))
 
 
 @pytest.mark.playwright
@@ -336,69 +319,15 @@ async def test_responsive_design_mobile(
         )
 
 
-@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
-async def test_form_interactions(
+async def test_tasks_page_renders(
     web_test_readonly_with_console_check: WebTestFixture,
 ) -> None:
-    """Test basic form interactions work without errors."""
+    """Test that the task queue renders after loading."""
     page = web_test_readonly_with_console_check.page
     base_url = web_test_readonly_with_console_check.base_url
     base_page = BasePage(page, base_url)
 
-    # Navigate to vector search page (has a simple search form)
-    print(f"Navigating to vector search page at {base_url}")
-    await base_page.navigate_to("/vector-search")
-    await base_page.wait_for_load()
-
-    # Check if we got HTML or JSON
-    page_content = await page.content()
-    print(f"Page content type check - starts with: {page_content[:100]}")
-
-    # Wait for search input to be available
-    await page.wait_for_selector(
-        'input[type="text"], input[type="search"]',
-        timeout=10000,  # 10 seconds should be plenty
-    )
-
-    # Find search input
-    search_input = page.locator('input[type="text"], input[type="search"]').first
-    assert await search_input.is_visible(), "Search input not found"
-
-    # Type in search box
-    await search_input.fill("test search query")
-
-    # Find and click search button
-    search_button = page.locator('button[type="submit"], button:has-text("Search")')
-    if await search_button.count() > 0:
-        await search_button.first.click()
-        # No need to wait - this test only checks that the button click doesn't cause errors
-
-
-@pytest.mark.playwright
-@pytest.mark.asyncio
-async def test_loading_states(
-    web_test_readonly_with_console_check: WebTestFixture,
-) -> None:
-    """Test that pages show appropriate loading states."""
-    page = web_test_readonly_with_console_check.page
-    base_url = web_test_readonly_with_console_check.base_url
-    base_page = BasePage(page, base_url)
-
-    # Navigate to tasks page (likely to have loading states)
     await base_page.navigate_to("/tasks")
-
-    # Check for loading indicators or quick page load
-    # Most pages should either show content quickly or show a loader
-    try:
-        # Wait for either main content (h1, task items) or loading indicator
-        await page.wait_for_selector(
-            "h1, .task-item, .loading, .spinner, [role='progressbar']",
-            timeout=3000,
-        )
-    except Exception:
-        pytest.fail("Page did not show content or loading state within 3 seconds")
-
-    # Wait for final load
-    await base_page.wait_for_load()
+    await expect(page.locator("main h1")).to_have_text("Task Queue")
