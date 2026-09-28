@@ -354,10 +354,15 @@ class TestGeminiConnectFlow:
             {"type": "websocket.disconnect"},
         ]
 
-    async def test_buffered_audio_flushed_in_order_on_connect(
+    async def test_pre_connect_buffer_is_flushed_in_order_on_connect(
         self, mock_websocket: AsyncMock
     ) -> None:
-        """Audio buffered before Gemini connects is flushed to it, in order, on connect."""
+        """Whatever is in the pre-connect buffer is sent to Gemini, in order, on connect.
+
+        This covers the flush only. The buffer is seeded directly because live
+        media cannot reach it: run() awaits client.connect() before it starts
+        relaying Asterisk messages, so nothing is buffered while connecting.
+        """
         session = self._make_session()
         config = GeminiLiveConfig(greeting=GeminiLiveGreetingConfig(enabled=False))
         handler = AsteriskLiveHandler(
