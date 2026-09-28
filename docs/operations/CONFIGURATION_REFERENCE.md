@@ -746,7 +746,8 @@ OpenRouter API key for accessing multiple LLM providers.
 
 Used when model names start with `openrouter/`. The shipped `kimi_k3` delegation preset is one, and
 every tier a profile may run on gets its client built at startup, so a deployment running the
-shipped `default_assistant` needs this key or must drop `kimi_k3` from its `delegation_model_tiers`.
+shipped `default_assistant` or `council_member` needs this key or must drop `kimi_k3` from their
+`delegation_model_tiers` (and, for the council, re-seat member C).
 
 ______________________________________________________________________
 
@@ -947,6 +948,22 @@ automatically. The shipped `default_assistant` also lists four presets in `deleg
 `gpt_6_sol`, `claude_opus_5_5`, `claude_fable_5_1` and `kimi_k3` — which, being listed there, a
 delegating model may name without a confirmation. Adding a preset is a `model_tiers` entry plus a
 name in that list.
+
+#### The council's seats
+
+The `council` profile convenes three members through the shared `council_member` profile, one
+exact-model preset per seat (see [the user guide](../user/council.md) and
+[the design doc](../design/council.md)). Two settings have to agree:
+
+- **The roster** is in the `council` profile's system prompt: which preset sits in seats A, B and C,
+  and which preset is the alternative Anthropic seat. The shipped roster is `gpt_6_sol`,
+  `claude_fable_5_1` and `kimi_k3`, with `claude_opus_5_5` as the alternative.
+- **The admissions** are `council_member`'s `delegation_model_tiers`. A profile admits presets for
+  itself; `default_assistant`'s list does not reach the member profile.
+
+To change a seat, add the preset to `model_tiers` if it is new (one model, no fallback), list it in
+`council_member.delegation_model_tiers`, and edit the roster. A seat whose preset the member does
+not admit fails that member's delegation visibly rather than running on another model.
 
 #### Selecting a tier per request
 

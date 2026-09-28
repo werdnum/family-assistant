@@ -85,6 +85,10 @@ that answer fails rather than quietly coming from a different model.
 
 The models on offer are the ones your household's setup lists; these are not on the level picker.
 
+A side-by-side is each model answering alone. When you want the models to research the question,
+read and criticise each other's answers and revise them before you get a combined answer, ask for a
+council instead: see [council.md](council.md).
+
 ## Seeing what a reply ran at
 
 In the web app and the iOS app, a reply carries the level it ran at beside the name of the assistant
