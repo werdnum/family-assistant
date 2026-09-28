@@ -146,6 +146,12 @@ class TaskAttempt:
         return self.retry_count >= self.max_retries
 
 
+# Statuses of a task the queue has yet to finish: waiting to be claimed, or
+# claimed by a worker and running. A dequeued task moves from the first to the
+# second; ``done`` and ``failed`` are the terminal statuses.
+ACTIVE_TASK_STATUSES = ("pending", "processing")
+
+
 # Define the tasks table for the message queue
 tasks_table = Table(
     "tasks",

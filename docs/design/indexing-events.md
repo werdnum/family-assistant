@@ -32,37 +32,16 @@ table or the existing pipeline architecture:
 
 ### 1. Completion Detection Strategy
 
-Check for document completion ONLY after embedding tasks complete. This avoids race conditions where
-the pipeline hasn't yet created tasks.
+Decide completion when a document's indexing task (`process_uploaded_document` or
+`embed_and_store_batch`) is marked done, in the same transaction as that done-commit, and emit
+DOCUMENT_READY once it commits. A task counts as unfinished while it is `pending` or `processing`
+(`ACTIVE_TASK_STATUSES`). Deciding inside the handler cannot work: every task is still `processing`
+while its handler runs, so two batches finishing together would each see the other unfinished and
+neither would announce the document. After the done-commit, the last task to finish sees none left.
 
-```python
-
-# In handle_embed_and_store_batch, after successful embedding storage:
-
-# Check if this was the last task for this document
-from sqlalchemy import select, and_, or_, func
-
-# Query for any remaining tasks (both indexing and embedding) for this document
-remaining_tasks = await db_context.execute(
-    select(func.count())
-    .select_from(tasks_table)
-    .where(
-        and_(
-            tasks_table.c.task_type.in_([
-                'index_document', 'index_email', 'index_note', 'embed_and_store_batch'
-            ]),
-            func.json_extract(tasks_table.c.payload, '$.document_id') == str(document_id),
-            tasks_table.c.status.in_(['pending', 'locked'])
-        )
-    )
-)
-pending_count = remaining_tasks.scalar()
-
-if pending_count == 0:
-    # All tasks complete - emit document ready event
-    await emit_document_ready_event(exec_context, document_id)
-
-```
+The transaction locks the document row before counting, which orders two tasks finishing at once:
+the first to take the lock still sees the other unfinished, the second sees it done, so exactly one
+emits. A document that ends with no embeddings is not announced.
 
 ### 2. Event Source Implementation
 
