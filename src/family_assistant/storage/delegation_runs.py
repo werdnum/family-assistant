@@ -12,9 +12,18 @@ DelegationRunStatus = Literal[
     "queued",
     "running",
     "awaiting_remote",
+    "awaiting_children",
     "completed",
     "failed",
 ]
+"""Where a run is in its lifecycle.
+
+``awaiting_children`` is a local run whose turn ended while delegations it
+started itself were still running. It is not finished: when they have all
+finished, it goes back to ``queued`` and runs another turn with their results,
+and only a turn that ends with nothing of its own outstanding produces the
+run's result.
+"""
 
 TERMINAL_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
     "completed",

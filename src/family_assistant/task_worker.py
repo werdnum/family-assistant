@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Required, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, cast
 
 import aiofiles.os
 from dateutil import rrule
@@ -104,6 +104,7 @@ from family_assistant.storage.delegation_runs import (
     DelegationNotifyStage,
 )
 from family_assistant.tools.services import (
+    DELEGATED_PROFILE_RUN_TASK_TYPE,
     delegation_run_result_taint_metadata,
     short_error_summary,
 )
@@ -255,6 +256,43 @@ def _model_selection_from_delegation_run(
     if persisted is None:
         return None
     return ResolvedModelSelection.from_json(persisted)
+
+
+def _frozen_model_selection(
+    run: DelegationRunDict, target: ProcessingService
+) -> ResolvedModelSelection:
+    """The models every turn of *run* executes on.
+
+    Resolved, and routed, when the run was created, and frozen by the load:
+    deciding the models of an already-authorized run from whatever the
+    deployment looks like at execution time is the drift persisting the
+    envelope prevents. A run queued before envelopes existed carries none, and
+    takes the target's own tier -- frozen, so it is not routed here either.
+    """
+    return (
+        _model_selection_from_delegation_run(run)
+        or ResolvedModelSelection.unselected(
+            target.service_config.tier_eligibility.default_tier
+        ).freeze()
+    )
+
+
+def _delegation_continuation_text(children: list[DelegationRunDict]) -> str:
+    """The trigger for the turn that follows a run's own delegations finishing."""
+    references = "\n".join(
+        f"- {child['delegation_id']} ({child['target_service_id']}): {child['status']}"
+        for child in children
+    )
+    return (
+        "System: Delegations you started have finished.\n\n"
+        f"{references}\n\n"
+        "Their results are provided as lower-priority data in the message "
+        "history for this turn. Continue the task you were given. If you "
+        "delegate more work in the background, you will be woken again when it "
+        "has all finished. The reply you give in a turn that leaves nothing of "
+        "yours still running is your final answer, returned to whoever asked "
+        "you."
+    )
 
 
 def _taint_state_from_delegation_run(run: DelegationRunDict) -> TurnTaintState:
@@ -824,6 +862,10 @@ class DelegatedProfileRunPayload(TypedDict):
     interface_type: str
     conversation_id: str
     user_name: str
+    # Set on the task that resumes a run after the delegations it started
+    # itself have all finished: the turn it runs is triggered by their results
+    # rather than by the run's original request.
+    continuation: NotRequired[bool]
 
 
 class DelegationRunCleanupPayload(TypedDict, total=False):
@@ -1973,52 +2015,16 @@ class TaskWorker:
             )
             return
 
+        local_target = cast("ProcessingService", target_service)
         try:
-            content_parts = cast(
-                "list[ContentPartDict]",
-                run["content_parts_json"],
-            )
-            chat_interface = self._chat_interface_for_interface(
-                exec_context,
-                run["interface_type"],
-            )
-            request_confirmation_callback = (
-                self._build_delegation_confirmation_callback(exec_context, run)
-            )
-            local_target = cast("ProcessingService", target_service)
-            result = await local_target.handle_chat_interaction(
-                db_context=exec_context.db_context,
-                interface_type=run["interface_type"],
-                conversation_id=run["conversation_id"],
-                trigger_content_parts=content_parts,
-                trigger_interface_message_id=None,
-                user_name=run["user_name"] or exec_context.user_name,
-                user_id=run["user_id"],
-                replied_to_interface_id=None,
-                chat_interface=chat_interface,
-                chat_interfaces=exec_context.chat_interfaces,
-                confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                request_confirmation_callback=request_confirmation_callback,
-                subconversation_id=run["subconversation_id"],
-                initial_taint_sources=_taint_sources_from_delegation_run(run),
-                tool_call_review_trigger=await _delegation_run_review_trigger(
-                    exec_context,
-                    run,
-                    trigger_type="delegation_request",
-                    active_request_role="user",
-                    payload_present=False,
-                ),
-                # Resolved, and routed, when the run was created, and frozen by
-                # the load: deciding the models of an already-authorized run
-                # from whatever the deployment looks like at execution time is
-                # the drift persisting the envelope prevents. A run queued
-                # before envelopes existed carries none, and takes the target's
-                # own tier -- frozen, so it is not routed here either.
-                model_selection=_model_selection_from_delegation_run(run)
-                or ResolvedModelSelection.unselected(
-                    local_target.service_config.tier_eligibility.default_tier
-                ).freeze(),
-            )
+            if payload.get("continuation"):
+                result = await self._run_delegation_continuation(
+                    exec_context, started, local_target
+                )
+            else:
+                result = await self._run_delegated_request(
+                    exec_context, run, local_target
+                )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
             # here: it propagates so the task is retried, and the retry's
@@ -2035,7 +2041,270 @@ class TaskWorker:
             )
             return
 
+        await self._settle_delegated_turn(exec_context, started, result)
+
+    async def _run_delegated_request(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        local_target: ProcessingService,
+    ) -> ChatInteractionResult:
+        """Run a delegation's first turn, on the request it was created with."""
+        content_parts = cast(
+            "list[ContentPartDict]",
+            run["content_parts_json"],
+        )
+        chat_interface = self._chat_interface_for_interface(
+            exec_context,
+            run["interface_type"],
+        )
+        request_confirmation_callback = self._build_delegation_confirmation_callback(
+            exec_context, run
+        )
+        return await local_target.handle_chat_interaction(
+            db_context=exec_context.db_context,
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            trigger_content_parts=content_parts,
+            trigger_interface_message_id=None,
+            user_name=run["user_name"] or exec_context.user_name,
+            user_id=run["user_id"],
+            replied_to_interface_id=None,
+            chat_interface=chat_interface,
+            chat_interfaces=exec_context.chat_interfaces,
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
+            request_confirmation_callback=request_confirmation_callback,
+            subconversation_id=run["subconversation_id"],
+            initial_taint_sources=_taint_sources_from_delegation_run(run),
+            tool_call_review_trigger=await _delegation_run_review_trigger(
+                exec_context,
+                run,
+                trigger_type="delegation_request",
+                active_request_role="user",
+                payload_present=False,
+            ),
+            model_selection=_frozen_model_selection(run, local_target),
+        )
+
+    async def _run_delegation_continuation(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        local_target: ProcessingService,
+    ) -> ChatInteractionResult:
+        """Run the turn that follows a run's own delegations finishing.
+
+        Their results go into the run's history as internal data rows and are
+        marked delivered in the same transaction, before the turn starts: once
+        the rows exist the results have reached the run, and a turn that then
+        fails must not have them delivered a second time somewhere else.
+        """
+        clock = exec_context.clock or self.clock
+        children = [
+            child
+            for child in await exec_context.db_context.delegation_runs.list_undelivered_children(
+                conversation_id=run["conversation_id"],
+                parent_subconversation_id=run["subconversation_id"],
+            )
+            if child["status"] in TERMINAL_DELEGATION_STATUSES
+        ]
+        turn_id = str(uuid.uuid4())
+        child_taints = [
+            await delegation_run_result_taint_metadata(exec_context.db_context, child)
+            for child in children
+        ]
+
+        async def _record_results(txn: DatabaseTransaction) -> list[int]:
+            data_ids: list[int] = []
+            for child, taint in zip(children, child_taints, strict=True):
+                data_id = await txn.message_history.add_message(
+                    UserMessage(
+                        content=self._delegation_wakeup_data_text(child),
+                        taint_metadata=floor_machine_authored_metadata(taint),
+                        authorship_taint_metadata=floor_machine_authored_metadata(
+                            taint
+                        ),
+                    ),
+                    interface_type=run["interface_type"],
+                    conversation_id=run["conversation_id"],
+                    turn_id=turn_id,
+                    timestamp=clock.now(),
+                    processing_profile_id=local_target.service_config.id,
+                    user_id=run["user_id"],
+                    attachments=self._delegation_notification_attachments(child),
+                    subconversation_id=run["subconversation_id"],
+                    is_internal=True,
+                )
+                if data_id is None:
+                    raise RuntimeError(
+                        f"Failed to persist the result of delegation "
+                        f"{child['delegation_id']} for {run['delegation_id']}."
+                    )
+                await txn.delegation_runs.mark_notified(
+                    delegation_id=child["delegation_id"],
+                    result_message_internal_id=data_id,
+                    notified_at=clock.now(),
+                )
+                data_ids.append(data_id)
+            return data_ids
+
+        data_ids = await exec_context.db_context.atomic(_record_results)
+        trigger_attachments = [
+            attachment
+            for child in children
+            for attachment in self._delegation_notification_attachments(child) or []
+        ]
+        return await local_target.handle_chat_interaction(
+            db_context=exec_context.db_context,
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            trigger_content_parts=[
+                {"type": "text", "text": _delegation_continuation_text(children)}
+            ],
+            trigger_interface_message_id=None,
+            user_name=run["user_name"] or exec_context.user_name,
+            user_id=run["user_id"],
+            replied_to_interface_id=None,
+            chat_interface=self._chat_interface_for_interface(
+                exec_context, run["interface_type"]
+            ),
+            chat_interfaces=exec_context.chat_interfaces,
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
+            request_confirmation_callback=self._build_delegation_confirmation_callback(
+                exec_context, run
+            ),
+            trigger_attachments=trigger_attachments or None,
+            subconversation_id=run["subconversation_id"],
+            thread_root_id=data_ids[0] if data_ids else None,
+            trigger_is_internal=True,
+            pinned_history_message_ids=data_ids,
+            trigger_role="system",
+            turn_id=turn_id,
+            initial_taint_sources=_taint_sources_from_delegation_run(run),
+            tool_call_review_trigger=await _delegation_run_review_trigger(
+                exec_context,
+                run,
+                trigger_type="delegation_completion",
+                active_request_role="system",
+                payload_present=True,
+            ),
+            model_selection=_frozen_model_selection(run, local_target),
+        )
+
+    async def _settle_delegated_turn(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        result: ChatInteractionResult,
+    ) -> None:
+        """Finish a run after one of its turns, unless it is still waiting.
+
+        A turn that handed delegations of its own off to the background has
+        not produced the run's answer -- it has produced a note that work is
+        under way. Finishing the run on it would hand that note to the caller
+        as the result, and each child's completion would then wake this
+        profile with nobody left to answer to. The run waits instead, and the
+        turn that follows its children is what gets judged again here.
+        """
+        delegation_id = run["delegation_id"]
+        if result.error_traceback is None:
+            outstanding = (
+                await exec_context.db_context.delegation_runs.list_undelivered_children(
+                    conversation_id=run["conversation_id"],
+                    parent_subconversation_id=run["subconversation_id"],
+                )
+            )
+            if outstanding:
+                parked = await exec_context.db_context.delegation_runs.mark_awaiting_children(
+                    delegation_id
+                )
+                if parked is not None:
+                    logger.info(
+                        "Delegation run %s is waiting on %d delegation(s) of its own.",
+                        delegation_id,
+                        len(outstanding),
+                    )
+                    await self._continue_when_children_finish(exec_context, parked)
+                    return
         await self._finalize_delegation_run(exec_context, delegation_id, result)
+
+    async def _continue_when_children_finish(
+        self,
+        exec_context: ToolExecutionContext,
+        parent: DelegationRunDict,
+    ) -> bool:
+        """Queue a waiting run's next turn if none of its children is running.
+
+        Called when the run starts waiting and whenever one of its children
+        finishes, so whichever of those sees the last child finished queues the
+        turn. The conditional requeue is what makes that happen once.
+        """
+        clock = exec_context.clock or self.clock
+        priority = exec_context.inherited_task_priority()
+
+        async def _requeue(txn: DatabaseTransaction) -> bool:
+            children = await txn.delegation_runs.list_undelivered_children(
+                conversation_id=parent["conversation_id"],
+                parent_subconversation_id=parent["subconversation_id"],
+            )
+            if any(
+                child["status"] not in TERMINAL_DELEGATION_STATUSES
+                for child in children
+            ):
+                return False
+            if not await txn.delegation_runs.requeue_for_continuation(
+                parent["delegation_id"], clock.now()
+            ):
+                return False
+            await txn.tasks.enqueue(
+                task_id=f"{parent['task_id']}_continue_{uuid.uuid4().hex}",
+                task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
+                payload={
+                    "delegation_id": parent["delegation_id"],
+                    "interface_type": parent["interface_type"],
+                    "conversation_id": parent["conversation_id"],
+                    "user_name": parent["user_name"] or "",
+                    "continuation": True,
+                },
+                max_retries_override=1,
+                priority=priority,
+            )
+            return True
+
+        queued = await exec_context.db_context.atomic(_requeue)
+        if queued:
+            logger.info(
+                "Delegations started by run %s have finished; queued its next turn.",
+                parent["delegation_id"],
+            )
+        return queued
+
+    async def _deliver_to_waiting_parent(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> bool:
+        """Leave a finished child's result to the delegated run that started it.
+
+        A run started from inside another delegation answers to that run, not
+        to the person: while its parent is still live, the parent's next turn
+        is what receives the result. Returns False when there is no live parent
+        -- a top-level turn started it, or the parent has already finished --
+        and the result is delivered the ordinary way.
+        """
+        parent_subconversation_id = run["source_subconversation_id"]
+        if parent_subconversation_id is None:
+            return False
+        parent = await exec_context.db_context.delegation_runs.get_active_for_subconversation(
+            conversation_id=run["conversation_id"],
+            subconversation_id=parent_subconversation_id,
+        )
+        if parent is None:
+            return False
+        # A parent still in its turn picks the result up when the turn ends.
+        if parent["status"] == "awaiting_children":
+            await self._continue_when_children_finish(exec_context, parent)
+        return True
 
     @staticmethod
     async def _prepare_authenticated_run(
@@ -3496,6 +3765,9 @@ class TaskWorker:
                 "Delegation %s was already given up on; not delivering again.",
                 run["delegation_id"],
             )
+            return
+
+        if await self._deliver_to_waiting_parent(exec_context, run):
             return
 
         source_service = self._source_service_for_delegation(exec_context, run)
