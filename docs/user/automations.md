@@ -12,6 +12,12 @@ action:
   for logging, simple notifications, and data collection. A script can also call the model or reach
   external services, and then those guarantees no longer hold.
 
+When the assistant is woken and finds nothing worth your attention — the washer is still running,
+the price hasn't dropped, the check came back clean — it can finish without messaging you. It still
+does whatever the automation asked; it just doesn't report routine results. So say what you want to
+hear about: "check the calendar every evening and only tell me if there's a clash" works as written.
+Reminders you set are different: the first time a reminder fires, you always get it.
+
 Just ask in an ordinary conversation. The assistant validates the trigger against real data and
 tests the action before creating anything, so say what you want and it will check its own work.
 

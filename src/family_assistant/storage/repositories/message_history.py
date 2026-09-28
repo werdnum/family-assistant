@@ -1908,6 +1908,10 @@ class MessageHistoryRepository(BaseRepository):
         once an interface has accepted it. A row matching both means generation
         finished but delivery did not -- so a retry can resume at delivery
         rather than running the turn again.
+
+        A turn the model ended quietly also matches: its closing row is
+        internal and is never delivered by design. Callers check
+        ``is_internal`` and treat it as already settled, not as a reply to send.
         """
         stmt = (
             select(message_history_table)

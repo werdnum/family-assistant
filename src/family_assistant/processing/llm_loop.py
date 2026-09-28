@@ -36,6 +36,13 @@ from family_assistant.tools.types import ToolCallBatch, ToolCallReviewTurnState
 
 from .attachments import AttachmentSelectionError
 from .protocol import TaintedSinkRefusedError
+from .quiet_turn import (
+    END_TURN_QUIETLY_TOOL_DEFINITION,
+    END_TURN_QUIETLY_TOOL_NAME,
+    QUIET_END_TOOL_RESULT,
+    quiet_end_reason,
+    quiet_end_record,
+)
 from .utils import (
     _map_stream_error_to_exception,
     messages_have_thought_signatures,
@@ -195,6 +202,7 @@ class LLMStreamingLoop:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
+        allow_quiet_end: bool = False,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -233,6 +241,7 @@ class LLMStreamingLoop:
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
             memory_review=memory_review,
+            allow_quiet_end=allow_quiet_end,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -271,6 +280,7 @@ class LLMStreamingLoop:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
+        allow_quiet_end: bool = False,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """Run a turn, attributing its telemetry to this profile.
 
@@ -303,6 +313,7 @@ class LLMStreamingLoop:
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
             memory_review=memory_review,
+            allow_quiet_end=allow_quiet_end,
         )
         try:
             attribution = CallAttribution(
@@ -347,6 +358,7 @@ class LLMStreamingLoop:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
+        allow_quiet_end: bool = False,
         # AsyncGenerator rather than AsyncIterator: run_stream closes this
         # deterministically, and only the generator protocol offers aclose().
     ) -> AsyncGenerator[tuple[LLMStreamEvent, LLMMessage | None]]:
@@ -491,6 +503,8 @@ class LLMStreamingLoop:
                 if view_addition:
                     additions.append(view_addition)
             addition = "\n\n".join(additions) if additions else None
+            if allow_quiet_end:
+                defs = [*defs, END_TURN_QUIETLY_TOOL_DEFINITION]
             return defs, addition
 
         async def build_done_metadata(
@@ -648,7 +662,12 @@ class LLMStreamingLoop:
                         content=(
                             "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
                             "You MUST now provide your final response summarizing your findings and conclusions. "
-                            "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
+                            "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user."
+                            + (
+                                " If nothing needs the user's attention, you may instead call end_turn_quietly.]"
+                                if allow_quiet_end
+                                else "]"
+                            )
                         ),
                         is_turn_scaffolding=True,
                     )
@@ -656,10 +675,16 @@ class LLMStreamingLoop:
                 logger.info("Added final iteration instruction as user message")
 
             # On final iteration, don't offer any tools to ensure we get a response
-            tools_to_offer = None if is_final_iteration else tools_for_llm
-            tool_choice_mode = (
-                "none" if is_final_iteration or not tools_to_offer else "auto"
-            )
+            # A quiet end is a way of finishing, not more work, so it stays on
+            # offer when the tool budget runs out: the last tool result may be
+            # exactly what shows there is nothing to report.
+            if is_final_iteration:
+                tools_to_offer = (
+                    [END_TURN_QUIETLY_TOOL_DEFINITION] if allow_quiet_end else None
+                )
+            else:
+                tools_to_offer = tools_for_llm
+            tool_choice_mode = "none" if not tools_to_offer else "auto"
 
             # Stream from LLM (with one context-length retry and one empty-response retry)
             context_retry_attempted = False
@@ -887,8 +912,13 @@ class LLMStreamingLoop:
                 break
 
             # On final iteration, report unexecuted tool calls explicitly rather than
-            # silently dropping them.
-            if is_final_iteration:
+            # silently dropping them. A quiet end is the one call still honoured
+            # there, since it is the only tool offered on that pass.
+            only_quiet_end = allow_quiet_end and all(
+                tc.function.name == END_TURN_QUIETLY_TOOL_NAME
+                for tc in tool_calls_from_stream
+            )
+            if is_final_iteration and not only_quiet_end:
                 logger.warning(
                     "Final iteration (%d) reached but LLM returned %d tool call(s). "
                     "Emitting explicit non-executed tool results and ending loop.",
@@ -981,6 +1011,22 @@ class LLMStreamingLoop:
                     )
                     yield (activate_event, activate_message)
                     messages.append(activate_message)
+
+            # end_turn_quietly is the loop's own tool, so it is answered here
+            # and never reaches the executor. It is only honoured on a turn it
+            # was advertised on; anywhere else it runs as an unknown tool.
+            quiet_end_calls: list[ToolCallItem] = []
+            if allow_quiet_end:
+                quiet_end_calls = [
+                    tc
+                    for tc in regular_tool_calls
+                    if tc.function.name == END_TURN_QUIETLY_TOOL_NAME
+                ]
+                regular_tool_calls = [
+                    tc
+                    for tc in regular_tool_calls
+                    if tc.function.name != END_TURN_QUIETLY_TOOL_NAME
+                ]
 
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
@@ -1106,6 +1152,43 @@ class LLMStreamingLoop:
                 yield (
                     LLMStreamEvent(type="done", metadata=terminal_done_metadata),
                     terminal_assistant_message,
+                )
+                return
+
+            if quiet_end_calls:
+                # Every call in the batch has its result before the closing
+                # row, as with the denial above, so the history stays valid
+                # provider protocol when the next turn replays it.
+                for quiet_call in quiet_end_calls:
+                    quiet_result_message = ToolMessage(
+                        tool_call_id=quiet_call.id,
+                        content=QUIET_END_TOOL_RESULT,
+                        name=END_TURN_QUIETLY_TOOL_NAME,
+                        taint_metadata=taint_tracker.snapshot().to_metadata(),
+                    )
+                    yield (
+                        LLMStreamEvent(
+                            type="tool_result",
+                            tool_call_id=quiet_call.id,
+                            tool_result=QUIET_END_TOOL_RESULT,
+                        ),
+                        quiet_result_message,
+                    )
+                quiet_reason = quiet_end_reason(quiet_end_calls[0])
+                logger.info("Turn %s ended quietly: %s", turn_id, quiet_reason)
+                quiet_assistant_message = AssistantMessage(
+                    content=quiet_end_record(quiet_reason),
+                    taint_metadata=taint_tracker.snapshot().to_metadata(),
+                    ended_quietly=True,
+                )
+                yield (
+                    LLMStreamEvent(
+                        type="done",
+                        metadata=await build_done_metadata(
+                            quiet_assistant_message, None
+                        ),
+                    ),
+                    quiet_assistant_message,
                 )
                 return
 
