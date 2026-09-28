@@ -25,6 +25,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.processing.quiet_turn import END_TURN_QUIETLY_TOOL_NAME
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     LlmCallbackPayload,
     NonRetryableTaskError,
@@ -105,7 +106,9 @@ def _quiet_call(reason: str = "Washer still running") -> ToolCallItem:
     )
 
 
-def _make_service(client: RuleBasedMockLLMClient) -> ProcessingService:
+def _make_service(
+    client: RuleBasedMockLLMClient, *, max_iterations: int = 5
+) -> ProcessingService:
     return ProcessingService(
         llm_client=client,
         tools_provider=LocalToolsProvider(
@@ -119,6 +122,7 @@ def _make_service(client: RuleBasedMockLLMClient) -> ProcessingService:
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.BLOCKED,
             id="test_profile",
+            max_iterations=max_iterations,
         ),
         context_providers=[],
         server_url="http://localhost:8000",
@@ -149,12 +153,14 @@ def _exec_context(
         chat_interface=chat_interface,
         credential_resolvers=None,
         api_backend=None,
+        task_priority=TaskPriority.INTERACTIVE,
     )
 
 
 def _payload(
     *,
     reminder_attempt: int | None = None,
+    reminder_follow_up: bool = False,
     trigger_type: str | None = None,
 ) -> LlmCallbackPayload:
     payload: LlmCallbackPayload = {
@@ -168,7 +174,7 @@ def _payload(
     if reminder_attempt is not None:
         payload["reminder_config"] = {
             "is_reminder": True,
-            "follow_up": False,
+            "follow_up": reminder_follow_up,
             "current_attempt": reminder_attempt,
         }
     if trigger_type is not None:
@@ -285,6 +291,50 @@ async def test_an_empty_callback_reply_fails_without_a_retry(
             _payload(),
         )
     chat_interface.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_quiet_end_stays_available_when_the_tool_budget_runs_out(
+    db_engine: AsyncEngine,
+) -> None:
+    """The last tool result may be what shows there is nothing to report."""
+    client = _ScriptedLLMClient([
+        LLMOutput(tool_calls=[_tool_call("call_echo", "echo", '{"value": "ok"}')]),
+        LLMOutput(tool_calls=[_quiet_call()]),
+    ])
+    chat_interface = _chat_interface()
+    db_context = Database(engine=db_engine)
+
+    await handle_llm_callback(
+        _exec_context(
+            db_context, _make_service(client, max_iterations=2), chat_interface
+        ),
+        _payload(),
+    )
+
+    assert client.offered_tool_names[-1] == {END_TURN_QUIETLY_TOOL_NAME}
+    chat_interface.send_message.assert_not_called()
+    rows = await db_context.message_history.get_recent_with_metadata(
+        interface_type=TEST_INTERFACE_TYPE, conversation_id=TEST_CONVERSATION_ID
+    )
+    assert rows[-1]["is_internal"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reminder_does_not_schedule_a_follow_up(
+    db_engine: AsyncEngine,
+) -> None:
+    """A follow-up would claim a reminder was sent that never was."""
+    client = _ScriptedLLMClient([LLMOutput(content="")] * 3)
+    db_context = Database(engine=db_engine)
+
+    with pytest.raises(NonRetryableTaskError):
+        await handle_llm_callback(
+            _exec_context(db_context, _make_service(client), _chat_interface()),
+            _payload(reminder_attempt=1, reminder_follow_up=True),
+        )
+
+    assert await db_context.tasks.get_all(task_type="llm_callback") == []
 
 
 class _OfferCapturingService:

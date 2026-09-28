@@ -662,7 +662,12 @@ class LLMStreamingLoop:
                         content=(
                             "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
                             "You MUST now provide your final response summarizing your findings and conclusions. "
-                            "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
+                            "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user."
+                            + (
+                                " If nothing needs the user's attention, you may instead call end_turn_quietly.]"
+                                if allow_quiet_end
+                                else "]"
+                            )
                         ),
                         is_turn_scaffolding=True,
                     )
@@ -670,10 +675,16 @@ class LLMStreamingLoop:
                 logger.info("Added final iteration instruction as user message")
 
             # On final iteration, don't offer any tools to ensure we get a response
-            tools_to_offer = None if is_final_iteration else tools_for_llm
-            tool_choice_mode = (
-                "none" if is_final_iteration or not tools_to_offer else "auto"
-            )
+            # A quiet end is a way of finishing, not more work, so it stays on
+            # offer when the tool budget runs out: the last tool result may be
+            # exactly what shows there is nothing to report.
+            if is_final_iteration:
+                tools_to_offer = (
+                    [END_TURN_QUIETLY_TOOL_DEFINITION] if allow_quiet_end else None
+                )
+            else:
+                tools_to_offer = tools_for_llm
+            tool_choice_mode = "none" if not tools_to_offer else "auto"
 
             # Stream from LLM (with one context-length retry and one empty-response retry)
             context_retry_attempted = False
@@ -901,8 +912,13 @@ class LLMStreamingLoop:
                 break
 
             # On final iteration, report unexecuted tool calls explicitly rather than
-            # silently dropping them.
-            if is_final_iteration:
+            # silently dropping them. A quiet end is the one call still honoured
+            # there, since it is the only tool offered on that pass.
+            only_quiet_end = allow_quiet_end and all(
+                tc.function.name == END_TURN_QUIETLY_TOOL_NAME
+                for tc in tool_calls_from_stream
+            )
+            if is_final_iteration and not only_quiet_end:
                 logger.warning(
                     "Final iteration (%d) reached but LLM returned %d tool call(s). "
                     "Emitting explicit non-executed tool results and ending loop.",

@@ -1716,6 +1716,18 @@ async def handle_llm_callback(
                 )
             raise RuntimeError(error_message)
 
+        # A turn that wanted to say nothing ended quietly above, so an empty
+        # reply here is a fault. It is not retried: the turn's tool calls are
+        # already durable, and a retry would run them all again. Checked before
+        # follow-ups are scheduled, which would claim a reminder was sent.
+        if not (final_llm_content_to_send or response_attachment_ids):
+            logger.error(
+                f"No content generated for callback in {interface_type}:{conversation_id}"
+            )
+            raise NonRetryableTaskError(
+                "LLM failed to generate response content for callback."
+            )
+
         # Schedule follow-up reminder if needed (moved outside of text reply condition)
         logger.info(
             f"Follow-up scheduling check: is_reminder={is_reminder}, "
@@ -1746,17 +1758,6 @@ async def handle_llm_callback(
             logger.debug(
                 f"Not scheduling follow-up reminder for {interface_type}:{conversation_id}: "
                 f"conditions not met"
-            )
-
-        # A turn that wanted to say nothing ended quietly above, so an empty
-        # reply here is a fault. It is not retried: the turn's tool calls are
-        # already durable, and a retry would run them all again.
-        if not (final_llm_content_to_send or response_attachment_ids):
-            logger.error(
-                f"No content generated for callback in {interface_type}:{conversation_id}"
-            )
-            raise NonRetryableTaskError(
-                "LLM failed to generate response content for callback."
             )
 
     try:
