@@ -3057,6 +3057,12 @@ async def get_conversation_messages(
 _REQUEST_PREVIEW_CHARS = 200
 
 
+def _as_utc(value: datetime) -> datetime:
+    # SQLite hands timezone columns back naive; clients read a naive ISO
+    # string in their own local zone.
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 @chat_api_router.get("/v1/chat/conversations/{conversation_id}/pending-delegations")
 async def get_pending_delegations(
     conversation_id: str,
@@ -3084,9 +3090,17 @@ async def get_pending_delegations(
                 target_profile_id=entry["run"]["target_service_id"],
                 status=entry["run"]["status"],
                 request_preview=entry["run"]["request_text"][:_REQUEST_PREVIEW_CHARS],
-                created_at=entry["run"]["created_at"],
-                started_at=entry["run"]["started_at"],
-                completed_at=entry["run"]["completed_at"],
+                created_at=_as_utc(entry["run"]["created_at"]),
+                started_at=(
+                    _as_utc(entry["run"]["started_at"])
+                    if entry["run"]["started_at"] is not None
+                    else None
+                ),
+                completed_at=(
+                    _as_utc(entry["run"]["completed_at"])
+                    if entry["run"]["completed_at"] is not None
+                    else None
+                ),
                 cancel_requested=entry["run"]["cancel_requested_at"] is not None,
                 children_total=entry["children_total"],
                 children_finished=entry["children_finished"],

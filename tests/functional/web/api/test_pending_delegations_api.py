@@ -131,6 +131,10 @@ async def test_lists_only_background_work_still_owed_to_the_conversation(
     assert council_entry["children_finished"] == 1
     assert finishing_entry["status"] == "completed"
     assert finishing_entry["children_total"] == 0
+    # Clients parse these as instants; a naive timestamp would be read in the
+    # client's local zone.
+    for field in ("created_at", "completed_at"):
+        assert datetime.fromisoformat(finishing_entry[field]).utcoffset() is not None
 
 
 @pytest.mark.asyncio
