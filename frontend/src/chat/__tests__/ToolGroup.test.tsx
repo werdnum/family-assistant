@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ToolGroup } from '../ToolGroup';
+import { ToolGroupShell } from '../ToolGroupShell';
 
 describe('ToolGroup', () => {
   const mockChildren = (
@@ -31,17 +32,6 @@ describe('ToolGroup', () => {
     expect(screen.getByText('3 tool calls')).toBeInTheDocument();
   });
 
-  it('is initially collapsed', () => {
-    render(
-      <ToolGroup startIndex={0} endIndex={1}>
-        {mockChildren}
-      </ToolGroup>
-    );
-
-    const content = screen.getByTestId('tool-group-content');
-    expect(content).toHaveAttribute('data-state', 'closed');
-  });
-
   it('expands when clicked', async () => {
     const user = userEvent.setup();
     render(
@@ -54,10 +44,14 @@ describe('ToolGroup', () => {
     const content = screen.getByTestId('tool-group-content');
 
     expect(content).toHaveAttribute('data-state', 'closed');
+    expect(trigger).toHaveAttribute('data-state', 'closed');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
 
     await user.click(trigger);
 
     expect(content).toHaveAttribute('data-state', 'open');
+    expect(trigger).toHaveAttribute('data-state', 'open');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('collapses again when clicked while expanded', async () => {
@@ -164,58 +158,51 @@ describe('ToolGroup', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('updates ARIA attributes when expanded', async () => {
-    const user = userEvent.setup();
-    render(
-      <ToolGroup startIndex={0} endIndex={1}>
-        {mockChildren}
-      </ToolGroup>
-    );
+  describe('category summary and icons', () => {
+    function renderShell(toolNames: string[], toolCount: number = toolNames.length): HTMLElement {
+      render(
+        <ToolGroupShell
+          toolNames={toolNames}
+          toolCount={toolCount}
+          isExpanded={false}
+          onOpenChange={() => {}}
+        >
+          {mockChildren}
+        </ToolGroupShell>
+      );
+      return screen.getByTestId('tool-group-trigger');
+    }
 
-    const trigger = screen.getByTestId('tool-group-trigger');
+    function categoryIconCount(trigger: HTMLElement): number {
+      return trigger.querySelectorAll('svg:not(.lucide-chevron-down)').length;
+    }
 
-    // Click to expand
-    await user.click(trigger);
+    it('summarises by category and shows one icon per distinct category', () => {
+      const trigger = renderShell(['add_or_update_note', 'get_note', 'search_documents']);
 
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-  });
+      expect(trigger).toHaveTextContent('2 notes and 1 document');
+      expect(categoryIconCount(trigger)).toBe(2);
+      expect(trigger.querySelector('.lucide-chevron-down')).toBeInTheDocument();
+    });
 
-  it('displays category icons', () => {
-    render(
-      <ToolGroup startIndex={0} endIndex={1}>
-        {mockChildren}
-      </ToolGroup>
-    );
+    it('caps category icons at four when tools span more categories', () => {
+      const trigger = renderShell([
+        'add_or_update_note',
+        'add_calendar_event',
+        'search_documents',
+        'schedule_reminder',
+        'execute_script',
+      ]);
 
-    // Check for icon container (icons render based on tool names from context)
-    const trigger = screen.getByTestId('tool-group-trigger');
-    // When context is not available, no icons are shown (graceful fallback)
-    // This is expected behavior in isolated tests
-    expect(trigger).toBeInTheDocument();
-  });
+      expect(trigger).toHaveTextContent('5 tools from 5 categories');
+      expect(categoryIconCount(trigger)).toBe(4);
+    });
 
-  it('displays chevron icon that rotates when collapsed', async () => {
-    const user = userEvent.setup();
-    render(
-      <ToolGroup startIndex={0} endIndex={1}>
-        {mockChildren}
-      </ToolGroup>
-    );
+    it('falls back to a plain count without icons when tool names are unavailable', () => {
+      const trigger = renderShell([], 2);
 
-    const trigger = screen.getByTestId('tool-group-trigger');
-    const chevron = trigger.querySelector('svg:last-child');
-
-    expect(chevron).toBeInTheDocument();
-    // Initially collapsed, trigger should have data-state="closed"
-    expect(trigger).toHaveAttribute('data-state', 'closed');
-
-    // Click to expand
-    await user.click(trigger);
-
-    // Trigger should have data-state="open"
-    expect(trigger).toHaveAttribute('data-state', 'open');
-
-    // Note: The rotation is applied via CSS selector [&[data-state=open]>svg]:rotate-180
-    // in the CollapsibleTrigger component, so we don't directly test the rotate-180 class
+      expect(trigger).toHaveTextContent('2 tool calls');
+      expect(categoryIconCount(trigger)).toBe(0);
+    });
   });
 });

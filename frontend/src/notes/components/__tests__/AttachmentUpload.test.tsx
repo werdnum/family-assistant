@@ -1,26 +1,25 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { server } from '../../../test/setup';
 import { AttachmentUpload } from '../AttachmentUpload';
 
 describe('AttachmentUpload', () => {
-  it('renders upload button', () => {
-    render(<AttachmentUpload onUploadComplete={vi.fn()} />);
-    expect(screen.getByText('Add Attachments')).toBeInTheDocument();
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('opens file picker when button is clicked', async () => {
     const user = userEvent.setup();
     render(<AttachmentUpload onUploadComplete={vi.fn()} />);
-
-    const button = screen.getByText('Add Attachments');
-    await user.click(button);
-
-    // Check that the hidden file input exists
     const fileInput = document.querySelector('input[type="file"]');
-    expect(fileInput).toBeInTheDocument();
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, 'click');
+
+    await user.click(screen.getByRole('button', { name: 'Add Attachments' }));
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(clickSpy.mock.contexts[0]).toBe(fileInput);
   });
 
   it('uploads file and calls onUploadComplete', async () => {
@@ -42,29 +41,27 @@ describe('AttachmentUpload', () => {
     });
   });
 
-  it('shows error when upload fails', async () => {
+  it('shows the server error detail when upload fails', async () => {
     const user = userEvent.setup();
+    const onUploadComplete = vi.fn();
 
-    // Override handler to return error
     server.use(
       http.post('/api/attachments/upload', () => {
-        return HttpResponse.json({ detail: 'Upload failed' }, { status: 500 });
+        return HttpResponse.json({ detail: 'Attachment storage is full' }, { status: 500 });
       })
     );
 
-    render(<AttachmentUpload onUploadComplete={vi.fn()} />);
-
-    const button = screen.getByText('Add Attachments');
-    await user.click(button);
+    render(<AttachmentUpload onUploadComplete={onUploadComplete} />);
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['test content'], 'test.png', { type: 'image/png' });
 
     await user.upload(fileInput, file);
 
-    await waitFor(() => {
-      expect(screen.getByText(/Upload failed/)).toBeInTheDocument();
-    });
+    expect(await screen.findByText('Attachment storage is full')).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Add Attachments' });
+    expect(button).toBeEnabled();
+    expect(onUploadComplete).not.toHaveBeenCalled();
   });
 
   it('disables button when disabled prop is true', () => {

@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -791,8 +791,14 @@ describe('Resumable streaming client', () => {
         },
         { timeout: 10000 }
       );
+      // History has no assistant row for the turn, so the only assistant bubble
+      // is the preserved placeholder: its typing indicator renders, with no text.
       await waitFor(() => {
-        expect(document.querySelectorAll('.animate-bounce').length).toBeGreaterThan(0);
+        const assistantBubbles = screen.getAllByTestId('assistant-message');
+        expect(assistantBubbles).toHaveLength(1);
+        const bubbleContent = within(assistantBubbles[0]).getByTestId('assistant-message-content');
+        expect(bubbleContent).not.toBeEmptyDOMElement();
+        expect(bubbleContent).not.toHaveTextContent(/\S/);
       });
       expect(screen.queryByText(/couldn't confirm the reply/i)).not.toBeInTheDocument();
     },

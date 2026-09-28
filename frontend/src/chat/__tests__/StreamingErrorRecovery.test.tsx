@@ -279,18 +279,24 @@ describe.sequential('Streaming Error Recovery', () => {
       await waitFor(
         () => {
           expect(screen.getByText('Let me look that up. Found some results.')).toBeInTheDocument();
+          expect(screen.getByTestId('send-button')).toBeInTheDocument();
         },
         { timeout: 5000 }
       );
 
       // Error should NOT be shown since content was delivered successfully
       expect(screen.queryByText(/encountered an error/)).not.toBeInTheDocument();
+
+      // The tool call survives the error, along with the result that arrived after it.
+      await user.click(screen.getByTestId('tool-group-trigger'));
+      expect(await screen.findByText('search_notes')).toBeInTheDocument();
+      expect(screen.getByTestId('tool-result')).toHaveTextContent('Test note');
     },
     { timeout: 30000 }
   );
 
   it(
-    'clears error state between conversations',
+    "does not carry a failed turn's error into the next reply",
     async () => {
       let callCount = 0;
 
@@ -331,9 +337,15 @@ describe.sequential('Streaming Error Recovery', () => {
       await waitFor(
         () => {
           expect(screen.getByText('This works fine!')).toBeInTheDocument();
+          expect(screen.getByTestId('send-button')).toBeInTheDocument();
         },
         { timeout: 5000 }
       );
+
+      const replies = screen.getAllByTestId('assistant-message-content');
+      expect(replies).toHaveLength(2);
+      expect(replies[0]).toHaveTextContent(/encountered an error processing your message/);
+      expect(replies[1]).toHaveTextContent(/^This works fine!$/);
     },
     { timeout: 30000 }
   );
@@ -554,16 +566,21 @@ describe.sequential('Streaming Error Recovery', () => {
         })
       );
 
+      const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
 
-      await waitFor(
-        () => {
-          expect(screen.getByTestId('send-button')).toBeInTheDocument();
-        },
-        { timeout: 5000 }
-      );
+      expect(
+        await screen.findByText('Please check this', {}, { timeout: 5000 })
+      ).toBeInTheDocument();
+      const toolGroupTrigger = await screen.findByTestId('tool-group-trigger');
+      if (toolGroupTrigger.getAttribute('data-state') === 'closed') {
+        await user.click(toolGroupTrigger);
+      }
+      expect(await screen.findByText('search_notes')).toBeInTheDocument();
+      expect(screen.queryByText('Executing tool...')).not.toBeInTheDocument();
+      expect(screen.getByTestId('send-button')).toBeInTheDocument();
+      expect(screen.queryByTestId('stop-button')).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();
-      expect(screen.queryByText('Stop generating')).not.toBeInTheDocument();
     },
     { timeout: 30000 }
   );

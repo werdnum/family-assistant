@@ -6,6 +6,14 @@ import { handlers } from './mocks/handlers';
 // Set up MSW server
 export const server = setupServer(...handlers);
 
+// MSW answers an exception thrown inside a request handler with a 500 rather than
+// failing the test. Collect them so an expect() inside a handler fails the test
+// that triggered it.
+const handlerErrors = [];
+server.events.on('unhandledException', ({ error }) => {
+  handlerErrors.push(error);
+});
+
 // Start server before all tests
 beforeAll(() => {
   server.listen({
@@ -26,6 +34,10 @@ beforeAll(() => {
 // Reset handlers after each test (RTL auto-cleanup handles component unmount)
 afterEach(() => {
   server.resetHandlers();
+  if (handlerErrors.length > 0) {
+    const [first] = handlerErrors.splice(0);
+    throw first;
+  }
 });
 
 // Stop server after all tests

@@ -1,16 +1,20 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HttpResponse, http } from 'msw';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { _resetForTesting } from '../../api/errorClient';
+import { _resetForTesting, forceFlush } from '../../api/errorClient';
+import { server } from '../../test/setup.js';
 
-// Mock the errorClient module
-vi.mock('../../api/errorClient', async () => {
-  const actual = await vi.importActual('../../api/errorClient');
-  return {
-    ...actual,
-    reportErrorFromException: vi.fn(),
-  };
-});
+function recordDeliveredReports(): Record<string, unknown>[] {
+  const delivered: Record<string, unknown>[] = [];
+  server.use(
+    http.post('/api/errors/', async ({ request }) => {
+      delivered.push((await request.json()) as Record<string, unknown>);
+      return HttpResponse.json({ status: 'reported' });
+    })
+  );
+  return delivered;
+}
 
 // Component that throws an error
 const ThrowingComponent = ({ shouldThrow }: { shouldThrow: boolean }) => {
@@ -23,9 +27,13 @@ const ThrowingComponent = ({ shouldThrow }: { shouldThrow: boolean }) => {
 describe('ErrorBoundary', () => {
   beforeEach(() => {
     _resetForTesting();
-    vi.clearAllMocks();
     // Suppress console.error for expected errors
     vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    _resetForTesting();
+    vi.restoreAllMocks();
   });
 
   it('should render children when there is no error', () => {
@@ -96,56 +104,43 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Working component')).toBeInTheDocument();
   });
 
-  it('should report errors via errorClient', async () => {
-    const { reportErrorFromException } = await import('../../api/errorClient');
+  it('should report the caught error to the backend as a component_error', async () => {
+    const delivered = recordDeliveredReports();
 
     render(
       <ErrorBoundary componentName="TestComponent">
         <ThrowingComponent shouldThrow={true} />
       </ErrorBoundary>
     );
+    await forceFlush();
 
-    expect(reportErrorFromException).toHaveBeenCalledWith(
-      expect.any(Error),
-      'component_error',
-      'TestComponent',
+    expect(delivered).toEqual([
       expect.objectContaining({
-        componentStack: expect.any(String),
-      })
-    );
+        message: 'Test component error',
+        error_type: 'component_error',
+        component_name: 'TestComponent',
+        extra_data: { componentStack: expect.stringContaining('ThrowingComponent') },
+      }),
+    ]);
+    expect(delivered[0]).not.toHaveProperty('severity');
   });
 
-  it('should include component name in error report', async () => {
-    const { reportErrorFromException } = await import('../../api/errorClient');
-
-    render(
-      <ErrorBoundary componentName="MySpecificComponent">
-        <ThrowingComponent shouldThrow={true} />
-      </ErrorBoundary>
-    );
-
-    expect(reportErrorFromException).toHaveBeenCalledWith(
-      expect.any(Error),
-      'component_error',
-      'MySpecificComponent',
-      expect.any(Object)
-    );
-  });
-
-  it('should work without componentName prop', async () => {
-    const { reportErrorFromException } = await import('../../api/errorClient');
+  it('should report a null component_name when no componentName prop is given', async () => {
+    const delivered = recordDeliveredReports();
 
     render(
       <ErrorBoundary>
         <ThrowingComponent shouldThrow={true} />
       </ErrorBoundary>
     );
+    await forceFlush();
 
-    expect(reportErrorFromException).toHaveBeenCalledWith(
-      expect.any(Error),
-      'component_error',
-      undefined,
-      expect.any(Object)
-    );
+    expect(delivered).toEqual([
+      expect.objectContaining({
+        message: 'Test component error',
+        error_type: 'component_error',
+        component_name: null,
+      }),
+    ]);
   });
 });
