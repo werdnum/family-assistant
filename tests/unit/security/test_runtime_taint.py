@@ -1720,6 +1720,35 @@ def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> Non
     )
 
 
+def test_read_only_worker_tool_is_a_read_not_a_sandbox_execution() -> None:
+    """Listing worker tasks does not run code, so it is not sandbox_network.
+
+    ``worker`` names the code-execution subsystem, and a whole-subsystem grant
+    is gated as sandbox_network. A read-only member of it only reads, so it
+    keeps the conservative read classification instead of the execution sink.
+    """
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "list_worker_tasks", ToolTag.READ_ONLY, ToolTag.WORKER
+            )
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    # The execution members of the same subsystem still resolve to the sandbox.
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "spawn_worker",
+                ToolTag.CODE_EXECUTION,
+                ToolTag.STATE_CHANGING,
+                ToolTag.WORKER,
+            )
+        )
+        is SinkClass.SANDBOX_NETWORK
+    )
+
+
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
     None
 ):

@@ -19,6 +19,7 @@ from family_assistant.tools.metadata import (
     make_local_tool_metadata,
     normalize_mcp_tool_metadata,
     resolve_mcp_tool_tags,
+    uncovered_configured_tools,
 )
 
 if TYPE_CHECKING:
@@ -132,6 +133,27 @@ def test_resolve_mcp_tool_tags_adds_output_unspecified_when_annotations_lack_out
         configured_tool_metadata=None,
         annotation_tags=annotation_tags,
     ) == {ToolTag.READ_ONLY, ToolTag.OPEN_WORLD, ToolTag.OUTPUT_UNSPECIFIED}
+
+
+def test_uncovered_configured_tools_reports_tools_an_exact_map_omits() -> None:
+    """A map with no wildcard must cover every tool or say which it does not."""
+    configured = normalize_mcp_tool_metadata({
+        "airbnb_property": ["read_only", "output_untrusted"],
+    })
+
+    assert uncovered_configured_tools(
+        ["airbnb_property", "booking", "booking_property"], configured
+    ) == ("booking", "booking_property")
+    # A wildcard covers a tool the map does not name.
+    assert (
+        uncovered_configured_tools(
+            ["airbnb_property", "booking"],
+            normalize_mcp_tool_metadata({"airbnb_property": ["read_only"], "*": []}),
+        )
+        == ()
+    )
+    # No configured map at all is not a declared-coverage gap.
+    assert uncovered_configured_tools(["anything"], {}) == ()
 
 
 def test_derive_mcp_annotation_tags_marks_open_world_by_default() -> None:

@@ -1365,7 +1365,16 @@ def resolve_tool_sink_class(
         and not tag_values.intersection({"browser", "external_comm"})
     ):
         return SinkClass.SENSITIVE_READ_BROADENING
-    if "code_execution" in tag_values or "worker" in tag_values:
+    if "code_execution" in tag_values or (
+        # ``worker`` marks a tool as belonging to the code-execution subsystem,
+        # which is why the whole subsystem is gated as sandbox_network. A
+        # read-only member of it -- ``list_worker_tasks``, ``read_task_result``
+        # -- does not run anything in the sandbox, so it is a read rather than
+        # an execution and falls through to the read classification below. Its
+        # untrusted output is still tracked as a source; only the sink changes.
+        "worker" in tag_values
+        and "read_only" not in tag_values
+    ):
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
         return SinkClass.ATTACKER_ADDRESSABLE_EGRESS
