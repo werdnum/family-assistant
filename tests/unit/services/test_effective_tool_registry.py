@@ -8,6 +8,7 @@ import pytest
 
 from family_assistant.config_loader import load_config
 from family_assistant.services.effective_tool_registry import (
+    WORKER_TOOL_NAMES,
     build_effective_local_tool_definitions,
     build_effective_local_tool_registrations,
 )
@@ -112,6 +113,36 @@ def test_disabled_google_integration_removes_every_governed_tool(
     assert {registration.name for registration in registrations}.isdisjoint(
         GOOGLE_TOOL_REQUIRED_SCOPES
     )
+
+
+def test_disabled_ai_worker_removes_every_worker_tool(tmp_path: Path) -> None:
+    config = _load_defaults(tmp_path)
+    config.ai_worker_config.enabled = False
+
+    registrations = build_effective_local_tool_registrations(
+        config, _google_state(frozenset())
+    )
+
+    assert {registration.name for registration in registrations}.isdisjoint(
+        WORKER_TOOL_NAMES
+    )
+
+
+def test_enabled_ai_worker_serves_every_worker_tool(tmp_path: Path) -> None:
+    config = _load_defaults(tmp_path)
+    config.ai_worker_config.enabled = True
+
+    registrations = build_effective_local_tool_registrations(
+        config, _google_state(frozenset())
+    )
+
+    assert {
+        "spawn_worker",
+        "read_task_result",
+        "cancel_worker_task",
+        "list_worker_tasks",
+    } == WORKER_TOOL_NAMES
+    assert {registration.name for registration in registrations} >= WORKER_TOOL_NAMES
 
 
 @pytest.mark.asyncio
