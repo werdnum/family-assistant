@@ -10,8 +10,8 @@ rule. Registration lives in `src/family_assistant/tools/__init__.py`; runtime ac
 unless `tools_policy` also allows it, so both are required.
 
 A tool that belongs to an integration packaged as a plugin (`src/family_assistant/plugins/`, e.g.
-Home Assistant) is declared on the plugin as a `ToolRegistration` instead, and reaches its client
-through `exec_context.plugins`. See
+Home Assistant, Reolink cameras) is declared on the plugin as a `ToolRegistration` instead, and
+reaches its client through `exec_context.plugins`. See
 [docs/design/plugin-architecture.md](../../../docs/design/plugin-architecture.md).
 
 ### Step 1: Create the Tool Implementation
@@ -118,12 +118,13 @@ attributes:
 - `processing_service`, `processing_profile_id`
 - `embedding_generator`, `indexing_source`
 - `clock`: Clock instance for time operations
-- `home_assistant_client`, `camera_backend`, `attachment_registry`, `event_sources`
+- `plugins`: the profile's plugin instances (Home Assistant, Reolink cameras)
+- `attachment_registry`, `event_sources`
 
-Infrastructure fields (`processing_service`, `clock`, `home_assistant_client`, `event_sources`,
-`attachment_registry`, `camera_backend`, `credential_resolvers`, `api_backend`, `timezone`) have no
-defaults, so every construction site must pass them explicitly and the type checker catches
-omissions when new infrastructure is added.
+Infrastructure fields (`processing_service`, `clock`, `plugins`, `event_sources`,
+`attachment_registry`, `credential_resolvers`, `api_backend`, `timezone`) have no defaults, so every
+construction site must pass them explicitly and the type checker catches omissions when new
+infrastructure is added.
 
 ## Special Context Injection
 

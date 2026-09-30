@@ -1535,7 +1535,6 @@ def _build_exec_context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         processing_profile_id="default",
         embedding_generator=embedding_generator,

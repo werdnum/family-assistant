@@ -97,7 +97,6 @@ def _context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         visibility_grants=set(grants) if grants is not None else None,
         memory_read=memory_read,
         timezone=ZoneInfo("UTC"),

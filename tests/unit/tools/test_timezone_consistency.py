@@ -14,16 +14,18 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.camera.fake import FakeCameraBackend
-from family_assistant.camera.protocol import CameraEvent, Recording
-from family_assistant.tools.automations import (
-    _to_isoformat,  # noqa: PLC2701
-    format_automation_datetime,
-)
-from family_assistant.tools.camera import (
+from family_assistant.plugins.reolink.fake import FakeCameraBackend
+from family_assistant.plugins.reolink.instance import ReolinkInstance
+from family_assistant.plugins.reolink.protocol import CameraEvent, Recording
+from family_assistant.plugins.reolink.tools import (
     get_camera_frames_batch_tool,
     get_camera_recordings_tool,
     search_camera_events_tool,
+)
+from family_assistant.plugins.runtime import ProfilePlugins
+from family_assistant.tools.automations import (
+    _to_isoformat,  # noqa: PLC2701
+    format_automation_datetime,
 )
 from family_assistant.tools.events import _format_event_timestamp  # noqa: PLC2701
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
@@ -133,10 +135,9 @@ def sydney_exec_context(
         db_context=Mock(),
         processing_service=None,
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((ReolinkInstance(camera_backend_with_events),)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=camera_backend_with_events,
         timezone=SYDNEY,
         credential_resolvers=None,
         api_backend=None,

@@ -188,7 +188,6 @@ def _context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=(
             {"google": cast("OAuthCredentialResolver", resolver)} if resolver else None
         ),

@@ -223,7 +223,6 @@ def _context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         visibility_grants=None,
         timezone=curator.service_config.timezone,
         credential_resolvers=None,

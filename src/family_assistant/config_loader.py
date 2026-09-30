@@ -47,6 +47,10 @@ DEFAULT_CONFIG_FILE = "config.yaml"
 DEFAULT_PROMPTS_FILE = "prompts.yaml"
 
 
+class JsonObject:
+    """``EnvVarMapping.value_type`` for a variable whose value is a JSON object."""
+
+
 @dataclass
 class EnvVarMapping:
     """Defines how an environment variable maps to a config path.
@@ -54,7 +58,8 @@ class EnvVarMapping:
     Attributes:
         env_var: Environment variable name
         config_path: Dot-separated path in config dict (e.g., "pwa_config.vapid_public_key")
-        value_type: Type to convert the value to (str, int, bool, list, dict)
+        value_type: Type to convert the value to (str, int, bool, list, dict,
+            JsonObject)
         list_separator: Separator for list values (default ",")
         dict_separator: Separator for dict key:value pairs (default ":")
     """
@@ -126,6 +131,7 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("TIMEZONE", "default_profile_settings.processing_config.timezone"),
     EnvVarMapping("HOMEASSISTANT_URL", "plugins.home_assistant.default.api_url"),
     EnvVarMapping("HOMEASSISTANT_API_KEY", "plugins.home_assistant.default.token"),
+    EnvVarMapping("REOLINK_CAMERAS", "plugins.reolink.default.cameras", JsonObject),
     EnvVarMapping(
         "MCP_INITIALIZATION_TIMEOUT_SECONDS",
         "default_profile_settings.tools_config.mcp_initialization_timeout_seconds",
@@ -261,7 +267,7 @@ def parse_env_value(
 
     Args:
         value: The raw string value from the environment
-        value_type: The target type (str, int, bool, list, dict)
+        value_type: The target type (str, int, bool, list, dict, JsonObject)
         list_separator: Separator for list values
         dict_separator: Separator for dict key:value pairs
 
@@ -290,6 +296,13 @@ def parse_env_value(
             return [int(item) for item in items]
         except ValueError:
             return items
+
+    if value_type is JsonObject:
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            msg = "must be a JSON object"
+            raise ValueError(msg)
+        return parsed
 
     if value_type is dict:
         # Parse as dict from "key:value,key:value" format
@@ -725,7 +738,6 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "retry_config",
     "model_tier",
     "model_selection",
-    "camera_config",
     "default_note_visibility_labels",
     "required_note_visibility_labels",
     "allowed_note_visibility_labels",

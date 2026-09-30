@@ -440,7 +440,6 @@ def _make_tool_context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         visibility_grants=visibility_grants,
         default_note_visibility_labels=default_note_visibility_labels,
         timezone=ZoneInfo("UTC"),

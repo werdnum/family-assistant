@@ -373,7 +373,6 @@ result
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             timezone=ZoneInfo("America/New_York"),
             credential_resolvers=None,
             api_backend=None,

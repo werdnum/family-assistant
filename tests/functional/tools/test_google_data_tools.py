@@ -243,7 +243,6 @@ def _make_context(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        camera_backend=None,
         credential_resolvers=(
             {"google": cast("OAuthCredentialResolver", resolver)} if resolver else None
         ),

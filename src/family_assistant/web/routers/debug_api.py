@@ -291,7 +291,7 @@ async def dump_profiles(
     been merged) including:
 
     - ``processing_config`` — prompts, LLM model/provider, retry/fallback chain,
-      history limits, timezone, iteration caps, calendar/camera/Home Assistant
+      history limits, timezone, iteration caps, calendar
       settings, delegation security level, system-doc includes.
     - ``tools_config`` — enabled local tools (with eager/on-demand loading mode),
       enabled MCP servers, tools requiring confirmation, timeouts.

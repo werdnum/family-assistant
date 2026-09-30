@@ -330,7 +330,6 @@ class InteractionsAgentProcessingService(ProcessingService):
             plugins=self.plugins,
             event_sources=self.event_sources,
             attachment_registry=self.attachment_registry,
-            camera_backend=self.camera_backend,
             credential_resolvers=self.credential_resolvers,
             api_backend=self.api_backend,
             timezone=self.service_config.timezone,

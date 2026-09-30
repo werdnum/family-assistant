@@ -162,14 +162,22 @@
 #       llm_model: "claude-sonnet-4-6"
 #   - id: "camera_analyst"
 #     processing_config:
-#       camera_config:
-#         backend: "reolink"
-#         cameras_config:
-#           camera1:
-#             host: "192.168.1.100"
-#             username: "admin"
-#             password: "your_password"
-#             name: "Front Door"
+#       max_iterations: 50
+
+# --- Plugins ---
+# Integrations packaged as plugins, configured as named instances. Every profile
+# uses an instance named "default" unless its own `plugins` map picks another
+# (or null). Reolink cameras can come from the REOLINK_CAMERAS environment
+# variable (JSON) instead.
+# plugins:
+#   reolink:
+#     default:
+#       cameras:
+#         camera1:
+#           host: "192.168.1.100"
+#           username: "admin"
+#           password: "your_password"
+#           name: "Front Door"
 
 # --- MCP (Model Context Protocol) Servers ---
 # Configure external MCP servers. These override the defaults in defaults.yaml.

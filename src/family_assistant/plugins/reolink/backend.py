@@ -9,16 +9,11 @@ reolink_aio library. It provides:
 
 The implementation handles timezone conversions (UTC to camera local time) and
 manages concurrent access to avoid exceeding Reolink's session limits.
-
-Configuration can be provided via:
-1. Environment variable REOLINK_CAMERAS (JSON format)
-2. Direct config dict passed to create_reolink_backend()
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -26,7 +21,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 import aiohttp
 from reolink_aio.api import Host
@@ -34,7 +29,7 @@ from reolink_aio.enums import VodRequestType
 from reolink_aio.exceptions import ReolinkConnectionError
 from reolink_aio.typings import VOD_file, VOD_trigger
 
-from family_assistant.camera.protocol import (
+from family_assistant.plugins.reolink.protocol import (
     CameraEvent,
     CameraInfo,
     FrameWithTimestamp,
@@ -42,14 +37,12 @@ from family_assistant.camera.protocol import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
 
-    from family_assistant.config_models import ReolinkCameraItemConfig
+    from family_assistant.plugins.reolink.config import ReolinkCameraItemConfig
 
 logger = logging.getLogger(__name__)
-
-# Environment variable for camera configuration
-REOLINK_CAMERAS_ENV = "REOLINK_CAMERAS"
 
 # Mapping from VOD_trigger flag names to our event types
 # VOD_trigger is an IntFlag with values: PERSON, VEHICLE, ANIMAL, MOTION, FACE, etc.
@@ -65,23 +58,6 @@ VOD_TRIGGER_TO_EVENT_TYPE: dict[str, str] = {
 
 # VOD split time for searching recordings (5 minutes per chunk)
 VOD_SPLIT_TIME = timedelta(minutes=5)
-
-
-class _ReolinkCameraConfigRequired(TypedDict):
-    """Required fields for Reolink camera configuration."""
-
-    host: str
-    username: str
-    password: str
-
-
-class ReolinkCameraConfigDict(_ReolinkCameraConfigRequired, total=False):
-    """TypedDict for Reolink camera configuration."""
-
-    port: int
-    use_https: bool
-    channel: int
-    name: str | None
 
 
 @dataclass
@@ -960,115 +936,26 @@ class ReolinkBackend:
         self._hosts.clear()
 
 
-def get_cameras_from_env() -> dict[str, ReolinkCameraConfigDict] | None:
-    """Read camera configuration from REOLINK_CAMERAS environment variable.
-
-    Expected format (JSON):
-    {
-        "camera_id": {
-            "host": "192.168.1.100",
-            "username": "admin",
-            "password": "secret",
-            "name": "Front Door",
-            "port": 443,
-            "use_https": true,
-            "channel": 0
-        }
-    }
-
-    Returns:
-        Dict of camera configs, or None if env var not set.
-
-    Raises:
-        ValueError: If env var contains invalid JSON.
-    """
-    env_value = os.environ.get(REOLINK_CAMERAS_ENV)
-    if not env_value:
-        return None
-
-    try:
-        config = json.loads(env_value)
-        if not isinstance(config, dict):
-            msg = f"{REOLINK_CAMERAS_ENV} must be a JSON object"
-            raise ValueError(msg)
-        return config
-    except json.JSONDecodeError as e:
-        msg = f"Invalid JSON in {REOLINK_CAMERAS_ENV}: {e}"
-        raise ValueError(msg) from e
-
-
 def create_reolink_backend(
-    cameras_config: dict[str, ReolinkCameraItemConfig] | None = None,
-) -> ReolinkBackend | None:
-    """Create ReolinkBackend from typed config or environment variable.
-
-    Configuration priority:
-    1. cameras_config argument (if provided and non-empty)
-    2. REOLINK_CAMERAS environment variable (JSON format)
-
-    Args:
-        cameras_config: Optional dict mapping camera_id to ReolinkCameraItemConfig
-            Pydantic models with typed fields (host, username, password, etc.)
-
-    Returns:
-        ReolinkBackend instance, or None if:
-        - reolink_aio is not available
-        - No camera configuration provided (neither arg nor env var)
-
-    Example:
-        >>> # From typed config (normal usage from config.yaml)
-        >>> # cameras_config comes from CameraConfig.cameras_config
-
-        >>> # From environment variable (fallback)
-        >>> # export REOLINK_CAMERAS='{"cam1": {"host": "...", ...}}'
-        >>> backend = create_reolink_backend()
-    """
-    cameras: dict[str, ReolinkCameraConfig] = {}
-
-    # Use provided typed config
-    if cameras_config:
-        for camera_id, config in cameras_config.items():
-            cameras[camera_id] = ReolinkCameraConfig(
-                host=config.host,
-                username=config.username,
-                password=config.password.get_secret_value(),
-                port=config.effective_port,
-                use_https=config.use_https,
-                channel=config.channel,
-                name=config.name,
-                prefer_download=getattr(config, "prefer_download", False),
-            )
-    else:
-        # Fall back to environment variable (returns untyped dicts)
-        try:
-            env_config = get_cameras_from_env()
-        except ValueError:
-            logger.exception("Failed to parse camera config from environment")
-            return None
-
-        if env_config:
-            for camera_id, config in env_config.items():
-                cameras[camera_id] = ReolinkCameraConfig(
-                    host=config["host"],
-                    username=config["username"],
-                    password=config["password"],
-                    port=config.get("port"),  # None = auto (443 for HTTPS, 80 for HTTP)
-                    use_https=config.get("use_https", True),
-                    channel=config.get("channel", 0),
-                    name=config.get("name"),
-                    prefer_download=config.get("prefer_download", False),
-                )
-
-    if not cameras:
-        logger.debug(
-            "No camera configuration provided (neither config dict nor %s env var)",
-            REOLINK_CAMERAS_ENV,
+    cameras_config: Mapping[str, ReolinkCameraItemConfig],
+) -> ReolinkBackend:
+    """Build a backend for the configured cameras, keyed by camera id."""
+    cameras = {
+        camera_id: ReolinkCameraConfig(
+            host=config.host,
+            username=config.username,
+            password=config.password.get_secret_value(),
+            port=config.effective_port,
+            use_https=config.use_https,
+            channel=config.channel,
+            name=config.name,
+            prefer_download=config.prefer_download,
         )
-        return None
-
+        for camera_id, config in cameras_config.items()
+    }
     logger.info(
         "Created Reolink backend with %d camera(s): %s",
         len(cameras),
-        ", ".join(cameras.keys()),
+        ", ".join(cameras),
     )
     return ReolinkBackend(cameras)

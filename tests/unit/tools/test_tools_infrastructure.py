@@ -55,7 +55,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -173,7 +172,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -220,7 +218,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -265,7 +262,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -324,7 +320,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,  # No attachment registry
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -387,7 +382,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -446,7 +440,6 @@ class TestLocalToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         )
@@ -521,7 +514,6 @@ class TestLocalToolsProvider:
                 plugins=None,
                 event_sources=None,
                 attachment_registry=None,
-                camera_backend=None,
                 credential_resolvers=None,
                 api_backend=None,
             )
@@ -638,7 +630,6 @@ class TestPolicyConfirmationFlow:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             request_confirmation_callback=confirmation_callback,
             credential_resolvers=None,
             api_backend=None,
@@ -720,7 +711,6 @@ class TestPolicyEnforcingToolsProvider:
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             request_confirmation_callback=None,
             credential_resolvers=None,
             api_backend=None,

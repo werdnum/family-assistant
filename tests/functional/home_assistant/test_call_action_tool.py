@@ -72,7 +72,6 @@ def _make_exec_context(
         ),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         credential_resolvers=None,
         api_backend=None,

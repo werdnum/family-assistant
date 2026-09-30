@@ -994,7 +994,6 @@ def _execution_context() -> ToolExecutionContext:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

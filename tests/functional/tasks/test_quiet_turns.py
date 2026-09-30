@@ -148,7 +148,6 @@ def _exec_context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         chat_interface=chat_interface,
         credential_resolvers=None,
