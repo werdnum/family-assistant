@@ -19,6 +19,7 @@ from browser_handoff_service.runtime import CHECK_REF_JS as SERVER_CHECK_REF_JS
 from browser_handoff_service.runtime import SNAPSHOT_JS as SERVER_SNAPSHOT_JS
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
+from family_assistant.security.taint import InMemoryTurnTaintTracker, TurnTaintState
 from family_assistant.tools.browser_backend import (
     CHECK_REF_JS,
     SNAPSHOT_JS,
@@ -307,6 +308,7 @@ def _exec_context(
     profile_id: str | None,
     timezone: ZoneInfo | None = _DEFAULT_TZ,
     conversation_id: str = "conv_select",
+    taint_tracker: InMemoryTurnTaintTracker | None = None,
 ) -> ToolExecutionContext:
     app_config = SimpleNamespace(browser_handoff_config=_config(enabled=enabled))
     service = SimpleNamespace(app_config=app_config)
@@ -315,6 +317,7 @@ def _exec_context(
         processing_profile_id=profile_id,
         conversation_id=conversation_id,
         timezone=timezone,
+        taint_tracker=taint_tracker,
     )
     return cast("ToolExecutionContext", cast("object", ctx))
 
@@ -344,6 +347,41 @@ async def test_get_browser_backend_forwards_context_timezone() -> None:
     # live session with network I/O, which this selection test deliberately avoids.
     assert backend._timezone_id == "Australia/Sydney"
     await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_only_a_credential_session_records_a_sensitive_read() -> None:
+    """A signed-in session's pages may be the household's own account data."""
+    ordinary = InMemoryTurnTaintTracker(TurnTaintState.empty())
+    backend = await get_browser_backend(
+        _exec_context(
+            enabled=True,
+            profile_id="browser_profile",
+            conversation_id="conv_plain_read",
+            taint_tracker=ordinary,
+        )
+    )
+    await backend.close()
+    assert ordinary.snapshot().sensitive_reads == ()
+
+    credential = InMemoryTurnTaintTracker(TurnTaintState.empty())
+    config = _config(enabled=True)
+    config.handoff_capable_profiles = ["credential_browser_profile"]
+    ctx = SimpleNamespace(
+        processing_service=SimpleNamespace(
+            app_config=SimpleNamespace(browser_handoff_config=config)
+        ),
+        processing_profile_id="credential_browser_profile",
+        conversation_id="conv_credential_read",
+        timezone=None,
+        taint_tracker=credential,
+    )
+    backend = await get_browser_backend(
+        cast("ToolExecutionContext", cast("object", ctx))
+    )
+    await backend.close()
+    reads = credential.snapshot().sensitive_reads
+    assert [read.scope.qualifier for read in reads] == ["credential_browser"]
 
 
 @pytest.mark.asyncio

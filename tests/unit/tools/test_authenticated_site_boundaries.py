@@ -87,6 +87,7 @@ def _context(
             timezone=None,
             tool_call_batch=None,
             tool_call_id=None,
+            taint_tracker=None,
         ),
     )
 

@@ -1365,9 +1365,25 @@ def resolve_tool_sink_class(
         and not tag_values.intersection({"browser", "external_comm"})
     ):
         return SinkClass.SENSITIVE_READ_BROADENING
-    if "code_execution" in tag_values or "worker" in tag_values:
+    if "code_execution" in tag_values:
+        # ``worker`` names the subsystem, not an execution: the worker tools that
+        # run anything also carry ``code_execution``, while reading or cancelling
+        # a worker task is an ordinary read or write.
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
+        if (
+            descriptor.origin == "local"
+            and "read_only" in tag_values
+            and "state_changing" not in tag_values
+            and not descriptor.destination_argument_paths
+        ):
+            # This application's own snapshot, extract, screenshot and wait
+            # tools read the page already open and send nothing the model chose
+            # anywhere: the egress was the navigation that opened it, which is
+            # gated here. What they return is tracked as an untrusted source;
+            # as a sink they are local. An MCP tool tagged ``browser`` is
+            # declared to accept a destination, so it stays egress.
+            return SinkClass.USER_LOCAL
         return SinkClass.ATTACKER_ADDRESSABLE_EGRESS
     if "user_facing_media" in tag_values:
         # Attaching media to the current turn's own reply is a local, same-user

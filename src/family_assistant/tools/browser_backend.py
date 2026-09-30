@@ -46,6 +46,7 @@ from family_assistant.tools.browser_session import (
     close_browser_session,
     get_browser_session,
 )
+from family_assistant.tools.taint_helpers import record_sensitive_read
 
 if TYPE_CHECKING:
     from rebrowser_playwright.async_api import Locator, Page
@@ -1462,6 +1463,32 @@ def _remote_enabled(exec_context: ToolExecutionContext) -> BrowserHandoffConfig 
     return config
 
 
+def _record_protected_session_read(
+    exec_context: ToolExecutionContext, backend: RemoteBrowserBackend
+) -> None:
+    """Treat whatever a signed-in session returns as private data.
+
+    A page read in ordinary browsing is untrusted but not private, so it is not
+    a sensitive read. In a credential-protected session every result may carry
+    the household's own account data, so any tool that reaches the session
+    records one -- which is what keeps a confined profile's later disclosure
+    under review rather than audit.
+    """
+    if not backend.autofill_enabled:
+        return
+    spec = backend.authenticated_spec
+    record_sensitive_read(
+        exec_context,
+        kind="tool",
+        qualifier=(
+            f"authenticated_site:{spec.site_id}"
+            if spec is not None
+            else "credential_browser"
+        ),
+        surfaced_ids=(),
+    )
+
+
 async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBackend:
     """Resolve the browser backend for this execution context.
 
@@ -1475,6 +1502,7 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
     """
     binding = await resolve_authenticated_binding(exec_context)
     if binding is not None:
+        _record_protected_session_read(exec_context, binding.backend)
         return binding.backend
     if _requires_authenticated_binding(exec_context):
         # An authenticated browser profile with no bound session has nothing it
@@ -1515,6 +1543,7 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
                 autofill_enabled=autofill_enabled,
             )
             _remote_backends[session_key] = backend
+        _record_protected_session_read(exec_context, backend)
         return backend
     session: BrowserSession = await get_browser_session(exec_context)
     return LocalPlaywrightBackend(session)

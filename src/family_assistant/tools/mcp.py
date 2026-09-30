@@ -55,6 +55,7 @@ from family_assistant.tools.metadata import (
     derive_mcp_annotation_tags,
     normalize_mcp_tool_metadata,
     resolve_mcp_tool_tags,
+    uncovered_configured_tools,
 )
 
 # Import storage functions needed by local tools
@@ -363,6 +364,7 @@ class MCPToolsProvider:
             self._mcp_server_configs[server_id].get("tool_metadata")
         )
         descriptors: list[ToolDescriptor] = []
+        remote_names: list[str] = []
         discovered_tools_by_name = {
             discovered_tool.name: discovered_tool
             for discovered_tool in discovered_tools
@@ -372,6 +374,7 @@ class MCPToolsProvider:
         for definition in definitions:
             tool_name = definition["function"]["name"]
             remote_name = self._remote_tool_name(server_id, tool_name)
+            remote_names.append(remote_name)
             discovered_tool = discovered_tools_by_name.get(remote_name)
             annotations = getattr(discovered_tool, "annotations", None)
             annotation_tags = derive_mcp_annotation_tags(
@@ -391,6 +394,17 @@ class MCPToolsProvider:
                     origin="mcp",
                     mcp_server_id=server_id,
                 )
+            )
+
+        uncovered = uncovered_configured_tools(remote_names, configured_tool_metadata)
+        if uncovered:
+            logger.warning(
+                "MCP server '%s' declares tool_metadata but no wildcard, and these "
+                "discovered tools have no entry, so they fall back to their protocol "
+                "annotations for runtime taint classification: %s. Add an entry or a "
+                "'*' wildcard to tool_metadata.",
+                server_id,
+                ", ".join(uncovered),
             )
 
         return descriptors

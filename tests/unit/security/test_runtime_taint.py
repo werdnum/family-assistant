@@ -1720,6 +1720,81 @@ def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> Non
     )
 
 
+@pytest.mark.parametrize("name", ["read_task_result", "list_worker_tasks"])
+def test_worker_result_reads_record_a_sensitive_read(name: str) -> None:
+    """Worker output is household data, so reading it ends a confined exemption."""
+    assert ToolTag.SENSITIVE_DATA in LOCAL_TOOL_METADATA_BY_NAME[name].tags
+
+
+def test_worker_tools_that_run_nothing_are_not_sandbox_executions() -> None:
+    """``worker`` names the subsystem; only ``code_execution`` is the sandbox."""
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor("list_worker_tasks", ToolTag.READ_ONLY, ToolTag.WORKER)
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "cancel_worker_task",
+                ToolTag.DESTRUCTIVE,
+                ToolTag.STATE_CHANGING,
+                ToolTag.WORKER,
+            )
+        )
+        is SinkClass.ARTIFACT_WRITE
+    )
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "spawn_worker",
+                ToolTag.CODE_EXECUTION,
+                ToolTag.STATE_CHANGING,
+                ToolTag.WORKER,
+            )
+        )
+        is SinkClass.SANDBOX_NETWORK
+    )
+
+
+def test_reading_the_open_browser_page_is_local_not_egress() -> None:
+    """The navigation that opened the page is the egress, not reading it."""
+    read_tags = (
+        ToolTag.BROWSER,
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    )
+    for name in (
+        "browser_snapshot",
+        "browser_wait",
+        "browser_extract",
+        "browser_screenshot",
+    ):
+        assert (
+            resolve_tool_sink_class(_tool_descriptor(name, *read_tags))
+            is SinkClass.USER_LOCAL
+        )
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "browser_open",
+                ToolTag.BROWSER,
+                ToolTag.STATE_CHANGING,
+                ToolTag.EXTERNAL_COMM,
+                ToolTag.OUTPUT_UNTRUSTED,
+            )
+        )
+        is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
+    )
+    # An MCP tool tagged browser is declared to accept a destination.
+    mcp_fetch = replace(
+        _tool_descriptor("fetch", *read_tags), origin="mcp", mcp_server_id="web"
+    )
+    assert resolve_tool_sink_class(mcp_fetch) is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
+
+
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
     None
 ):
