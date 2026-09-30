@@ -8,10 +8,13 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import aiohttp
 import homeassistant_api
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +122,25 @@ class HomeAssistantClientWrapper:
             List of entity states
         """
         return await self._client.async_get_states()
+
+    async def async_get_entity_histories(
+        self,
+        entity_ids: Sequence[str],
+        *,
+        start_timestamp: datetime,
+        end_timestamp: datetime,
+    ) -> list[homeassistant_api.History]:
+        """Get the state histories of the given entities over a time window."""
+        # The library's own method wants Entity objects only to read their ids,
+        # so build its query directly from the ids we have.
+        params, url = self._client.prepare_get_entity_histories_params(
+            start_timestamp=start_timestamp, end_timestamp=end_timestamp
+        )
+        params["filter_entity_id"] = ",".join(entity_ids)
+        data = await self._client.async_request(
+            url, params=self._client.construct_params(params)
+        )
+        return [homeassistant_api.History.model_validate({"states": s}) for s in data]
 
     async def async_request(self, method: str, path: str, **kwargs: Any) -> Any:  # noqa: ANN401
         """

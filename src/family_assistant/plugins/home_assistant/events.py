@@ -11,7 +11,6 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
-import homeassistant_api as ha_api
 import janus
 from homeassistant_api import WebsocketClient
 
@@ -22,6 +21,9 @@ from family_assistant.storage.types import MatchConditions
 
 if TYPE_CHECKING:
     from family_assistant.events.processor import EventProcessor
+    from family_assistant.plugins.home_assistant.client import (
+        HomeAssistantClientWrapper,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
     """Event source for Home Assistant state changes."""
 
     def __init__(
-        self, client: ha_api.Client, event_types: list[str] | None = None
+        self,
+        client: "HomeAssistantClientWrapper",
+        event_types: list[str] | None = None,
     ) -> None:
         """
         Initialize Home Assistant event source.
@@ -62,9 +66,9 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         self.client = client
         # Extract connection info from client to create WebSocket client
         # The API URL needs to be converted to WebSocket URL
-        self.api_url = getattr(client, "api_url", "")
-        self.token = getattr(client, "token", "")
-        self.verify_ssl = getattr(client, "verify_ssl", True)
+        self.api_url = client.api_url
+        self.token = client.token
+        self.verify_ssl = client.verify_ssl
         self.processor: EventProcessor | None = None
         self._websocket_task: asyncio.Task | None = None
         self._running = False
@@ -349,7 +353,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         try:
             # Use the regular client to test API connectivity
             # This is a lightweight call that should work if HA is accessible
-            states = await asyncio.to_thread(self.client.get_states)
+            states = await self.client.async_get_states()
             return len(states) > 0
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
@@ -443,7 +447,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
     async def _check_entity_exists(
         self, entity_id: str, errors: list[ValidationError]
     ) -> None:
-        states = await asyncio.to_thread(self.client.get_states)
+        states = await self.client.async_get_states()
         entity_ids = [state.entity_id for state in states]
         if entity_id in entity_ids:
             return
@@ -477,18 +481,14 @@ class HomeAssistantSource(BaseEventSource, EventSource):
         warnings: list[str],
     ) -> None:
         end_time = datetime.now(UTC)
-        histories_raw = await asyncio.to_thread(
-            self.client.get_entity_histories,
-            entities=(entity_id,),  # type: ignore[arg-type]  # Entity-ID tuple conflicts with third-party tuple[Entity, ...] stub
-            start_timestamp=end_time - timedelta(days=7),
-            end_timestamp=end_time,
-        )
-        if isinstance(histories_raw, dict):
-            histories = histories_raw
-        else:
-            histories = {
-                history.entity_id: list(history.states) for history in histories_raw
-            }
+        histories = {
+            history.entity_id: list(history.states)
+            for history in await self.client.async_get_entity_histories(
+                (entity_id,),
+                start_timestamp=end_time - timedelta(days=7),
+                end_timestamp=end_time,
+            )
+        }
         if not histories or entity_id not in histories:
             warnings.append(
                 f"No history found for entity '{entity_id}'. Cannot validate state conditions."
