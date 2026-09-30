@@ -26,6 +26,7 @@ from family_assistant.security.taint import (
     DEFAULT_MAX_SOURCES,
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     InMemoryTurnTaintTracker,
+    SensitiveReadScope,
     SinkClass,
     SourceTrustTier,
     TaintMetadata,
@@ -3639,3 +3640,49 @@ def test_legacy_inflated_history_totals_do_not_propagate() -> None:
     assert merged.distinct_source_count == 173
     assert merged.total_source_count == 173
     assert merged.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+_NOTES_READ = SensitiveReadScope(
+    kind="notes", qualifier="search_notes", surfaced_ids=frozenset({"note-1"})
+)
+
+
+def test_history_does_not_carry_an_earlier_turns_sensitive_reads() -> None:
+    """A read belongs to the turn that made it, not to every later turn."""
+    stamp = (
+        TurnTaintState
+        .empty()
+        .add_sensitive_read(_NOTES_READ, "model_generated")
+        .to_metadata()
+    )
+
+    state = merge_history_taint([SimpleNamespace(taint_metadata=stamp)])
+
+    assert state.sensitive_reads == ()
+
+
+def test_merging_a_delegate_result_twice_records_its_reads_once() -> None:
+    stamp = (
+        TurnTaintState
+        .empty()
+        .add_sensitive_read(_NOTES_READ, "model_generated")
+        .to_metadata()
+    )
+
+    state = (
+        TurnTaintState
+        .empty()
+        .with_sensitive_reads_from(stamp)
+        .with_sensitive_reads_from(stamp)
+    )
+
+    assert [record.scope for record in state.sensitive_reads] == [_NOTES_READ]
+
+
+def test_an_unparseable_persisted_read_still_counts_as_a_read() -> None:
+    state = TurnTaintState.empty().with_sensitive_reads_from({
+        "max_tier": "trusted_user",
+        "sensitive_reads": [{"kind": "somewhere_new"}],
+    })
+
+    assert len(state.sensitive_reads) == 1

@@ -13,6 +13,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
 )
 from family_assistant.security.taint import (
+    SensitiveReadScope,
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
@@ -569,6 +570,43 @@ async def test_add_message_without_taint_metadata_logs_regression_guard(
     )
     assert classified_row is not None
     assert classified_row["taint_metadata_version"] == "runtime_v2"
+
+
+@pytest.mark.asyncio
+async def test_subconversation_taint_carries_the_delegate_turns_sensitive_reads(
+    db_context: Database,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    subconversation_id = str(uuid.uuid4())
+    read = SensitiveReadScope(
+        kind="documents", qualifier="search_documents", surfaced_ids=frozenset()
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(
+            content="found it",
+            taint_metadata=(
+                TurnTaintState
+                .empty()
+                .add_sensitive_read(read, "model_generated")
+                .to_metadata()
+            ),
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        timestamp=datetime.now(UTC),
+    )
+
+    merged_metadata = (
+        await db_context.message_history.get_merged_taint_metadata_for_subconversation(
+            interface_type="web",
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+        )
+    )
+
+    merged = TurnTaintState.empty().with_sensitive_reads_from(merged_metadata)
+    assert [record.scope for record in merged.sensitive_reads] == [read]
 
 
 @pytest.mark.asyncio
