@@ -3767,7 +3767,8 @@ renames a parameter degrades to its own schema rather than being called with one
 Configure `tool_metadata` for MCP servers whose protocol annotations do not describe their security
 boundary, so the runtime taint policy can classify their tools correctly:
 
-- `code_execution` or `worker` — network-capable sandboxes.
+- `code_execution` — network-capable sandboxes. `worker` names the worker subsystem for tool policy;
+  on its own it does not make a tool a sandbox, so pair it with `code_execution`.
 - `home_auto` — actions confined to the household system.
 - `low_bandwidth_external` — constrained providers such as a search API that receives only a query.
 - `external_comm` or `browser` — anything that sends messages, invokes webhooks, or accepts

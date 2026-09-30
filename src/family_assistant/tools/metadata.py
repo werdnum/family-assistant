@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
 
     from family_assistant.tools.types import ToolDefinition
 
@@ -332,6 +332,26 @@ def normalize_mcp_tool_metadata(
         tool_name: normalize_tool_tags(tuple(raw_tags))
         for tool_name, raw_tags in tool_metadata.items()
     }
+
+
+def uncovered_configured_tools(
+    tool_names: Iterable[str],
+    configured_tool_metadata: dict[str, frozenset[ToolTag]] | None,
+) -> tuple[str, ...]:
+    """Return tool names an explicit ``tool_metadata`` map does not cover.
+
+    An operator who writes an exact entry per tool has declared a security
+    classification for that server. A tool the map omits -- and that no ``*``
+    wildcard catches -- silently falls back to its protocol annotations, which
+    is how a server that gains a tool (``booking``) or exposes one the operator
+    forgot lands on an unintended sink class. Returns the uncovered names, sorted,
+    so a caller can warn. An empty map or a wildcard covers everything.
+    """
+    if not configured_tool_metadata or "*" in configured_tool_metadata:
+        return ()
+    return tuple(
+        sorted(name for name in tool_names if name not in configured_tool_metadata)
+    )
 
 
 def resolve_mcp_tool_tags(

@@ -263,11 +263,29 @@ class TaintSource:
     reason: str
 
 
+SensitiveReadKind = Literal[
+    "notes", "documents", "message_history", "attachments", "tool"
+]
+SensitiveReadQueryOrigin = Literal["direct_user", "model_generated", "tool_or_history"]
+_SENSITIVE_READ_KINDS: frozenset[str] = frozenset({
+    "notes",
+    "documents",
+    "message_history",
+    "attachments",
+    "tool",
+})
+_SENSITIVE_READ_QUERY_ORIGINS: frozenset[str] = frozenset({
+    "direct_user",
+    "model_generated",
+    "tool_or_history",
+})
+
+
 @dataclass(frozen=True, slots=True)
 class SensitiveReadScope:
     """Private corpus scope touched by a sensitive read."""
 
-    kind: Literal["notes", "documents", "message_history", "attachments", "tool"]
+    kind: SensitiveReadKind
     qualifier: str
     surfaced_ids: frozenset[str]
 
@@ -278,7 +296,7 @@ class SensitiveReadRecord:
 
     sequence: int
     scope: SensitiveReadScope
-    query_origin: Literal["direct_user", "model_generated", "tool_or_history"]
+    query_origin: SensitiveReadQueryOrigin
 
 
 DEFAULT_MAX_SOURCES: int = 12
@@ -483,7 +501,7 @@ class TurnTaintState:
     def add_sensitive_read(
         self,
         scope: SensitiveReadScope,
-        query_origin: Literal["direct_user", "model_generated", "tool_or_history"],
+        query_origin: SensitiveReadQueryOrigin,
     ) -> TurnTaintState:
         """Return a new state with a sensitive read record."""
         next_sequence = self.sequence + 1
@@ -497,6 +515,41 @@ class TurnTaintState:
             sensitive_reads=(*self.sensitive_reads, record),
             sequence=next_sequence,
         )
+
+    def with_sensitive_reads_from(self, metadata: object) -> TurnTaintState:
+        """Return this state plus the sensitive reads a persisted stamp records.
+
+        Reads are a fact about the turn that made them, so ordinary
+        deserialization -- history, a note's provenance -- leaves them behind.
+        This is for the one place a stamp speaks for work done on the current
+        turn's behalf: a delegate's result, whose reads the caller now holds
+        the output of. An entry that cannot be parsed still counts as a read,
+        since dropping it would make the caller look cleaner than it is.
+        """
+        if not isinstance(metadata, dict):
+            return self
+        raw_reads = cast("dict[str, object]", metadata).get("sensitive_reads")
+        if raw_reads is None:
+            return self
+        entries = raw_reads if isinstance(raw_reads, list) else [raw_reads]
+        state = self
+        for entry in cast("list[object]", entries):
+            scope, query_origin = _sensitive_read_from_metadata(entry)
+            state = state.merge_sensitive_read(scope, query_origin)
+        return state
+
+    def merge_sensitive_read(
+        self,
+        scope: SensitiveReadScope,
+        query_origin: SensitiveReadQueryOrigin,
+    ) -> TurnTaintState:
+        """Record a read unless this state already holds the same one."""
+        if any(
+            record.scope == scope and record.query_origin == query_origin
+            for record in self.sensitive_reads
+        ):
+            return self
+        return self.add_sensitive_read(scope, query_origin)
 
     def with_authorship_floor(self) -> TurnTaintState:
         """Return this state floored at ``TRUSTED_INTERNAL``.
@@ -536,6 +589,16 @@ class TurnTaintState:
             ],
             "approved_sinks": sorted(self.approved_sinks),
         }
+        if self.sensitive_reads:
+            metadata["sensitive_reads"] = [
+                {
+                    "kind": record.scope.kind,
+                    "qualifier": record.scope.qualifier,
+                    "query_origin": record.query_origin,
+                    "surfaced_ids": sorted(record.scope.surfaced_ids),
+                }
+                for record in self.sensitive_reads
+            ]
         should_include_counts = include_counts
         if should_include_counts is None:
             should_include_counts = (
@@ -690,6 +753,15 @@ class TaintMetadataSource(TypedDict):
     reason: str
 
 
+class TaintMetadataSensitiveRead(TypedDict):
+    """Serialized sensitive read."""
+
+    kind: str
+    qualifier: str
+    query_origin: str
+    surfaced_ids: list[str]
+
+
 class TaintMetadata(TypedDict, total=False):
     """Compact message/artifact taint metadata."""
 
@@ -702,6 +774,7 @@ class TaintMetadata(TypedDict, total=False):
     total_source_count: int
     distinct_source_count: int
     omitted_source_count: int
+    sensitive_reads: list[TaintMetadataSensitiveRead]
 
 
 class TurnTaintTracker(Protocol):
@@ -826,9 +899,51 @@ def merge_taint_state_into_tracker(
         merged = replace(
             merged, approved_sinks=merged.approved_sinks | state.approved_sinks
         )
+    if not from_history:
+        for record in state.sensitive_reads:
+            merged = merged.merge_sensitive_read(record.scope, record.query_origin)
     merged = _merge_snapshot_counts(before, merged, state)
     tracker.replace(merged)
     return merged
+
+
+def _sensitive_read_from_metadata(
+    entry: object,
+) -> tuple[SensitiveReadScope, SensitiveReadQueryOrigin]:
+    """Parse one serialized read, degrading a malformed entry to an opaque read."""
+    if isinstance(entry, dict):
+        fields = cast("dict[str, object]", entry)
+        kind = fields.get("kind")
+        qualifier = fields.get("qualifier")
+        query_origin = fields.get("query_origin")
+        surfaced_ids = fields.get("surfaced_ids", [])
+        if (
+            isinstance(kind, str)
+            and kind in _SENSITIVE_READ_KINDS
+            and isinstance(qualifier, str)
+            and isinstance(query_origin, str)
+            and query_origin in _SENSITIVE_READ_QUERY_ORIGINS
+            and isinstance(surfaced_ids, list)
+            and all(
+                isinstance(item, str) for item in cast("list[object]", surfaced_ids)
+            )
+        ):
+            return (
+                SensitiveReadScope(
+                    kind=cast("SensitiveReadKind", kind),
+                    qualifier=qualifier,
+                    surfaced_ids=frozenset(cast("list[str]", surfaced_ids)),
+                ),
+                cast("SensitiveReadQueryOrigin", query_origin),
+            )
+    return (
+        SensitiveReadScope(
+            kind="tool",
+            qualifier="unparseable_persisted_read",
+            surfaced_ids=frozenset(),
+        ),
+        "tool_or_history",
+    )
 
 
 def raise_taint_state_to(
@@ -1365,9 +1480,25 @@ def resolve_tool_sink_class(
         and not tag_values.intersection({"browser", "external_comm"})
     ):
         return SinkClass.SENSITIVE_READ_BROADENING
-    if "code_execution" in tag_values or "worker" in tag_values:
+    if "code_execution" in tag_values:
+        # ``worker`` names the subsystem, not an execution: the worker tools that
+        # run anything also carry ``code_execution``, while reading or cancelling
+        # a worker task is an ordinary read or write.
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
+        if (
+            descriptor.origin == "local"
+            and "read_only" in tag_values
+            and "state_changing" not in tag_values
+            and not descriptor.destination_argument_paths
+        ):
+            # This application's own snapshot, extract, screenshot and wait
+            # tools read the page already open and send nothing the model chose
+            # anywhere: the egress was the navigation that opened it, which is
+            # gated here. What they return is tracked as an untrusted source;
+            # as a sink they are local. An MCP tool tagged ``browser`` is
+            # declared to accept a destination, so it stays egress.
+            return SinkClass.USER_LOCAL
         return SinkClass.ATTACKER_ADDRESSABLE_EGRESS
     if "user_facing_media" in tag_values:
         # Attaching media to the current turn's own reply is a local, same-user

@@ -1297,7 +1297,6 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "take_screenshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1319,7 +1318,6 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "browser_snapshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1344,21 +1342,18 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "browser_wait": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_extract": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_screenshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1462,6 +1457,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "read_task_result": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.WORKER,
         ToolTag.OUTPUT_UNSPECIFIED,
     ),
@@ -1473,6 +1469,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "list_worker_tasks": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.WORKER,
         # OUTPUT_UNTRUSTED: returns stored task descriptions and results, which are
         # authored by whoever's content shaped the task.

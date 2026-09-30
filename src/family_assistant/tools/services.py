@@ -617,7 +617,7 @@ async def delegated_result_taint_metadata(
             "Delegated result taint unavailable; conservatively treated as "
             "unknown external."
         )
-    )
+    ).with_sensitive_reads_from(result_metadata)
 
     if parent_taint_metadata is not None:
         parent_state = TurnTaintState.from_metadata(parent_taint_metadata)
@@ -670,7 +670,8 @@ async def _merge_delegated_result_taint(
         parent_taint_metadata=parent_taint_metadata,
     )
     merge_taint_state_into_tracker(
-        exec_context.taint_tracker, TurnTaintState.from_metadata(metadata)
+        exec_context.taint_tracker,
+        TurnTaintState.from_metadata(metadata).with_sensitive_reads_from(metadata),
     )
 
 

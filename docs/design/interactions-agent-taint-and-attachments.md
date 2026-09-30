@@ -43,7 +43,12 @@ action is classified by its `domain`. Delegation is the same shape: classified b
 
 A profile declares its sink in config (`processing_config.taint_sink_class`), `coder` declares
 `sandbox_network`, and the resolver consults a profile-id → sink map built once at startup. A
-profile that declares nothing keeps today's classification, so nothing else moves.
+profile served by this application's own LLM loop that declares nothing is not an egress: the
+delegate is seeded with the caller's taint, gates its own tools under it and folds its result taint
+back, including the sensitive reads it made, so the gate belongs on what the delegate does rather
+than on the handoff, and the map resolves it to `user_local`. A remote A2A agent or an Interactions
+API agent that declares nothing is outside that loop, so taint cannot follow it and it keeps the
+tag-only `arbitrary_external_message`.
 
 ### 2. The profile evaluates its own sink, at the point the whole turn is known
 

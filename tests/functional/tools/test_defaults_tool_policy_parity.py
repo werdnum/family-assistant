@@ -61,6 +61,14 @@ MCP_SERVER_IDS = (
 CONFINED_NON_SENSITIVE_READ_ALLOWLIST = {
     # Static documentation shipped with the application, not acting-user data.
     "get_user_documentation_content": "packaged application documentation",
+    # Reads of the browser page already open. Ordinary browsing is untrusted but
+    # not private; a credential-protected session records its own sensitive read
+    # when the backend is resolved (get_browser_backend).
+    "browser_snapshot": "current browser page",
+    "browser_wait": "current browser page",
+    "browser_extract": "current browser page",
+    "browser_screenshot": "current browser page",
+    "take_screenshot": "current browser page",
 }
 
 

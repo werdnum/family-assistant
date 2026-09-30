@@ -26,6 +26,7 @@ from family_assistant.security.taint import (
     DEFAULT_MAX_SOURCES,
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     InMemoryTurnTaintTracker,
+    SensitiveReadScope,
     SinkClass,
     SourceTrustTier,
     TaintMetadata,
@@ -1718,6 +1719,81 @@ def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> Non
         )
         is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     )
+
+
+@pytest.mark.parametrize("name", ["read_task_result", "list_worker_tasks"])
+def test_worker_result_reads_record_a_sensitive_read(name: str) -> None:
+    """Worker output is household data, so reading it ends a confined exemption."""
+    assert ToolTag.SENSITIVE_DATA in LOCAL_TOOL_METADATA_BY_NAME[name].tags
+
+
+def test_worker_tools_that_run_nothing_are_not_sandbox_executions() -> None:
+    """``worker`` names the subsystem; only ``code_execution`` is the sandbox."""
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor("list_worker_tasks", ToolTag.READ_ONLY, ToolTag.WORKER)
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "cancel_worker_task",
+                ToolTag.DESTRUCTIVE,
+                ToolTag.STATE_CHANGING,
+                ToolTag.WORKER,
+            )
+        )
+        is SinkClass.ARTIFACT_WRITE
+    )
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "spawn_worker",
+                ToolTag.CODE_EXECUTION,
+                ToolTag.STATE_CHANGING,
+                ToolTag.WORKER,
+            )
+        )
+        is SinkClass.SANDBOX_NETWORK
+    )
+
+
+def test_reading_the_open_browser_page_is_local_not_egress() -> None:
+    """The navigation that opened the page is the egress, not reading it."""
+    read_tags = (
+        ToolTag.BROWSER,
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
+    )
+    for name in (
+        "browser_snapshot",
+        "browser_wait",
+        "browser_extract",
+        "browser_screenshot",
+    ):
+        assert (
+            resolve_tool_sink_class(_tool_descriptor(name, *read_tags))
+            is SinkClass.USER_LOCAL
+        )
+    assert (
+        resolve_tool_sink_class(
+            _tool_descriptor(
+                "browser_open",
+                ToolTag.BROWSER,
+                ToolTag.STATE_CHANGING,
+                ToolTag.EXTERNAL_COMM,
+                ToolTag.OUTPUT_UNTRUSTED,
+            )
+        )
+        is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
+    )
+    # An MCP tool tagged browser is declared to accept a destination.
+    mcp_fetch = replace(
+        _tool_descriptor("fetch", *read_tags), origin="mcp", mcp_server_id="web"
+    )
+    assert resolve_tool_sink_class(mcp_fetch) is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
@@ -3564,3 +3640,49 @@ def test_legacy_inflated_history_totals_do_not_propagate() -> None:
     assert merged.distinct_source_count == 173
     assert merged.total_source_count == 173
     assert merged.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+_NOTES_READ = SensitiveReadScope(
+    kind="notes", qualifier="search_notes", surfaced_ids=frozenset({"note-1"})
+)
+
+
+def test_history_does_not_carry_an_earlier_turns_sensitive_reads() -> None:
+    """A read belongs to the turn that made it, not to every later turn."""
+    stamp = (
+        TurnTaintState
+        .empty()
+        .add_sensitive_read(_NOTES_READ, "model_generated")
+        .to_metadata()
+    )
+
+    state = merge_history_taint([SimpleNamespace(taint_metadata=stamp)])
+
+    assert state.sensitive_reads == ()
+
+
+def test_merging_a_delegate_result_twice_records_its_reads_once() -> None:
+    stamp = (
+        TurnTaintState
+        .empty()
+        .add_sensitive_read(_NOTES_READ, "model_generated")
+        .to_metadata()
+    )
+
+    state = (
+        TurnTaintState
+        .empty()
+        .with_sensitive_reads_from(stamp)
+        .with_sensitive_reads_from(stamp)
+    )
+
+    assert [record.scope for record in state.sensitive_reads] == [_NOTES_READ]
+
+
+def test_an_unparseable_persisted_read_still_counts_as_a_read() -> None:
+    state = TurnTaintState.empty().with_sensitive_reads_from({
+        "max_tier": "trusted_user",
+        "sensitive_reads": [{"kind": "somewhere_new"}],
+    })
+
+    assert len(state.sensitive_reads) == 1
