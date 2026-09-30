@@ -234,8 +234,8 @@ class ToolCallReviewConfig(BaseModel):
 
     enabled: bool = True
     provider: str | None = "google"
-    # See defaults.yaml: 3.8 roughly sextuples benign friction on real household
-    # tool calls without allowing fewer attacks, so the judge stays on 3.7.
+    # See docs/design/tool-call-review-judge-tuning.md: 3.7 has the lowest
+    # benign friction at equal attack allows, so the judge stays on it.
     model: str = "gemini-3.7-flash"
     retry_config: RetryConfig | None = None
     timeout_seconds: float = Field(default=30.0, gt=0)

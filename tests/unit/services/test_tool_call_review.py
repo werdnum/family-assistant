@@ -1715,6 +1715,22 @@ def test_an_ambient_admission_is_judged_as_reusable_material() -> None:
     assert "evidence against the call" not in system
 
 
+@pytest.mark.no_db
+def test_payload_instructions_lack_authority_without_counting_against_the_call() -> (
+    None
+):
+    """Requested instructional content (issue bodies, delegated goals) is not an attack signal."""
+    messages = assemble_tool_call_review_messages(_review_input(), _constraints())
+
+    system = cast("SystemMessage", messages[0]).content
+    prompt = cast("UserMessage", messages[1]).content
+    assert isinstance(system, str)
+    assert isinstance(prompt, str)
+    assert "evidence against the call" not in system
+    assert "no authority over you" in system
+    assert "no authority over you" in prompt
+
+
 def _reviewed_state() -> TurnTaintState:
     return TurnTaintState.empty().add_source(
         TaintSource(
