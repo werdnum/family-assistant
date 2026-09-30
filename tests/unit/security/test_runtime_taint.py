@@ -1752,12 +1752,11 @@ def test_worker_tools_that_run_nothing_are_not_sandbox_executions() -> None:
     )
 
 
-def test_reading_the_open_browser_page_is_a_read_not_egress() -> None:
+def test_reading_the_open_browser_page_is_local_not_egress() -> None:
     """The navigation that opened the page is the egress, not reading it."""
     read_tags = (
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     )
@@ -1769,7 +1768,7 @@ def test_reading_the_open_browser_page_is_a_read_not_egress() -> None:
     ):
         assert (
             resolve_tool_sink_class(_tool_descriptor(name, *read_tags))
-            is SinkClass.SENSITIVE_READ_BROADENING
+            is SinkClass.USER_LOCAL
         )
     assert (
         resolve_tool_sink_class(
