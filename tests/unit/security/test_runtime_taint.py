@@ -1720,6 +1720,12 @@ def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> Non
     )
 
 
+@pytest.mark.parametrize("name", ["read_task_result", "list_worker_tasks"])
+def test_worker_result_reads_record_a_sensitive_read(name: str) -> None:
+    """Worker output is household data, so reading it ends a confined exemption."""
+    assert ToolTag.SENSITIVE_DATA in LOCAL_TOOL_METADATA_BY_NAME[name].tags
+
+
 def test_worker_tools_that_run_nothing_are_not_sandbox_executions() -> None:
     """``worker`` names the subsystem; only ``code_execution`` is the sandbox."""
     assert (
