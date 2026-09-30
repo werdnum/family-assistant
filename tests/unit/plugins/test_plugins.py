@@ -177,6 +177,16 @@ default_profile_settings:
         assert default.verify_ssl is False
         assert default.api_url == "http://ha.local:8123"
 
+    def test_legacy_event_source_switch_moves_to_the_default_instance(self) -> None:
+        data: dict[str, object] = {
+            "event_system": {"sources": {"home_assistant": {"enabled": False}}}
+        }
+        migrate_legacy_home_assistant_settings(data)
+        assert data == {
+            "event_system": {"sources": {}},
+            "plugins": {"home_assistant": {"default": {"events": False}}},
+        }
+
     def test_new_location_wins_over_legacy(self) -> None:
         data: dict[str, object] = {
             "default_profile_settings": {

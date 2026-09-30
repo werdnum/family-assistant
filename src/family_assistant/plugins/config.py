@@ -91,12 +91,17 @@ def migrate_legacy_home_assistant_settings(
         for old_key, new_key in _LEGACY_HOME_ASSISTANT_KEYS.items()
         if old_key in processing
     }
+    sources = (data.get("event_system") or {}).get("sources") or {}
+    legacy_source = sources.pop("home_assistant", None) or {}
+    if "enabled" in legacy_source:
+        legacy["events"] = legacy_source["enabled"]
     legacy = {key: value for key, value in legacy.items() if value is not None}
     if not legacy:
         return
     logger.warning(
-        "default_profile_settings.processing_config.home_assistant_* is deprecated; "
-        "move %s to plugins.home_assistant.default.",
+        "default_profile_settings.processing_config.home_assistant_* and "
+        "event_system.sources.home_assistant are deprecated; move %s to "
+        "plugins.home_assistant.default.",
         ", ".join(sorted(legacy)),
     )
     plugins = data.setdefault("plugins", {})

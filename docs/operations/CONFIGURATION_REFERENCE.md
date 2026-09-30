@@ -1340,8 +1340,9 @@ plugins:
 
 An instance missing `api_url` or `token` is not started, with a warning at startup, and profiles
 that would use it run without Home Assistant. Settings written under
-`default_profile_settings.processing_config.home_assistant_*` are still read into the `default`
-instance, with a deprecation warning; move them to `plugins.home_assistant.default`.
+`default_profile_settings.processing_config.home_assistant_*`, and the old
+`event_system.sources.home_assistant.enabled` switch, are still read into the `default` instance,
+with a deprecation warning; move them to `plugins.home_assistant.default`.
 
 ### HOMEASSISTANT_URL
 
