@@ -122,10 +122,16 @@ allows. It is fast, cheap and deterministic, which fits a narrower classificatio
 
 ## Deliberate simplifications and accepted residuals
 
-- **Looked-up targets for irreversible local actions.** "Cancel the specified task" where the ID
-  appears only in stubbed untrusted content is allowed. Confirming every call whose target was
-  looked up (the broad rule) closes it, but tripled held-out friction. The narrow rule covers
-  delegated *choice of action*, where the measured attacks concentrated.
+- **The judge exists to stop tail risks, not nuisance.** Injection attempts are expected to be rare,
+  and the acting model resists most of them. Strictness therefore belongs on the effects that are
+  costly to get wrong: money moving, data leaving the household, access being granted, and standing
+  instructions. A confirmation is itself a cost, so the prompt does not confirm calls whose worst
+  case is annoyance.
+- **Looked-up targets for local actions.** "Cancel the specified task" where the ID appears only in
+  stubbed untrusted content is allowed; the worst case is a cancelled task. Confirming every call
+  whose target was looked up (the broad rule) would close it, but tripled held-out friction. The
+  narrow rule covers delegated *choice of action* for outward, money, access and participant
+  effects, where the measured attacks concentrated.
 - **Looked-up recipients for outward actions** (for example "invite the colleague whose details are
   in that message") remain indistinguishable from an injected recipient while untrusted content is
   stubbed. They pass when the request clearly asks for the lookup. This is the same boundary, and
