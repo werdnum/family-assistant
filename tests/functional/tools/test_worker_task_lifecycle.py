@@ -52,9 +52,7 @@ def _make_exec_context(
     if processing_service is None:
         processing_service = MagicMock()
         processing_service.app_config.ai_worker_config.backend_type = "mock"
-        processing_service.app_config.ai_worker_config.workspace_mount_path = (
-            "/tmp/test"
-        )
+        processing_service.app_config.shared_workspace_path = "/tmp/test"
         processing_service.app_config.ai_worker_config.docker = None
         processing_service.app_config.ai_worker_config.kubernetes = None
 

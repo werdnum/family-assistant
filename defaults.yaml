@@ -2868,7 +2868,6 @@ attachment_config:
 ai_worker_config:
   enabled: false
   backend_type: "kubernetes" # "kubernetes", "docker", "mock"
-  workspace_mount_path: "/workspace"
   default_timeout_minutes: 30
   max_timeout_minutes: 120
   max_concurrent_workers: 3

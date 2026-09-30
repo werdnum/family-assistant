@@ -203,8 +203,8 @@ def _make_exec_context(
     mock_service.app_config.ai_worker_config = AIWorkerConfig(
         enabled=True,
         backend_type="mock",
-        workspace_mount_path=str(workspace_path),
     )
+    mock_service.app_config.shared_workspace_path = str(workspace_path)
     mock_service.ai_worker_backend = mock_backend
 
     db = Database(engine=db_engine)

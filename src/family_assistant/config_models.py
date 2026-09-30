@@ -44,6 +44,7 @@ credential field.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import re
 import zoneinfo
@@ -51,7 +52,7 @@ from contextvars import ContextVar
 from email.utils import parseaddr
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
@@ -90,6 +91,8 @@ from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RetryModelConfig(BaseModel):
@@ -1834,9 +1837,6 @@ class AIWorkerConfig(BaseModel):
     # Backend selection
     backend_type: Literal["kubernetes", "docker", "mock"] = "kubernetes"
 
-    # Volume settings
-    workspace_mount_path: str = "/workspace"
-
     # Webhook URL for worker completion notifications
     # If not set, falls back to server_url + /webhook/event
     # For Kubernetes, use internal service URL like:
@@ -2090,6 +2090,27 @@ class GeminiOmniVideoConfig(BaseModel):
     model: str = "gemini-omni-1.1-flash"
 
 
+def migrate_legacy_ai_worker_settings(
+    # ast-grep-ignore: no-dict-any - raw config data before validation
+    data: dict[str, Any],
+) -> None:
+    """Move pre-plugin AI worker settings to where they live now, in place.
+
+    Deployed config written before AI workers became a plugin keeps working
+    until it is rewritten; the new location wins where both are set.
+    """
+    legacy = data.get("ai_worker_config")
+    if not isinstance(legacy, dict):
+        return
+    workspace_path = legacy.pop("workspace_mount_path", None)
+    if workspace_path is not None:
+        logger.warning(
+            "ai_worker_config.workspace_mount_path is deprecated; set "
+            "shared_workspace_path instead."
+        )
+        data.setdefault("shared_workspace_path", workspace_path)
+
+
 class AppConfig(BaseSettings):
     """Main application configuration.
 
@@ -2198,6 +2219,9 @@ class AppConfig(BaseSettings):
     document_storage_path: str = "/mnt/data/files"
     attachment_storage_path: str = "/mnt/data/mailbox/attachments"
     mailbox_raw_dir: str | None = None  # Directory for saving raw email requests
+    # The shared workspace: files the workspace_* tools read and write, and
+    # which AI workers mount.
+    shared_workspace_path: str = "/workspace"
     chat_attachment_storage_path: str | None = (
         None  # Falls back to attachment_config.storage_path
     )
@@ -2275,6 +2299,14 @@ class AppConfig(BaseSettings):
     # The Auto classifier that picks a tier per request for profiles whose
     # `processing_config.model_selection` is `auto`.
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_plugin_settings(cls, data: object) -> object:
+        """Accept settings still written where they lived before plugins."""
+        if isinstance(data, dict):
+            migrate_legacy_ai_worker_settings(cast("dict[str, Any]", data))
+        return data
 
     @model_validator(mode="after")
     def validate_model_routing_names_a_classifier(self) -> AppConfig:

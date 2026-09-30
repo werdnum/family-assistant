@@ -258,9 +258,7 @@ class TestWorkspaceFilesTimezone:
         modified_at = datetime(2025, 1, 15, tzinfo=UTC).timestamp()
         os.utime(workspace_file, (modified_at, modified_at))
         processing_service = Mock()
-        processing_service.app_config.ai_worker_config.workspace_mount_path = str(
-            tmp_path
-        )
+        processing_service.app_config.shared_workspace_path = str(tmp_path)
         sydney_exec_context.processing_service = processing_service
 
         result = await workspace_glob_tool(

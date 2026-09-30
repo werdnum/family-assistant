@@ -5788,7 +5788,7 @@ async def handle_worker_task_cleanup(
     if not workspace_path and exec_context.processing_service:
         app_config = exec_context.processing_service.app_config
         if app_config.ai_worker_config.enabled:
-            workspace_path = app_config.ai_worker_config.workspace_mount_path
+            workspace_path = app_config.shared_workspace_path
 
     logger.info(f"Starting worker task cleanup (retention: {retention_hours} hours)")
 

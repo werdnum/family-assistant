@@ -155,10 +155,10 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
         "default_profile_settings.chat_id_to_name_map",
         dict,
     ),
+    EnvVarMapping("SHARED_WORKSPACE_PATH", "shared_workspace_path"),
     # AI Worker configuration
     EnvVarMapping("AI_WORKER_ENABLED", "ai_worker_config.enabled", bool),
     EnvVarMapping("AI_WORKER_BACKEND_TYPE", "ai_worker_config.backend_type"),
-    EnvVarMapping("AI_WORKER_WORKSPACE_PATH", "ai_worker_config.workspace_mount_path"),
     EnvVarMapping(
         "AI_WORKER_DEFAULT_TIMEOUT", "ai_worker_config.default_timeout_minutes", int
     ),

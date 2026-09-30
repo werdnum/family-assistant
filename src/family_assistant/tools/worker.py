@@ -293,7 +293,7 @@ async def cancel_worker_task_tool(
     if job_name:
         backend = get_worker_backend(
             worker_config.backend_type,
-            workspace_root=worker_config.workspace_mount_path,
+            workspace_root=app_config.shared_workspace_path,
             docker_config=worker_config.docker,
             kubernetes_config=worker_config.kubernetes,
         )

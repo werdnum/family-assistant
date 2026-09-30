@@ -2216,7 +2216,7 @@ class Assistant:
         db_ctx = Database(self.database_engine)
         backend = get_worker_backend(
             worker_config.backend_type,
-            workspace_root=worker_config.workspace_mount_path,
+            workspace_root=self.config.shared_workspace_path,
             docker_config=worker_config.docker,
             kubernetes_config=worker_config.kubernetes,
         )
