@@ -35,6 +35,7 @@ from family_assistant.processing.types import (
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    SensitiveReadScope,
     SourceTrustTier,
     TaintMetadata,
     TaintSource,
@@ -447,6 +448,75 @@ async def test_synchronous_delegation_returns_the_delegate_turns_taint(
     )
 
     assert tracker.snapshot().max_tier is expected_tier
+
+
+@pytest.mark.asyncio
+async def test_synchronous_delegation_returns_the_delegate_turns_sensitive_reads() -> (
+    None
+):
+    """The caller holds what its delegate read, so it holds the read too."""
+    delegate_read = SensitiveReadScope(
+        kind="notes", qualifier="search_notes", surfaced_ids=frozenset({"note-1"})
+    )
+    delegate_taint = (
+        TurnTaintState
+        .empty()
+        .add_sensitive_read(delegate_read, "model_generated")
+        .to_metadata()
+    )
+    target_service = _Namespace(
+        service_config=_Namespace(
+            id="target_profile",
+            allowed_delegation_sources=None,
+        ),
+        handle_chat_interaction=AsyncMock(
+            return_value=ChatInteractionResult(
+                status=ChatInteractionStatus.SUCCESS,
+                text_reply="delegated",
+            )
+        ),
+    )
+    source_service = _Namespace(
+        service_config=_Namespace(
+            id="source_profile",
+            tools_config=ToolsConfig(async_delegation_enabled=False),
+        ),
+        processing_services_registry={"target_profile": target_service},
+    )
+    db = _db_without_history()
+    cast(
+        "MagicMock", db.message_history
+    ).get_merged_taint_metadata_for_subconversation = AsyncMock(
+        return_value=delegate_taint
+    )
+    tracker = InMemoryTurnTaintTracker()
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        taint_tracker=tracker,
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="what did I note about the plumber?",
+    )
+
+    assert [record.scope for record in tracker.snapshot().sensitive_reads] == [
+        delegate_read
+    ]
 
 
 @pytest.mark.asyncio

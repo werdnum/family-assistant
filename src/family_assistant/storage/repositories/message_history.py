@@ -1856,7 +1856,12 @@ class MessageHistoryRepository(BaseRepository):
         if not rows:
             return None
         messages = [self._process_message_row(row) for row in rows]
-        return merge_history_taint(messages).to_metadata()
+        state = merge_history_taint(messages)
+        for message in messages:
+            state = state.with_sensitive_reads_from(
+                getattr(message, "taint_metadata", None)
+            )
+        return state.to_metadata()
 
     async def get_user_row_by_turn_id(
         self,
