@@ -1371,11 +1371,18 @@ def resolve_tool_sink_class(
         # a worker task is an ordinary read or write.
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
-        if "read_only" in tag_values and "state_changing" not in tag_values:
-            # Snapshotting, extracting or waiting on the page already open sends
-            # nothing the model chose anywhere: the egress was the navigation
-            # that opened it, which is gated here. The page may be a signed-in
-            # session, so the read keeps the conservative read class.
+        if (
+            descriptor.origin == "local"
+            and "read_only" in tag_values
+            and "state_changing" not in tag_values
+            and not descriptor.destination_argument_paths
+        ):
+            # This application's own snapshot, extract, screenshot and wait
+            # tools read the page already open and send nothing the model chose
+            # anywhere: the egress was the navigation that opened it, which is
+            # gated here. The page may be a signed-in session, so the read keeps
+            # the conservative read class. An MCP tool tagged ``browser`` is
+            # declared to accept a destination, so it stays egress.
             return SinkClass.SENSITIVE_READ_BROADENING
         return SinkClass.ATTACKER_ADDRESSABLE_EGRESS
     if "user_facing_media" in tag_values:

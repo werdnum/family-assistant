@@ -1783,6 +1783,11 @@ def test_reading_the_open_browser_page_is_a_read_not_egress() -> None:
         )
         is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
     )
+    # An MCP tool tagged browser is declared to accept a destination.
+    mcp_fetch = replace(
+        _tool_descriptor("fetch", *read_tags), origin="mcp", mcp_server_id="web"
+    )
+    assert resolve_tool_sink_class(mcp_fetch) is SinkClass.ATTACKER_ADDRESSABLE_EGRESS
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
