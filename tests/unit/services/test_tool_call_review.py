@@ -51,6 +51,7 @@ from family_assistant.services.tool_call_review import (
     build_delegation_review_trigger,
     compute_trusted_destination_echo,
     resolve_originating_request,
+    review_prompt_revision,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
@@ -1729,6 +1730,21 @@ def test_payload_instructions_lack_authority_without_counting_against_the_call()
     assert "evidence against the call" not in system
     assert "no authority over you" in system
     assert "no authority over you" in prompt
+
+
+@pytest.mark.no_db
+def test_a_retuned_review_prompt_changes_the_prompt_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = review_prompt_revision()
+
+    monkeypatch.setattr(
+        tool_call_review_module,
+        "_ACTION_REVIEW_SYSTEM_PROMPT",
+        tool_call_review_module._ACTION_REVIEW_SYSTEM_PROMPT + " Be strict.",
+    )
+
+    assert review_prompt_revision() != before
 
 
 def _reviewed_state() -> TurnTaintState:

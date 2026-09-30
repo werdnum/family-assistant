@@ -81,6 +81,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewStatus,
     ToolCallReviewVerdict,
     compute_trusted_destination_echo,
+    review_prompt_revision,
 )
 from family_assistant.storage.database import spawn_detached
 from family_assistant.tools.argument_schema import check_parameter_schema
@@ -3077,9 +3078,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
         """Identify the reviewer that produced a verdict, for a later filterable review.
 
         A recorded ``judge_allowed`` stands until the content changes, so
-        recalibrating the reviewer -- a new model, or new guidance -- must be
-        visible when an operator comes to review the judge-cured estate. Model
-        and guidance are what change the verdict, so both feed the identifier.
+        recalibrating the reviewer -- a new model, new guidance, or a retuned
+        prompt -- must be visible when an operator comes to review the
+        judge-cured estate. All three change the verdict, so all three feed the
+        identifier.
         """
         config = self._review_config
         model = f"{config.provider or 'default'}/{config.model}" if config else "none"
@@ -3089,7 +3091,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             self._profile_review_guidance,
         ))
         digest = hashlib.sha256(guidance.encode("utf-8")).hexdigest()[:12]
-        return f"{model}@{digest}"
+        return f"{model}@{digest}+prompt-{review_prompt_revision()}"
 
     def _allow_is_enforce_equivalent(
         self,
