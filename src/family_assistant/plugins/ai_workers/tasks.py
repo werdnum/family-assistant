@@ -115,10 +115,7 @@ async def handle_worker_task_cleanup(
 
     In order: completion listeners whose worker can no longer report, stale
     tasks (marked failed), old task records, and, when the payload names the
-    workspace, old task directories under its ``tasks/``. The directories are
-    only swept for a workspace the payload names, which the plugin's startup
-    does when it seeds this task, so a deployment that has stopped running
-    workers never has its shared workspace swept.
+    workspace, old task directories under its ``tasks/``.
 
     Payload can include:
         retention_hours: How long finished task records and directories are

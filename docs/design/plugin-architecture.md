@@ -122,9 +122,9 @@ names, tags and policy behaviour are unchanged.
   event endpoint under its existing authentication, and handling that from the plugin needs a
   webhook hook nothing else wants yet. The `worker_tasks` table and repository stay in core storage,
   with the other tables and their migrations.
-- **The cleanup sweeps the workspace only when its payload names it**, which the startup hook does.
-  The daily task a deployment seeded before removing workers keeps collecting task rows and
-  listeners but leaves the shared workspace alone.
+- **Removing the plugin does not unschedule its daily cleanup.** The task already seeded keeps
+  running, and keeps expiring old worker task rows, listeners and `tasks/` directories on the
+  retention it was seeded with, which is what it did before workers were a plugin.
 
 ### Temporary config migration
 
