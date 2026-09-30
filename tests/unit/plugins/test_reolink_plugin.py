@@ -91,6 +91,23 @@ class TestConfigSources:
         with pytest.raises(ValueError, match="rtsp_port"):
             _load(tmp_path)
 
+    def test_a_validation_error_does_not_echo_the_password(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        camera = {key: value for key, value in CAMERA.items() if key != "host"}
+        monkeypatch.setenv("REOLINK_CAMERAS", json.dumps({"coop": camera}))
+        with (
+            caplog.at_level(logging.ERROR, logger="family_assistant.config_loader"),
+            pytest.raises(ValueError, match="host") as raised,
+        ):
+            _load(tmp_path)
+
+        assert "cam-secret" not in str(raised.value)
+        assert "cam-secret" not in caplog.text
+
 
 class TestRuntime:
     def test_an_instance_without_cameras_is_left_out(self) -> None:

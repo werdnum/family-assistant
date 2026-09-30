@@ -2062,9 +2062,12 @@ class AppConfig(BaseSettings):
     (YAML files, env vars) via pydantic-settings.
     """
 
+    # A value that fails validation has not yet become a SecretStr, so an
+    # error that echoed its input could print a credential into the logs.
     model_config = SettingsConfigDict(
         extra="forbid",
         nested_model_default_partial_update=True,
+        hide_input_in_errors=True,
     )
 
     # ContextVar used to pass YAML file paths to settings_customise_sources thread-safely.
