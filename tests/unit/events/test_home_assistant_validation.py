@@ -6,7 +6,7 @@ from unittest.mock import NonCallableMagicMock, create_autospec
 import homeassistant_api as ha_api
 import pytest
 
-from family_assistant.events.home_assistant_source import HomeAssistantSource
+from family_assistant.plugins.home_assistant.events import HomeAssistantSource
 
 KNOWN_ENTITY_IDS = (
     "person.alex_smith",

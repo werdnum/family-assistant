@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -161,7 +163,9 @@ async def test_render_home_assistant_template_success(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "What's the current temperature in the living room?"
@@ -293,7 +297,7 @@ async def test_render_home_assistant_template_no_client(
         app_config=AppConfig(),
     )
 
-    # Don't set home_assistant_client - it should be None
+    # No plugins set, so no Home Assistant instance
 
     # --- Simulate User Interaction ---
     user_message = "Check the sensor status"
@@ -428,7 +432,9 @@ async def test_render_home_assistant_template_api_error(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "What's the alarm status?"

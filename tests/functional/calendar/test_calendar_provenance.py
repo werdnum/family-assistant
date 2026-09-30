@@ -45,7 +45,7 @@ def _context(db: Database, tracker: InMemoryTurnTaintTracker) -> ToolExecutionCo
         db_context=db,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("UTC"),

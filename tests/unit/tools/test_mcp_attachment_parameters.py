@@ -342,7 +342,7 @@ def _execution_context(
         db_context=db_context if db_context is not None else cast("Database", None),
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=registry,
         camera_backend=None,

@@ -31,7 +31,6 @@ from family_assistant.config_models import (  # Used at runtime
 )
 from family_assistant.context_providers import (
     CalendarContextProvider,
-    HomeAssistantContextProvider,  # Added
     KnownUsersContextProvider,
     NotesContextProvider,
     WeatherContextProvider,
@@ -49,7 +48,6 @@ from family_assistant.embeddings import (
     GoogleEmbeddingGenerator,
     OpenAIEmbeddingGenerator,
 )
-from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.indexing_source import IndexingSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.webhook_source import WebhookEventSource
@@ -57,7 +55,6 @@ from family_assistant.events.webhook_source import WebhookEventSource
 # Import the whole storage module for task queue functions etc.
 # --- NEW: Import ContextProvider and its implementations ---
 from family_assistant.google_calendar import google_calendar_factory
-from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.message_history_indexer import (
@@ -103,6 +100,8 @@ from family_assistant.memory.sweep import (
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
+from family_assistant.plugins.base import PluginProfileContext
+from family_assistant.plugins.runtime import PluginRuntime
 from family_assistant.processing import (
     DelegatableService,
     ProcessingService,
@@ -208,8 +207,8 @@ if TYPE_CHECKING:
         ServiceProfile,
     )
     from family_assistant.context_providers import ContextProvider
-    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.llm import LLMInterface
+    from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.security.taint import SinkClass
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -570,8 +569,7 @@ class Assistant:
 
         # Event system
         self.event_processor: EventProcessor | None = None
-        # ast-grep-ignore: no-dict-any - maps profile IDs to heterogeneous HA client objects
-        self.home_assistant_clients: dict[str, Any] = {}  # profile_id -> HA client
+        self.plugin_runtime: PluginRuntime | None = None
 
         # Logging handler
         self.error_logging_handler = None
@@ -753,6 +751,7 @@ class Assistant:
         self._setup_attachment_registry()
         self._setup_error_logging()
         await self._setup_root_tools_provider()
+        self.plugin_runtime = PluginRuntime(self.config.plugins)
         await self._setup_processing_services()
         self._select_default_processing_service()
         self._setup_indexers()
@@ -1324,6 +1323,15 @@ class Assistant:
 
         model_tier = validate_profile_model_tier(profile_conf, self.config.model_tiers)
 
+        assert self.plugin_runtime is not None
+        # Checked here rather than when the config is validated: instances can
+        # come from environment variables, which are applied after the YAML is.
+        try:
+            profile_plugins = self.plugin_runtime.for_profile(profile_conf.plugins)
+        except ValueError as exc:
+            msg = f"Profile '{profile_conf.id}' plugins: {exc}"
+            raise ValueError(msg) from exc
+
         if profile_conf.remote_a2a:
             self._setup_remote_a2a_profile(profile_conf)
             return
@@ -1357,7 +1365,7 @@ class Assistant:
         )
         profile_read_policy = self._profile_note_read_policy(profile_conf)
         context_providers = self._build_profile_context_providers(
-            profile_conf, note_registry, profile_read_policy
+            profile_conf, note_registry, profile_read_policy, profile_plugins
         )
 
         service_config = ProcessingServiceConfig(
@@ -1408,7 +1416,6 @@ class Assistant:
             auto_routing_guidance=profile_conf.auto_routing_guidance,
         )
 
-        home_assistant_client_for_profile = self.home_assistant_clients.get(profile_id)
         camera_backend_for_profile = self._create_camera_backend(profile_conf)
 
         # Interactions API agent profiles (Deep Research, Antigravity)
@@ -1436,7 +1443,7 @@ class Assistant:
             if self.event_processor
             else None,
             processing_services_registry=self.processing_services_registry,
-            home_assistant_client=home_assistant_client_for_profile,
+            plugins=profile_plugins,
             camera_backend=camera_backend_for_profile,
             on_demand_view=profile_on_demand_view,
             credential_resolvers=self.credential_resolvers,
@@ -1515,6 +1522,7 @@ class Assistant:
         profile_conf: ServiceProfile,
         note_registry: NoteRegistry | None,
         read_policy: NoteReadPolicy,
+        plugins: ProfilePlugins,
     ) -> list[ContextProvider]:
         """Build and filter the aggregated-context sources for one profile."""
         assert self.attachment_registry is not None
@@ -1546,11 +1554,15 @@ class Assistant:
         weather_provider = self._create_weather_context_provider(profile_conf)
         if weather_provider is not None:
             providers.append(weather_provider)
-        home_assistant_provider = self._create_home_assistant_context_provider(
-            profile_conf
+        providers.extend(
+            plugins.context_providers(
+                PluginProfileContext(
+                    profile_id=profile_conf.id,
+                    prompts=profile_config.prompts,
+                    timezone=ZoneInfo(profile_config.timezone),
+                )
+            )
         )
-        if home_assistant_provider is not None:
-            providers.append(home_assistant_provider)
 
         excluded = set(profile_config.excluded_context_providers)
         if not excluded:
@@ -1572,78 +1584,6 @@ class Assistant:
             timezone=ZoneInfo(profile_config.timezone),
             httpx_client=self.shared_httpx_client,
         )
-
-    def _create_home_assistant_context_provider(
-        self, profile_conf: ServiceProfile
-    ) -> HomeAssistantContextProvider | None:
-        profile_config = profile_conf.processing_config
-        api_url = profile_config.home_assistant_api_url
-        secret_token = profile_config.home_assistant_token
-        template = profile_config.home_assistant_context_template
-        if not api_url or not secret_token:
-            return None
-        token = secret_token.get_secret_value()
-
-        client = self._get_home_assistant_client(profile_conf, api_url, token)
-        if not client or not template:
-            logger.warning(
-                "Home Assistant context provider for profile '%s' is partially "
-                "configured but missing essential settings (URL, token, or "
-                "template). Skipping.",
-                profile_conf.id,
-            )
-            return None
-        try:
-            if (
-                HomeAssistantContextProvider.__module__
-                != "family_assistant.context_providers"
-            ):
-                return None
-            provider = HomeAssistantContextProvider(
-                api_url=api_url,
-                token=token,
-                context_template=template,
-                prompts=profile_config.prompts,
-                verify_ssl=profile_config.home_assistant_verify_ssl,
-                client=client,
-            )
-        except ImportError:
-            logger.warning(
-                "homeassistant_api library is not installed, but Home Assistant "
-                "context provider is configured. Skipping."
-            )
-            return None
-        except Exception as exc:
-            logger.exception(
-                "Failed to initialize HomeAssistantContextProvider for profile "
-                "'%s': %s",
-                profile_conf.id,
-                exc,
-            )
-            return None
-        logger.info(
-            "HomeAssistantContextProvider added for profile '%s'.", profile_conf.id
-        )
-        return provider
-
-    def _get_home_assistant_client(
-        self, profile_conf: ServiceProfile, api_url: str, token: str
-    ) -> HomeAssistantClientWrapper | None:
-        client_key = f"{api_url}:{token[:8]}..."
-        cached_client = self.home_assistant_clients.get(client_key)
-        if cached_client is not None:
-            self.home_assistant_clients[profile_conf.id] = cached_client
-            return cast("HomeAssistantClientWrapper", cached_client)
-
-        client = create_home_assistant_client(
-            api_url=api_url,
-            token=token,
-            verify_ssl=profile_conf.processing_config.home_assistant_verify_ssl,
-        )
-        if client is not None:
-            self.home_assistant_clients[client_key] = client
-            self.home_assistant_clients[profile_conf.id] = client
-        return client
 
     async def _build_profile_tools_provider(
         self,
@@ -1995,24 +1935,8 @@ class Assistant:
         if event_config.enabled:
             event_sources = {}  # Dict, not list
 
-            # Create Home Assistant event sources for unique HA instances
-            if event_config.sources.home_assistant.enabled:
-                # Get unique HA clients (use cache keys which represent unique instances)
-                unique_clients = {}
-                for key, ha_client in self.home_assistant_clients.items():
-                    # Cache keys contain "..." and represent unique HA instances
-                    if "..." in str(key):
-                        unique_clients[key] = ha_client
-
-                # Create one event source per unique HA instance
-                for idx, (key, ha_client) in enumerate(unique_clients.items()):
-                    logger.info(f"Creating HomeAssistantSource for HA instance: {key}")
-                    ha_source = HomeAssistantSource(client=ha_client)
-                    # Use a simple numeric suffix if we have multiple HA instances
-                    source_key = (
-                        "home_assistant" if idx == 0 else f"home_assistant_{idx}"
-                    )
-                    event_sources[source_key] = ha_source
+            assert self.plugin_runtime is not None
+            event_sources.update(self.plugin_runtime.event_sources())
 
             # Always add indexing source since it's needed for document indexing events
             self.indexing_source = IndexingSource()
@@ -2983,6 +2907,8 @@ class Assistant:
             except Exception:
                 logger.exception("Error closing shared tool-call reviewer")
 
+        if self.plugin_runtime is not None:
+            await self.plugin_runtime.close()
         if self.shared_httpx_client:
             await self.shared_httpx_client.aclose()
             logger.info("Shared httpx client closed.")

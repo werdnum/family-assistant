@@ -18,6 +18,8 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.llm.messages import ToolMessage, is_turn_scaffolding
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -201,7 +203,9 @@ async def test_list_home_assistant_entities_with_filter(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "Show me all temperature sensors"
@@ -382,7 +386,9 @@ async def test_list_home_assistant_entities_with_area_filter(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "What devices are in the pool area?"
@@ -513,7 +519,7 @@ async def test_list_home_assistant_entities_no_client(
         app_config=AppConfig(),
     )
 
-    # Don't set home_assistant_client - it should be None
+    # No plugins set, so no Home Assistant instance
 
     # --- Simulate User Interaction ---
     user_message = "List all entities"

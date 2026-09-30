@@ -130,7 +130,7 @@ def _build_indexer_context(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
         camera_backend=None,

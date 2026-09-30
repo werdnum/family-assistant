@@ -15,6 +15,8 @@ from family_assistant.config_models import (
     RemoteA2AConfig,
     ServiceProfile,
 )
+from family_assistant.plugins.config import PluginsConfig
+from family_assistant.plugins.runtime import PluginRuntime
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,6 +37,7 @@ def _stand_in_assistant(config: AppConfig | None = None) -> SimpleNamespace:
         processing_services_registry={},
         attachment_registry=MagicMock(),
         _database=MagicMock(),
+        plugin_runtime=PluginRuntime(config.plugins if config else PluginsConfig()),
     )
     # The arg-type suppression covers the deliberate duck-typed stand-in.
     fake_self._setup_remote_a2a_profile = partial(

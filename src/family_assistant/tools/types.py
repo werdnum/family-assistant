@@ -271,11 +271,11 @@ if TYPE_CHECKING:
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.events.sources import EventSource
-    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.memory.review_context import MemoryReviewContext
+    from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.processing import ProcessingService
     from family_assistant.scripting.invocation import (
         PreparedScriptInvocation,
@@ -479,7 +479,7 @@ class ToolExecutionContext:
     """
     Context passed to tool execution functions.
 
-    IMPORTANT: Infrastructure fields (processing_service, clock, home_assistant_client,
+    IMPORTANT: Infrastructure fields (processing_service, clock, plugins,
     event_sources, attachment_registry) have NO defaults to prevent accidental omission.
     You MUST explicitly specify them (even if None) when creating a context.
     This ensures all production sites stay in sync and the type checker catches bugs
@@ -507,7 +507,7 @@ class ToolExecutionContext:
         indexing_source: Optional indexing event source for emitting document indexing events.
         event_sources: Map of event source ID to source instance (REQUIRED - no default).
         tools_provider: Optional tools provider for direct access (used by execute_script from API).
-        home_assistant_client: Home Assistant client wrapper (REQUIRED - no default).
+        plugins: The plugin instances the turn's profile selected (REQUIRED - no default).
         attachment_registry: Attachment registry for file operations (REQUIRED - no default).
         subconversation_id: Optional ID for delegated subconversations. None indicates main conversation.
             When set, history retrieval is isolated to only messages with this subconversation_id.
@@ -522,9 +522,7 @@ class ToolExecutionContext:
     # Infrastructure fields - REQUIRED (no defaults) to catch bugs via type checker
     processing_service: ProcessingService | None  # NO DEFAULT - must specify explicitly
     clock: Clock | None  # NO DEFAULT - must specify explicitly
-    home_assistant_client: (
-        HomeAssistantClientWrapper | None
-    )  # NO DEFAULT - must specify explicitly
+    plugins: ProfilePlugins | None  # NO DEFAULT - must specify explicitly
     event_sources: EventSourcesById | None  # NO DEFAULT - must specify explicitly
     attachment_registry: (
         AttachmentRegistry | None

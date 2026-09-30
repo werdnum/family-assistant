@@ -1295,7 +1295,7 @@ class AsteriskLiveHandler:
                     # model use the profile's default one.
                     llm_client=self.processing_service.llm_client,
                     clock=self.processing_service.clock,
-                    home_assistant_client=self.processing_service.home_assistant_client,
+                    plugins=self.processing_service.plugins,
                     event_sources=self.processing_service.event_sources,
                     indexing_source=(
                         cast(

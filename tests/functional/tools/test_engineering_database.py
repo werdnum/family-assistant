@@ -33,7 +33,7 @@ def _make_exec_context(db: Database) -> ToolExecutionContext:
         db_context=db,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

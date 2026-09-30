@@ -51,7 +51,7 @@ from contextvars import ContextVar
 from email.utils import parseaddr
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
@@ -76,6 +76,10 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .memory.limits import MemoryLimits
 from .memory.review_settings import MemoryReviewSettings
+from .plugins.config import (
+    PluginsConfig,
+    migrate_legacy_home_assistant_settings,
+)
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -492,10 +496,6 @@ class ProcessingConfig(BaseModel):
     review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
-    home_assistant_api_url: str | None = None
-    home_assistant_token: SecretStr | None = None
-    home_assistant_context_template: str | None = None
-    home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
     # Context providers inject the user's own data -- notes, calendar, known
     # users, weather, Home Assistant state -- into the system prompt. A profile
@@ -707,6 +707,10 @@ class ServiceProfile(BaseModel):
     # privileges to actually hold none.
     excluded_global_tools: list[str] = Field(default_factory=list)
     remote_a2a: RemoteA2AConfig | None = None
+    # Which instance of each plugin this profile uses: plugin id -> instance
+    # name, or null to go without. A plugin's "default" instance applies unless
+    # overridden. See family_assistant.plugins.config.
+    plugins: dict[str, str | None] = Field(default_factory=dict)
     # Tiers this profile may run on. `None` means "only its configured
     # `model_tier`", which is what a profile pinned to a model or to a
     # provider-coupled runtime stays at.
@@ -749,6 +753,10 @@ class DefaultProfileSettings(BaseModel):
     auto_model_tiers: list[str] | None = None
     delegation_model_tiers: list[str] | None = None
     auto_routing_guidance: str | None = None
+    # Which instance of each plugin this profile uses: plugin id -> instance
+    # name, or null to go without. A plugin's "default" instance applies unless
+    # overridden. See family_assistant.plugins.config.
+    plugins: dict[str, str | None] = Field(default_factory=dict)
 
 
 class NotesConfig(BaseModel):
@@ -1358,14 +1366,6 @@ class EventStorageConfig(BaseModel):
     retention_hours: int = 48
 
 
-class HomeAssistantSourceConfig(BaseModel):
-    """Home Assistant event source configuration."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-
-
 class WebhookSourceConfig(BaseModel):
     """Webhook event source configuration."""
 
@@ -1384,9 +1384,6 @@ class EventSourcesConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    home_assistant: HomeAssistantSourceConfig = Field(
-        default_factory=HomeAssistantSourceConfig
-    )
     webhook: WebhookSourceConfig = Field(default_factory=WebhookSourceConfig)
 
 
@@ -2225,6 +2222,8 @@ class AppConfig(BaseSettings):
     default_profile_settings: DefaultProfileSettings = Field(
         default_factory=DefaultProfileSettings
     )
+    # Instances of each plugin (family_assistant.plugins), by instance name.
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     # Tool policy rules injected into *every* profile's policy engine, regardless
     # of the profile's own tools_policy (which otherwise replaces the defaults
     # wholesale). Use this for tools that must be available in all contexts, such
@@ -2349,6 +2348,14 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_plugin_settings(cls, data: object) -> object:
+        """Accept plugin settings still written where they lived before plugins."""
+        if isinstance(data, dict):
+            migrate_legacy_home_assistant_settings(cast("dict[str, Any]", data))
+        return data
 
     @model_validator(mode="after")
     def validate_metrics_port_is_not_the_application_port(self) -> AppConfig:

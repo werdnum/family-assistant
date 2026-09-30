@@ -29,17 +29,16 @@ class TestEventSourceDeduplication:
             "embedding_dimensions": 384,
             "server_url": "http://test.local",
             "database_url": "sqlite+aiosqlite:///:memory:",
-            "event_system": {
-                "enabled": True,
-                "sources": {"home_assistant": {"enabled": True}},
+            "event_system": {"enabled": True},
+            "plugins": {
+                "home_assistant": {
+                    "default": {"api_url": "http://ha.local", "token": "test_token"}
+                }
             },
             "service_profiles": [
                 {
-                    "id": "profile1",
+                    "id": profile_id,
                     "processing_config": {
-                        "home_assistant_api_url": "http://ha.local",
-                        "home_assistant_token": "test_token",
-                        "home_assistant_verify_ssl": True,
                         "prompts": {},
                         "timezone": "UTC",
                         "max_history_messages": 10,
@@ -47,27 +46,14 @@ class TestEventSourceDeduplication:
                     },
                     "tools_config": {},
                     "tools_policy": {"default_decision": "allow", "rules": []},
-                },
-                {
-                    "id": "profile2",
-                    "processing_config": {
-                        "home_assistant_api_url": "http://ha.local",
-                        "home_assistant_token": "test_token",
-                        "home_assistant_verify_ssl": True,
-                        "prompts": {},
-                        "timezone": "UTC",
-                        "max_history_messages": 10,
-                        "history_max_age_hours": 24,
-                    },
-                    "tools_config": {},
-                    "tools_policy": {"default_decision": "allow", "rules": []},
-                },
+                }
+                for profile_id in ("profile1", "profile2")
             ],
         }
 
         # Only mock the external Home Assistant client creation
         with patch(
-            "family_assistant.assistant.create_home_assistant_client"
+            "family_assistant.plugins.home_assistant.plugin.create_home_assistant_client"
         ) as mock_create_ha_client:
             # Mock the HA client creation
             mock_ha_client = MagicMock()
@@ -88,7 +74,7 @@ class TestEventSourceDeduplication:
             await assistant.setup_dependencies()
 
             try:
-                # The important test: only one HA client was created despite two profiles using same URL/token
+                # Both profiles share the one default instance's client.
                 assert mock_create_ha_client.call_count == 1
 
                 # Verify the event processor was set up correctly

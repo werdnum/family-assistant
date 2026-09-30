@@ -1310,9 +1310,43 @@ ______________________________________________________________________
 
 ## Smart Home - Home Assistant
 
+Home Assistant is a plugin (see [Plugins](#plugins)). Each configured instance under
+`plugins.home_assistant` is one Home Assistant server; the instance named `default` serves every
+profile that doesn't choose another.
+
+```yaml
+plugins:
+  home_assistant:
+    default:
+      # api_url and token usually come from HOMEASSISTANT_URL / HOMEASSISTANT_API_KEY.
+      verify_ssl: true
+      # Jinja template Home Assistant renders into each turn's context. Omit it for no
+      # home_assistant context provider.
+      context_template: |
+        {% for person in states.person %}{{ person.name }} is {{ person.state }}
+        {% endfor %}
+      # Run the state-change event source that automations and event listeners use.
+      # Only one instance may have it on.
+      events: true
+```
+
+| Key                | Default | Notes                                                      |
+| ------------------ | ------- | ---------------------------------------------------------- |
+| `api_url`          | None    | Base URL, without `/api`. Required to start the instance.  |
+| `token`            | None    | Long-lived access token. **Sensitive.** Required to start. |
+| `verify_ssl`       | `true`  |                                                            |
+| `context_template` | None    | No template means no `home_assistant` context provider.    |
+| `events`           | `true`  | The `home_assistant` event source.                         |
+
+An instance missing `api_url` or `token` is not started, with a warning at startup, and profiles
+that would use it run without Home Assistant. Settings written under
+`default_profile_settings.processing_config.home_assistant_*`, and the old
+`event_system.sources.home_assistant.enabled` switch, are still read into the `default` instance,
+with a deprecation warning; move them to `plugins.home_assistant.default`.
+
 ### HOMEASSISTANT_URL
 
-URL to your Home Assistant instance.
+URL of the `default` Home Assistant instance (`plugins.home_assistant.default.api_url`).
 
 | Property  | Value                                |
 | --------- | ------------------------------------ |
@@ -1325,7 +1359,7 @@ ______________________________________________________________________
 
 ### HOMEASSISTANT_API_KEY
 
-Long-lived access token for Home Assistant API.
+Long-lived access token for the `default` instance (`plugins.home_assistant.default.token`).
 
 | Property  | Value                                     |
 | --------- | ----------------------------------------- |
@@ -1335,6 +1369,37 @@ Long-lived access token for Home Assistant API.
 | Example   | `eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...` |
 
 Generate from Home Assistant: Profile -> Long-Lived Access Tokens.
+
+______________________________________________________________________
+
+## Plugins
+
+Bespoke integrations are packaged as plugins (`src/family_assistant/plugins/`). A plugin declares
+its config model, its tools and what each configured instance contributes (context providers, event
+sources) in one place. Configure instances under `plugins.<plugin id>.<instance name>`:
+
+```yaml
+plugins:
+  home_assistant:
+    default: {...}
+    cabin: {...}
+```
+
+A profile uses each plugin's `default` instance unless its `plugins` map says otherwise:
+
+```yaml
+service_profiles:
+  - id: "cabin_assistant"
+    plugins:
+      home_assistant: "cabin"   # use another instance
+  - id: "media_analyst"
+    plugins:
+      home_assistant: null      # no instance: its tools report that it isn't configured
+```
+
+A profile naming a plugin or instance that isn't configured is a startup error. A plugin's tools are
+registered whether or not it is configured, so `tools_policy` still decides what a profile may call.
+Plugins so far: `home_assistant`.
 
 ______________________________________________________________________
 

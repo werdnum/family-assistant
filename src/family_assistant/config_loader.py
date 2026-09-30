@@ -124,14 +124,8 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     # Profile settings
     EnvVarMapping("DEFAULT_SERVICE_PROFILE_ID", "default_service_profile_id"),
     EnvVarMapping("TIMEZONE", "default_profile_settings.processing_config.timezone"),
-    EnvVarMapping(
-        "HOMEASSISTANT_URL",
-        "default_profile_settings.processing_config.home_assistant_api_url",
-    ),
-    EnvVarMapping(
-        "HOMEASSISTANT_API_KEY",
-        "default_profile_settings.processing_config.home_assistant_token",
-    ),
+    EnvVarMapping("HOMEASSISTANT_URL", "plugins.home_assistant.default.api_url"),
+    EnvVarMapping("HOMEASSISTANT_API_KEY", "plugins.home_assistant.default.token"),
     EnvVarMapping(
         "MCP_INITIALIZATION_TIMEOUT_SECONDS",
         "default_profile_settings.tools_config.mcp_initialization_timeout_seconds",
@@ -748,10 +742,6 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "poll_interval_seconds",
     "max_async_seconds",
     "calendar_config",
-    "home_assistant_api_url",
-    "home_assistant_token",
-    "home_assistant_context_template",
-    "home_assistant_verify_ssl",
     "greeting_wav_path",
 )
 
@@ -1044,6 +1034,13 @@ def resolve_service_profile(
             resolved[key] = None
         for key in unstated_processing:
             resolved["processing_config"][key] = _tier_qualifier_default(key)
+
+    # A profile's plugin choices override the inherited ones plugin by plugin.
+    if isinstance(profile_def.get("plugins"), dict):
+        resolved["plugins"] = {
+            **(resolved.get("plugins") or {}),
+            **profile_def["plugins"],
+        }
 
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:

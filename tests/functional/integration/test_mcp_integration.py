@@ -617,7 +617,7 @@ async def test_mcp_time_conversion_streamable_http(
             db_context=MagicMock(),
             processing_service=None,
             clock=None,
-            home_assistant_client=None,
+            plugins=None,
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,

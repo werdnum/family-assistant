@@ -237,6 +237,22 @@ def build_local_tool_registrations(
     return registrations
 
 
+def join_tool_registrations(
+    *groups: Sequence[ToolRegistration],
+) -> list[ToolRegistration]:
+    """Concatenate registration groups, refusing a name registered twice."""
+    joined: list[ToolRegistration] = []
+    seen_names: set[str] = set()
+    for group in groups:
+        for registration in group:
+            if registration.name in seen_names:
+                msg = f"Duplicate local tool registration for {registration.name!r}"
+                raise ValueError(msg)
+            seen_names.add(registration.name)
+            joined.append(registration)
+    return joined
+
+
 def build_local_tool_descriptors(
     registrations: Sequence[ToolRegistration],
 ) -> list[ToolDescriptor]:

@@ -12,9 +12,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.webhook_source import WebhookEventSource
+from family_assistant.plugins.home_assistant.events import HomeAssistantSource
 from family_assistant.storage.database import Database
 
 
@@ -67,7 +67,9 @@ async def test_exponential_backoff_reconnection() -> None:
         to_thread=AsyncMock(side_effect=RuntimeError("Connection failed")),
     )
     # Patch only the source's module reference, leaving other session tasks alone.
-    with patch("family_assistant.events.home_assistant_source.asyncio", source_asyncio):
+    with patch(
+        "family_assistant.plugins.home_assistant.events.asyncio", source_asyncio
+    ):
         source._running = True
         task = asyncio.create_task(source._websocket_loop())
         try:
@@ -137,7 +139,7 @@ async def test_successful_reconnection_resets_attempts() -> None:
 
     # Mock successful WebSocket connection
     with patch(
-        "family_assistant.events.home_assistant_source.WebsocketClient"
+        "family_assistant.plugins.home_assistant.events.WebsocketClient"
     ) as mock_ws_class:
         mock_ws = MagicMock()
         mock_ws.__enter__ = MagicMock(return_value=mock_ws)
@@ -171,7 +173,7 @@ async def test_event_processor_health_status() -> None:
     mock_client.token = "test_token"
     ha_source = HomeAssistantSource(mock_client)
     with patch(
-        "family_assistant.events.home_assistant_source.WebsocketClient",
+        "family_assistant.plugins.home_assistant.events.WebsocketClient",
         _SilentWebsocketClient,
     ):
         ha_source._connect_and_listen()

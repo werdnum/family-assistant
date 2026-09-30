@@ -92,7 +92,7 @@ async def test_attachment_read_takes_the_attachments_taint(
         attachment_registry=registry,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),

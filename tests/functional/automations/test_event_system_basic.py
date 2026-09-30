@@ -13,9 +13,9 @@ import pytest
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
+from family_assistant.plugins.home_assistant.events import HomeAssistantSource
 from family_assistant.storage import Database
 from family_assistant.storage.events import (
     EventSourceType,
@@ -155,7 +155,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
         return bool(rows)
 
     with patch(
-        "family_assistant.events.home_assistant_source.WebsocketClient",
+        "family_assistant.plugins.home_assistant.events.WebsocketClient",
         partial(FakeWebsocketClient, events=[fired_event]),
     ):
         await processor.start()
@@ -177,7 +177,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
         db_context=db_ctx,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -312,7 +312,7 @@ async def test_test_event_listener_tool_matches_person_coming_home(
         db_context=db_ctx,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -376,7 +376,7 @@ async def test_test_event_listener_tool_no_match_wrong_state(
         db_context=db_ctx,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -419,7 +419,7 @@ async def test_test_event_listener_tool_empty_conditions_error(
         db_context=db_ctx,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

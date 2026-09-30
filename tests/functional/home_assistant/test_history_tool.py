@@ -18,6 +18,9 @@ from homeassistant_api.models.states import State
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.home_assistant.tools import download_state_history_tool
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
@@ -34,7 +37,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from family_assistant.tools.home_assistant import download_state_history_tool
 from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
@@ -285,7 +287,9 @@ async def test_download_state_history_success(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "Can you download the history for temperature and humidity sensors?"
@@ -369,7 +373,7 @@ async def test_download_state_history_direct_call() -> None:
         db_context=MagicMock(),
         processing_service=None,
         clock=None,
-        home_assistant_client=mock_ha_client,
+        plugins=ProfilePlugins((HomeAssistantInstance(mock_ha_client),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -415,7 +419,7 @@ async def test_download_state_history_no_client() -> None:
         db_context=MagicMock(),
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -486,7 +490,7 @@ async def test_download_state_history_empty() -> None:
         db_context=MagicMock(),
         processing_service=None,
         clock=None,
-        home_assistant_client=mock_ha_client,
+        plugins=ProfilePlugins((HomeAssistantInstance(mock_ha_client),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -538,7 +542,7 @@ async def test_download_state_history_missing_entity() -> None:
         db_context=MagicMock(),
         processing_service=None,
         clock=None,
-        home_assistant_client=mock_ha_client,
+        plugins=ProfilePlugins((HomeAssistantInstance(mock_ha_client),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

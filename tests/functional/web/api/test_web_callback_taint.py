@@ -128,7 +128,7 @@ def _exec_context(
         db_context=db_context,
         processing_service=cast("Any", processing_service),
         clock=SystemClock(),
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
