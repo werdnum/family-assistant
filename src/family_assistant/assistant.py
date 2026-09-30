@@ -372,14 +372,23 @@ def delegation_sink_class(profile: ServiceProfile) -> SinkClass | None:
     under that taint, and its result taint folds back into the caller, so the
     handoff itself sends nothing anywhere the delegate's own sinks do not
     already account for. A remote A2A agent or a server-side Interactions API
-    agent is outside that loop, so it declares nothing here and keeps the
+    agent, named inline or anywhere in the retry chain, is outside that loop, so it declares nothing here and keeps the
     conservative tag-only classification.
     """
     declared = profile.processing_config.taint_sink_class
     if declared is not None:
         return declared
-    if profile.remote_a2a or is_interactions_agent_model(
-        profile.processing_config.llm_model or ""
+    processing_config = profile.processing_config
+    retry_config = processing_config.retry_config
+    retry_chain = (
+        []
+        if retry_config is None
+        else [retry_config.primary, *filter(None, [retry_config.fallback])]
+    )
+    if (
+        profile.remote_a2a
+        or is_interactions_agent_model(processing_config.llm_model or "")
+        or models_in_chain(retry_chain, is_interactions_agent_model)
     ):
         return None
     return RuntimeSinkClass.USER_LOCAL

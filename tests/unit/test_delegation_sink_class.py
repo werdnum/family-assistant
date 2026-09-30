@@ -6,6 +6,8 @@ from family_assistant.assistant import delegation_sink_class
 from family_assistant.config_models import (
     ProcessingConfig,
     RemoteA2AConfig,
+    RetryConfig,
+    RetryModelConfig,
     ServiceProfile,
 )
 from family_assistant.security.taint import SinkClass
@@ -46,5 +48,18 @@ def test_agents_outside_the_local_loop_keep_the_tag_classification() -> None:
         ),
     )
 
+    deep_research_fallback = ServiceProfile(
+        id="researcher",
+        processing_config=ProcessingConfig(
+            retry_config=RetryConfig(
+                primary=RetryModelConfig(provider="google", model="gemini-3.8-flash"),
+                fallback=RetryModelConfig(
+                    provider="google", model="deep-research-preview-04-2026"
+                ),
+            )
+        ),
+    )
+
     assert delegation_sink_class(remote) is None
     assert delegation_sink_class(deep_research) is None
+    assert delegation_sink_class(deep_research_fallback) is None
