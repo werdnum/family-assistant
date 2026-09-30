@@ -166,19 +166,20 @@ engineer itself.
 
 ## Tools
 
-| Tool                   | Purpose                                                | Side Effects                          |
-| ---------------------- | ------------------------------------------------------ | ------------------------------------- |
-| `read_source_file`     | Read project source files with optional line ranges    | None                                  |
-| `search_source_code`   | Search codebase using ripgrep patterns                 | None                                  |
-| `query_database`       | Execute read-only SQL SELECT queries                   | None                                  |
-| `read_error_logs`      | Read application error/warning logs                    | None                                  |
-| `resolve_tool_policy`  | Explain the live tool-policy decision for any profile  | None                                  |
-| `read_task_result`     | Read the result of an AI worker task                   | None                                  |
-| `list_worker_tasks`    | List AI worker tasks and their statuses                | None                                  |
-| `create_github_issue`  | File bug reports on GitHub                             | Creates issue (requires confirmation) |
-| `reconnect_mcp_server` | Re-establish a failed MCP server session               | Reconnects (allowed)                  |
-| `spawn_worker`         | Launch an isolated AI coding worker to implement a fix | Starts worker (requires review)       |
-| `cancel_worker_task`   | Cancel a running AI worker task                        | Stops worker (allowed)                |
+| Tool                       | Purpose                                                            | Side Effects                          |
+| -------------------------- | ------------------------------------------------------------------ | ------------------------------------- |
+| `read_source_file`         | Read project source files with optional line ranges                | None                                  |
+| `search_source_code`       | Search codebase using ripgrep patterns                             | None                                  |
+| `query_database`           | Execute read-only SQL SELECT queries                               | None                                  |
+| `read_error_logs`          | Read application error/warning logs                                | None                                  |
+| `resolve_tool_policy`      | Explain the live tool-policy decision for any profile              | None                                  |
+| `read_task_result`         | Read the result of an AI worker task                               | None                                  |
+| `list_worker_tasks`        | List AI worker tasks and their statuses                            | None                                  |
+| `create_github_issue`      | File bug reports on GitHub                                         | Creates issue (requires confirmation) |
+| `reconnect_mcp_server`     | Re-establish a failed MCP server session                           | Reconnects (allowed)                  |
+| `spawn_worker`             | Launch an isolated AI coding worker to implement a fix             | Starts worker (requires review)       |
+| `cancel_worker_task`       | Cancel a running AI worker task                                    | Stops worker (allowed)                |
+| `schedule_future_callback` | Wake itself later in the same conversation to re-check a condition | Enqueues callback (requires review)   |
 
 Repository history, pull requests and issues come from GitHub's hosted read-only MCP servers
 (`github-repos`, `github-pull-requests`, `github-issues`) rather than from local tools. They are

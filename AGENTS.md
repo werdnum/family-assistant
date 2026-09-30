@@ -280,15 +280,16 @@ supervision requirements based on input trust level:
    for debugging the application. Used via `/engineer` or by delegating to the `engineer` profile.
    It cannot change state or communicate externally on its own; side effects are gated — creating
    GitHub issues requires user confirmation, while aligned handoffs, worker launches, sandboxed code
-   execution, and inbound delegations are judged by tool-call review. Example: "Why isn't my daily
-   brief firing?" Code execution is granted by the tag pair `code_execution` + `worker`, which is
-   what execution *outside* the application carries (a deployment's code-execution MCP server,
-   `spawn_worker`); `code_execution` alone — the in-app script tools — stays denied, as does the
-   shared workspace. A sandbox run reproduces a failure or reads a repository without giving the
-   profile anything that writes back, and the `sandbox_network` taint sink gates it whenever the
-   turn carries untrusted content. It runs on the `deep` model tier, with all three tiers selectable
-   per request and Auto in shadow mode, like `default_assistant` below; its routing guidance is more
-   eager, because diagnosis is the work a weaker model loops on without converging.
+   execution, self-scheduled check-back callbacks, and inbound delegations are judged by tool-call
+   review. Example: "Why isn't my daily brief firing?" Code execution is granted by the tag pair
+   `code_execution` + `worker`, which is what execution *outside* the application carries (a
+   deployment's code-execution MCP server, `spawn_worker`); `code_execution` alone — the in-app
+   script tools — stays denied, as does the shared workspace. A sandbox run reproduces a failure or
+   reads a repository without giving the profile anything that writes back, and the
+   `sandbox_network` taint sink gates it whenever the turn carries untrusted content. It runs on the
+   `deep` model tier, with all three tiers selectable per request and Auto in shadow mode, like
+   `default_assistant` below; its routing guidance is more eager, because diagnosis is the work a
+   weaker model loops on without converging.
 5. **Complex Tasks Profile [BC]**: full tool access on the `deep` model tier (Claude Opus 5.5 at
    effort `high`, falling back to OpenAI GPT-6-sol), with a higher iteration limit (100) for deep
    multi-step reasoning. Used via `/complex` or delegation from the default assistant, which runs

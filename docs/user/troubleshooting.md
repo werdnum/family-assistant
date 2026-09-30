@@ -99,10 +99,15 @@ It deliberately cannot change data or send messages. It can run code in a throwa
 reproduce a failure, read a repository, or crunch data it exported from a diagnostic read. That
 sandbox cannot reach your information or change the running assistant: it holds only what the
 assistant puts into the command, which for that last case is the data it exported. Aligned handoffs
-to other modes, coding worker launches and sandbox runs are judged automatically by tool-call review
-without a prompt; filing a public GitHub issue and cancelling a worker still ask for your approval
-first. If it tells you a tool isn't available to it, that's the intended safety configuration, not a
-fault.
+to other modes, coding worker launches, scheduled check-backs and sandbox runs are judged
+automatically by tool-call review without a prompt; filing a public GitHub issue and cancelling a
+worker still ask for your approval first. If it tells you a tool isn't available to it, that's the
+intended safety configuration, not a fault.
+
+You can ask it to wait for something and then follow up — "once the fix for this is deployed, check
+whether the error has stopped." It checks now, and if the change isn't live yet it tells you when it
+will look again and checks back in the same conversation, even across the restart a deployment
+causes.
 
 ## Still stuck
 
