@@ -53,17 +53,18 @@ class PluginRuntime:
         for plugin_id, plugin in PLUGINS_BY_ID.items():
             for instance_name, instance_config in config.instances(plugin_id).items():
                 logger.info("Starting plugin %s instance %r", plugin_id, instance_name)
-                self._instances[plugin_id, instance_name] = plugin.start(
-                    instance_name, instance_config
-                )
+                instance = plugin.start(instance_name, instance_config)
+                if instance is not None:
+                    self._instances[plugin_id, instance_name] = instance
 
     def for_profile(self, selection: Mapping[str, str | None]) -> ProfilePlugins:
         """The instances a profile with this ``plugins`` selection uses."""
         resolved = resolve_profile_plugins(self._config, selection)
         return ProfilePlugins(
             tuple(
-                self._instances[plugin_id, instance_name]
-                for plugin_id, instance_name in resolved.items()
+                self._instances[key]
+                for key in resolved.items()
+                if key in self._instances
             )
         )
 

@@ -190,11 +190,15 @@ default_profile_settings:
         }
         assert data["default_profile_settings"] == {"processing_config": {}}
 
-    def test_starting_without_a_connection_is_an_error(self) -> None:
-        with pytest.raises(ValueError, match="needs both api_url and token"):
-            HOME_ASSISTANT_PLUGIN.start(
-                "default", HomeAssistantConfig(context_template="x")
+    @pytest.mark.parametrize("token", ["token", ""])
+    def test_an_instance_without_a_url_is_left_out(self, token: str) -> None:
+        """Deployment templates set HOMEASSISTANT_API_KEY alone, often empty."""
+        runtime = PluginRuntime(
+            PluginsConfig(
+                home_assistant={"default": HomeAssistantConfig(token=SecretStr(token))}
             )
+        )
+        assert runtime.for_profile({}).get(HomeAssistantInstance) is None
 
 
 class TestRuntime:

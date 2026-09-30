@@ -63,5 +63,9 @@ class Plugin[ConfigT: BaseModel, InstanceT: PluginInstance](ABC):
     tools: ClassVar[Sequence[ToolRegistration]] = ()
 
     @abstractmethod
-    def start(self, instance_name: str, config: ConfigT) -> InstanceT:
-        """Build the runtime instance for one configured entry."""
+    def start(self, instance_name: str, config: ConfigT) -> InstanceT | None:
+        """Build the runtime instance for one configured entry.
+
+        ``None`` means the entry is incomplete and the plugin logged why; the
+        instance is left out and profiles selecting it run without it.
+        """
