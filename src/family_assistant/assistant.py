@@ -111,6 +111,7 @@ from family_assistant.processing import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
+from family_assistant.security.taint import SinkClass as RuntimeSinkClass
 from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
 from family_assistant.services.apns import APNsService, load_apns_auth_key
@@ -360,6 +361,28 @@ def _build_profile_policy_engine(
         profile=synthetic_policy,
         operator=operator_tools_policy,
     )
+
+
+def delegation_sink_class(profile: ServiceProfile) -> SinkClass | None:
+    """The sink a ``delegate_to_service`` call to ``profile`` reaches.
+
+    A profile that declares a ``taint_sink_class`` is classified as that sink.
+    A profile served by this application's own LLM loop is not an egress: the
+    delegate is seeded with the caller's taint, every tool it calls is gated
+    under that taint, and its result taint folds back into the caller, so the
+    handoff itself sends nothing anywhere the delegate's own sinks do not
+    already account for. A remote A2A agent or a server-side Interactions API
+    agent is outside that loop, so it declares nothing here and keeps the
+    conservative tag-only classification.
+    """
+    declared = profile.processing_config.taint_sink_class
+    if declared is not None:
+        return declared
+    if profile.remote_a2a or is_interactions_agent_model(
+        profile.processing_config.llm_model or ""
+    ):
+        return None
+    return RuntimeSinkClass.USER_LOCAL
 
 
 class NullChatInterface:
@@ -1120,9 +1143,9 @@ class Assistant:
         resolved_profiles = self.config.service_profiles
         note_registry = self._load_note_registry()
         delegation_sink_classes = {
-            candidate.id: candidate.processing_config.taint_sink_class
+            candidate.id: sink_class
             for candidate in resolved_profiles
-            if candidate.processing_config.taint_sink_class is not None
+            if (sink_class := delegation_sink_class(candidate)) is not None
         }
         tool_call_reviewer = self._create_tool_call_reviewer()
         self._tool_call_reviewer = tool_call_reviewer

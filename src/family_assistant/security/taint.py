@@ -1365,17 +1365,18 @@ def resolve_tool_sink_class(
         and not tag_values.intersection({"browser", "external_comm"})
     ):
         return SinkClass.SENSITIVE_READ_BROADENING
-    if "code_execution" in tag_values or (
-        # ``worker`` marks a tool as belonging to the code-execution subsystem,
-        # which is why the whole subsystem is gated as sandbox_network. A
-        # read-only member of it -- ``list_worker_tasks``, ``read_task_result``
-        # -- does not run anything in the sandbox, so it is a read rather than
-        # an execution and falls through to the read classification below. Its
-        # untrusted output is still tracked as a source; only the sink changes.
-        "worker" in tag_values and "read_only" not in tag_values
-    ):
+    if "code_execution" in tag_values:
+        # ``worker`` names the subsystem, not an execution: the worker tools that
+        # run anything also carry ``code_execution``, while reading or cancelling
+        # a worker task is an ordinary read or write.
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
+        if "read_only" in tag_values and "state_changing" not in tag_values:
+            # Snapshotting, extracting or waiting on the page already open sends
+            # nothing the model chose anywhere: the egress was the navigation
+            # that opened it, which is gated here. The page may be a signed-in
+            # session, so the read keeps the conservative read class.
+            return SinkClass.SENSITIVE_READ_BROADENING
         return SinkClass.ATTACKER_ADDRESSABLE_EGRESS
     if "user_facing_media" in tag_values:
         # Attaching media to the current turn's own reply is a local, same-user
