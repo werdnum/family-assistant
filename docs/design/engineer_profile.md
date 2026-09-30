@@ -179,8 +179,7 @@ engineer itself.
 | `reconnect_mcp_server`     | Re-establish a failed MCP server session                           | Reconnects (allowed)                  |
 | `spawn_worker`             | Launch an isolated AI coding worker to implement a fix             | Starts worker (requires review)       |
 | `cancel_worker_task`       | Cancel a running AI worker task                                    | Stops worker (allowed)                |
-| `schedule_future_callback` | Wake itself later in the same conversation to re-check a condition | Enqueues callback (allowed)           |
-| `cancel_pending_callback`  | Withdraw one of its own pending callbacks                          | Cancels callback (allowed)            |
+| `schedule_future_callback` | Wake itself later in the same conversation to re-check a condition | Enqueues callback (requires review)   |
 
 Repository history, pull requests and issues come from GitHub's hosted read-only MCP servers
 (`github-repos`, `github-pull-requests`, `github-issues`) rather than from local tools. They are
