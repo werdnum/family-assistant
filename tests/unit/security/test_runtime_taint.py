@@ -67,7 +67,11 @@ from family_assistant.tools.metadata import (
     ToolImplementation,
     ToolRegistration,
     ToolTag,
+    build_tool_descriptor,
+    derive_mcp_annotation_tags,
     make_local_tool_metadata,
+    normalize_mcp_tool_metadata,
+    resolve_mcp_tool_tags,
 )
 from family_assistant.tools.notes import (
     add_or_update_note_tool,
@@ -1729,9 +1733,7 @@ def test_read_only_worker_tool_is_a_read_not_a_sandbox_execution() -> None:
     """
     assert (
         resolve_tool_sink_class(
-            _tool_descriptor(
-                "list_worker_tasks", ToolTag.READ_ONLY, ToolTag.WORKER
-            )
+            _tool_descriptor("list_worker_tasks", ToolTag.READ_ONLY, ToolTag.WORKER)
         )
         is SinkClass.SENSITIVE_READ_BROADENING
     )
@@ -1747,6 +1749,50 @@ def test_read_only_worker_tool_is_a_read_not_a_sandbox_execution() -> None:
         )
         is SinkClass.SANDBOX_NETWORK
     )
+
+
+def test_mcp_wildcard_read_only_sensitive_tool_is_read_broadening() -> None:
+    """A wildcard covering a read-only sensitive MCP tool must not become egress.
+
+    Regression guard for the Trino incident: a server given the wildcard
+    ``read_only, sensitive_data, output_untrusted`` resolves its read-only tools
+    to ``sensitive_read_broadening``. Twelve production calls between
+    2026-07-09 and 2026-08-04 fell to ``arbitrary_external_message``, the
+    annotation-only fallback for an open-world read-only tool; every call since
+    the wildcard was in place resolves to the read class.
+    """
+    configured = normalize_mcp_tool_metadata({
+        "*": ["read_only", "sensitive_data", "output_untrusted"],
+    })
+    # openWorldHint unset: the annotation-derived fallback would mark this
+    # OPEN_WORLD and classify it as egress. The config entry must win.
+    annotations = derive_mcp_annotation_tags(
+        read_only_hint=True,
+        destructive_hint=None,
+        open_world_hint=None,
+    )
+    tags = resolve_mcp_tool_tags(
+        tool_name="catalog_list",
+        configured_tool_metadata=configured,
+        annotation_tags=annotations,
+    )
+    descriptor = build_tool_descriptor(
+        cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "catalog_list",
+                    "description": "List catalogs.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags,
+        origin="mcp",
+    )
+
+    assert resolve_tool_sink_class(descriptor) is SinkClass.SENSITIVE_READ_BROADENING
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (

@@ -1372,8 +1372,7 @@ def resolve_tool_sink_class(
         # -- does not run anything in the sandbox, so it is a read rather than
         # an execution and falls through to the read classification below. Its
         # untrusted output is still tracked as a source; only the sink changes.
-        "worker" in tag_values
-        and "read_only" not in tag_values
+        "worker" in tag_values and "read_only" not in tag_values
     ):
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
