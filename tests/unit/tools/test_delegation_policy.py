@@ -498,7 +498,7 @@ async def test_synchronous_delegation_returns_the_delegate_turns_sensitive_reads
         db_context=db,
         processing_service=cast("ProcessingService", source_service),
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
