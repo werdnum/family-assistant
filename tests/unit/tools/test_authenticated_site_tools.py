@@ -81,6 +81,7 @@ def _exec_context() -> ToolExecutionContext:
             timezone=None,
             processing_profile_id="browser_profile",
             processing_service=None,
+            taint_tracker=None,
         ),
     )
 
