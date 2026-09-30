@@ -18,6 +18,8 @@ from family_assistant.plugins.ai_workers.instance import (
 from family_assistant.plugins.ai_workers.tasks import WORKER_TASK_CLEANUP_TASK_TYPE
 from family_assistant.plugins.ai_workers.tools import (
     NOT_CONFIGURED_ERROR,
+    list_worker_tasks_tool,
+    read_task_result_tool,
     spawn_worker_tool,
 )
 from family_assistant.plugins.base import PluginInstance, PluginStartupContext
@@ -199,6 +201,11 @@ async def test_a_profile_without_a_sandbox_is_told_so(db_engine: AsyncEngine) ->
         timezone=ZoneInfo("UTC"),
     )
 
-    result = await spawn_worker_tool(context, task_description="write a script")
+    results = [
+        await spawn_worker_tool(context, task_description="write a script"),
+        await read_task_result_tool(context, task_id="task-1"),
+        await list_worker_tasks_tool(context),
+    ]
 
-    assert result.get_data() == {"error": NOT_CONFIGURED_ERROR}
+    for result in results:
+        assert result.get_data() == {"error": NOT_CONFIGURED_ERROR}

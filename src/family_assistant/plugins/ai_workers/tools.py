@@ -499,6 +499,9 @@ async def read_task_result_tool(
     Returns:
         ToolResult with task status and output
     """
+    if _worker_instance(exec_context) is None:
+        return ToolResult(data={"error": NOT_CONFIGURED_ERROR})
+
     db_context = exec_context.db_context
 
     # Get task from database
@@ -585,6 +588,9 @@ async def list_worker_tasks_tool(
     Returns:
         ToolResult with list of tasks
     """
+    if _worker_instance(exec_context) is None:
+        return ToolResult(data={"error": NOT_CONFIGURED_ERROR})
+
     db_context = exec_context.db_context
 
     tasks = await db_context.worker_tasks.get_tasks_for_conversation(
