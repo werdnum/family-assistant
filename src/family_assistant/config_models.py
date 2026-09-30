@@ -79,7 +79,6 @@ from .memory.review_settings import MemoryReviewSettings
 from .plugins.config import (
     PluginsConfig,
     migrate_legacy_home_assistant_settings,
-    resolve_profile_plugins,
 )
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
@@ -2357,17 +2356,6 @@ class AppConfig(BaseSettings):
         if isinstance(data, dict):
             migrate_legacy_home_assistant_settings(cast("dict[str, Any]", data))
         return data
-
-    @model_validator(mode="after")
-    def validate_profile_plugin_selections(self) -> AppConfig:
-        """Reject a profile naming a plugin or instance that isn't configured."""
-        for profile in self.service_profiles:
-            try:
-                resolve_profile_plugins(self.plugins, profile.plugins)
-            except ValueError as exc:
-                msg = f"Profile '{profile.id}' plugins: {exc}"
-                raise ValueError(msg) from exc
-        return self
 
     @model_validator(mode="after")
     def validate_metrics_port_is_not_the_application_port(self) -> AppConfig:

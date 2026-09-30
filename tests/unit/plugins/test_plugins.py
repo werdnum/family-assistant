@@ -7,10 +7,9 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import SecretStr
 
 from family_assistant.config_loader import load_config
-from family_assistant.config_models import AppConfig
 from family_assistant.plugins.base import PluginProfileContext
 from family_assistant.plugins.config import (
     PluginsConfig,
@@ -88,11 +87,28 @@ class TestProfileSelection:
         with pytest.raises(ValueError, match="Unknown plugin 'trino'"):
             resolve_profile_plugins(PluginsConfig(), {"trino": "default"})
 
-    def test_app_config_refuses_a_profile_naming_a_missing_instance(self) -> None:
-        with pytest.raises(ValidationError, match="Profile 'p' plugins"):
-            AppConfig.model_validate({
-                "service_profiles": [{"id": "p", "plugins": {"home_assistant": "x"}}]
-            })
+    def test_a_profile_may_name_an_instance_supplied_by_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            """
+service_profiles:
+  - id: p
+    plugins: {home_assistant: default}
+"""
+        )
+        monkeypatch.setenv("HOMEASSISTANT_URL", "http://ha.local:8123")
+        monkeypatch.setenv("HOMEASSISTANT_API_KEY", "env-token")
+        config = load_config(
+            defaults_file_path=str(tmp_path / "missing_defaults.yaml"),
+            config_file_path=str(config_file),
+            prompts_file_path=str(tmp_path / "missing_prompts.yaml"),
+            load_dotenv_file=False,
+        )
+        assert resolve_profile_plugins(
+            config.plugins, config.service_profiles[0].plugins
+        ) == {"home_assistant": "default"}
 
     def test_a_profile_override_merges_over_inherited_choices(
         self, tmp_path: Path

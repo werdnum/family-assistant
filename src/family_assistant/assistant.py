@@ -1356,7 +1356,13 @@ class Assistant:
         )
         profile_read_policy = self._profile_note_read_policy(profile_conf)
         assert self.plugin_runtime is not None
-        profile_plugins = self.plugin_runtime.for_profile(profile_conf.plugins)
+        # Checked here rather than when the config is validated: instances can
+        # come from environment variables, which are applied after the YAML is.
+        try:
+            profile_plugins = self.plugin_runtime.for_profile(profile_conf.plugins)
+        except ValueError as exc:
+            msg = f"Profile '{profile_conf.id}' plugins: {exc}"
+            raise ValueError(msg) from exc
         context_providers = self._build_profile_context_providers(
             profile_conf, note_registry, profile_read_policy, profile_plugins
         )
