@@ -13,7 +13,6 @@ from family_assistant.config_loader import load_config
 from family_assistant.plugins.base import PluginProfileContext
 from family_assistant.plugins.config import (
     PluginsConfig,
-    migrate_legacy_home_assistant_settings,
     resolve_profile_plugins,
 )
 from family_assistant.plugins.home_assistant.config import HomeAssistantConfig
@@ -167,54 +166,6 @@ plugins:
         assert default.api_url == "http://ha.local:8123"
         assert default.token == SecretStr("env-token")
         assert default.context_template == "{{ states('sun.sun') }}"
-
-    def test_legacy_default_profile_settings_move_to_the_default_instance(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            """
-default_profile_settings:
-  processing_config:
-    home_assistant_context_template: "legacy template"
-    home_assistant_verify_ssl: false
-"""
-        )
-        monkeypatch.setenv("HOMEASSISTANT_URL", "http://ha.local:8123")
-        monkeypatch.setenv("HOMEASSISTANT_API_KEY", "env-token")
-        config = load_config(
-            defaults_file_path=str(tmp_path / "missing_defaults.yaml"),
-            config_file_path=str(config_file),
-            prompts_file_path=str(tmp_path / "missing_prompts.yaml"),
-            load_dotenv_file=False,
-        )
-        default = config.plugins.home_assistant["default"]
-        assert default.context_template == "legacy template"
-        assert default.verify_ssl is False
-        assert default.api_url == "http://ha.local:8123"
-
-    def test_legacy_event_source_switch_moves_to_the_default_instance(self) -> None:
-        data: dict[str, object] = {
-            "event_system": {"sources": {"home_assistant": {"enabled": False}}}
-        }
-        migrate_legacy_home_assistant_settings(data)
-        assert data == {
-            "event_system": {"sources": {}},
-            "plugins": {"home_assistant": {"default": {"events": False}}},
-        }
-
-    def test_new_location_wins_over_legacy(self) -> None:
-        data: dict[str, object] = {
-            "default_profile_settings": {
-                "processing_config": {"home_assistant_context_template": "old"}
-            },
-            "plugins": {"home_assistant": {"default": {"context_template": "new"}}},
-        }
-        migrate_legacy_home_assistant_settings(data)
-        assert data["plugins"] == {
-            "home_assistant": {"default": {"context_template": "new"}}
-        }
-        assert data["default_profile_settings"] == {"processing_config": {}}
 
     @pytest.mark.parametrize("token", ["token", ""])
     def test_an_instance_without_a_url_is_left_out(self, token: str) -> None:
