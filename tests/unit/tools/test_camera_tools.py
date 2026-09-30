@@ -8,12 +8,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.camera.fake import FakeCameraBackend
-from family_assistant.camera.protocol import (
+from family_assistant.plugins.reolink.fake import FakeCameraBackend
+from family_assistant.plugins.reolink.instance import ReolinkInstance
+from family_assistant.plugins.reolink.protocol import (
     CameraEvent,
     Recording,
 )
-from family_assistant.tools.camera import (
+from family_assistant.plugins.reolink.tools import (
     FrameAnalysisLLMResponse,
     get_camera_frame_tool,
     get_camera_frames_batch_tool,
@@ -22,6 +23,7 @@ from family_assistant.tools.camera import (
     scan_camera_frames_tool,
     search_camera_events_tool,
 )
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 
@@ -109,10 +111,9 @@ def exec_context(fake_camera_backend: FakeCameraBackend) -> ToolExecutionContext
         db_context=Mock(),
         processing_service=None,
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((ReolinkInstance(fake_camera_backend),)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=fake_camera_backend,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -145,7 +146,7 @@ async def test_list_cameras_success(exec_context: ToolExecutionContext) -> None:
 
 @pytest.mark.asyncio
 async def test_list_cameras_no_backend() -> None:
-    """Test listing cameras returns error when camera_backend is None."""
+    """Test listing cameras returns error when the profile has no cameras."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -157,7 +158,6 @@ async def test_list_cameras_no_backend() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -239,7 +239,7 @@ async def test_search_camera_events_with_type_filter(
 
 @pytest.mark.asyncio
 async def test_search_camera_events_no_backend() -> None:
-    """Test searching events returns error when camera_backend is None."""
+    """Test searching events returns error when the profile has no cameras."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -251,7 +251,6 @@ async def test_search_camera_events_no_backend() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -319,7 +318,7 @@ async def test_get_camera_frame_not_found(
 
 @pytest.mark.asyncio
 async def test_get_camera_frame_no_backend() -> None:
-    """Test getting frame returns error when camera_backend is None."""
+    """Test getting frame returns error when the profile has no cameras."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -331,7 +330,6 @@ async def test_get_camera_frame_no_backend() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -412,7 +410,7 @@ async def test_get_camera_frames_batch_no_frames(
 
 @pytest.mark.asyncio
 async def test_get_camera_frames_batch_no_backend() -> None:
-    """Test getting batch frames returns error when camera_backend is None."""
+    """Test getting batch frames returns error when the profile has no cameras."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -424,7 +422,6 @@ async def test_get_camera_frames_batch_no_backend() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -479,7 +476,7 @@ async def test_get_camera_recordings_success(
 
 @pytest.mark.asyncio
 async def test_get_camera_recordings_no_backend() -> None:
-    """Test getting recordings returns error when camera_backend is None."""
+    """Test getting recordings returns error when the profile has no cameras."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -491,7 +488,6 @@ async def test_get_camera_recordings_no_backend() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -589,10 +585,9 @@ def exec_context_with_llm(
         processing_service=Mock(),
         llm_client=create_mock_llm_client(),
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((ReolinkInstance(fake_camera_backend),)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=fake_camera_backend,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -728,10 +723,9 @@ async def test_scan_camera_frames_no_matches() -> None:
         processing_service=Mock(),
         llm_client=create_mock_llm_client(no_match_responses),
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((ReolinkInstance(fake_backend),)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=fake_backend,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -758,7 +752,7 @@ async def test_scan_camera_frames_no_matches() -> None:
 
 @pytest.mark.asyncio
 async def test_scan_camera_frames_no_backend() -> None:
-    """Test scanning frames returns error when camera_backend is None."""
+    """Test scanning frames returns error when the profile has no cameras."""
     exec_context = ToolExecutionContext(
         interface_type="test",
         conversation_id="test_conv",
@@ -771,7 +765,6 @@ async def test_scan_camera_frames_no_backend() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -807,10 +800,9 @@ async def test_scan_camera_frames_without_a_run_client(
         processing_service=None,
         llm_client=None,
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((ReolinkInstance(fake_camera_backend),)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=fake_camera_backend,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
@@ -902,10 +894,9 @@ async def test_scan_camera_frames_handles_llm_errors() -> None:
         processing_service=Mock(),
         llm_client=erroring_client,
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((ReolinkInstance(fake_backend),)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=fake_backend,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

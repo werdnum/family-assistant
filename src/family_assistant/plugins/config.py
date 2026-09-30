@@ -12,6 +12,9 @@ from family_assistant.plugins.ai_workers.config import (
 from family_assistant.plugins.home_assistant.config import (
     HomeAssistantConfig,  # noqa: TC001 - Pydantic needs at runtime
 )
+from family_assistant.plugins.reolink.config import (
+    ReolinkConfig,  # noqa: TC001 - Pydantic needs at runtime
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -29,6 +32,7 @@ class PluginsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     home_assistant: dict[str, HomeAssistantConfig] = Field(default_factory=dict)
+    reolink: dict[str, ReolinkConfig] = Field(default_factory=dict)
     ai_workers: dict[str, AIWorkersConfig] = Field(default_factory=dict)
 
     @field_validator("ai_workers")

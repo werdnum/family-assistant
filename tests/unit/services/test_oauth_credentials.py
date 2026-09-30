@@ -137,7 +137,6 @@ def _exec_context(db_context: Database, user_id: str | None) -> ToolExecutionCon
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=__import__("zoneinfo").ZoneInfo("UTC"),
         user_id=user_id,
         credential_resolvers=None,

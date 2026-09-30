@@ -107,7 +107,9 @@ async def test_health_check_triggers_reconnection() -> None:
     mock_client = MagicMock()
     mock_client.api_url = "http://localhost:8123/api"
     mock_client.token = "test_token"
-    mock_client.get_states.side_effect = ConnectionError("Home Assistant unreachable")
+    mock_client.async_get_states.side_effect = ConnectionError(
+        "Home Assistant unreachable"
+    )
 
     source = HomeAssistantSource(mock_client)
     source._connection_healthy = True

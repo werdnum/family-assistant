@@ -39,7 +39,6 @@ def make_exec_context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         note_registry=note_registry,
         visibility_grants=visibility_grants,
         timezone=ZoneInfo("UTC"),

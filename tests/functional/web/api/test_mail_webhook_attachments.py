@@ -133,7 +133,6 @@ def _build_indexer_context(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

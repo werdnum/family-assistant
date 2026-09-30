@@ -51,7 +51,6 @@ def exec_context(db_context: Database) -> ToolExecutionContext:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         timezone=ZoneInfo("UTC"),

@@ -94,7 +94,6 @@ async def test_attachment_read_takes_the_attachments_taint(
         clock=None,
         plugins=None,
         event_sources=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         taint_tracker=tracker,
         credential_resolvers=None,

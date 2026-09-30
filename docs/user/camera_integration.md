@@ -169,34 +169,8 @@ using a binary search approach:
 
 ### Configuration
 
-Reolink camera integration requires configuration in `config.yaml` or via environment variables:
-
-```yaml
-# In config.yaml under the camera_analyst profile:
-processing_config:
-  camera_config:
-    backend: 'reolink'
-    cameras_config:
-      coop:
-        host: '192.168.1.100'
-        username: 'admin'
-        password: 'your-password'
-        name: 'Chicken Coop'
-      driveway:
-        host: '192.168.1.101'
-        username: 'admin'
-        password: 'your-password'
-        name: 'Driveway Camera'
-```
-
-Or use the `REOLINK_CAMERAS` environment variable with JSON format:
-
-```bash
-REOLINK_CAMERAS='{"coop": {"host": "192.168.1.100", "username": "admin", "password": "secret", "name": "Chicken Coop"}}'
-```
-
-For detailed configuration options, see the configuration reference or contact your system
-administrator.
+Your administrator sets up which Reolink cameras the assistant can reach; see the Reolink section of
+the [configuration reference](../operations/CONFIGURATION_REFERENCE.md#reolink-cameras).
 
 ## Natural Language Examples
 

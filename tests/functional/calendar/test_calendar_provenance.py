@@ -49,7 +49,6 @@ def _context(db: Database, tracker: InMemoryTurnTaintTracker) -> ToolExecutionCo
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("UTC"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         taint_tracker=tracker,

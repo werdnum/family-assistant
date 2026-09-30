@@ -1458,7 +1458,7 @@ service_profiles:
 A profile naming a plugin or instance that isn't configured is a startup error. A plugin's tools are
 registered whether or not it is configured, so `tools_policy` still decides what a profile may call;
 a plugin may withhold tools its configuration cannot serve, as AI workers do without an instance.
-Plugins so far: `home_assistant`, `ai_workers`.
+Plugins so far: `home_assistant`, [`reolink`](#reolink-cameras), `ai_workers`.
 
 ______________________________________________________________________
 
@@ -2628,11 +2628,46 @@ Must be an integer.
 
 ______________________________________________________________________
 
-## Camera Integration
+## Reolink Cameras
+
+Reolink cameras are a plugin (see [Plugins](#plugins)) that backs the camera investigation tools
+(`list_cameras`, `search_camera_events`, `get_camera_frame`, `get_camera_frames_batch`,
+`get_camera_recordings`, `get_live_camera_snapshot`, `scan_camera_frames`). Each configured instance
+under `plugins.reolink` is one set of cameras, keyed by camera id; the instance named `default`
+serves every profile that doesn't choose another. Which profiles may call the tools is up to
+`tools_policy` — shipped `defaults.yaml` grants them only to `camera_analyst`.
+
+```yaml
+plugins:
+  reolink:
+    default:
+      # Usually supplied by REOLINK_CAMERAS instead.
+      cameras:
+        coop:
+          host: "192.168.1.100"
+          username: "admin"
+          password: "your-password"
+          name: "Chicken Coop"
+```
+
+| Key               | Default            | Notes                                                |
+| ----------------- | ------------------ | ---------------------------------------------------- |
+| `host`            | —                  | Camera or NVR address. Required.                     |
+| `username`        | —                  | Required.                                            |
+| `password`        | —                  | **Sensitive.** Required.                             |
+| `port`            | 443, or 80 w/o TLS |                                                      |
+| `use_https`       | `true`             |                                                      |
+| `channel`         | `0`                | NVR channel; `0` for a standalone camera.            |
+| `name`            | None               | Display name; the device's own name when unset.      |
+| `prefer_download` | `false`            | Skip FLV streaming, for cameras whose TLS breaks it. |
+
+An unknown key is a startup error. An instance with no cameras is not started, with a warning at
+startup, and profiles that would use it get "not configured" from the camera tools.
 
 ### REOLINK_CAMERAS
 
-JSON configuration for Reolink camera backends.
+The `default` instance's cameras (`plugins.reolink.default.cameras`), as a JSON object keyed by
+camera id with the fields above.
 
 | Property  | Value                                                                                                    |
 | --------- | -------------------------------------------------------------------------------------------------------- |
@@ -2641,7 +2676,7 @@ JSON configuration for Reolink camera backends.
 | Sensitive | **Yes** (contains passwords)                                                                             |
 | Example   | `{"coop": {"host": "192.168.1.100", "username": "admin", "password": "secret", "name": "Chicken Coop"}}` |
 
-Alternative to configuring cameras in `config.yaml`.
+A value that isn't a JSON object is logged and ignored.
 
 ______________________________________________________________________
 

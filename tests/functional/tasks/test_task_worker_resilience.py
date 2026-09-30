@@ -1251,7 +1251,6 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         timezone=ZoneInfo("UTC"),

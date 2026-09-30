@@ -52,7 +52,6 @@ from .utils import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
-    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_selection import ResolvedModelSelection
@@ -195,7 +194,6 @@ class LLMStreamingLoop:
         # Runtime deps passed through to tool_executor
         processing_service: ProcessingService | None = None,
         plugins: ProfilePlugins | None = None,
-        camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
@@ -234,7 +232,6 @@ class LLMStreamingLoop:
             subconversation_id=subconversation_id,
             processing_service=processing_service,
             plugins=plugins,
-            camera_backend=camera_backend,
             event_sources=event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
@@ -273,7 +270,6 @@ class LLMStreamingLoop:
         # Runtime deps passed through to tool_executor
         processing_service: ProcessingService | None = None,
         plugins: ProfilePlugins | None = None,
-        camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
@@ -306,7 +302,6 @@ class LLMStreamingLoop:
             subconversation_id=subconversation_id,
             processing_service=processing_service,
             plugins=plugins,
-            camera_backend=camera_backend,
             event_sources=event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
@@ -351,7 +346,6 @@ class LLMStreamingLoop:
         # Runtime deps passed through to tool_executor
         processing_service: ProcessingService | None = None,
         plugins: ProfilePlugins | None = None,
-        camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
@@ -448,7 +442,6 @@ class LLMStreamingLoop:
                 processing_service=processing_service,
                 llm_client=llm_client,
                 plugins=plugins,
-                camera_backend=camera_backend,
                 event_sources=event_sources,
                 taint_tracker=turn_taint_tracker,
                 taint_policy_snapshot=turn_taint_tracker.snapshot(),
@@ -1063,7 +1056,6 @@ class LLMStreamingLoop:
                     processing_service=processing_service,
                     llm_client=llm_client,
                     plugins=plugins,
-                    camera_backend=camera_backend,
                     event_sources=event_sources,
                     taint_tracker=taint_tracker,
                     taint_policy_snapshot=taint_policy_snapshot,

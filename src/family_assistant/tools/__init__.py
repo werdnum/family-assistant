@@ -55,16 +55,6 @@ from family_assistant.tools.calendar import (
     modify_calendar_event_tool,
     search_calendar_events_tool,
 )
-from family_assistant.tools.camera import (
-    CAMERA_TOOLS_DEFINITION,
-    get_camera_frame_tool,
-    get_camera_frames_batch_tool,
-    get_camera_recordings_tool,
-    get_live_camera_snapshot_tool,
-    list_cameras_tool,
-    scan_camera_frames_tool,
-    search_camera_events_tool,
-)
 from family_assistant.tools.communication import (
     COMMUNICATION_TOOLS_DEFINITION,
     get_attachment_info_tool,
@@ -308,8 +298,6 @@ __all__ = [
     "BROWSER_DOM_TOOLS_DEFINITION",
     "CALL_TOOL_DEFINITION",
     "CALL_TOOL_TOOL_NAME",
-    # Camera tools
-    "CAMERA_TOOLS_DEFINITION",
     "COMPUTER_USE_TOOLS_DEFINITION",
     "DATA_MANIPULATION_TOOLS_DEFINITION",
     "DATA_VISUALIZATION_TOOLS_DEFINITION",
@@ -436,12 +424,8 @@ __all__ = [
     "generate_image_tool",
     "generate_video_tool",
     "get_attachment_info_tool",
-    "get_camera_frame_tool",
-    "get_camera_frames_batch_tool",
-    "get_camera_recordings_tool",
     "get_delegation_status_tool",
     "get_full_document_content_tool",
-    "get_live_camera_snapshot_tool",
     "get_llm_request_history",
     "get_mcp_server_status",
     "get_message_history_tool",
@@ -461,7 +445,6 @@ __all__ = [
     "ingest_document_from_url_tool",
     "jq_query_tool",
     "list_calendars_tool",
-    "list_cameras_tool",
     "list_delegations_tool",
     "list_notes_tool",
     "list_pending_callbacks_tool",
@@ -484,12 +467,10 @@ __all__ = [
     "resolve_tool_policy",
     "run_authenticated_site_task_tool",
     "save_script_tool",
-    "scan_camera_frames_tool",
     "schedule_action_tool",
     # Individual tool functions (for testing/direct use)
     "schedule_future_callback_tool",
     "schedule_reminder_tool",
-    "search_camera_events_tool",
     "search_documents_tool",
     "search_source_code",
     "send_message_to_user_tool",
@@ -553,7 +534,6 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + DOCUMENT_TOOLS_DEFINITION
     + EVENT_TOOLS_DEFINITION
     + AUTOMATIONS_TOOLS_DEFINITION
-    + CAMERA_TOOLS_DEFINITION
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
     + SCRIPT_TOOLS_DEFINITION
@@ -611,14 +591,6 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "cancel_pending_callback": cancel_pending_callback_tool,
     "query_recent_events": query_recent_events_tool,
     "test_event_listener": test_event_listener_tool,
-    # Camera tools (Reolink/Frigate backend)
-    "list_cameras": list_cameras_tool,
-    "search_camera_events": search_camera_events_tool,
-    "get_camera_frame": get_camera_frame_tool,
-    "get_camera_frames_batch": get_camera_frames_batch_tool,
-    "get_camera_recordings": get_camera_recordings_tool,
-    "get_live_camera_snapshot": get_live_camera_snapshot_tool,
-    "scan_camera_frames": scan_camera_frames_tool,
     "execute_script": execute_script_tool,
     # Stored scripts
     "save_script": save_script_tool,
@@ -927,54 +899,6 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
-    ),
-    "list_cameras": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "search_camera_events": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
-    ),
-    "get_camera_frame": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
-    ),
-    "get_camera_frames_batch": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
-    ),
-    "get_camera_recordings": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
-    ),
-    "get_live_camera_snapshot": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
-    ),
-    "scan_camera_frames": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "list_calendars": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,

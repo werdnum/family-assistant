@@ -249,43 +249,6 @@ class ToolCallReviewConfig(BaseModel):
     guidance: str = ""
 
 
-class ReolinkCameraItemConfig(BaseModel):
-    """Configuration for a single Reolink camera."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    host: str
-    username: str
-    password: SecretStr
-    port: int | None = None  # None means auto-detect based on use_https
-    use_https: bool = True
-    channel: int = 0
-    name: str | None = None
-    prefer_download: bool = (
-        False  # Skip FLV streaming, use direct download (faster for TLS issues)
-    )
-
-    @property
-    def effective_port(self) -> int:
-        """Get the effective port, defaulting based on use_https if not set."""
-        if self.port is not None:
-            return self.port
-        return 443 if self.use_https else 80
-
-
-class CameraConfig(BaseModel):
-    """Camera backend configuration.
-
-    Can be configured per-profile (e.g., camera_analyst profile) to enable
-    camera tools. Currently supports 'reolink' backend.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    backend: str = "reolink"  # Currently only 'reolink' is supported
-    cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
-
-
 class AntigravityEgressCredentialConfig(BaseModel):
     """A credential the sandbox's egress proxy injects on matching requests.
 
@@ -538,7 +501,6 @@ class ProcessingConfig(BaseModel):
     max_iterations: int = 5
     context_pruning_min_turns: int = 3
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
-    camera_config: CameraConfig | None = None  # Per-profile camera backend config
     greeting_wav_path: str | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
@@ -2019,9 +1981,12 @@ class AppConfig(BaseSettings):
     (YAML files, env vars) via pydantic-settings.
     """
 
+    # A value that fails validation has not yet become a SecretStr, so an
+    # error that echoed its input could print a credential into the logs.
     model_config = SettingsConfigDict(
         extra="forbid",
         nested_model_default_partial_update=True,
+        hide_input_in_errors=True,
     )
 
     # ContextVar used to pass YAML file paths to settings_customise_sources thread-safely.

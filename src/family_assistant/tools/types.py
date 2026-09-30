@@ -266,7 +266,6 @@ if TYPE_CHECKING:
     from datetime import date, datetime
     from zoneinfo import ZoneInfo
 
-    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
     from family_assistant.events.indexing_source import IndexingSource
@@ -527,7 +526,6 @@ class ToolExecutionContext:
     attachment_registry: (
         AttachmentRegistry | None
     )  # NO DEFAULT - must specify explicitly
-    camera_backend: CameraBackend | None  # NO DEFAULT - must specify explicitly
     credential_resolvers: (
         Mapping[str, OAuthCredentialResolver] | None
     )  # NO DEFAULT - must specify explicitly

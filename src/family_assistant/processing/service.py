@@ -78,7 +78,6 @@ if TYPE_CHECKING:
     )
     from datetime import datetime
 
-    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.context_providers import ContextProvider
     from family_assistant.interfaces import ChatInterface
@@ -280,7 +279,6 @@ class ProcessingService:
         event_sources: EventSourcesById | None = None,
         processing_services_registry: Mapping[str, DelegatableService] | None = None,
         plugins: ProfilePlugins | None = None,
-        camera_backend: CameraBackend | None = None,
         on_demand_view: OnDemandToolsView | None = None,
         credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
         api_backend: ApiBackend | None = None,
@@ -316,7 +314,6 @@ class ProcessingService:
         self._attachment_registry = attachment_registry
         self.processing_services_registry = processing_services_registry
         self.plugins = plugins
-        self.camera_backend = camera_backend
         self.event_sources = event_sources
         self.credential_resolvers = credential_resolvers
         self.api_backend = api_backend
@@ -1773,7 +1770,6 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             processing_service=self,
             plugins=self.plugins,
-            camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
@@ -1830,7 +1826,6 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             processing_service=self,
             plugins=self.plugins,
-            camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,

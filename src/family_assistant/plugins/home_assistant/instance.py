@@ -32,14 +32,7 @@ class HomeAssistantInstance(PluginInstance):
     ) -> None:
         self.client = client
         self._context_template = context_template
-        # HomeAssistantSource is typed for the raw client but has always been
-        # handed the wrapper; its sync validation calls (get_states,
-        # get_entity_histories) don't exist on the wrapper.
-        self._event_source = (
-            HomeAssistantSource(client)  # pyright: ignore[reportArgumentType]
-            if events
-            else None
-        )
+        self._event_source = HomeAssistantSource(client) if events else None
 
     def context_providers(
         self, profile: PluginProfileContext

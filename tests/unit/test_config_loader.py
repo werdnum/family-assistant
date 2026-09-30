@@ -34,6 +34,7 @@ from family_assistant.config_loader import (
     PROFILE_OVERRIDABLE_PROCESSING_KEYS,
     PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS,
     USER_IDENTITIES_FILE_ENV_VAR,
+    JsonObject,
     _log_config,  # noqa: PLC2701 - testing startup logging redaction helper directly
     apply_calendar_env_vars,
     apply_env_var_overrides,
@@ -270,6 +271,13 @@ class TestParseEnvValue:
         assert parse_env_value("0.0", float) == 0.0
         with pytest.raises(ValueError):
             parse_env_value("not-a-float", float)
+
+    def test_parse_json_object(self) -> None:
+        assert parse_env_value('{"a": {"b": 1}}', JsonObject) == {"a": {"b": 1}}
+        with pytest.raises(ValueError, match="JSON object"):
+            parse_env_value("[1, 2]", JsonObject)
+        with pytest.raises(ValueError):
+            parse_env_value("{not json", JsonObject)
 
 
 class TestLoadYamlFile:
@@ -2532,9 +2540,12 @@ class TestEnvVarMappingsComplete:
                     get_args(annotation)[1] if get_origin(annotation) is dict else None
                 )
                 if isinstance(value_type, type) and issubclass(value_type, BaseModel):
-                    assert next(parts, None) is not None, (
-                        f"{mapping.env_var}: {part} needs a key in {mapping.config_path}"
-                    )
+                    if next(parts, None) is None:
+                        assert mapping.value_type is JsonObject, (
+                            f"{mapping.env_var}: {part} needs a key in "
+                            f"{mapping.config_path}, or a JSON object value"
+                        )
+                        break
                     annotation = value_type
                 candidates = (annotation, *get_args(annotation))
                 nested = next(
@@ -3489,17 +3500,13 @@ plugins:
     default:
       api_url: "http://ha.local"
       token: "ha-secret-token-nested"
-service_profiles:
-  - id: "camera_profile"
-    description: "Camera analyst"
-    processing_config:
-      camera_config:
-        backend: "reolink"
-        cameras_config:
-          front_door:
-            host: "192.168.1.100"
-            username: "admin"
-            password: "cam-password-secret-123"
+  reolink:
+    default:
+      cameras:
+        front_door:
+          host: "192.168.1.100"
+          username: "admin"
+          password: "cam-password-secret-123"
 event_system:
   enabled: true
   sources:

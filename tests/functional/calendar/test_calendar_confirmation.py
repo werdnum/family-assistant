@@ -74,7 +74,6 @@ def create_test_execution_context(
         attachment_registry=None,
         chat_interface=None,
         request_confirmation_callback=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -120,7 +119,6 @@ async def create_test_event_in_radicale(
         chat_interface=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -432,7 +430,6 @@ async def test_confirming_tools_provider_with_calendar_events(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=capture_confirmation_callback,
         calendar_config=test_calendar_config,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -566,7 +563,6 @@ async def test_policy_confirmation_renders_event_details(
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=rendering_confirmation_callback,
         calendar_config=test_calendar_config,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -682,7 +678,6 @@ async def test_delete_confirmation_through_production_provider_chain(
         timezone=local_tz,
         request_confirmation_callback=rendering_confirmation_callback,
         calendar_config=test_calendar_config,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )

@@ -2,8 +2,8 @@
 
 ## Status
 
-Milestone 1 implemented: the plugin seam, with Home Assistant as its first plugin. Later milestones
-are proposals.
+Milestones 1 to 3 implemented: the plugin seam with Home Assistant as its first plugin, then Reolink
+cameras, then AI workers. Later milestones are proposals.
 
 ## Problem
 
@@ -16,7 +16,7 @@ into about twenty files outside its own tool module:
   profile and one event source per unique client.
 - **Plumbing:** a `home_assistant_client` parameter threaded from `ProcessingService` through the
   LLM loop and tool execution into `ToolExecutionContext`, and through the task worker, the tools
-  API and the voice API. Reolink cameras do the same with `camera_backend`.
+  API and the voice API. Reolink cameras did the same with `camera_backend`.
 - **Registration:** each tool listed three times in `tools/__init__.py`.
 
 Adding an integration meant touching all of that, which is also why a finer-grained native tool (the
@@ -89,7 +89,33 @@ wrapper, which has no `get_states` or `get_entity_histories`. Its connection hea
 listener validation calls fail as a result. This milestone preserves the behaviour and marks the
 call site.
 
-## AI workers
+## Milestone 2: Reolink cameras
+
+- The camera tools, the camera backend protocol, its fake and the Reolink backend live in
+  `plugins/reolink/`. The plugin id is `reolink` because everything configurable about it is
+  Reolink's; the tools are written against the backend protocol, so another camera system would be
+  another plugin supplying the same protocol.
+- `camera_backend` is gone from the processing layer and `ToolExecutionContext`; the tools find the
+  profile's `ReolinkInstance` through `plugins`.
+- `processing_config.camera_config` is gone. An instance is a map of cameras, and `REOLINK_CAMERAS`
+  (JSON) fills the `default` instance through the same environment-variable mapping as Home
+  Assistant's settings, so camera passwords are `SecretStr` from the start.
+- The tool names, tags and shipped tool policy are unchanged.
+
+No config migration was needed: the deployment supplies its cameras only through `REOLINK_CAMERAS`,
+which keeps working.
+
+### Deliberate simplifications
+
+- **Every profile gets the default instance, not just `camera_analyst`.** Previously only a profile
+  with `camera_config` had a backend. Now reachability is decided where it is for every other tool,
+  by `tools_policy`, and shipped defaults grant the camera tools to `camera_analyst` alone. A
+  deployment wanting a profile to hold no cameras at all can say `reolink: null`.
+- **The environment variable is stricter.** An unknown field in a `REOLINK_CAMERAS` entry is a
+  startup error rather than ignored, as for any other config; a value that isn't a JSON object is
+  logged and ignored, as before.
+
+## Milestone 3: AI workers
 
 Implemented. The worker tools, config, backends, cleanup task and startup reconciliation live in
 `plugins/ai_workers/`; the tool registry, task worker and startup no longer mention workers. Tool
@@ -135,10 +161,7 @@ has moved.
 
 ## Later milestones
 
-1. **Reolink cameras.** Verified by removing `camera_config` from `processing_config` and
-   `camera_backend` from the processing layer and `ToolExecutionContext`.
-2. **AI workers.** Implemented; see [AI workers](#ai-workers).
-3. **Per-result grading, then Trino** as a native plugin that grades each result from the tables a
+1. **Per-result grading, then Trino** as a native plugin that grades each result from the tables a
    query reads. Verified by a turn reading only Home Assistant tables carrying no `unknown_external`
    source, while a `lake.messages` query still does.
-4. Google data and UCP if still worthwhile by then.
+2. Google data and UCP if still worthwhile by then.

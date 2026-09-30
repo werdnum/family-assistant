@@ -68,7 +68,6 @@ def _make_exec_context(
         plugins=ProfilePlugins((sandbox,)),
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

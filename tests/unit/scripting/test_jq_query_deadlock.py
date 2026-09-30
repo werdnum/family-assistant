@@ -77,7 +77,6 @@ async def test_jq_query_from_script_no_deadlock(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        camera_backend=None,
         processing_service=None,
         tools_provider=policy_provider,
         timezone=ZoneInfo("UTC"),

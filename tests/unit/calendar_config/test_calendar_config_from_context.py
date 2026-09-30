@@ -76,7 +76,6 @@ async def test_calendar_config_from_context() -> None:
         attachment_registry=None,
         chat_interface=None,
         timezone=ZoneInfo("UTC"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         calendar_config=test_calendar_config,
@@ -140,7 +139,6 @@ async def test_calendar_tool_without_config() -> None:
         attachment_registry=None,
         chat_interface=None,
         timezone=ZoneInfo("UTC"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )

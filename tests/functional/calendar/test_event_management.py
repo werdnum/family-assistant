@@ -414,7 +414,6 @@ async def test_modify_event(
             chat_interface=None,
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
-            camera_backend=None,
             credential_resolvers=None,
             api_backend=None,
         ),
@@ -1701,7 +1700,6 @@ async def test_similarity_based_search_finds_similar_events(
         chat_interface=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -1805,7 +1803,6 @@ async def test_similarity_search_threshold_filtering(
         chat_interface=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -1911,7 +1908,6 @@ async def test_similarity_search_score_sorting(
         chat_interface=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
         request_confirmation_callback=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -2016,7 +2012,6 @@ async def test_duplicate_detection_error_shown(
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("America/New_York"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -2151,7 +2146,6 @@ async def test_duplicate_detection_no_error_different_time(
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("America/New_York"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -2247,7 +2241,6 @@ async def test_duplicate_detection_disabled(
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("America/New_York"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -2348,7 +2341,6 @@ async def test_duplicate_detection_all_day_events(
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("America/New_York"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -2459,7 +2451,6 @@ async def test_duplicate_detection_exact_same_title(
         event_sources=None,
         attachment_registry=None,
         timezone=ZoneInfo("America/New_York"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )

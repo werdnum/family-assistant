@@ -45,7 +45,7 @@ def test_plugins_config_has_one_field_per_registered_plugin() -> None:
 
 def test_plugin_tools_join_the_tool_catalogue_with_their_metadata() -> None:
     names = {definition["function"]["name"] for definition in TOOLS_DEFINITION}
-    for registration in HOME_ASSISTANT_PLUGIN.tools:
+    for registration in (tool for plugin in PLUGINS for tool in plugin.tools):
         assert registration.name in names
         assert LOCAL_TOOL_METADATA_BY_NAME[registration.name] == registration.metadata
     assert ToolTag.EXTERNAL_COMM in (

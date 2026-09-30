@@ -381,7 +381,6 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         chat_interface=None,  # Add chat_interface (None for this tool context)
         embedding_generator=mock_generator,
         timezone=ZoneInfo("UTC"),
@@ -531,7 +530,6 @@ async def test_get_full_document_content_with_raw_content(
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,
             api_backend=None,

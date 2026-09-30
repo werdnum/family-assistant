@@ -97,8 +97,6 @@ async def execute_tool_api(
     event_sources = getattr(request.app.state, "event_sources", None)
     attachment_registry = getattr(request.app.state, "attachment_registry", None)
 
-    # Find camera backend from any profile that has one configured
-    camera_backend = None
     processing_services = getattr(request.app.state, "processing_services", {})
     if payload.profile_id is not None:
         selected_service = processing_services.get(payload.profile_id)
@@ -133,12 +131,6 @@ async def execute_tool_api(
         if processing_service
         else selected_tools_provider
     )
-    for service in processing_services.values():
-        if service.kind == "remote":
-            continue
-        if hasattr(service, "camera_backend") and service.camera_backend is not None:
-            camera_backend = service.camera_backend
-            break
 
     # --- Create Execution Context ---
     # We need some context, minimum placeholders for now
@@ -215,7 +207,6 @@ async def execute_tool_api(
         plugins=processing_service.plugins if processing_service else None,
         event_sources=event_sources,
         attachment_registry=attachment_registry,
-        camera_backend=camera_backend,
         # Optional fields (with defaults)
         chat_interface=None,
         chat_interfaces=getattr(request.app.state, "chat_interfaces", None),

@@ -80,7 +80,6 @@ def _create_mock_context() -> ToolExecutionContext:
         attachment_registry=None,
         chat_interface=None,
         timezone=ZoneInfo("UTC"),
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -205,7 +204,6 @@ async def test_search_calendar_events_with_ical_feed(
         attachment_registry=ctx.attachment_registry,
         chat_interface=ctx.chat_interface,
         timezone=ZoneInfo("UTC"),
-        camera_backend=ctx.camera_backend,
         credential_resolvers=ctx.credential_resolvers,
         api_backend=ctx.api_backend,
     )
@@ -277,7 +275,6 @@ async def test_search_calendar_events_source_ids_filtering(
         attachment_registry=ctx.attachment_registry,
         chat_interface=ctx.chat_interface,
         timezone=ZoneInfo("UTC"),
-        camera_backend=ctx.camera_backend,
         credential_resolvers=ctx.credential_resolvers,
         api_backend=ctx.api_backend,
     )

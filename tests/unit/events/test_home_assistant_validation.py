@@ -6,6 +6,7 @@ from unittest.mock import NonCallableMagicMock, create_autospec
 import homeassistant_api as ha_api
 import pytest
 
+from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
 from family_assistant.plugins.home_assistant.events import HomeAssistantSource
 
 KNOWN_ENTITY_IDS = (
@@ -24,9 +25,12 @@ def _state(entity_id: str, state: str) -> ha_api.State:
 
 
 def _ha_client(entity_ids: Iterable[str]) -> NonCallableMagicMock:
-    """An ``ha_api.Client`` stand-in whose calls are checked against the library's signatures."""
-    client = create_autospec(ha_api.Client, instance=True)
-    client.get_states.return_value = tuple(
+    """A client stand-in whose calls are checked against the wrapper's signatures."""
+    client = create_autospec(HomeAssistantClientWrapper, instance=True)
+    client.api_url = "http://localhost:8123"
+    client.token = "test_token"
+    client.verify_ssl = True
+    client.async_get_states.return_value = tuple(
         _state(entity_id, "on") for entity_id in entity_ids
     )
     return client
@@ -158,7 +162,7 @@ class TestHomeAssistantValidation:
     async def test_api_error_becomes_warning(self) -> None:
         """Test that API errors become warnings, not validation failures."""
         client = _ha_client(KNOWN_ENTITY_IDS)
-        client.get_states.side_effect = ConnectionError("API connection failed")
+        client.async_get_states.side_effect = ConnectionError("API connection failed")
         source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
@@ -222,9 +226,9 @@ class TestHomeAssistantValidation:
     async def test_state_validation_with_valid_state(self) -> None:
         """Test validation when entity has been in the specified state."""
         client = _ha_client(["person.test"])
-        client.get_entity_histories.return_value = iter([
+        client.async_get_entity_histories.return_value = [
             _history("person.test", "home")
-        ])
+        ]
         source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
@@ -240,9 +244,9 @@ class TestHomeAssistantValidation:
     async def test_state_validation_with_unknown_state(self) -> None:
         """Test validation when entity has never been in the specified state."""
         client = _ha_client(["person.test"])
-        client.get_entity_histories.return_value = iter([
+        client.async_get_entity_histories.return_value = [
             _history("person.test", "home", "away")
-        ])
+        ]
         source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
@@ -263,7 +267,7 @@ class TestHomeAssistantValidation:
     async def test_state_validation_no_history(self) -> None:
         """Test validation when no history is available for entity."""
         client = _ha_client(["person.test"])
-        client.get_entity_histories.return_value = iter([])
+        client.async_get_entity_histories.return_value = []
         source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
@@ -280,7 +284,9 @@ class TestHomeAssistantValidation:
     async def test_state_validation_api_error(self) -> None:
         """Test that history API errors return warnings."""
         client = _ha_client(["person.test"])
-        client.get_entity_histories.side_effect = ConnectionError("History API Error")
+        client.async_get_entity_histories.side_effect = ConnectionError(
+            "History API Error"
+        )
         source = HomeAssistantSource(client)
 
         result = await source.validate_match_conditions({
