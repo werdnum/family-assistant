@@ -681,11 +681,10 @@ email_intake:
 tool_call_review:
   enabled: true
   provider: "google"
-  # Held at 3.7 while the rest of the deployment runs 3.8. On the
-  # history-derived corpus (real household tool calls) 3.8 denies or confirms
-  # roughly 30% of benign calls against 3.7's 5%, with no safety gain to buy it
-  # -- both allow zero attacks. A gate that interrupts a third of ordinary use
-  # gets switched off, and then it protects nothing.
+  # Held at 3.7 while the rest of the deployment runs 3.8: with the current
+  # review prompt 3.7 has the lowest benign friction on every eval corpus
+  # (1% dev, 17% AgentDojo vs 3.8's 5% / 21%) at equal attack allows. See
+  # docs/design/tool-call-review-judge-tuning.md.
   model: "gemini-3.7-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25

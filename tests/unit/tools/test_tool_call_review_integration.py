@@ -45,6 +45,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewStatus,
     ToolCallReviewVerdict,
     TriggerReviewInput,
+    review_prompt_revision,
 )
 from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import (
@@ -2691,6 +2692,25 @@ async def test_an_allow_records_the_taint_cell_that_delegated_it(
     assert outcome.gate.mode == "enforce"
     assert outcome.gate.verdict_id is not None
     assert outcome.gate.reviewer_revision is not None
+
+
+async def test_a_judge_allowed_revision_identifies_the_review_prompt(
+    db_engine: AsyncEngine,
+) -> None:
+    """A retuned prompt must be distinguishable in the judge-cured estate."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(TaintPolicyMode.ENFORCE),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    revision = recorder.only.gate.reviewer_revision
+    assert revision is not None
+    assert revision.endswith(f"+prompt-{review_prompt_revision()}")
 
 
 async def test_a_static_rule_allow_records_the_static_layer(
