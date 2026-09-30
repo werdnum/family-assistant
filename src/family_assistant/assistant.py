@@ -363,7 +363,9 @@ def _build_profile_policy_engine(
     )
 
 
-def delegation_sink_class(profile: ServiceProfile) -> SinkClass | None:
+def delegation_sink_class(
+    profile: ServiceProfile, default_model: str
+) -> SinkClass | None:
     """The sink a ``delegate_to_service`` call to ``profile`` reaches.
 
     A profile that declares a ``taint_sink_class`` is classified as that sink.
@@ -372,8 +374,9 @@ def delegation_sink_class(profile: ServiceProfile) -> SinkClass | None:
     under that taint, and its result taint folds back into the caller, so the
     handoff itself sends nothing anywhere the delegate's own sinks do not
     already account for. A remote A2A agent or a server-side Interactions API
-    agent, named inline or anywhere in the retry chain, is outside that loop, so it declares nothing here and keeps the
-    conservative tag-only classification.
+    agent -- named inline, inherited as the global default, or anywhere in the
+    retry chain; a model tier cannot name one -- is outside that loop, so it
+    declares nothing here and keeps the conservative tag-only classification.
     """
     declared = profile.processing_config.taint_sink_class
     if declared is not None:
@@ -387,7 +390,12 @@ def delegation_sink_class(profile: ServiceProfile) -> SinkClass | None:
     )
     if (
         profile.remote_a2a
-        or is_interactions_agent_model(processing_config.llm_model or "")
+        or (
+            processing_config.model_tier is None
+            and is_interactions_agent_model(
+                processing_config.llm_model or default_model
+            )
+        )
         or models_in_chain(retry_chain, is_interactions_agent_model)
     ):
         return None
@@ -1154,7 +1162,8 @@ class Assistant:
         delegation_sink_classes = {
             candidate.id: sink_class
             for candidate in resolved_profiles
-            if (sink_class := delegation_sink_class(candidate)) is not None
+            if (sink_class := delegation_sink_class(candidate, self.config.model))
+            is not None
         }
         tool_call_reviewer = self._create_tool_call_reviewer()
         self._tool_call_reviewer = tool_call_reviewer

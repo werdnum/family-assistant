@@ -12,6 +12,8 @@ from family_assistant.config_models import (
 )
 from family_assistant.security.taint import SinkClass
 
+_DEFAULT_MODEL = "gemini-3.8-flash"
+
 
 def test_a_profile_on_the_local_loop_is_not_an_egress() -> None:
     """Taint follows the turn into the delegate, so the handoff is local."""
@@ -19,7 +21,7 @@ def test_a_profile_on_the_local_loop_is_not_an_egress() -> None:
         id="complex_tasks", processing_config=ProcessingConfig(model_tier="deep")
     )
 
-    assert delegation_sink_class(profile) is SinkClass.USER_LOCAL
+    assert delegation_sink_class(profile, _DEFAULT_MODEL) is SinkClass.USER_LOCAL
 
 
 def test_a_declared_sink_wins() -> None:
@@ -32,7 +34,7 @@ def test_a_declared_sink_wins() -> None:
         ),
     )
 
-    assert delegation_sink_class(profile) is SinkClass.SANDBOX_NETWORK
+    assert delegation_sink_class(profile, _DEFAULT_MODEL) is SinkClass.SANDBOX_NETWORK
 
 
 def test_agents_outside_the_local_loop_keep_the_tag_classification() -> None:
@@ -60,6 +62,14 @@ def test_agents_outside_the_local_loop_keep_the_tag_classification() -> None:
         ),
     )
 
-    assert delegation_sink_class(remote) is None
-    assert delegation_sink_class(deep_research) is None
-    assert delegation_sink_class(deep_research_fallback) is None
+    assert delegation_sink_class(remote, _DEFAULT_MODEL) is None
+    assert delegation_sink_class(deep_research, _DEFAULT_MODEL) is None
+    assert delegation_sink_class(deep_research_fallback, _DEFAULT_MODEL) is None
+
+
+def test_an_inherited_default_interactions_agent_is_external() -> None:
+    """A profile naming no model runs on the global default."""
+    profile = ServiceProfile(id="plain", processing_config=ProcessingConfig())
+
+    assert delegation_sink_class(profile, _DEFAULT_MODEL) is SinkClass.USER_LOCAL
+    assert delegation_sink_class(profile, "deep-research-preview-04-2026") is None
