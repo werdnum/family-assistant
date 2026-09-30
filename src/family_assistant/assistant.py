@@ -1323,6 +1323,15 @@ class Assistant:
 
         model_tier = validate_profile_model_tier(profile_conf, self.config.model_tiers)
 
+        assert self.plugin_runtime is not None
+        # Checked here rather than when the config is validated: instances can
+        # come from environment variables, which are applied after the YAML is.
+        try:
+            profile_plugins = self.plugin_runtime.for_profile(profile_conf.plugins)
+        except ValueError as exc:
+            msg = f"Profile '{profile_conf.id}' plugins: {exc}"
+            raise ValueError(msg) from exc
+
         if profile_conf.remote_a2a:
             self._setup_remote_a2a_profile(profile_conf)
             return
@@ -1355,14 +1364,6 @@ class Assistant:
             else None
         )
         profile_read_policy = self._profile_note_read_policy(profile_conf)
-        assert self.plugin_runtime is not None
-        # Checked here rather than when the config is validated: instances can
-        # come from environment variables, which are applied after the YAML is.
-        try:
-            profile_plugins = self.plugin_runtime.for_profile(profile_conf.plugins)
-        except ValueError as exc:
-            msg = f"Profile '{profile_conf.id}' plugins: {exc}"
-            raise ValueError(msg) from exc
         context_providers = self._build_profile_context_providers(
             profile_conf, note_registry, profile_read_policy, profile_plugins
         )

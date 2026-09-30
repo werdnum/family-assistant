@@ -77,7 +77,10 @@ against a real Home Assistant, functional tests through the processing loop, and
 
 - **Legacy keys under `default_profile_settings` are migrated, not rejected.** Deployed config is
   updated separately from the image, so for now the settings are moved into the `default` instance
-  with a deprecation warning. The migration is removed once deployed config has moved.
+  with a deprecation warning. The migration is removed once deployed config has moved. Only the
+  `default_profile_settings` location is migrated: per-profile `home_assistant_*` overrides are
+  refused as unknown keys and have to be rewritten as a named instance plus a profile `plugins`
+  selection. No known deployment sets them, and migrating them would mean inventing instance names.
 - **One Home Assistant event source.** Event source ids are persisted as `home_assistant`, so at
   most one instance may enable events; a second is a startup error.
 - **Plugin tools still take `ToolExecutionContext`.** A narrower plugin tool context is worthwhile
