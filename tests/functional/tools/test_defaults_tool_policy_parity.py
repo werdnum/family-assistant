@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import inspect
 from pathlib import Path
 from typing import cast
@@ -23,6 +25,7 @@ from family_assistant.context_providers import (
     ContextProvider,
     TaintedContextProvider,
 )
+from family_assistant.plugins.registry import PLUGINS
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
@@ -578,12 +581,23 @@ def test_engineer_reads_that_return_external_content_are_untrusted() -> None:
 def _context_provider_classes() -> dict[str, type[ContextProvider]]:
     """Map every shipped provider's ``name`` to its class.
 
-    Discovered from the module rather than listed, so a provider added later is
-    covered by the engineer's invariant instead of silently escaping it.
+    Discovered from the core module and each plugin's ``context`` module rather
+    than listed, so a provider added later is covered by the engineer's
+    invariant instead of silently escaping it.
     """
+    modules = [context_providers]
+    for plugin in PLUGINS:
+        module_name = f"family_assistant.plugins.{plugin.id}.context"
+        if importlib.util.find_spec(module_name) is not None:
+            modules.append(importlib.import_module(module_name))
     discovered: dict[str, type[ContextProvider]] = {}
-    for _, member in inspect.getmembers(context_providers, inspect.isclass):
-        if member.__module__ != context_providers.__name__:
+    classes = [
+        (source, cls)
+        for source in modules
+        for _, cls in inspect.getmembers(source, inspect.isclass)
+    ]
+    for module, member in classes:
+        if member.__module__ != module.__name__:
             continue
         # ContextProvider is a plain Protocol, so issubclass is unavailable;
         # match its shape instead -- a literal `name` property plus the
