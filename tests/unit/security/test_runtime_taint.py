@@ -341,7 +341,6 @@ def _minimal_context(
         event_sources=None,
         indexing_source=None,
         attachment_registry=attachment_registry,
-        camera_backend=None,
         visibility_grants=None,
         default_note_visibility_labels=None,
         note_registry=None,

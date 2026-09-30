@@ -234,7 +234,6 @@ async def test_indexing_pipeline_e2e(
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             chat_interface=MagicMock(),  # Provide a mock ChatInterface
             embedding_generator=mock_pipeline_embedding_generator,
             timezone=ZoneInfo("UTC"),
@@ -428,7 +427,6 @@ async def test_indexing_pipeline_pdf_processing(
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             chat_interface=MagicMock(),  # Provide a mock ChatInterface
             embedding_generator=mock_pipeline_embedding_generator,
             timezone=ZoneInfo("UTC"),

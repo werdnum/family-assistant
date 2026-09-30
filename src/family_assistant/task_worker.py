@@ -5079,7 +5079,6 @@ class TaskWorker:
                     attachment_registry=self.processing_service.attachment_registry
                     if self.processing_service
                     else None,
-                    camera_backend=None,
                     # Optional fields (with defaults)
                     chat_interface=(
                         self.chat_interfaces.get(
@@ -6463,7 +6462,6 @@ async def handle_script_execution(
             # default's (mirrors _build_confirmation_execution_context).
             plugins=processing_service.plugins,
             attachment_registry=processing_service.attachment_registry,
-            camera_backend=processing_service.camera_backend,
             calendar_config=processing_service.service_config.calendar_config,
             visibility_grants=(
                 set(processing_service.service_config.visibility_grants)
@@ -6851,7 +6849,6 @@ async def _build_confirmation_execution_context(
         plugins=processing_service.plugins,
         event_sources=exec_context.event_sources,
         attachment_registry=processing_service.attachment_registry,
-        camera_backend=processing_service.camera_backend,
         chat_interface=chat_interface,
         chat_interfaces=exec_context.chat_interfaces,
         confirmation_ui_managers=exec_context.confirmation_ui_managers,

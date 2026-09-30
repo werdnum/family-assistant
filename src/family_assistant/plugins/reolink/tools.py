@@ -16,6 +16,12 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from pydantic import BaseModel, Field
 
 from family_assistant.llm.base import StructuredOutputError
+from family_assistant.plugins.reolink.instance import ReolinkInstance
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 # Threshold for warning about old dates (likely model confusion about current date)
@@ -24,12 +30,13 @@ OLD_DATE_THRESHOLD = timedelta(days=30)
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
-    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.content_parts import (
         ImageUrlContentPartDict,
         TextContentPartDict,
     )
+    from family_assistant.plugins.reolink.protocol import CameraBackend
+    from family_assistant.tools.metadata import ToolImplementation
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -373,19 +380,30 @@ def _to_local_isoformat(dt: datetime, timezone: ZoneInfo) -> str:
     return dt.astimezone(timezone).isoformat()
 
 
+def _camera_backend(exec_context: ToolExecutionContext) -> CameraBackend | None:
+    """The camera backend of the Reolink instance the turn's profile selected."""
+    if exec_context.plugins is None:
+        return None
+    instance = exec_context.plugins.get(ReolinkInstance)
+    return None if instance is None else instance.backend
+
+
+def _not_configured() -> ToolResult:
+    return ToolResult(
+        data={"error": "Camera backend not configured: no cameras for this profile."}
+    )
+
+
 async def list_cameras_tool(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
     """List all configured cameras with status."""
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     try:
-        cameras = await exec_context.camera_backend.list_cameras()
+        cameras = await camera_backend.list_cameras()
         camera_list = [
             {
                 "id": cam.id,
@@ -409,12 +427,9 @@ async def search_camera_events_tool(
     event_types: list[str] | None = None,
 ) -> ToolResult:
     """Search for AI detection events in a time range."""
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     try:
         start_dt = _parse_local_time(start_time, exec_context.timezone)
@@ -434,7 +449,7 @@ async def search_camera_events_tool(
         )
 
     try:
-        events = await exec_context.camera_backend.search_events(
+        events = await camera_backend.search_events(
             camera_id=camera_id,
             start_time=start_dt,
             end_time=end_dt,
@@ -476,12 +491,9 @@ async def get_camera_frame_tool(
     timestamp: str,
 ) -> ToolResult:
     """Get a single frame at a specific timestamp."""
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     try:
         ts = _parse_local_time(timestamp, exec_context.timezone)
@@ -489,7 +501,7 @@ async def get_camera_frame_tool(
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
     try:
-        frame_bytes = await exec_context.camera_backend.get_frame(
+        frame_bytes = await camera_backend.get_frame(
             camera_id=camera_id,
             timestamp=ts,
         )
@@ -520,12 +532,9 @@ async def get_camera_frames_batch_tool(
     max_frames: int = 10,
 ) -> ToolResult:
     """Get multiple frames at regular intervals for binary search."""
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     try:
         start_dt = _parse_local_time(start_time, exec_context.timezone)
@@ -534,7 +543,7 @@ async def get_camera_frames_batch_tool(
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
     try:
-        frames = await exec_context.camera_backend.get_frames_batch(
+        frames = await camera_backend.get_frames_batch(
             camera_id=camera_id,
             start_time=start_dt,
             end_time=end_dt,
@@ -582,12 +591,9 @@ async def get_camera_recordings_tool(
     end_time: str,
 ) -> ToolResult:
     """List available recording segments in a time range."""
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     try:
         start_dt = _parse_local_time(start_time, exec_context.timezone)
@@ -596,7 +602,7 @@ async def get_camera_recordings_tool(
         return ToolResult(data={"error": f"Invalid timestamp format: {e}"})
 
     try:
-        recordings = await exec_context.camera_backend.get_recordings(
+        recordings = await camera_backend.get_recordings(
             camera_id=camera_id,
             start_time=start_dt,
             end_time=end_dt,
@@ -635,15 +641,12 @@ async def get_live_camera_snapshot_tool(
     camera_id: str,
 ) -> ToolResult:
     """Get a live snapshot showing the current state of the camera."""
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     try:
-        snapshot_bytes = await exec_context.camera_backend.get_live_snapshot(
+        snapshot_bytes = await camera_backend.get_live_snapshot(
             camera_id=camera_id,
         )
         return ToolResult(
@@ -944,13 +947,9 @@ async def scan_camera_frames_tool(
     Returns:
         ToolResult with analysis summary and matching frame attachments
     """
-    # Check camera backend
-    if not exec_context.camera_backend:
-        return ToolResult(
-            data={
-                "error": "Camera backend not configured. Check camera_config in profile."
-            }
-        )
+    camera_backend = _camera_backend(exec_context)
+    if camera_backend is None:
+        return _not_configured()
 
     # A named model overrides; otherwise this runs on the client the turn is
     # bound to, so the frame analysis is spent at the tier the turn resolved to
@@ -981,7 +980,7 @@ async def scan_camera_frames_tool(
 
     try:
         return await _scan_camera_frames_impl(
-            camera_backend=exec_context.camera_backend,
+            camera_backend=camera_backend,
             llm_client=llm_client,
             timezone=exec_context.timezone,
             camera_id=camera_id,
@@ -1000,3 +999,48 @@ async def scan_camera_frames_tool(
     except Exception as e:
         logger.exception("Error scanning camera frames")
         return ToolResult(data={"error": f"Failed to scan frames: {e}"})
+
+
+def _tool(
+    name: str, implementation: ToolImplementation, *tags: ToolTag
+) -> ToolRegistration:
+    definitions = {
+        definition["function"]["name"]: definition
+        for definition in CAMERA_TOOLS_DEFINITION
+    }
+    return ToolRegistration(
+        definition=definitions[name],
+        implementation=implementation,
+        metadata=make_local_tool_metadata(tags),
+    )
+
+
+CAMERA_TOOLS: tuple[ToolRegistration, ...] = (
+    _tool(
+        "list_cameras",
+        list_cameras_tool,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CAMERA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    *(
+        _tool(
+            name,
+            implementation,
+            ToolTag.READ_ONLY,
+            ToolTag.SENSITIVE_DATA,
+            ToolTag.CAMERA,
+            ToolTag.MEDIA,
+            ToolTag.OUTPUT_UNTRUSTED,
+        )
+        for name, implementation in (
+            ("search_camera_events", search_camera_events_tool),
+            ("get_camera_frame", get_camera_frame_tool),
+            ("get_camera_frames_batch", get_camera_frames_batch_tool),
+            ("get_camera_recordings", get_camera_recordings_tool),
+            ("get_live_camera_snapshot", get_live_camera_snapshot_tool),
+            ("scan_camera_frames", scan_camera_frames_tool),
+        )
+    ),
+)

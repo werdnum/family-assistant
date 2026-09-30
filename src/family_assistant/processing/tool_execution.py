@@ -51,7 +51,6 @@ from .utils import get_file_extension_from_mime_type
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
-    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm import LLMInterface
@@ -244,7 +243,6 @@ class ToolExecutor:
         processing_service: ProcessingService | None,
         llm_client: LLMInterface | None,
         plugins: ProfilePlugins | None,
-        camera_backend: CameraBackend | None,
         event_sources: EventSourcesById | None,
         taint_tracker: TurnTaintTracker | None,
         taint_policy_snapshot: TurnTaintState | None,
@@ -284,7 +282,6 @@ class ToolExecutor:
                 else None
             ),
             attachment_registry=self.attachment_registry,
-            camera_backend=camera_backend,
             credential_resolvers=self.credential_resolvers,
             api_backend=self.api_backend,
             visibility_grants=self.config.visibility_grants,
@@ -872,7 +869,6 @@ class ToolExecutor:
         processing_service: ProcessingService | None = None,
         llm_client: LLMInterface | None = None,
         plugins: ProfilePlugins | None = None,
-        camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         taint_policy_snapshot: TurnTaintState | None = None,
@@ -895,7 +891,6 @@ class ToolExecutor:
             request_confirmation_callback: Callback for tool confirmation
             processing_service: The processing service instance
             plugins: The profile's plugin instances
-            camera_backend: Camera backend instance
             event_sources: Event sources mapping
 
         Returns:
@@ -1025,7 +1020,6 @@ class ToolExecutor:
                 processing_service=processing_service,
                 llm_client=llm_client,
                 plugins=plugins,
-                camera_backend=camera_backend,
                 event_sources=event_sources,
                 taint_tracker=taint_tracker,
                 taint_policy_snapshot=taint_policy_snapshot,

@@ -53,7 +53,6 @@ def _context(db: Database, *, now: datetime = NOW) -> ToolExecutionContext:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         visibility_grants=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,

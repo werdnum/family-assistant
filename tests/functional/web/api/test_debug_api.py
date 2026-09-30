@@ -10,10 +10,10 @@ from pydantic import SecretStr
 from family_assistant.config_loader import resolve_all_service_profiles
 from family_assistant.config_models import (
     AppConfig,
-    CameraConfig,
+    CalDAVConfig,
+    CalendarConfig,
     DefaultProfileSettings,
     ProcessingConfig,
-    ReolinkCameraItemConfig,
     ServiceProfile,
     ToolsConfig,
 )
@@ -53,15 +53,11 @@ def _make_sample_config() -> AppConfig:
             llm_model="gemini/gemini-3.1-pro-preview",
             provider="google",
             max_iterations=7,
-            camera_config=CameraConfig(
-                backend="reolink",
-                cameras_config={
-                    "porch": ReolinkCameraItemConfig(
-                        host="camera.local",
-                        username="admin",
-                        password=SecretStr("super-secret-camera-password"),
-                    )
-                },
+            calendar_config=CalendarConfig(
+                caldav=CalDAVConfig(
+                    username="admin",
+                    password=SecretStr("super-secret-caldav-password"),
+                ),
             ),
             prompts={
                 "system_prompt": "You are a helpful assistant for {user_name}.",
@@ -205,13 +201,13 @@ async def test_dump_profiles_redacts_sensitive_fields(
         data = response.json()
 
         trusted = data["profiles"][0]
-        token = trusted["config"]["processing_config"]["camera_config"][
-            "cameras_config"
-        ]["porch"]["password"]
+        token = trusted["config"]["processing_config"]["calendar_config"]["caldav"][
+            "password"
+        ]
         # Pydantic's own mask, not the "[REDACTED]" this module writes for a
         # credential it strips out of a larger value.
         assert token == "**********"
-        assert "super-secret-camera-password" not in response.text
+        assert "super-secret-caldav-password" not in response.text
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)

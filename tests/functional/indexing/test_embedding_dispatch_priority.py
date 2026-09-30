@@ -37,7 +37,6 @@ def _context(db_engine: AsyncEngine, priority: TaskPriority) -> ToolExecutionCon
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         timezone=ZoneInfo("UTC"),

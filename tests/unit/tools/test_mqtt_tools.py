@@ -31,7 +31,6 @@ def _make_exec_context(mqtt_config: MQTTConfig) -> ToolExecutionContext:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )
@@ -195,7 +194,6 @@ async def test_mqtt_publish_no_processing_service() -> None:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
     )

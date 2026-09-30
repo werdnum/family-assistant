@@ -60,7 +60,6 @@ def _tool_context(db_context: Database) -> ToolExecutionContext:
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         visibility_grants=None,
         # These are the foreground whole-note paths, exercised as a profile
         # that reads memory; the refusal a non-reading profile gets instead has

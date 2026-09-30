@@ -101,7 +101,6 @@ def _build_exec_context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         chat_interface=typed_chat_interface,
         chat_interfaces=chat_interfaces,

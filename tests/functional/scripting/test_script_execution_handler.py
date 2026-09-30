@@ -179,7 +179,6 @@ async def test_script_execution_by_stored_name(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         timezone=ZoneInfo("UTC"),
         tools_provider=save_tools_provider,
         credential_resolvers=None,

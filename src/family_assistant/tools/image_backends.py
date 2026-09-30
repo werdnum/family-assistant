@@ -170,7 +170,7 @@ def _gemini_image_usage(
         return None
     # Imported here rather than at module scope: the provider client reaches
     # config_models, which reaches back to this module through the tool
-    # registry. Same cycle-breaking local import as tools/camera.py.
+    # registry. Same cycle-breaking local import as plugins/reolink/tools.py.
     from family_assistant.llm.providers.google_genai_client import (  # noqa: PLC0415
         GoogleGenAIClient,
     )

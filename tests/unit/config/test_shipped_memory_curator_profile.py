@@ -110,7 +110,6 @@ def test_the_execution_context_derives_the_same_two_policies(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         timezone=ZoneInfo("UTC"),

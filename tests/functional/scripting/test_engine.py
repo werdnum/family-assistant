@@ -346,7 +346,6 @@ datetime.now().astimezone().utcoffset().total_seconds()
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             timezone=ZoneInfo("Asia/Kolkata"),
             credential_resolvers=None,
             api_backend=None,

@@ -200,7 +200,6 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import (
         AIWorkerConfig,
         ModelTierConfig,
@@ -1416,8 +1415,6 @@ class Assistant:
             auto_routing_guidance=profile_conf.auto_routing_guidance,
         )
 
-        camera_backend_for_profile = self._create_camera_backend(profile_conf)
-
         # Interactions API agent profiles (Deep Research, Antigravity)
         # get the pollable subclass so a delegated run submits/polls
         # instead of holding a worker for the whole (potentially very
@@ -1444,7 +1441,6 @@ class Assistant:
             else None,
             processing_services_registry=self.processing_services_registry,
             plugins=profile_plugins,
-            camera_backend=camera_backend_for_profile,
             on_demand_view=profile_on_demand_view,
             credential_resolvers=self.credential_resolvers,
             api_backend=self.api_backend,
@@ -1465,40 +1461,6 @@ class Assistant:
             ) from exc
 
         self.processing_services_registry[profile_id] = processing_service_instance
-
-    @staticmethod
-    def _create_camera_backend(
-        profile_conf: ServiceProfile,
-    ) -> CameraBackend | None:
-        """Create the optional camera backend for one profile."""
-        camera_config = profile_conf.processing_config.camera_config
-        if camera_config is None or camera_config.backend != "reolink":
-            return None
-        try:
-            from family_assistant.camera.reolink import (  # noqa: PLC0415
-                create_reolink_backend,
-            )
-
-            camera_backend = create_reolink_backend(
-                camera_config.cameras_config or None
-            )
-            if camera_backend is not None:
-                logger.info(
-                    "Camera backend initialized for profile '%s'", profile_conf.id
-                )
-                return camera_backend
-            logger.warning(
-                "Camera backend not created for profile '%s' "
-                "(no config or reolink-aio unavailable)",
-                profile_conf.id,
-            )
-        except ImportError:
-            logger.warning("Reolink backend requested but reolink-aio not installed")
-        except Exception:
-            logger.exception(
-                "Failed to create camera backend for profile '%s'", profile_conf.id
-            )
-        return None
 
     def _profile_note_read_policy(self, profile_conf: ServiceProfile) -> NoteReadPolicy:
         """The note-read confinement a profile's context and tools run under.

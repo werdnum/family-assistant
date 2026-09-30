@@ -170,7 +170,6 @@ async def test_a_context_outside_a_task_has_no_lane_to_inherit(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         credential_resolvers=None,
         api_backend=None,
         timezone=ZoneInfo("UTC"),

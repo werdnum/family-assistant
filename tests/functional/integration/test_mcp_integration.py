@@ -620,7 +620,6 @@ async def test_mcp_time_conversion_streamable_http(
             plugins=None,
             event_sources=None,
             attachment_registry=None,
-            camera_backend=None,
             timezone=ZoneInfo("UTC"),
             credential_resolvers=None,
             api_backend=None,

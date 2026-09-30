@@ -144,7 +144,6 @@ def _exec_context(
         plugins=None,
         event_sources=None,
         attachment_registry=None,
-        camera_backend=None,
         note_registry=_registry(),
         visibility_grants=None
         if read_policy.grants is None

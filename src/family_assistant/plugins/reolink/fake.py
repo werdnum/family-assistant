@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from family_assistant.camera.protocol import (
+from family_assistant.plugins.reolink.protocol import (
     CameraEvent,
     CameraInfo,
     FrameWithTimestamp,

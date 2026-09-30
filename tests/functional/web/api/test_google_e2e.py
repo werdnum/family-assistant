@@ -503,7 +503,6 @@ def _exec_context(
         plugins=None,
         event_sources=None,
         attachment_registry=registry,
-        camera_backend=None,
         credential_resolvers={"google": resolver},
         api_backend=cast("ApiBackend | None", backend),
         timezone=ZoneInfo("UTC"),

@@ -65,7 +65,6 @@ def tool_context(
         plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
-        camera_backend=None,
         visibility_grants=None,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
