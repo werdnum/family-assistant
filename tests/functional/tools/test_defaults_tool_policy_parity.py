@@ -402,8 +402,14 @@ def test_engineer_side_effects_and_reads_policy() -> None:
     unattended = engine.evaluate_for_execution(issue_desc, can_confirm=False)
     assert unattended.decision is ToolPolicyDecision.DENY
 
-    # reconnect_mcp_server and cancel_worker_task are allowed outright
-    for allowed_name in ("reconnect_mcp_server", "cancel_worker_task"):
+    # reconnect_mcp_server, cancel_worker_task and self-scheduled callbacks
+    # (how the engineer waits across a restart) are allowed outright
+    for allowed_name in (
+        "reconnect_mcp_server",
+        "cancel_worker_task",
+        "schedule_future_callback",
+        "cancel_pending_callback",
+    ):
         descriptor = _local_descriptor(allowed_name)
         assert (
             engine.evaluate_for_execution(descriptor, can_confirm=False).decision
@@ -487,6 +493,8 @@ ENGINEER_TRUSTED_OUTPUT_ALLOWLIST = {
         "issue number and URL, plus the title the call itself supplied"
     ),
     "cancel_worker_task": "task id and lifecycle status, never task content",
+    "schedule_future_callback": "a fixed acknowledgement echoing the requested time",
+    "cancel_pending_callback": "task id and status, never the callback's context",
     "report_technical_problem": "a fixed acknowledgement of the recorded report",
     # The one exception, held open deliberately: get_message_history is granted
     # far beyond the engineer (the default baseline, email_intake, telephone,

@@ -2639,6 +2639,14 @@ service_profiles:
           8. Summarize findings and recommend fixes
           9. If appropriate, create a GitHub issue with your findings
           10. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — if spawn_worker is available, offer to spawn an isolated AI coding worker (judged by automated review); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
+
+          ## Waiting for Something
+
+          When asked to wait until something happens and then act -- "once PR 123 is deployed, check whether the error stopped" -- never hold the turn open: no sleep loop, no sandbox command or worker that blocks until the condition holds. A turn does not survive this application restarting, and a deployment of this application restarts it, so a turn waiting for its own deployment is guaranteed to be torn down before the wait ends.
+
+          Instead, check the condition once now. If it does not hold yet, use schedule_future_callback to wake yourself in this conversation at a sensible time to check again (a few minutes for a rollout, longer for something slower), tell {user_name} when you will look, and end the turn. Callbacks are stored in the database, so one that comes due while the application is restarting runs once it is back. Put everything the later turn needs in the callback context: the condition, how to check it, the follow-up to do once it holds, and how many checks remain. When the callback fires, check again: if the condition now holds, do the follow-up; if not, schedule the next check, and after a reasonable number of misses report what you saw instead of polling forever. cancel_pending_callback withdraws a check that is no longer needed.
+
+          To tell whether a change is deployed, compare the commit get_system_info reports with the change's merge commit: the change is live once that commit contains it (github-repos can compare the two).
     allowed_model_tiers: ["standard", "deep", "frontier"]
     # `standard` is in the automatic range for the questions that are really
     # lookups -- what a config value is, when a task last ran -- and `frontier`
@@ -2700,6 +2708,16 @@ service_profiles:
               - "list_delegations"
           decision: "allow"
           priority: 10
+        # Self-scheduled callbacks wake this profile in the same conversation, so
+        # a wait (for a deploy, a slow job) outlives the turn and the restart a
+        # deploy causes. They change no household data and reach no one else.
+        - match:
+            names:
+              - "schedule_future_callback"
+              - "cancel_pending_callback"
+          decision: "allow"
+          priority: 10
+          description: "The engineer may schedule and cancel callbacks into its own conversation to check back on something later."
         # Granted by server id rather than by tool name: GitHub renames and
         # adds tools on its own schedule, and a name list would decay into
         # silently withdrawing access the profile is meant to have. Read-only
