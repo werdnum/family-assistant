@@ -14,15 +14,16 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import update
 
-from family_assistant.services.backends.mock import MockBackend
-from family_assistant.services.worker_backend import WorkerStatus
+from family_assistant.plugins.ai_workers.backend import WorkerStatus
+from family_assistant.plugins.ai_workers.backends.mock import MockBackend
+from family_assistant.plugins.ai_workers.config import AIWorkersConfig
+from family_assistant.plugins.ai_workers.instance import AIWorkersInstance
+from family_assistant.plugins.ai_workers.lifecycle import reconcile_stale_tasks
+from family_assistant.plugins.ai_workers.tools import cancel_worker_task_tool
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.tools.types import ToolExecutionContext
-from family_assistant.tools.worker import (
-    cancel_worker_task_tool,
-    reconcile_stale_tasks,
-)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -51,10 +52,10 @@ def _make_exec_context(
     """Create a minimal ToolExecutionContext for testing."""
     if processing_service is None:
         processing_service = MagicMock()
-        processing_service.app_config.ai_worker_config.backend_type = "mock"
         processing_service.app_config.shared_workspace_path = "/tmp/test"
-        processing_service.app_config.ai_worker_config.docker = None
-        processing_service.app_config.ai_worker_config.kubernetes = None
+    sandbox = AIWorkersInstance(
+        AIWorkersConfig(backend_type="mock", docker=None, kubernetes=None)
+    )
 
     return ToolExecutionContext(
         interface_type="test",
@@ -64,7 +65,7 @@ def _make_exec_context(
         db_context=db_context,
         processing_service=processing_service,
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((sandbox,)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -238,7 +239,7 @@ class TestCancelWorkerTask:
 
         exec_context = _make_exec_context(db_context, conversation_id="conv-cancel")
         monkeypatch.setattr(
-            "family_assistant.tools.worker.get_worker_backend",
+            "family_assistant.plugins.ai_workers.instance.get_worker_backend",
             MagicMock(return_value=mock_backend),
         )
 

@@ -277,6 +277,20 @@ Directory for storing chat message attachments.
 
 ______________________________________________________________________
 
+### SHARED_WORKSPACE_PATH
+
+The shared workspace (`shared_workspace_path`): the directory the `workspace_*` tools read and
+write, and which AI workers mount (see [AI Workers](#ai-workers)).
+
+| Property  | Value                                 |
+| --------- | ------------------------------------- |
+| Required  | No                                    |
+| Default   | `/workspace`                          |
+| Sensitive | No                                    |
+| Example   | `/var/lib/family-assistant/workspace` |
+
+______________________________________________________________________
+
 ### DOCS_USER_DIR
 
 Directory containing user documentation files.
@@ -1369,11 +1383,58 @@ Generate from Home Assistant: Profile -> Long-Lived Access Tokens.
 
 ______________________________________________________________________
 
+## AI Workers
+
+AI workers are a plugin (see [Plugins](#plugins)): `spawn_worker` launches an isolated coding agent
+(Claude Code or Gemini CLI) in a sandbox that mounts the shared workspace, and `read_task_result`,
+`list_worker_tasks` and `cancel_worker_task` follow it up. Configuring an instance under
+`plugins.ai_workers` is what enables them; with no instance the four tools are not offered at all.
+At most one instance may be configured.
+
+```yaml
+plugins:
+  ai_workers:
+    default:
+      backend_type: kubernetes   # kubernetes, docker or mock
+      # Where workers post their start and completion events. Defaults to
+      # server_url + /webhook/event; in a cluster, use the internal service URL.
+      webhook_url: "http://family-assistant.ml-bot.svc.cluster.local/webhook/event"
+      max_timeout_minutes: 120
+      max_concurrent_workers: 3
+      available_agents: [claude, gemini]   # the choices spawn_worker offers
+      task_retention_hours: 48
+      kubernetes:
+        namespace: ml-bot
+        workspace_pvc_name: family-assistant-workspace
+        ai_coder_image: ghcr.io/werdnum/ai-coding-base:latest
+        service_account: ai-worker
+        runtime_class: gvisor
+        api_keys_secret: ai-worker-api-keys   # a Secret's name, not a credential
+      docker:
+        image: ghcr.io/werdnum/ai-coding-base:latest
+```
+
+The `kubernetes` block also takes `resources`, `run_as_user`/`run_as_group`/`fs_group`,
+`enable_rootless_podman`, `extra_env`, `extra_volumes` and `extra_volume_mounts`; see
+`AIWorkersConfig` in `src/family_assistant/plugins/ai_workers/config.py`. The workspace a worker
+mounts is the top-level [SHARED_WORKSPACE_PATH](#shared_workspace_path).
+
+At startup the plugin settles worker tasks a restart left running against the backend and schedules
+a daily cleanup of finished task records, their directories under the workspace's `tasks/`, and
+completion listeners no worker will fire.
+
+A top-level `ai_worker_config` block is still accepted temporarily: `workspace_mount_path` moves to
+`shared_workspace_path`, an enabled block becomes the `default` instance, and a disabled one is
+dropped. Each is logged as deprecated.
+
+______________________________________________________________________
+
 ## Plugins
 
 Bespoke integrations are packaged as plugins (`src/family_assistant/plugins/`). A plugin declares
-its config model, its tools and what each configured instance contributes (context providers, event
-sources) in one place. Configure instances under `plugins.<plugin id>.<instance name>`:
+its config model, its tools, its background task handlers and what each configured instance
+contributes (context providers, event sources, work at startup) in one place. Configure instances
+under `plugins.<plugin id>.<instance name>`:
 
 ```yaml
 plugins:
@@ -1395,8 +1456,9 @@ service_profiles:
 ```
 
 A profile naming a plugin or instance that isn't configured is a startup error. A plugin's tools are
-registered whether or not it is configured, so `tools_policy` still decides what a profile may call.
-Plugins so far: `home_assistant`.
+registered whether or not it is configured, so `tools_policy` still decides what a profile may call;
+a plugin may withhold tools its configuration cannot serve, as AI workers do without an instance.
+Plugins so far: `home_assistant`, `ai_workers`.
 
 ______________________________________________________________________
 

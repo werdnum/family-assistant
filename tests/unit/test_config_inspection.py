@@ -24,14 +24,17 @@ from family_assistant.config_inspection import (
 )
 from family_assistant.config_loader import expand_env_vars_in_dict
 from family_assistant.config_models import (
-    AIWorkerConfig,
     ApnsConfig,
     AppConfig,
-    KubernetesBackendConfig,
     MCPConfig,
     MCPServerConfig,
     mcp_servers_for_runtime,
 )
+from family_assistant.plugins.ai_workers.config import (
+    AIWorkersConfig,
+    KubernetesBackendConfig,
+)
+from family_assistant.plugins.config import PluginsConfig
 
 PEM_KEY = (
     "-----BEGIN PRIVATE KEY-----\n"
@@ -68,14 +71,20 @@ def test_unset_credential_stays_none_rather_than_redacted() -> None:
 def test_kubernetes_secret_name_is_not_a_credential() -> None:
     """api_keys_secret names a Kubernetes Secret; the old name heuristic hid it."""
     app_config = AppConfig(
-        ai_worker_config=AIWorkerConfig(
-            kubernetes=KubernetesBackendConfig(api_keys_secret="fa-worker-api-keys")
+        plugins=PluginsConfig(
+            ai_workers={
+                "default": AIWorkersConfig(
+                    kubernetes=KubernetesBackendConfig(
+                        api_keys_secret="fa-worker-api-keys"
+                    )
+                )
+            }
         )
     )
 
     redacted = redact_sensitive_config(app_config.model_dump(mode="json"))
 
-    kubernetes = redacted["ai_worker_config"]["kubernetes"]
+    kubernetes = redacted["plugins"]["ai_workers"]["default"]["kubernetes"]
     assert kubernetes["api_keys_secret"] == "fa-worker-api-keys"
 
 
@@ -243,7 +252,11 @@ def test_non_credential_config_is_left_alone() -> None:
         "llm_parameters": {"claude-opus-5": {"max_tokens": 8192, "temperature": 0.2}},
         "keychute_config": {"token_file": "/etc/family-assistant/keychute.token"},
         "browser_handoff_config": {"auth": {"token_env": "BROWSER_HANDOFF_TOKEN"}},
-        "ai_worker_config": {"docker": {"anthropic_api_key_env": "ANTHROPIC_API_KEY"}},
+        "plugins": {
+            "ai_workers": {
+                "default": {"docker": {"anthropic_api_key_env": "ANTHROPIC_API_KEY"}}
+            }
+        },
     })
     assert redacted["llm_parameters"]["claude-opus-5"]["max_tokens"] == 8192
     assert (
@@ -255,7 +268,7 @@ def test_non_credential_config_is_left_alone() -> None:
         == "BROWSER_HANDOFF_TOKEN"
     )
     assert (
-        redacted["ai_worker_config"]["docker"]["anthropic_api_key_env"]
+        redacted["plugins"]["ai_workers"]["default"]["docker"]["anthropic_api_key_env"]
         == "ANTHROPIC_API_KEY"
     )
 

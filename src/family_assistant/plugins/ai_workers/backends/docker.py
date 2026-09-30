@@ -14,12 +14,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
+from family_assistant.plugins.ai_workers.backend import WorkerStatus, WorkerTaskResult
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import DockerBackendConfig
+    from family_assistant.plugins.ai_workers.config import DockerBackendConfig
 
-from family_assistant.config_models import WorkerResourceLimits
+from family_assistant.plugins.ai_workers.config import WorkerResourceLimits
 
 logger = logging.getLogger(__name__)
 

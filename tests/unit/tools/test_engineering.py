@@ -256,7 +256,9 @@ class TestSearchSourceCode:
     ) -> None:
         """Patterns starting with - should not be treated as rg options."""
         result = await search_source_code(
-            exec_context, "-e", "src/family_assistant/services/backends/docker.py"
+            exec_context,
+            "-e",
+            "src/family_assistant/plugins/ai_workers/backends/docker.py",
         )
         data = result.get_data()
         assert isinstance(data, dict)

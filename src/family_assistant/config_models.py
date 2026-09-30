@@ -55,7 +55,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlsplit
 
-import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
@@ -77,7 +76,7 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .memory.limits import MemoryLimits
 from .memory.review_settings import MemoryReviewSettings
-from .plugins.config import PluginsConfig
+from .plugins.config import DEFAULT_INSTANCE, PluginsConfig
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -1749,121 +1748,6 @@ def mcp_servers_for_runtime(
     return servers
 
 
-class WorkerResourceLimits(BaseModel):
-    """Resource limits for AI worker containers."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    memory_request: str = "512Mi"
-    memory_limit: str = "2Gi"
-    cpu_request: str = "500m"
-    cpu_limit: str = "2000m"
-
-
-class KubernetesBackendConfig(BaseModel):
-    """Kubernetes-specific configuration for AI workers."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    namespace: str = "ml-bot"
-    ai_coder_image: str = "ghcr.io/werdnum/ai-coding-base:latest"
-    service_account: str = "ai-worker"
-    runtime_class: str = "gvisor"
-    job_ttl_seconds: int = 3600
-
-    # Secret containing API keys (keys should be ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.)
-    # All keys from this secret are injected as environment variables
-    api_keys_secret: str | None = None
-
-    # Optional config volumes for ~/.claude and ~/.gemini
-    claude_config_volume: k8s_models.Volume | None = None
-    gemini_config_volume: k8s_models.Volume | None = None
-
-    # Resource limits for worker containers
-    resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
-
-    # Name of the PersistentVolumeClaim for workspace storage
-    workspace_pvc_name: str = "workspace"
-
-    # Optional explicit kubeconfig path (for local dev; in-cluster config used by default)
-    kubeconfig_path: str | None = None
-
-    # Security context for worker pods (None to inherit from container image)
-    run_as_user: int | None = 1000
-    run_as_group: int | None = 1000
-    fs_group: int | None = 1000
-    enable_rootless_podman: bool = False
-
-    # Additional volumes and volume mounts to attach to worker pods
-    extra_volumes: list[k8s_models.Volume] | None = None
-    extra_volume_mounts: list[k8s_models.VolumeMount] | None = None
-
-    # Additional environment variables to inject into worker containers
-    extra_env: list[k8s_models.EnvVar] | None = None
-
-
-class DockerBackendConfig(BaseModel):
-    """Docker-specific configuration for AI workers (local development)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    image: str = "ghcr.io/werdnum/ai-coding-base:latest"
-    network: str = "bridge"
-
-    # API keys from host environment variables (names of env vars to pass through)
-    # Set to None to disable passing the env var
-    anthropic_api_key_env: str | None = "ANTHROPIC_API_KEY"
-    gemini_api_key_env: str | None = "GOOGLE_API_KEY"
-
-    # Optional config volume mounts for ~/.claude and ~/.gemini
-    claude_config_volume: str | None = None
-    gemini_config_volume: str | None = None
-
-    # Resource limits for worker containers
-    resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
-
-
-class AIWorkerConfig(BaseModel):
-    """AI Worker Sandbox configuration.
-
-    Enables spawning isolated AI coding agents (Claude Code or Gemini CLI)
-    to handle complex tasks requiring general-purpose computing.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-
-    # Backend selection
-    backend_type: Literal["kubernetes", "docker", "mock"] = "kubernetes"
-
-    # Webhook URL for worker completion notifications
-    # If not set, falls back to server_url + /webhook/event
-    # For Kubernetes, use internal service URL like:
-    # http://family-assistant.family-assistant.svc.cluster.local:8000/webhook/event
-    webhook_url: str | None = None
-
-    # Execution settings
-    default_timeout_minutes: int = 30
-    max_timeout_minutes: int = 120
-    max_concurrent_workers: int = 3
-
-    # Resource limits
-    resources: WorkerResourceLimits = Field(default_factory=WorkerResourceLimits)
-
-    # Available AI agent types (used to populate tool enum at runtime)
-    available_agents: list[str] = Field(default_factory=lambda: ["claude", "gemini"])
-
-    # Cleanup settings
-    task_retention_hours: int = 48
-
-    # Backend-specific configurations
-    kubernetes: KubernetesBackendConfig | None = Field(
-        default_factory=KubernetesBackendConfig
-    )
-    docker: DockerBackendConfig | None = Field(default_factory=DockerBackendConfig)
-
-
 class MQTTConfig(BaseModel):
     """MQTT broker configuration for publishing messages to external devices."""
 
@@ -2097,18 +1981,32 @@ def migrate_legacy_ai_worker_settings(
     """Move pre-plugin AI worker settings to where they live now, in place.
 
     Deployed config written before AI workers became a plugin keeps working
-    until it is rewritten; the new location wins where both are set.
+    until it is rewritten; the new location wins where both are set. An
+    enabled ``ai_worker_config`` becomes the ``default`` instance of
+    ``plugins.ai_workers``, and a disabled one is dropped, because an instance
+    is what enables the plugin.
     """
-    legacy = data.get("ai_worker_config")
+    legacy = data.pop("ai_worker_config", None)
     if not isinstance(legacy, dict):
         return
+    legacy = cast("dict[str, Any]", legacy)
     workspace_path = legacy.pop("workspace_mount_path", None)
     if workspace_path is not None:
-        logger.warning(
-            "ai_worker_config.workspace_mount_path is deprecated; set "
-            "shared_workspace_path instead."
-        )
         data.setdefault("shared_workspace_path", workspace_path)
+    if not legacy.pop("enabled", False):
+        logger.warning(
+            "ai_worker_config is deprecated and, being disabled, ignored; remove "
+            "it. Set shared_workspace_path for the shared workspace, and "
+            "configure plugins.ai_workers.default to enable AI workers."
+        )
+        return
+    logger.warning(
+        "ai_worker_config is deprecated; move it to plugins.ai_workers.default "
+        "without enabled, and workspace_mount_path to shared_workspace_path."
+    )
+    plugins = data.setdefault("plugins", {})
+    instances = plugins.setdefault("ai_workers", {})
+    instances[DEFAULT_INSTANCE] = {**legacy, **(instances.get(DEFAULT_INSTANCE) or {})}
 
 
 class AppConfig(BaseSettings):
@@ -2273,7 +2171,6 @@ class AppConfig(BaseSettings):
         default_factory=MessageBatchingConfig
     )
     keychute_config: KeychuteConfig = Field(default_factory=KeychuteConfig)
-    ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
     browser_handoff_config: BrowserHandoffConfig = Field(
         default_factory=BrowserHandoffConfig
     )

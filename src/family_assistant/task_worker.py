@@ -9,16 +9,13 @@ import contextlib
 import json
 import logging
 import random
-import shutil
 import time
 import traceback
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta  # Added Union
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Required, TypedDict, cast
 
-import aiofiles.os
 from dateutil import rrule
 from dateutil.parser import isoparse
 from opentelemetry import trace
@@ -136,7 +133,6 @@ if TYPE_CHECKING:
     from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
     from family_assistant.storage.repositories.scripts import ScriptRow
     from family_assistant.storage.types import (
-        EventListenerDict,
         MessageHistoryRow,
         TaskDict,
     )
@@ -167,10 +163,6 @@ from family_assistant.storage.database import (
     Database,
     DatabaseExecutor,
     DatabaseTransaction,
-)
-from family_assistant.storage.events import (
-    WORKER_COMPLETION_EVENT_TYPE,
-    EventSourceType,
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
@@ -820,13 +812,6 @@ class SystemErrorLogCleanupPayload(TypedDict, total=False):
     retention_days: int
 
 
-class WorkerTaskCleanupPayload(TypedDict, total=False):
-    """Payload for worker_task_cleanup tasks."""
-
-    retention_hours: int
-    workspace_path: str
-
-
 class CompletedAutomationCleanupPayload(TypedDict, total=False):
     """Payload for completed_automation_cleanup tasks."""
 
@@ -836,8 +821,6 @@ class CompletedAutomationCleanupPayload(TypedDict, total=False):
 class StaleAutomationCleanupPayload(TypedDict, total=False):
     """Payload for stale_automation_cleanup tasks."""
 
-    dead_worker_grace_hours: int
-    abandoned_listener_hours: int
     spent_schedule_grace_hours: int
 
 
@@ -5766,87 +5749,6 @@ async def handle_system_error_log_cleanup(
         raise
 
 
-async def handle_worker_task_cleanup(
-    exec_context: ToolExecutionContext,
-    payload: WorkerTaskCleanupPayload,
-) -> None:
-    """Task handler for cleaning up old worker task records and directories.
-
-    This handler:
-    1. Deletes old task records from the database
-    2. Removes old task directories from the filesystem
-
-    Payload can include:
-        retention_hours: Override the default retention period
-        workspace_path: Override the default workspace path
-    """
-    # Get retention hours from payload or use default from config
-    retention_hours = payload.get("retention_hours", 48)
-    workspace_path = payload.get("workspace_path")
-
-    # Try to get workspace path from app config if not in payload
-    if not workspace_path and exec_context.processing_service:
-        app_config = exec_context.processing_service.app_config
-        if app_config.ai_worker_config.enabled:
-            workspace_path = app_config.shared_workspace_path
-
-    logger.info(f"Starting worker task cleanup (retention: {retention_hours} hours)")
-
-    db_deleted = 0
-    dirs_deleted = 0
-    stale_marked = 0
-
-    async def clean_up_worker_tasks() -> None:
-        nonlocal db_deleted, dirs_deleted, stale_marked
-        # Step 0: Mark stale tasks as failed before cleanup
-        stale_marked = await exec_context.db_context.worker_tasks.mark_stale_tasks()
-        if stale_marked:
-            logger.info(f"Marked {stale_marked} stale worker tasks as failed")
-
-        # Step 1: Clean up database records
-        db_deleted = await exec_context.db_context.worker_tasks.cleanup_old_tasks(
-            retention_hours
-        )
-
-        # Step 2: Clean up old task directories from filesystem
-        if workspace_path:
-            tasks_dir = Path(workspace_path) / "tasks"
-            if await aiofiles.os.path.exists(tasks_dir):
-                cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
-
-                # List directories in tasks/
-                for entry in await aiofiles.os.listdir(tasks_dir):
-                    task_path = tasks_dir / entry
-                    if await aiofiles.os.path.isdir(task_path):
-                        # Check directory modification time
-                        stat_info = await aiofiles.os.stat(task_path)
-                        mtime = datetime.fromtimestamp(stat_info.st_mtime, tz=UTC)
-
-                        if mtime < cutoff:
-                            # Remove old task directory
-                            try:
-                                await asyncio.to_thread(shutil.rmtree, task_path)
-                                dirs_deleted += 1
-                                logger.debug(f"Removed old task directory: {task_path}")
-                            except OSError as e:
-                                logger.warning(
-                                    f"Failed to remove task directory {task_path}: {e}"
-                                )
-
-        logger.info(
-            f"Worker task cleanup completed. "
-            f"Marked {stale_marked} stale tasks, "
-            f"deleted {db_deleted} database records, {dirs_deleted} task directories "
-            f"older than {retention_hours} hours."
-        )
-
-    try:
-        await clean_up_worker_tasks()
-    except Exception as e:
-        logger.exception(f"Error during worker task cleanup: {e}")
-        raise
-
-
 async def handle_completed_automation_cleanup(
     exec_context: ToolExecutionContext,
     payload: CompletedAutomationCleanupPayload,
@@ -5882,78 +5784,6 @@ async def handle_completed_automation_cleanup(
         raise
 
 
-def _worker_completion_task_id(listener: EventListenerDict) -> str | None:
-    """Return the worker task a listener is waiting on, if it is one.
-
-    ``spawn_worker`` arms a one-time webhook listener matching its own task's
-    completion event; the task ID it matches on is the only handle back to the
-    worker the listener exists for.
-    """
-    conditions = listener.get("match_conditions") or {}
-    if conditions.get("event_type") != WORKER_COMPLETION_EVENT_TYPE:
-        return None
-    task_id = conditions.get("data.task_id")
-    return task_id if isinstance(task_id, str) else None
-
-
-async def _cleanup_dead_worker_completion_listeners(
-    db_context: Database,
-    *,
-    now: datetime,
-    dead_worker_grace_hours: int,
-    abandoned_listener_hours: int,
-) -> int:
-    """Delete worker completion listeners whose worker can no longer report.
-
-    There are two grades of evidence, and they earn different waits.
-
-    We watched the task finish: its own finish time starts the clock, and the
-    listener goes once that is past the grace. The grace is what keeps this off
-    a completion still being acted on -- the webhook marks a task terminal
-    before the event it carried has fired the listener.
-
-    We never watched it finish, because the row is gone or because it is still
-    recorded live: the death is inferred, so the listener waits out
-    ``abandoned_listener_hours`` of silence. That covers a worker task reaped
-    while its own completion was still in flight -- the row retention is
-    shorter than this wait -- and a backend that lost a job, leaving a row live
-    forever. A row still live must also be past its own deadline, so a task an
-    operator gave a fortnight to is not judged by anyone else's clock.
-    """
-    listeners = await db_context.events.get_untriggered_one_time_listeners(
-        created_before=now - timedelta(hours=dead_worker_grace_hours),
-        source_id=EventSourceType.webhook,
-    )
-
-    waiting: list[tuple[EventListenerDict, str]] = []
-    for listener in listeners:
-        task_id = _worker_completion_task_id(listener)
-        if task_id is not None:
-            waiting.append((listener, task_id))
-
-    if not waiting:
-        return 0
-
-    quiet_times = await db_context.worker_tasks.get_quiet_times([
-        task_id for _, task_id in waiting
-    ])
-    finished_cutoff = now - timedelta(hours=dead_worker_grace_hours)
-    abandoned_cutoff = now - timedelta(hours=abandoned_listener_hours)
-
-    doomed: list[int] = []
-    for listener, task_id in waiting:
-        quiet = quiet_times.get(task_id)
-        if quiet is not None and not quiet.is_live:
-            if quiet.at < finished_cutoff:
-                doomed.append(listener["id"])
-        elif listener["created_at"] < abandoned_cutoff and (
-            quiet is None or now > quiet.at
-        ):
-            doomed.append(listener["id"])
-
-    return await db_context.events.delete_event_listeners_by_id(doomed)
-
-
 async def _cleanup_spent_one_shot_schedules(
     db_context: Database,
     *,
@@ -5984,38 +5814,24 @@ async def handle_stale_automation_cleanup(
     """Task handler for reaping one-shot automations that can never fire.
 
     The completed automation cleanup collects one-time listeners that fired.
-    This one collects the opposite case: one-shot automations still armed and
-    waiting for something that already happened without them, or that is never
-    going to happen.
+    This one collects schedule automations still armed for a rule that has no
+    occurrence left. Worker completion listeners whose worker can no longer
+    report are the AI worker plugin's to collect.
 
     Payload can include:
-        dead_worker_grace_hours: Age a worker completion listener must reach
-            before its worker's state is taken as final (default: 24)
-        abandoned_listener_hours: Age at which an untriggered worker completion
-            listener is dropped regardless of its worker's status (default: 168)
         spent_schedule_grace_hours: How long past its last scheduled time a
             schedule automation must be before it is considered spent
             (default: 24)
     """
-    dead_worker_grace_hours = int(payload.get("dead_worker_grace_hours", 24))
-    abandoned_listener_hours = int(payload.get("abandoned_listener_hours", 24 * 7))
     spent_schedule_grace_hours = int(payload.get("spent_schedule_grace_hours", 24))
     now = datetime.now(UTC)
 
     logger.info(
         f"Starting stale automation cleanup "
-        f"(worker listener grace: {dead_worker_grace_hours}h, "
-        f"abandoned after: {abandoned_listener_hours}h, "
-        f"spent schedule grace: {spent_schedule_grace_hours}h)"
+        f"(spent schedule grace: {spent_schedule_grace_hours}h)"
     )
 
     try:
-        listeners_deleted = await _cleanup_dead_worker_completion_listeners(
-            exec_context.db_context,
-            now=now,
-            dead_worker_grace_hours=dead_worker_grace_hours,
-            abandoned_listener_hours=abandoned_listener_hours,
-        )
         schedules_deleted = await _cleanup_spent_one_shot_schedules(
             exec_context.db_context,
             now=now,
@@ -6028,8 +5844,7 @@ async def handle_stale_automation_cleanup(
 
     logger.info(
         f"Stale automation cleanup finished. "
-        f"Deleted {listeners_deleted} dead worker completion listeners and "
-        f"{schedules_deleted} spent schedule automations."
+        f"Deleted {schedules_deleted} spent schedule automations."
     )
 
 

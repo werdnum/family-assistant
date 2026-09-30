@@ -28,8 +28,8 @@ sandbox's address space.
 The cluster already runs a GitHub App (`werdnum/family-assistant`'s own app, id `2376485`) whose
 private key lives in the `github-app-key` SealedSecret, reflected into the `ml-bot` namespace that
 family-assistant runs in. `spawn_worker` pods already receive it via
-`ai_worker_config.kubernetes.extra_env`. The Antigravity sandbox is Google-hosted and cannot mount a
-Kubernetes secret, so the proxy transform is the only way it reaches GitHub at all.
+`plugins.ai_workers.<instance>.kubernetes.extra_env`. The Antigravity sandbox is Google-hosted and
+cannot mount a Kubernetes secret, so the proxy transform is the only way it reaches GitHub at all.
 
 ## Decision
 

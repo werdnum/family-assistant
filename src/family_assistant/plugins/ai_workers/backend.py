@@ -11,7 +11,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import (
+    from family_assistant.plugins.ai_workers.config import (
         DockerBackendConfig,
         KubernetesBackendConfig,
     )
@@ -121,19 +121,19 @@ def get_worker_backend(
     # Lazy imports to avoid circular dependencies and optional dependency issues.
     # Each backend may have its own heavy dependencies (kubernetes, docker libs).
     if backend_type == "mock":
-        from family_assistant.services.backends.mock import (  # noqa: PLC0415
+        from family_assistant.plugins.ai_workers.backends.mock import (  # noqa: PLC0415
             MockBackend,
         )
 
         return MockBackend()
     elif backend_type == "docker":
-        from family_assistant.services.backends.docker import (  # noqa: PLC0415
+        from family_assistant.plugins.ai_workers.backends.docker import (  # noqa: PLC0415
             DockerBackend,
         )
 
         return DockerBackend(config=docker_config, workspace_root=workspace_root)
     elif backend_type == "kubernetes":
-        from family_assistant.services.backends.kubernetes import (  # noqa: PLC0415
+        from family_assistant.plugins.ai_workers.backends.kubernetes import (  # noqa: PLC0415
             KubernetesBackend,
         )
 

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from family_assistant.config_models import DockerBackendConfig
-from family_assistant.services.backends.docker import DockerBackend
-from family_assistant.services.worker_backend import WorkerStatus
+from family_assistant.plugins.ai_workers.backend import WorkerStatus
+from family_assistant.plugins.ai_workers.backends.docker import DockerBackend
+from family_assistant.plugins.ai_workers.config import DockerBackendConfig
 
 
 @pytest.fixture

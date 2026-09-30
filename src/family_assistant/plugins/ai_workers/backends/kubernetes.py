@@ -42,13 +42,13 @@ from kubernetes_asyncio.client import (
 )
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from family_assistant.config_models import KubernetesBackendConfig
-from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
+from family_assistant.plugins.ai_workers.backend import WorkerStatus, WorkerTaskResult
+from family_assistant.plugins.ai_workers.config import KubernetesBackendConfig
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from family_assistant.config_models import WorkerResourceLimits
+    from family_assistant.plugins.ai_workers.config import WorkerResourceLimits
 
 logger = logging.getLogger(__name__)
 

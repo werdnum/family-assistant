@@ -27,16 +27,17 @@ from family_assistant.config_loader import (
     resolve_all_service_profiles,
 )
 from family_assistant.config_models import (
-    AIWorkerConfig,
     DefaultProfileSettings,
     ServiceProfile,
     ToolCallReviewConfig,
 )
+from family_assistant.plugins.ai_workers.config import AIWorkersConfig
+from family_assistant.plugins.ai_workers.instance import AIWorkersInstance
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     TurnTaintState,
 )
-from family_assistant.services.backends.mock import MockBackend
 from family_assistant.services.tool_call_review import (
     ToolCallReviewer,
     ToolCallReviewResponse,
@@ -195,17 +196,12 @@ def _build_engineer_provider(
 def _make_exec_context(
     db_engine: AsyncEngine,
     confirmation_recorder: _ConfirmationRecorder,
-    mock_backend: MockBackend,
     workspace_path: Path,
     profile_id: str = "engineer",
 ) -> ToolExecutionContext:
     mock_service = MagicMock()
-    mock_service.app_config.ai_worker_config = AIWorkerConfig(
-        enabled=True,
-        backend_type="mock",
-    )
     mock_service.app_config.shared_workspace_path = str(workspace_path)
-    mock_service.ai_worker_backend = mock_backend
+    sandbox = AIWorkersInstance(AIWorkersConfig(backend_type="mock"))
 
     db = Database(engine=db_engine)
     state = TurnTaintState.empty()
@@ -219,7 +215,7 @@ def _make_exec_context(
         db_context=db,
         processing_service=cast("ProcessingService", mock_service),
         clock=None,
-        plugins=None,
+        plugins=ProfilePlugins((sandbox,)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -293,8 +289,7 @@ async def test_engineer_spawn_worker_executes_on_allow_verdict_without_prompt(
     review_llm = _MockReviewLLM(ToolCallReviewVerdict.ALLOW)
     provider = _build_engineer_provider(engineer, review_llm)
     confirmation = _ConfirmationRecorder()
-    mock_backend = MockBackend()
-    context = _make_exec_context(db_engine, confirmation, mock_backend, tmp_path)
+    context = _make_exec_context(db_engine, confirmation, tmp_path)
 
     result = await provider.execute_tool(
         "spawn_worker",
@@ -326,8 +321,7 @@ async def test_engineer_spawn_worker_prompts_on_confirm_verdict(
     review_llm = _MockReviewLLM(ToolCallReviewVerdict.CONFIRM)
     provider = _build_engineer_provider(engineer, review_llm)
     confirmation = _ConfirmationRecorder(outcome=ConfirmationOutcome(kind="approved"))
-    mock_backend = MockBackend()
-    context = _make_exec_context(db_engine, confirmation, mock_backend, tmp_path)
+    context = _make_exec_context(db_engine, confirmation, tmp_path)
 
     result = await provider.execute_tool(
         "spawn_worker",
@@ -359,8 +353,7 @@ async def test_engineer_spawn_worker_falls_back_to_confirm_on_reviewer_error(
     review_llm = _MockReviewLLM(ToolCallReviewVerdict.ALLOW, raise_timeout=True)
     provider = _build_engineer_provider(engineer, review_llm)
     confirmation = _ConfirmationRecorder(outcome=ConfirmationOutcome(kind="approved"))
-    mock_backend = MockBackend()
-    context = _make_exec_context(db_engine, confirmation, mock_backend, tmp_path)
+    context = _make_exec_context(db_engine, confirmation, tmp_path)
 
     result = await provider.execute_tool(
         "spawn_worker",

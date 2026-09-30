@@ -156,17 +156,6 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
         dict,
     ),
     EnvVarMapping("SHARED_WORKSPACE_PATH", "shared_workspace_path"),
-    # AI Worker configuration
-    EnvVarMapping("AI_WORKER_ENABLED", "ai_worker_config.enabled", bool),
-    EnvVarMapping("AI_WORKER_BACKEND_TYPE", "ai_worker_config.backend_type"),
-    EnvVarMapping(
-        "AI_WORKER_DEFAULT_TIMEOUT", "ai_worker_config.default_timeout_minutes", int
-    ),
-    EnvVarMapping(
-        "AI_WORKER_MAX_CONCURRENT", "ai_worker_config.max_concurrent_workers", int
-    ),
-    EnvVarMapping("AI_WORKER_K8S_NAMESPACE", "ai_worker_config.kubernetes.namespace"),
-    EnvVarMapping("AI_WORKER_K8S_IMAGE", "ai_worker_config.kubernetes.ai_coder_image"),
     # Browser-server (handoff) integration
     EnvVarMapping("BROWSER_HANDOFF_ENABLED", "browser_handoff_config.enabled", bool),
     EnvVarMapping("BROWSER_HANDOFF_URL", "browser_handoff_config.service_url"),

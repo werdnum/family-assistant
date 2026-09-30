@@ -1,8 +1,4 @@
-"""Worker tools for spawning and managing AI worker tasks.
-
-This module provides tools for spawning isolated AI coding agents,
-reading task results, and managing worker tasks.
-"""
+"""Tools for spawning and managing AI worker tasks."""
 
 from __future__ import annotations
 
@@ -14,15 +10,32 @@ from typing import TYPE_CHECKING, Any
 import aiofiles
 import aiofiles.os
 
-from family_assistant.services.worker_backend import WorkerStatus, get_worker_backend
+from family_assistant.plugins.ai_workers.instance import AIWorkersInstance
+from family_assistant.plugins.ai_workers.lifecycle import TERMINAL_DB_STATUSES
 from family_assistant.storage.events import WORKER_COMPLETION_EVENT_TYPE
+from family_assistant.tools.confirmation_format import (
+    confirmation_field,
+    markdown_code_block,
+)
+from family_assistant.tools.metadata import (
+    ToolConfirmation,
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
 from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
 if TYPE_CHECKING:
-    from family_assistant.services.worker_backend import WorkerBackend
-    from family_assistant.storage.database import Database, DatabaseTransaction
-    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
+    from collections.abc import Mapping
+
+    from family_assistant.storage.database import DatabaseTransaction
+    from family_assistant.tools.metadata import ToolImplementation
+    from family_assistant.tools.types import (
+        ToolArgumentsView,
+        ToolDefinition,
+        ToolExecutionContext,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -173,79 +186,14 @@ WORKER_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
-_TERMINAL_STATUSES = {
-    WorkerStatus.SUCCESS,
-    WorkerStatus.FAILED,
-    WorkerStatus.TIMEOUT,
-    WorkerStatus.CANCELLED,
-}
-
-_STATUS_MAP = {
-    WorkerStatus.SUCCESS: "success",
-    WorkerStatus.FAILED: "failed",
-    WorkerStatus.TIMEOUT: "timeout",
-    WorkerStatus.CANCELLED: "cancelled",
-}
-
-_TERMINAL_DB_STATUSES = set(_STATUS_MAP.values())
+NOT_CONFIGURED_ERROR = "AI workers are not configured for this profile"
 
 
-async def reconcile_stale_tasks(db_context: Database, backend: WorkerBackend) -> int:
-    """Check active DB tasks against backend state and mark stale ones as failed.
-
-    For each task with status "submitted" or "running" in the DB:
-    - If it has no job_name, mark as failed (spawn never completed)
-    - If backend reports a terminal status, update DB accordingly
-    - If backend still shows active, leave it alone
-
-    Returns:
-        Number of tasks reconciled
-    """
-    active_tasks = await db_context.worker_tasks.get_active_tasks()
-    if not active_tasks:
-        return 0
-
-    reconciled = 0
-    for task in active_tasks:
-        task_id = task["task_id"]
-        job_name = task.get("job_name")
-
-        if not job_name:
-            await db_context.worker_tasks.update_task_status(
-                task_id=task_id,
-                status="failed",
-                error_message="Task has no job_name — spawn never completed",
-            )
-            reconciled += 1
-            logger.info(f"Reconciled task {task_id}: no job_name, marked failed")
-            continue
-
-        try:
-            result = await backend.get_task_status(job_name)
-        except Exception:
-            logger.warning(
-                f"Failed to check backend status for task {task_id} (job {job_name})",
-                exc_info=True,
-            )
-            continue
-
-        if result.status in _TERMINAL_STATUSES:
-            db_status = _STATUS_MAP.get(result.status, "failed")
-            await db_context.worker_tasks.update_task_status(
-                task_id=task_id,
-                status=db_status,
-                error_message=result.error_message
-                or f"Reconciled from backend status: {result.status.value}",
-                exit_code=result.exit_code,
-            )
-            reconciled += 1
-            logger.info(
-                f"Reconciled task {task_id}: backend status {result.status.value} → {db_status}"
-            )
-
-    if reconciled:
-        logger.info(f"Reconciled {reconciled} stale worker tasks")
-    return reconciled
+def _worker_instance(exec_context: ToolExecutionContext) -> AIWorkersInstance | None:
+    """The AI worker sandbox the turn's profile selected."""
+    if exec_context.plugins is None:
+        return None
+    return exec_context.plugins.get(AIWorkersInstance)
 
 
 async def cancel_worker_task_tool(
@@ -261,8 +209,9 @@ async def cancel_worker_task_tool(
     Returns:
         ToolResult with cancellation status
     """
-    if exec_context.processing_service is None:
-        return ToolResult(data={"error": "Worker feature not available"})
+    instance = _worker_instance(exec_context)
+    if instance is None or exec_context.processing_service is None:
+        return ToolResult(data={"error": NOT_CONFIGURED_ERROR})
 
     db_context = exec_context.db_context
 
@@ -276,7 +225,7 @@ async def cancel_worker_task_tool(
             data={"error": "Access denied: Task belongs to another conversation"}
         )
 
-    if task["status"] in _TERMINAL_DB_STATUSES:
+    if task["status"] in TERMINAL_DB_STATUSES:
         return ToolResult(
             data={
                 "error": f"Task already in terminal state: {task['status']}",
@@ -285,18 +234,10 @@ async def cancel_worker_task_tool(
             }
         )
 
-    app_config = exec_context.processing_service.app_config
-    worker_config = app_config.ai_worker_config
-
     # Cancel via backend if we have a job_name
     job_name = task.get("job_name")
     if job_name:
-        backend = get_worker_backend(
-            worker_config.backend_type,
-            workspace_root=app_config.shared_workspace_path,
-            docker_config=worker_config.docker,
-            kubernetes_config=worker_config.kubernetes,
-        )
+        backend = instance.backend(get_workspace_root(exec_context))
         try:
             await backend.cancel_task(job_name)
         except Exception as e:
@@ -340,14 +281,12 @@ async def spawn_worker_tool(
     Returns:
         ToolResult with task_id and status
     """
-    if exec_context.processing_service is None:
-        return ToolResult(data={"error": "Worker feature not available"})
+    instance = _worker_instance(exec_context)
+    if instance is None or exec_context.processing_service is None:
+        return ToolResult(data={"error": NOT_CONFIGURED_ERROR})
 
     app_config = exec_context.processing_service.app_config
-    worker_config = app_config.ai_worker_config
-
-    if not worker_config.enabled:
-        return ToolResult(data={"error": "AI Worker feature is disabled"})
+    worker_config = instance.config
 
     # Validate timeout
     if timeout_minutes > worker_config.max_timeout_minutes:
@@ -463,13 +402,7 @@ async def spawn_worker_tool(
 
         await db_context.atomic(_create_worker_with_listener)
 
-        # Get backend and spawn task
-        backend = get_worker_backend(
-            worker_config.backend_type,
-            workspace_root=str(workspace_root),
-            docker_config=worker_config.docker,
-            kubernetes_config=worker_config.kubernetes,
-        )
+        backend = instance.backend(workspace_root)
         try:
             job_id = await backend.spawn_task(
                 task_id=task_id,
@@ -540,7 +473,7 @@ def _worker_submission_message(task_id: str, status: str) -> str:
             f"Worker task '{task_id}' has started. "
             "You will be notified when it completes."
         )
-    if status in _TERMINAL_DB_STATUSES:
+    if status in TERMINAL_DB_STATUSES:
         return (
             f"Worker task '{task_id}' finished with status '{status}'. "
             f"Use read_task_result('{task_id}') to see the results."
@@ -688,3 +621,166 @@ async def list_worker_tasks_tool(
             "conversation_id": exec_context.conversation_id,
         }
     )
+
+
+def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
+    """Build the full spawn_worker confirmation prompt."""
+    task_description = str(arguments.get("task_description", "")).strip()
+
+    fields = [
+        confirmation_field("Agent", arguments.get("agent", "claude")),
+        f"- Task description:\n{markdown_code_block(task_description)}",
+    ]
+    raw_context_paths = arguments.get("context_paths")
+    if isinstance(raw_context_paths, (list, tuple)):
+        if raw_context_paths:
+            fields.append(
+                confirmation_field(
+                    "Context paths", ", ".join(str(path) for path in raw_context_paths)
+                )
+            )
+    elif raw_context_paths is not None:
+        # Script callers bypass JSON-schema validation, so a non-list value
+        # (e.g. a mapping whose keys the tool would later iterate as paths)
+        # must not be silently omitted from the prompt: the guard refuses the
+        # call (see spawn_worker_block_reason), and the prompt says so.
+        fields.append(
+            f"- Context paths: ⚠️ Malformed value of type "
+            f"{type(raw_context_paths).__name__} — context_paths must be an array of "
+            "workspace path strings. The worker will not be launched."
+        )
+    fields.append(
+        confirmation_field("Timeout (minutes)", arguments.get("timeout_minutes", 30))
+    )
+    return (
+        "Do you want to launch an isolated AI coding worker? It executes code in a "
+        "sandboxed container with network access — it can clone public git "
+        "repositories, including this application's — but has no access to Family "
+        "Assistant tools or data. It works from the task description below and "
+        "returns output files:\n" + "\n".join(fields)
+    )
+
+
+async def render_spawn_worker_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for launching an isolated AI coding worker."""
+    _ = context
+    return _spawn_worker_confirmation_prompt(args)
+
+
+async def render_cancel_worker_task_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for cancelling a worker task.
+
+    Looks the task up so the approver sees what they are stopping, not just an
+    opaque id. Mirrors cancel_worker_task_tool's conversation scoping: a task
+    belonging to a different conversation is treated as not found, so the
+    prompt never leaks another conversation's task details for a cancel that
+    would be refused anyway.
+    """
+    task_id = str(args.get("task_id", "")).strip()
+    fields = [confirmation_field("Task ID", task_id)]
+
+    task = None
+    db_context = getattr(context, "db_context", None)
+    if task_id and db_context is not None:
+        task = await db_context.worker_tasks.get_task(task_id)
+        if task is not None and task.get("conversation_id") != context.conversation_id:
+            task = None
+
+    if task is not None:
+        fields.append(confirmation_field("Status", task.get("status")))
+        fields.append(
+            confirmation_field("Task description", task.get("task_description"))
+        )
+    else:
+        fields.append(
+            "- Task details: not found — the task may have already finished or the "
+            "id may be wrong."
+        )
+    return "Do you want to *cancel* this worker task?\n" + "\n".join(fields)
+
+
+def spawn_worker_block_reason(arguments: Mapping[str, object]) -> str | None:
+    """Refuse context paths the confirmation prompt could not show.
+
+    The context paths scope what the worker can read. Script callers bypass
+    JSON-schema validation, so a present-but-non-list value is refused
+    outright: the tool would later iterate it (a mapping's keys would become
+    paths) while the prompt showed the approver no paths.
+    """
+    raw_context_paths = arguments.get("context_paths")
+    if raw_context_paths is not None and not isinstance(
+        raw_context_paths, (list, tuple)
+    ):
+        return (
+            f"Error: context_paths must be an array of workspace path strings, "
+            f"got {type(raw_context_paths).__name__}. Pass the paths as a JSON "
+            'array (e.g. ["shared/data/input.csv"]).'
+        )
+    return None
+
+
+def _tool(
+    name: str,
+    implementation: ToolImplementation,
+    *tags: ToolTag,
+    confirmation: ToolConfirmation | None = None,
+) -> ToolRegistration:
+    definitions = {
+        definition["function"]["name"]: definition
+        for definition in WORKER_TOOLS_DEFINITION
+    }
+    return ToolRegistration(
+        definition=definitions[name],
+        implementation=implementation,
+        metadata=make_local_tool_metadata(tags),
+        confirmation=confirmation,
+    )
+
+
+AI_WORKER_TOOLS: tuple[ToolRegistration, ...] = (
+    _tool(
+        "spawn_worker",
+        spawn_worker_tool,
+        ToolTag.CODE_EXECUTION,
+        ToolTag.STATE_CHANGING,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_UNSPECIFIED,
+        confirmation=ToolConfirmation(
+            render=render_spawn_worker_confirmation,
+            block_reason=spawn_worker_block_reason,
+        ),
+    ),
+    _tool(
+        "read_task_result",
+        read_task_result_tool,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_UNSPECIFIED,
+    ),
+    _tool(
+        "cancel_worker_task",
+        cancel_worker_task_tool,
+        ToolTag.DESTRUCTIVE,
+        ToolTag.STATE_CHANGING,
+        ToolTag.WORKER,
+        ToolTag.OUTPUT_TRUSTED,
+        confirmation=ToolConfirmation(render=render_cancel_worker_task_confirmation),
+    ),
+    _tool(
+        "list_worker_tasks",
+        list_worker_tasks_tool,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.WORKER,
+        # OUTPUT_UNTRUSTED: returns stored task descriptions and results, which are
+        # authored by whoever's content shaped the task.
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+)
