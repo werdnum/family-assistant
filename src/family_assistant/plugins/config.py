@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,19 +13,8 @@ from family_assistant.plugins.home_assistant.config import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-logger = logging.getLogger(__name__)
-
 # The instance a profile gets when it doesn't name one.
 DEFAULT_INSTANCE = "default"
-
-# `default_profile_settings.processing_config` keys that became settings of the
-# default Home Assistant instance, by their new name.
-_LEGACY_HOME_ASSISTANT_KEYS: dict[str, str] = {
-    "home_assistant_api_url": "api_url",
-    "home_assistant_token": "token",
-    "home_assistant_context_template": "context_template",
-    "home_assistant_verify_ssl": "verify_ssl",
-}
 
 
 class PluginsConfig(BaseModel):
@@ -72,38 +60,3 @@ def resolve_profile_plugins(
             raise ValueError(msg)
         resolved[plugin_id] = instance_name
     return resolved
-
-
-def migrate_legacy_home_assistant_settings(
-    # ast-grep-ignore: no-dict-any - raw config data before validation
-    data: dict[str, Any],
-) -> None:
-    """Move pre-plugin Home Assistant settings to the default instance, in place.
-
-    Deployed config written before Home Assistant became a plugin keeps working
-    until it is rewritten; the new location wins where both are set.
-    """
-    processing = (data.get("default_profile_settings") or {}).get(
-        "processing_config"
-    ) or {}
-    legacy = {
-        new_key: processing.pop(old_key)
-        for old_key, new_key in _LEGACY_HOME_ASSISTANT_KEYS.items()
-        if old_key in processing
-    }
-    sources = (data.get("event_system") or {}).get("sources") or {}
-    legacy_source = sources.pop("home_assistant", None) or {}
-    if "enabled" in legacy_source:
-        legacy["events"] = legacy_source["enabled"]
-    legacy = {key: value for key, value in legacy.items() if value is not None}
-    if not legacy:
-        return
-    logger.warning(
-        "default_profile_settings.processing_config.home_assistant_* and "
-        "event_system.sources.home_assistant are deprecated; move %s to "
-        "plugins.home_assistant.default.",
-        ", ".join(sorted(legacy)),
-    )
-    plugins = data.setdefault("plugins", {})
-    instances = plugins.setdefault("home_assistant", {})
-    instances[DEFAULT_INSTANCE] = {**legacy, **(instances.get(DEFAULT_INSTANCE) or {})}

@@ -51,7 +51,7 @@ from contextvars import ContextVar
 from email.utils import parseaddr
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlsplit
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
@@ -76,10 +76,7 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .memory.limits import MemoryLimits
 from .memory.review_settings import MemoryReviewSettings
-from .plugins.config import (
-    PluginsConfig,
-    migrate_legacy_home_assistant_settings,
-)
+from .plugins.config import PluginsConfig
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -2348,14 +2345,6 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_plugin_settings(cls, data: object) -> object:
-        """Accept plugin settings still written where they lived before plugins."""
-        if isinstance(data, dict):
-            migrate_legacy_home_assistant_settings(cast("dict[str, Any]", data))
-        return data
 
     @model_validator(mode="after")
     def validate_metrics_port_is_not_the_application_port(self) -> AppConfig:
