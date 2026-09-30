@@ -70,7 +70,7 @@ def _exec_context(
             "RequestConfirmationCallback | None", confirmation_callback
         ),
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

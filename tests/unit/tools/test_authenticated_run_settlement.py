@@ -146,7 +146,7 @@ def _context(
         task_priority=TaskPriority.INTERACTIVE,
         processing_service=cast("Any", processing_service),
         clock=SystemClock(),
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -285,7 +285,7 @@ async def test_the_envelope_is_published_with_the_terminal_run_row(
             else "default_assistant"
         ),
         processing_services_registry={"authenticated_browser_profile": target},
-        home_assistant_client=None,
+        plugins=None,
         attachment_registry=None,
     )
     chat_interface = cast("ChatInterface", AsyncMock(spec=ChatInterface))
@@ -398,7 +398,7 @@ async def test_unknown_browser_state_cannot_settle_successfully(
     processing_service = SimpleNamespace(
         service_config=SimpleNamespace(id="default_assistant"),
         processing_services_registry={},
-        home_assistant_client=None,
+        plugins=None,
         attachment_registry=None,
     )
     exec_context = _context(db, processing_service, chat_interface)

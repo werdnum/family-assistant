@@ -13,8 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
+from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.home_assistant.tools import (
+    call_home_assistant_action_tool,
+    list_home_assistant_actions_tool,
+)
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -27,10 +33,6 @@ from family_assistant.tools import (
     CompositeToolsProvider,
     LocalToolsProvider,
     MCPToolsProvider,
-)
-from family_assistant.tools.home_assistant import (
-    call_home_assistant_action_tool,
-    list_home_assistant_actions_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from tests.mocks.mock_llm import (
@@ -63,7 +65,11 @@ def _make_exec_context(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=ha_client,
+        plugins=(
+            None
+            if ha_client is None
+            else ProfilePlugins((HomeAssistantInstance(ha_client),))
+        ),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -475,7 +481,7 @@ async def test_call_home_assistant_action_via_llm_flow(
         app_config=AppConfig(),
     )
 
-    processing_service.home_assistant_client = ha_client
+    processing_service.plugins = ProfilePlugins((HomeAssistantInstance(ha_client),))
 
     user_message = "Turn on the kitchen light at 75% brightness"
     db_context = Database(engine=db_engine)

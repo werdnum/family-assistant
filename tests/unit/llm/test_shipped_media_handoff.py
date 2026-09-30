@@ -25,7 +25,6 @@ from family_assistant.config_models import (
 from family_assistant.context_providers import (
     CalendarContextProvider,
     ContextProvider,
-    HomeAssistantContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
     WeatherContextProvider,
@@ -38,6 +37,9 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
+from family_assistant.plugins.home_assistant.context import (
+    HomeAssistantContextProvider,
+)
 from family_assistant.tools import (
     LOCAL_TOOL_DESCRIPTORS,
     PolicyEngine,

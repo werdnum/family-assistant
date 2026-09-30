@@ -98,7 +98,7 @@ def _build_exec_context(
         db_context=db,
         processing_service=processing_service,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

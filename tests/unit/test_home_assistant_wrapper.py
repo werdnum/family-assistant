@@ -7,7 +7,7 @@ import homeassistant_api
 import pytest
 from homeassistant_api.models.domains import Domain
 
-from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
+from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
 
 
 def _make_wrapper(

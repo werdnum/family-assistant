@@ -14,6 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.home_assistant.tools import detect_image_mime_type
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
@@ -30,7 +33,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPToolsProvider,
 )
-from family_assistant.tools.home_assistant import detect_image_mime_type
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
@@ -226,7 +228,9 @@ async def test_get_camera_snapshot_success(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "Can you get a snapshot from the front door camera?"
@@ -351,7 +355,9 @@ async def test_get_camera_snapshot_list_cameras(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "What cameras are available?"
@@ -436,7 +442,7 @@ async def test_get_camera_snapshot_no_client(
         llm_client, "test_ha_camera_no_client_profile"
     )
 
-    # Don't set home_assistant_client - it should be None
+    # No plugins set, so no Home Assistant instance
 
     # --- Simulate User Interaction ---
     user_message = "Check the camera"
@@ -526,7 +532,9 @@ async def test_get_camera_snapshot_api_error(
     )
 
     # Inject the mock HA client
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     # --- Simulate User Interaction ---
     user_message = "Check the broken camera"

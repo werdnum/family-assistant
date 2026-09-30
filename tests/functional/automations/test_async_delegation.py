@@ -248,7 +248,7 @@ class FakeDelegatableService:
                 db_context=kwargs["db_context"],
                 processing_service=None,
                 clock=SystemClock(),
-                home_assistant_client=None,
+                plugins=None,
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
@@ -360,7 +360,7 @@ class FakeWakeCapableSourceService:
             default_note_visibility_labels=None,
         )
         self.processing_services_registry = {"target_profile": target_service}
-        self.home_assistant_client = None
+        self.plugins = None
         self.attachment_registry = None
         self.wake_result_status = wake_result_status
         self.response_text = response_text
@@ -494,7 +494,7 @@ def _source_processing_service(
             default_note_visibility_labels=None,
         ),
         processing_services_registry={"target_profile": target_service},
-        home_assistant_client=None,
+        plugins=None,
         attachment_registry=None,
     )
     return cast("ProcessingService", source_service)
@@ -522,7 +522,7 @@ def _tool_context(
         task_priority=TaskPriority.INTERACTIVE,
         processing_service=processing_service,
         clock=SystemClock(),
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
         camera_backend=None,
@@ -2605,7 +2605,7 @@ class FakeConfirmingWakeSourceService:
             default_note_visibility_labels=None,
         )
         self.processing_services_registry: dict[str, object] = {}
-        self.home_assistant_client = None
+        self.plugins = None
         self.attachment_registry = None
         self.confirmation_outcome: ConfirmationOutcome | None = None
 
@@ -2626,7 +2626,7 @@ class FakeConfirmingWakeSourceService:
             db_context=db_context,
             processing_service=None,
             clock=SystemClock(),
-            home_assistant_client=None,
+            plugins=None,
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,

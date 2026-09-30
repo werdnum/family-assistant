@@ -7,13 +7,15 @@ import homeassistant_api
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
-from family_assistant.storage.database import Database
-from family_assistant.tools.home_assistant import (
+from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.home_assistant.tools import (
     download_state_history_tool,
     get_camera_snapshot_tool,
     render_home_assistant_template_tool,
 )
+from family_assistant.plugins.runtime import ProfilePlugins
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -50,7 +52,7 @@ async def test_render_template_tool(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=wrapper,
+        plugins=ProfilePlugins((HomeAssistantInstance(wrapper),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -106,7 +108,7 @@ async def test_camera_snapshot_tool_list_cameras(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=wrapper,
+        plugins=ProfilePlugins((HomeAssistantInstance(wrapper),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -160,7 +162,7 @@ async def test_camera_snapshot_tool_get_snapshot(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=wrapper,
+        plugins=ProfilePlugins((HomeAssistantInstance(wrapper),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
@@ -230,7 +232,7 @@ async def test_history_tool_with_entities(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=wrapper,
+        plugins=ProfilePlugins((HomeAssistantInstance(wrapper),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

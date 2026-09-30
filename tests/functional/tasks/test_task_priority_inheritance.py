@@ -167,7 +167,7 @@ async def test_a_context_outside_a_task_has_no_lane_to_inherit(
         db_context=Database(db_engine),
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

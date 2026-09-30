@@ -14,6 +14,9 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
+from family_assistant.plugins.home_assistant.tools import (
+    HOME_ASSISTANT_TOOLS_DEFINITION,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.security.taint import TurnTaintState
@@ -24,7 +27,6 @@ from family_assistant.task_worker import handle_llm_callback, handle_script_exec
 from family_assistant.tools import (
     ATTACHMENT_TOOLS_DEFINITION,
     COMMUNICATION_TOOLS_DEFINITION,
-    HOME_ASSISTANT_TOOLS_DEFINITION,
     MOCK_IMAGE_TOOLS_DEFINITION,
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -66,7 +68,7 @@ def _exec_context(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
         camera_backend=None,

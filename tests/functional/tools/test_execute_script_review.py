@@ -292,7 +292,7 @@ def _context(
         db_context=Database(db_engine),
         processing_service=cast("ProcessingService", processing_service),
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

@@ -81,11 +81,11 @@ if TYPE_CHECKING:
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.context_providers import ContextProvider
-    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_routing import ModelRouter, RoutingDecision
     from family_assistant.llm.model_selection import RoutingOutcome
     from family_assistant.memory.review_context import MemoryReviewContext
+    from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import (
@@ -279,7 +279,7 @@ class ProcessingService:
         attachment_registry: AttachmentRegistry | None = None,
         event_sources: EventSourcesById | None = None,
         processing_services_registry: Mapping[str, DelegatableService] | None = None,
-        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        plugins: ProfilePlugins | None = None,
         camera_backend: CameraBackend | None = None,
         on_demand_view: OnDemandToolsView | None = None,
         credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
@@ -315,7 +315,7 @@ class ProcessingService:
         self.clock = clock if clock is not None else SystemClock()
         self._attachment_registry = attachment_registry
         self.processing_services_registry = processing_services_registry
-        self.home_assistant_client = home_assistant_client
+        self.plugins = plugins
         self.camera_backend = camera_backend
         self.event_sources = event_sources
         self.credential_resolvers = credential_resolvers
@@ -1772,7 +1772,7 @@ class ProcessingService:
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=self,
-            home_assistant_client=self.home_assistant_client,
+            plugins=self.plugins,
             camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
@@ -1829,7 +1829,7 @@ class ProcessingService:
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=self,
-            home_assistant_client=self.home_assistant_client,
+            plugins=self.plugins,
             camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,

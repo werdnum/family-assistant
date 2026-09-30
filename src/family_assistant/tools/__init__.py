@@ -7,6 +7,7 @@ The tools are organized into thematic submodules for better maintainability.
 from __future__ import annotations
 
 from family_assistant import storage
+from family_assistant.plugins.registry import plugin_tool_registrations
 from family_assistant.tools.attachments import (
     ATTACHMENT_TOOLS_DEFINITION,
     attach_to_response_tool,
@@ -154,15 +155,6 @@ from family_assistant.tools.google_data import (
     gmail_get_message_tool,
     gmail_search_tool,
 )
-from family_assistant.tools.home_assistant import (
-    HOME_ASSISTANT_TOOLS_DEFINITION,
-    call_home_assistant_action_tool,
-    download_state_history_tool,
-    get_camera_snapshot_tool,
-    list_home_assistant_actions_tool,
-    list_home_assistant_entities_tool,
-    render_home_assistant_template_tool,
-)
 from family_assistant.tools.image_generation import (
     IMAGE_GENERATION_TOOLS_DEFINITION,
     generate_image_tool,
@@ -212,6 +204,7 @@ from family_assistant.tools.metadata import (
     ToolTag,
     build_local_tool_descriptors,
     build_local_tool_registrations,
+    join_tool_registrations,
     make_local_tool_metadata,
 )
 from family_assistant.tools.mock_image_tools import (
@@ -333,7 +326,6 @@ __all__ = [
     "EVENT_TOOLS_DEFINITION",
     # Google personal data (Gmail/Drive) tools
     "GOOGLE_DATA_TOOLS_DEFINITION",
-    "HOME_ASSISTANT_TOOLS_DEFINITION",
     "IMAGE_GENERATION_TOOLS_DEFINITION",
     "IMAGE_TOOLS_DEFINITION",
     "LIVE_META_TOOL_NAMES",
@@ -417,7 +409,6 @@ __all__ = [
     "browser_snapshot_tool",
     "browser_wait_tool",
     "build_local_tool_registrations",
-    "call_home_assistant_action_tool",
     "cancel_pending_callback_tool",
     "cancel_worker_task_tool",
     "collect_system_prompt_addition",
@@ -447,7 +438,6 @@ __all__ = [
     "delete_note_tool",
     "delete_script_tool",
     "download_media_tool",
-    "download_state_history_tool",
     "drive_get_file_tool",
     "drive_search_tool",
     "drive_write_file_tool",
@@ -459,7 +449,6 @@ __all__ = [
     "get_camera_frame_tool",
     "get_camera_frames_batch_tool",
     "get_camera_recordings_tool",
-    "get_camera_snapshot_tool",
     "get_delegation_status_tool",
     "get_full_document_content_tool",
     "get_live_camera_snapshot_tool",
@@ -484,8 +473,6 @@ __all__ = [
     "list_calendars_tool",
     "list_cameras_tool",
     "list_delegations_tool",
-    "list_home_assistant_actions_tool",
-    "list_home_assistant_entities_tool",
     "list_notes_tool",
     "list_pending_callbacks_tool",
     "list_scripts_tool",
@@ -504,7 +491,6 @@ __all__ = [
     "reindex_email_tool",
     "render_delete_calendar_event_confirmation",
     "render_generic_tool_confirmation",
-    "render_home_assistant_template_tool",
     "render_modify_calendar_event_confirmation",
     "report_technical_problem_tool",
     "resolve_tool_policy",
@@ -543,8 +529,11 @@ __all__ = [
 # To add a new tool to the system, you MUST:
 # 1. Add the tool function to the implementation map below
 # 2. Add the tool definition to the appropriate TOOLS_DEFINITION list (e.g., NOTE_TOOLS_DEFINITION)
-# 3. Add tool metadata in LOCAL_TOOL_METADATA_BY_NAME below
+# 3. Add tool metadata in _CORE_TOOL_METADATA_BY_NAME below
 # 4. Add or adjust tools_policy rules for each profile that should have access
+#
+# A plugin's tools are declared on the plugin instead (family_assistant.plugins)
+# and joined to the core tools here.
 #
 # The registration-backed catalog provides security and flexibility:
 # - Different profiles can have different tool access (e.g., browser profile has only browser tools)
@@ -577,7 +566,6 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + DOCUMENT_TOOLS_DEFINITION
     + EVENT_TOOLS_DEFINITION
     + AUTOMATIONS_TOOLS_DEFINITION
-    + HOME_ASSISTANT_TOOLS_DEFINITION
     + CAMERA_TOOLS_DEFINITION
     + CALENDAR_TOOLS_DEFINITION
     + COMMUNICATION_TOOLS_DEFINITION
@@ -637,12 +625,6 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "cancel_pending_callback": cancel_pending_callback_tool,
     "query_recent_events": query_recent_events_tool,
     "test_event_listener": test_event_listener_tool,
-    "render_home_assistant_template": render_home_assistant_template_tool,
-    "get_camera_snapshot": get_camera_snapshot_tool,
-    "download_state_history": download_state_history_tool,
-    "list_home_assistant_entities": list_home_assistant_entities_tool,
-    "list_home_assistant_actions": list_home_assistant_actions_tool,
-    "call_home_assistant_action": call_home_assistant_action_tool,
     # Camera tools (Reolink/Frigate backend)
     "list_cameras": list_cameras_tool,
     "search_camera_events": search_camera_events_tool,
@@ -767,7 +749,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "drive_write_file": drive_write_file_tool,
 }
 
-LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
+_CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "add_or_update_note": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.STATE_CHANGING,
@@ -963,50 +945,6 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "download_state_history": _metadata(
-        ToolTag.SCRIPT_DETERMINISTIC,
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.HOME_AUTOMATION,
-        ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "render_home_assistant_template": _metadata(
-        ToolTag.SCRIPT_DETERMINISTIC,
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.HOME_AUTOMATION,
-        ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "get_camera_snapshot": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.HOME_AUTOMATION,
-        ToolTag.CAMERA,
-        ToolTag.MEDIA,
-        ToolTag.OUTPUT_UNTRUSTED,
-    ),
-    "list_home_assistant_entities": _metadata(
-        ToolTag.SCRIPT_DETERMINISTIC,
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.HOME_AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "list_home_assistant_actions": _metadata(
-        ToolTag.SCRIPT_DETERMINISTIC,
-        ToolTag.READ_ONLY,
-        ToolTag.HOME_AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "call_home_assistant_action": _metadata(
-        ToolTag.SCRIPT_DETERMINISTIC,
-        ToolTag.STATE_CHANGING,
-        ToolTag.HOME_AUTOMATION,
-        ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_cameras": _metadata(
@@ -1731,11 +1669,18 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
 }
 
-LOCAL_TOOL_REGISTRATIONS: list[ToolRegistration] = build_local_tool_registrations(
-    definitions=_LOCAL_TOOL_DEFINITIONS,
-    implementations=_LOCAL_TOOL_IMPLEMENTATIONS,
-    metadata_by_name=LOCAL_TOOL_METADATA_BY_NAME,
+LOCAL_TOOL_REGISTRATIONS: list[ToolRegistration] = join_tool_registrations(
+    build_local_tool_registrations(
+        definitions=_LOCAL_TOOL_DEFINITIONS,
+        implementations=_LOCAL_TOOL_IMPLEMENTATIONS,
+        metadata_by_name=_CORE_TOOL_METADATA_BY_NAME,
+    ),
+    plugin_tool_registrations(),
 )
+LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
+    registration.name: registration.metadata
+    for registration in LOCAL_TOOL_REGISTRATIONS
+}
 LOCAL_TOOL_DESCRIPTORS: list[ToolDescriptor] = build_local_tool_descriptors(
     LOCAL_TOOL_REGISTRATIONS
 )

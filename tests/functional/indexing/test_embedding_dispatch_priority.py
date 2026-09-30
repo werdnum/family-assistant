@@ -34,7 +34,7 @@ def _context(db_engine: AsyncEngine, priority: TaskPriority) -> ToolExecutionCon
         db_context=Database(db_engine),
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

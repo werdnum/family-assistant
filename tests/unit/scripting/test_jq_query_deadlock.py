@@ -74,7 +74,7 @@ async def test_jq_query_from_script_no_deadlock(
         turn_id=None,
         db_context=db,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=attachment_registry,
         camera_backend=None,

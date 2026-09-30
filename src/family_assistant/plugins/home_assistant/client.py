@@ -8,12 +8,10 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, TypedDict
 
 import aiohttp
-
-if TYPE_CHECKING:
-    import homeassistant_api
+import homeassistant_api
 
 logger = logging.getLogger(__name__)
 
@@ -418,3 +416,18 @@ class HomeAssistantClientWrapper:
         ):
             response.raise_for_status()
             return await response.read()
+
+
+def create_home_assistant_client(
+    api_url: str, token: str, verify_ssl: bool = True
+) -> HomeAssistantClientWrapper:
+    """Create the wrapped client for a Home Assistant base URL (without ``/api``)."""
+    client = homeassistant_api.Client(
+        api_url=api_url.rstrip("/") + "/api",
+        token=token,
+        use_async=True,
+        verify_ssl=verify_ssl,
+    )
+    return HomeAssistantClientWrapper(
+        api_url=api_url, token=token, client=client, verify_ssl=verify_ssl
+    )

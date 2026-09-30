@@ -212,9 +212,7 @@ async def execute_tool_api(
         # tool that calls a model to inherit: the profile's default tier.
         llm_client=processing_service.llm_client if processing_service else None,
         clock=clock,
-        home_assistant_client=processing_service.home_assistant_client
-        if processing_service
-        else None,
+        plugins=processing_service.plugins if processing_service else None,
         event_sources=event_sources,
         attachment_registry=attachment_registry,
         camera_backend=camera_backend,

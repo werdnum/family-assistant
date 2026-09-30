@@ -91,7 +91,7 @@ def _processing_service_with_callback_result(
 ) -> MagicMock:
     processing_service = MagicMock()
     processing_service.handle_chat_interaction = AsyncMock(return_value=result)
-    processing_service.home_assistant_client = None
+    processing_service.plugins = None
     processing_service.attachment_registry = None
     processing_service.processing_services_registry = {}
     processing_service.service_config.id = "test_profile"
@@ -1248,7 +1248,7 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
         task_priority=TaskPriority.INTERACTIVE,
         processing_service=processing_service,
         clock=mock_clock,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

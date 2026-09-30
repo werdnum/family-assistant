@@ -107,7 +107,7 @@ def test_the_execution_context_derives_the_same_two_policies(
         ),
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

@@ -1,8 +1,4 @@
-"""Home Assistant integration tools.
-
-This module contains tools for interacting with Home Assistant, including
-rendering templates and retrieving camera snapshots.
-"""
+"""Home Assistant tools: templates, entities, actions, history and camera snapshots."""
 
 from __future__ import annotations
 
@@ -13,6 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant_api.errors import HomeassistantAPIError
 
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolDefinition,
@@ -21,7 +23,11 @@ from family_assistant.tools.types import (
 )
 
 if TYPE_CHECKING:
-    from family_assistant.home_assistant_wrapper import ActionPayload
+    from family_assistant.plugins.home_assistant.client import (
+        ActionPayload,
+        HomeAssistantClientWrapper,
+    )
+    from family_assistant.tools.metadata import ToolImplementation
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -377,7 +383,16 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
-# Tool Implementation
+def _home_assistant_client(
+    exec_context: ToolExecutionContext,
+) -> HomeAssistantClientWrapper | None:
+    """The client of the Home Assistant instance the turn's profile selected."""
+    if exec_context.plugins is None:
+        return None
+    instance = exec_context.plugins.get(HomeAssistantInstance)
+    return None if instance is None else instance.client
+
+
 async def render_home_assistant_template_tool(
     exec_context: ToolExecutionContext,
     template: str,
@@ -395,14 +410,10 @@ async def render_home_assistant_template_tool(
     logger.info(f"Rendering Home Assistant template: {template[:100]}...")
 
     # Check if Home Assistant client is available in context
-    if (
-        not hasattr(exec_context, "home_assistant_client")
-        or not exec_context.home_assistant_client
-    ):
+    ha_client = _home_assistant_client(exec_context)
+    if ha_client is None:
         logger.error("Home Assistant client not available in execution context")
         return "Error: Home Assistant integration is not configured or available."
-
-    ha_client = exec_context.home_assistant_client
 
     try:
         # Import homeassistant_api to check for the method
@@ -454,16 +465,12 @@ async def get_camera_snapshot_tool(
     logger.info(f"Getting camera snapshot: entity_id={camera_entity_id}")
 
     # Check if Home Assistant client is available
-    if (
-        not hasattr(exec_context, "home_assistant_client")
-        or not exec_context.home_assistant_client
-    ):
+    ha_client = _home_assistant_client(exec_context)
+    if ha_client is None:
         logger.error("Home Assistant client not available in execution context")
         return ToolResult(
             text="Error: Home Assistant integration is not configured or available."
         )
-
-    ha_client = exec_context.home_assistant_client
 
     # If no entity_id provided, list available cameras
     if not camera_entity_id:
@@ -555,16 +562,12 @@ async def download_state_history_tool(
     )
 
     # Check if Home Assistant client is available
-    if (
-        not hasattr(exec_context, "home_assistant_client")
-        or not exec_context.home_assistant_client
-    ):
+    ha_client = _home_assistant_client(exec_context)
+    if ha_client is None:
         logger.error("Home Assistant client not available in execution context")
         return ToolResult(
             text="Error: Home Assistant integration is not configured or available."
         )
-
-    ha_client = exec_context.home_assistant_client
 
     # Parse end_time first to determine default start_time
     if end_time:
@@ -746,16 +749,12 @@ async def call_home_assistant_action_tool(
         return_response,
     )
 
-    if (
-        not hasattr(exec_context, "home_assistant_client")
-        or not exec_context.home_assistant_client
-    ):
+    ha_client = _home_assistant_client(exec_context)
+    if ha_client is None:
         logger.error("Home Assistant client not available in execution context")
         return ToolResult(
             text="Error: Home Assistant integration is not configured or available."
         )
-
-    ha_client = exec_context.home_assistant_client
 
     try:
         result = await ha_client.async_call_action(
@@ -836,16 +835,13 @@ async def list_home_assistant_actions_tool(
         max_results,
     )
 
-    if (
-        not hasattr(exec_context, "home_assistant_client")
-        or not exec_context.home_assistant_client
-    ):
+    ha_client = _home_assistant_client(exec_context)
+    if ha_client is None:
         logger.error("Home Assistant client not available in execution context")
         return ToolResult(
             text="Error: Home Assistant integration is not configured or available."
         )
 
-    ha_client = exec_context.home_assistant_client
     max_results = max(1, min(max_results, 500))
 
     try:
@@ -929,16 +925,12 @@ async def list_home_assistant_entities_tool(
     )
 
     # Check if Home Assistant client is available
-    if (
-        not hasattr(exec_context, "home_assistant_client")
-        or not exec_context.home_assistant_client
-    ):
+    ha_client = _home_assistant_client(exec_context)
+    if ha_client is None:
         logger.error("Home Assistant client not available in execution context")
         return ToolResult(
             text="Error: Home Assistant integration is not configured or available."
         )
-
-    ha_client = exec_context.home_assistant_client
 
     # Limit max_results to 200
     max_results = min(max_results, 200)
@@ -1029,3 +1021,77 @@ async def list_home_assistant_entities_tool(
             text += f"\nFilters applied: {', '.join(filter_desc)}"
 
     return ToolResult(text=text, data=result_data)
+
+
+def _tool(
+    name: str, implementation: ToolImplementation, *tags: ToolTag
+) -> ToolRegistration:
+    definitions = {
+        definition["function"]["name"]: definition
+        for definition in HOME_ASSISTANT_TOOLS_DEFINITION
+    }
+    return ToolRegistration(
+        definition=definitions[name],
+        implementation=implementation,
+        metadata=make_local_tool_metadata(tags),
+    )
+
+
+HOME_ASSISTANT_TOOLS: tuple[ToolRegistration, ...] = (
+    _tool(
+        "download_state_history",
+        download_state_history_tool,
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    _tool(
+        "render_home_assistant_template",
+        render_home_assistant_template_tool,
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    _tool(
+        "get_camera_snapshot",
+        get_camera_snapshot_tool,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.CAMERA,
+        ToolTag.MEDIA,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    _tool(
+        "list_home_assistant_entities",
+        list_home_assistant_entities_tool,
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    _tool(
+        "list_home_assistant_actions",
+        list_home_assistant_actions_tool,
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    _tool(
+        "call_home_assistant_action",
+        call_home_assistant_action_tool,
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.STATE_CHANGING,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+)

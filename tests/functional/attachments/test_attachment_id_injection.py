@@ -22,6 +22,8 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import LLMMessage, ToolMessage, UserMessage
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -232,7 +234,9 @@ async def test_attachment_id_injected_and_referenceable(
     processing_service = await create_processing_service_with_image_tools(
         llm_client, "test_attachment_id_profile"
     )
-    processing_service.home_assistant_client = mock_ha_client
+    processing_service.plugins = ProfilePlugins((
+        HomeAssistantInstance(mock_ha_client),
+    ))
 
     attachment_registry = AttachmentRegistry(
         storage_path=str(tmp_path), db_engine=db_engine, config=None

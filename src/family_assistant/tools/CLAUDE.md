@@ -9,6 +9,11 @@ A tool needs a JSON schema definition, an async implementation, a registration e
 rule. Registration lives in `src/family_assistant/tools/__init__.py`; runtime access is denied
 unless `tools_policy` also allows it, so both are required.
 
+A tool that belongs to an integration packaged as a plugin (`src/family_assistant/plugins/`, e.g.
+Home Assistant) is declared on the plugin as a `ToolRegistration` instead, and reaches its client
+through `exec_context.plugins`. See
+[docs/design/plugin-architecture.md](../../../docs/design/plugin-architecture.md).
+
 ### Step 1: Create the Tool Implementation
 
 Create a new file in `src/family_assistant/tools/` (e.g. `something.py`), following the convention

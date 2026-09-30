@@ -5072,7 +5072,7 @@ class TaskWorker:
                     if self.processing_service
                     else None,
                     clock=self.clock,
-                    home_assistant_client=self.processing_service.home_assistant_client
+                    plugins=self.processing_service.plugins
                     if self.processing_service
                     else None,
                     event_sources=self.event_sources,
@@ -6461,7 +6461,7 @@ async def handle_script_execution(
             # Carry the resolved profile's infrastructure backends so tools that
             # read them use the creating profile's clients, not the worker
             # default's (mirrors _build_confirmation_execution_context).
-            home_assistant_client=processing_service.home_assistant_client,
+            plugins=processing_service.plugins,
             attachment_registry=processing_service.attachment_registry,
             camera_backend=processing_service.camera_backend,
             calendar_config=processing_service.service_config.calendar_config,
@@ -6848,7 +6848,7 @@ async def _build_confirmation_execution_context(
         # calls a model gets the profile's default tier.
         llm_client=processing_service.llm_client,
         clock=exec_context.clock,
-        home_assistant_client=processing_service.home_assistant_client,
+        plugins=processing_service.plugins,
         event_sources=exec_context.event_sources,
         attachment_registry=processing_service.attachment_registry,
         camera_backend=processing_service.camera_backend,

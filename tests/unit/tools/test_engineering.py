@@ -60,7 +60,7 @@ def exec_context() -> ToolExecutionContext:
         db_context=mock_db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

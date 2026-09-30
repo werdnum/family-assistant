@@ -336,7 +336,7 @@ def _minimal_context(
         request_confirmation_callback=None,
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         indexing_source=None,
         attachment_registry=attachment_registry,

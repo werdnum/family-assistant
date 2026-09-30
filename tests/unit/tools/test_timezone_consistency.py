@@ -133,7 +133,7 @@ def sydney_exec_context(
         db_context=Mock(),
         processing_service=None,
         clock=None,
-        home_assistant_client=None,
+        plugins=None,
         event_sources=None,
         attachment_registry=None,
         camera_backend=camera_backend_with_events,

@@ -327,7 +327,7 @@ class InteractionsAgentProcessingService(ProcessingService):
             # never as an interchangeable tier.
             llm_client=self.llm_client,
             clock=self.clock,
-            home_assistant_client=self.home_assistant_client,
+            plugins=self.plugins,
             event_sources=self.event_sources,
             attachment_registry=self.attachment_registry,
             camera_backend=self.camera_backend,

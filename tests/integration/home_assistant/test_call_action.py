@@ -6,13 +6,15 @@ import homeassistant_api
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
-from family_assistant.storage.database import Database
-from family_assistant.tools.home_assistant import (
+from family_assistant.plugins.home_assistant.client import HomeAssistantClientWrapper
+from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
+from family_assistant.plugins.home_assistant.tools import (
     call_home_assistant_action_tool,
     list_home_assistant_actions_tool,
     render_home_assistant_template_tool,
 )
+from family_assistant.plugins.runtime import ProfilePlugins
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -27,7 +29,7 @@ def _make_exec_context(
         db_context=db_context,
         processing_service=None,
         clock=None,
-        home_assistant_client=wrapper,
+        plugins=ProfilePlugins((HomeAssistantInstance(wrapper),)),
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,

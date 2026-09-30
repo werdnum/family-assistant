@@ -54,11 +54,11 @@ if TYPE_CHECKING:
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
-    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.memory.review_context import MemoryReviewContext
+    from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.security.taint import TaintSource, TurnTaintTracker
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
@@ -194,7 +194,7 @@ class LLMStreamingLoop:
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
         processing_service: ProcessingService | None = None,
-        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        plugins: ProfilePlugins | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
@@ -233,7 +233,7 @@ class LLMStreamingLoop:
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=processing_service,
-            home_assistant_client=home_assistant_client,
+            plugins=plugins,
             camera_backend=camera_backend,
             event_sources=event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
@@ -272,7 +272,7 @@ class LLMStreamingLoop:
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
         processing_service: ProcessingService | None = None,
-        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        plugins: ProfilePlugins | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
@@ -305,7 +305,7 @@ class LLMStreamingLoop:
             request_confirmation_callback=request_confirmation_callback,
             subconversation_id=subconversation_id,
             processing_service=processing_service,
-            home_assistant_client=home_assistant_client,
+            plugins=plugins,
             camera_backend=camera_backend,
             event_sources=event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
@@ -350,7 +350,7 @@ class LLMStreamingLoop:
         subconversation_id: str | None = None,
         # Runtime deps passed through to tool_executor
         processing_service: ProcessingService | None = None,
-        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        plugins: ProfilePlugins | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
@@ -447,7 +447,7 @@ class LLMStreamingLoop:
                 subconversation_id=subconversation_id,
                 processing_service=processing_service,
                 llm_client=llm_client,
-                home_assistant_client=home_assistant_client,
+                plugins=plugins,
                 camera_backend=camera_backend,
                 event_sources=event_sources,
                 taint_tracker=turn_taint_tracker,
@@ -1062,7 +1062,7 @@ class LLMStreamingLoop:
                     subconversation_id=subconversation_id,
                     processing_service=processing_service,
                     llm_client=llm_client,
-                    home_assistant_client=home_assistant_client,
+                    plugins=plugins,
                     camera_backend=camera_backend,
                     event_sources=event_sources,
                     taint_tracker=taint_tracker,

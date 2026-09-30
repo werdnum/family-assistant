@@ -21,7 +21,7 @@ import logging
 import os
 import subprocess
 import sys
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, get_args, get_origin
 from unittest import mock
 
 import pytest
@@ -2515,30 +2515,43 @@ class TestEnvVarMappingsComplete:
     """Tests to ensure environment variable mappings are complete and correct."""
 
     def test_all_mappings_have_valid_paths(self) -> None:
-        """Test that all env var mappings point to valid config paths."""
+        """Test that all env var mappings point to valid config paths.
+
+        A ``dict[str, Model]`` field (plugin instances) consumes the next part as
+        its key and continues into ``Model``.
+        """
         for mapping in ENV_VAR_MAPPINGS:
             model: type[BaseModel] = AppConfig
-            parts = mapping.config_path.split(".")
-            for index, part in enumerate(parts):
+            parts = iter(mapping.config_path.split("."))
+            for part in parts:
                 assert part in model.model_fields, (
                     f"{mapping.env_var}: {part} is not a field in {mapping.config_path}"
                 )
-                if index < len(parts) - 1:
-                    annotation = model.model_fields[part].annotation
-                    candidates = (annotation, *get_args(annotation))
-                    nested = next(
-                        (
-                            candidate
-                            for candidate in candidates
-                            if isinstance(candidate, type)
-                            and issubclass(candidate, BaseModel)
-                        ),
-                        None,
+                annotation = model.model_fields[part].annotation
+                value_type = (
+                    get_args(annotation)[1] if get_origin(annotation) is dict else None
+                )
+                if isinstance(value_type, type) and issubclass(value_type, BaseModel):
+                    assert next(parts, None) is not None, (
+                        f"{mapping.env_var}: {part} needs a key in {mapping.config_path}"
                     )
-                    assert nested is not None, (
+                    annotation = value_type
+                candidates = (annotation, *get_args(annotation))
+                nested = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if isinstance(candidate, type)
+                        and issubclass(candidate, BaseModel)
+                    ),
+                    None,
+                )
+                if nested is None:
+                    assert next(parts, None) is None, (
                         f"{mapping.env_var}: {part} is not a nested config model"
                     )
-                    model = nested
+                    break
+                model = nested
 
     def test_all_secrets_are_mapped(self) -> None:
         """Test that known secret env vars have mappings."""
@@ -2621,6 +2634,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "visibility_grants",
         "excluded_global_tools",
         "remote_a2a",
+        "plugins",
         "allowed_model_tiers",
         "auto_model_tiers",
         "delegation_model_tiers",
@@ -3468,13 +3482,17 @@ keychute_config:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Broad nested credentials across service profiles, camera, and webhook are redacted."""
+        """Broad nested credentials across plugins, profiles, camera, and webhook are redacted."""
         config_yaml = """
+plugins:
+  home_assistant:
+    default:
+      api_url: "http://ha.local"
+      token: "ha-secret-token-nested"
 service_profiles:
   - id: "camera_profile"
     description: "Camera analyst"
     processing_config:
-      home_assistant_token: "ha-secret-token-nested"
       camera_config:
         backend: "reolink"
         cameras_config:
