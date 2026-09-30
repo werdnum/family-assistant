@@ -23,6 +23,7 @@ from family_assistant.tools import (
     _scan_user_docs,
     build_local_tool_registrations,
 )
+from family_assistant.tools.worker import WORKER_TOOLS_DEFINITION
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
@@ -30,6 +31,10 @@ if TYPE_CHECKING:
     from family_assistant.tools import ToolDefinition, ToolRegistration
 
 logger = logging.getLogger(__name__)
+
+WORKER_TOOL_NAMES = frozenset(
+    definition["function"]["name"] for definition in WORKER_TOOLS_DEFINITION
+)
 
 
 def build_effective_local_tool_definitions(config: AppConfig) -> list[ToolDefinition]:
@@ -72,10 +77,21 @@ def build_effective_local_tool_registrations(
     config: AppConfig,
     google_integration_state: OAuthIntegrationState,
 ) -> list[ToolRegistration]:
-    """Return the root local registrations the deployment actually serves."""
+    """Return the root local registrations the deployment actually serves.
+
+    The AI worker tools are dropped when ``ai_worker_config`` is disabled:
+    there is no backend to run, cancel or report on a worker, so offering
+    them only invites calls that cannot succeed.
+    """
     registrations = build_local_tool_registrations(
         definitions=build_effective_local_tool_definitions(config),
         implementations=AVAILABLE_FUNCTIONS,
         metadata_by_name=LOCAL_TOOL_METADATA_BY_NAME,
     )
+    if not config.ai_worker_config.enabled:
+        registrations = [
+            registration
+            for registration in registrations
+            if registration.name not in WORKER_TOOL_NAMES
+        ]
     return filter_oauth_tool_registrations(registrations, google_integration_state)

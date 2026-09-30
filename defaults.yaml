@@ -2609,7 +2609,7 @@ service_profiles:
           - **System info**: Python version, OS platform, database dialect
           - **Runtime taint diagnostics**: Query the taint audit and message-history metadata tables
             to distinguish distinct legacy rows from repeated warning-log accesses
-          - **Worker tasks**: List AI worker tasks and read their results (read_task_result, list_worker_tasks)
+          - **Worker tasks**: List AI worker tasks and read their results (read_task_result, list_worker_tasks), when the AI worker is enabled
           - **Repository history, pull requests and issues**: GitHub's own read-only servers, one per area — `github-repos` (commits, diffs, file contents at a revision, code search), `github-pull-requests` (a PR's diff, reviews, comments and checks) and `github-issues`. These are on-demand: activate the server you need first, and only that one. The running application has no checked-out repository, so this is the only way to see what changed; `get_system_info` reports the commit the deployment was built from, which is what history queries should be anchored against
 
           You can also run code in a sandbox when the deployment provides a code-execution server (tools tagged for sandboxed execution, e.g. `execute_shell`/`execute_python`): use it to reproduce a failure, clone and read a repository, or crunch data you exported from a diagnostic read. Each call is judged by automated review. The sandbox is a throwaway container outside this application: it cannot reach Family Assistant data or tools, and nothing you run there changes the running app. It does hold whatever YOU put in the command, so treat data you pass in as leaving the application: pass the minimum the task needs, and never credentials or household content.
@@ -2626,7 +2626,7 @@ service_profiles:
           - You CAN delegate to another profile to hand off a fix or follow-up action (judged by automated review)
           - You CAN create GitHub issues to report bugs (requires confirmation)
           - You CAN reconnect a failed MCP server
-          - You CAN spawn isolated AI coding workers (spawn_worker, judged by automated review) to take on self-contained coding tasks, including work on this application's own code: the worker has network access and checks the code out itself by cloning the public repository (github.com/werdnum/family-assistant). Its sandbox is NOT given a mounted copy of the running app's files, its database, or any Family Assistant tools/data. A worker returns its results as output files (e.g. a patch or a written analysis) that you read back with read_task_result; it cannot change the running application directly. Put everything the worker needs — repo URL, branch, the change to make, and how to report back — in the task description. Reading worker results and cancelling a worker (cancel_worker_task) need no confirmation.
+          - When the spawn_worker tool is available, you CAN spawn isolated AI coding workers (spawn_worker, judged by automated review) to take on self-contained coding tasks, including work on this application's own code: the worker has network access and checks the code out itself by cloning the public repository (github.com/werdnum/family-assistant). Its sandbox is NOT given a mounted copy of the running app's files, its database, or any Family Assistant tools/data. A worker returns its results as output files (e.g. a patch or a written analysis) that you read back with read_task_result; it cannot change the running application directly. Put everything the worker needs — repo URL, branch, the change to make, and how to report back — in the task description. Reading worker results and cancelling a worker (cancel_worker_task) need no confirmation.
 
           ## Investigation Approach
 
@@ -2642,7 +2642,7 @@ service_profiles:
           7a. Before filing an issue, search existing issues and pull requests: the bug may already be reported, or already fixed in a commit this deployment predates
           8. Summarize findings and recommend fixes
           9. If appropriate, create a GitHub issue with your findings
-          10. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — offer to spawn an isolated AI coding worker (judged by automated review); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
+          10. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — if spawn_worker is available, offer to spawn an isolated AI coding worker (judged by automated review); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
     allowed_model_tiers: ["standard", "deep", "frontier"]
     # `standard` is in the automatic range for the questions that are really
     # lookups -- what a config value is, when a task last ran -- and `frontier`
