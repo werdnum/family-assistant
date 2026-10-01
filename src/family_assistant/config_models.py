@@ -52,7 +52,7 @@ from contextvars import ContextVar
 from email.utils import parseaddr
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -76,7 +76,7 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .memory.limits import MemoryLimits
 from .memory.review_settings import MemoryReviewSettings
-from .plugins.config import DEFAULT_INSTANCE, PluginsConfig
+from .plugins.config import PluginsConfig
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -1936,41 +1936,6 @@ class GeminiOmniVideoConfig(BaseModel):
     model: str = "gemini-omni-1.1-flash"
 
 
-def migrate_legacy_ai_worker_settings(
-    # ast-grep-ignore: no-dict-any - raw config data before validation
-    data: dict[str, Any],
-) -> None:
-    """Move pre-plugin AI worker settings to where they live now, in place.
-
-    Deployed config written before AI workers became a plugin keeps working
-    until it is rewritten; the new location wins where both are set. An
-    enabled ``ai_worker_config`` becomes the ``default`` instance of
-    ``plugins.ai_workers``, and a disabled one is dropped, because an instance
-    is what enables the plugin.
-    """
-    legacy = data.pop("ai_worker_config", None)
-    if not isinstance(legacy, dict):
-        return
-    legacy = cast("dict[str, Any]", legacy)
-    workspace_path = legacy.pop("workspace_mount_path", None)
-    if workspace_path is not None:
-        data.setdefault("shared_workspace_path", workspace_path)
-    if not legacy.pop("enabled", False):
-        logger.warning(
-            "ai_worker_config is deprecated and, being disabled, ignored; remove "
-            "it. Set shared_workspace_path for the shared workspace, and "
-            "configure plugins.ai_workers.default to enable AI workers."
-        )
-        return
-    logger.warning(
-        "ai_worker_config is deprecated; move it to plugins.ai_workers.default "
-        "without enabled, and workspace_mount_path to shared_workspace_path."
-    )
-    plugins = data.setdefault("plugins", {})
-    instances = plugins.setdefault("ai_workers", {})
-    instances[DEFAULT_INSTANCE] = {**legacy, **(instances.get(DEFAULT_INSTANCE) or {})}
-
-
 class AppConfig(BaseSettings):
     """Main application configuration.
 
@@ -2161,14 +2126,6 @@ class AppConfig(BaseSettings):
     # The Auto classifier that picks a tier per request for profiles whose
     # `processing_config.model_selection` is `auto`.
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_legacy_plugin_settings(cls, data: object) -> object:
-        """Accept settings still written where they lived before plugins."""
-        if isinstance(data, dict):
-            migrate_legacy_ai_worker_settings(cast("dict[str, Any]", data))
-        return data
 
     @model_validator(mode="after")
     def validate_model_routing_names_a_classifier(self) -> AppConfig:

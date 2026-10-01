@@ -1423,10 +1423,6 @@ At startup the plugin settles worker tasks a restart left running against the ba
 a daily cleanup of finished task records, their directories under the workspace's `tasks/`, and
 completion listeners no worker will fire.
 
-A top-level `ai_worker_config` block is still accepted temporarily: `workspace_mount_path` moves to
-`shared_workspace_path`, an enabled block becomes the `default` instance, and a disabled one is
-dropped. Each is logged as deprecated.
-
 ______________________________________________________________________
 
 ## Plugins

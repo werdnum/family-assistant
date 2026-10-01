@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from family_assistant.config_loader import load_config
 from family_assistant.plugins.ai_workers.config import AIWorkersConfig
 from family_assistant.plugins.ai_workers.instance import (
     CLEANUP_TASK_ID,
@@ -34,72 +33,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncEngine
-
-    from family_assistant.config_models import AppConfig
-
-
-def _load(tmp_path: Path, yaml_text: str) -> AppConfig:
-    config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml_text)
-    return load_config(
-        defaults_file_path=str(tmp_path / "missing_defaults.yaml"),
-        config_file_path=str(config_file),
-        prompts_file_path=str(tmp_path / "missing_prompts.yaml"),
-        load_dotenv_file=False,
-    )
-
-
-class TestLegacyConfig:
-    """Deployed config still written as ai_worker_config keeps loading."""
-
-    def test_disabled_block_is_dropped_but_keeps_its_workspace(
-        self, tmp_path: Path
-    ) -> None:
-        config = _load(
-            tmp_path,
-            """
-ai_worker_config:
-  enabled: false
-  webhook_url: "http://fa.local/webhook/event"
-  workspace_mount_path: "/srv/workspace"
-  kubernetes:
-    namespace: ml-bot
-""",
-        )
-        assert config.plugins.ai_workers == {}
-        assert config.shared_workspace_path == "/srv/workspace"
-
-    def test_enabled_block_becomes_the_default_instance(self, tmp_path: Path) -> None:
-        config = _load(
-            tmp_path,
-            """
-ai_worker_config:
-  enabled: true
-  backend_type: docker
-  available_agents: [claude]
-""",
-        )
-        default = config.plugins.ai_workers["default"]
-        assert default.backend_type == "docker"
-        assert default.available_agents == ["claude"]
-
-    def test_the_new_location_wins(self, tmp_path: Path) -> None:
-        config = _load(
-            tmp_path,
-            """
-shared_workspace_path: "/new"
-ai_worker_config:
-  enabled: true
-  workspace_mount_path: "/old"
-  max_concurrent_workers: 1
-plugins:
-  ai_workers:
-    default:
-      max_concurrent_workers: 5
-""",
-        )
-        assert config.shared_workspace_path == "/new"
-        assert config.plugins.ai_workers["default"].max_concurrent_workers == 5
 
 
 def test_a_second_sandbox_is_refused() -> None:

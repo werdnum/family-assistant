@@ -152,13 +152,6 @@ names, tags and policy behaviour are unchanged.
   running, and keeps expiring old worker task rows, listeners and `tasks/` directories on the
   retention it was seeded with, which is what it did before workers were a plugin.
 
-### Temporary config migration
-
-Deployed config still carries a disabled `ai_worker_config`. Until it is rewritten, loading moves
-its workspace path to `shared_workspace_path`, turns an enabled block into the `default` instance
-and drops a disabled one, with a deprecation warning. The migration is removed once deployed config
-has moved.
-
 ## Later milestones
 
 1. **Per-result grading, then Trino** as a native plugin that grades each result from the tables a
