@@ -19,6 +19,7 @@ from family_assistant.plugins.ai_workers.tools import (
     NOT_CONFIGURED_ERROR,
     list_worker_tasks_tool,
     read_task_result_tool,
+    render_cancel_worker_task_confirmation,
     spawn_worker_tool,
 )
 from family_assistant.plugins.base import PluginInstance, PluginStartupContext
@@ -142,3 +143,14 @@ async def test_a_profile_without_a_sandbox_is_told_so(db_engine: AsyncEngine) ->
 
     for result in results:
         assert result.get_data() == {"error": NOT_CONFIGURED_ERROR}
+
+    await context.db_context.worker_tasks.create_task(
+        task_id="task-1",
+        conversation_id="conv",
+        interface_type="test",
+        task_description="private task description",
+    )
+    prompt = await render_cancel_worker_task_confirmation(
+        {"task_id": "task-1"}, context
+    )
+    assert "private task description" not in prompt

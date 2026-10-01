@@ -686,14 +686,15 @@ async def render_cancel_worker_task_confirmation(
     opaque id. Mirrors cancel_worker_task_tool's conversation scoping: a task
     belonging to a different conversation is treated as not found, so the
     prompt never leaks another conversation's task details for a cancel that
-    would be refused anyway.
+    would be refused anyway. A profile without a sandbox is refused too, so
+    its prompt shows no task details either.
     """
     task_id = str(args.get("task_id", "")).strip()
     fields = [confirmation_field("Task ID", task_id)]
 
     task = None
     db_context = getattr(context, "db_context", None)
-    if task_id and db_context is not None:
+    if task_id and db_context is not None and _worker_instance(context) is not None:
         task = await db_context.worker_tasks.get_task(task_id)
         if task is not None and task.get("conversation_id") != context.conversation_id:
             task = None
