@@ -35,6 +35,7 @@ from family_assistant.plugins.ai_workers.config import (
     KubernetesBackendConfig,
 )
 from family_assistant.plugins.config import PluginsConfig
+from family_assistant.plugins.trino.config import TrinoConfig
 
 PEM_KEY = (
     "-----BEGIN PRIVATE KEY-----\n"
@@ -52,13 +53,23 @@ def test_declared_credential_fields_mask_themselves() -> None:
         telegram_token=SecretStr("telegram-secret"),
         openai_api_key=SecretStr("sk-live"),
         apns=ApnsConfig(team_id="TEAM123", auth_key=SecretStr(PEM_KEY)),
+        plugins=PluginsConfig(
+            trino={
+                "default": TrinoConfig(
+                    url="http://trino:8080",
+                    user="trino-login",
+                    password=SecretStr("trino-secret"),
+                )
+            }
+        ),
     )
 
     dumped = json.dumps(config.model_dump(mode="json"))
 
-    for secret in ("telegram-secret", "sk-live", "BEGIN PRIVATE KEY"):
+    for secret in ("telegram-secret", "sk-live", "BEGIN PRIVATE KEY", "trino-secret"):
         assert secret not in dumped, secret
     assert "TEAM123" in dumped
+    assert "trino-login" in dumped
 
 
 def test_unset_credential_stays_none_rather_than_redacted() -> None:
