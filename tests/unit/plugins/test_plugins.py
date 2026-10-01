@@ -83,8 +83,8 @@ class TestProfileSelection:
             resolve_profile_plugins(PluginsConfig(), {"home_assistant": "cabin"})
 
     def test_unknown_plugin_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="Unknown plugin 'trino'"):
-            resolve_profile_plugins(PluginsConfig(), {"trino": "default"})
+        with pytest.raises(ValueError, match="Unknown plugin 'spreadsheet'"):
+            resolve_profile_plugins(PluginsConfig(), {"spreadsheet": "default"})
 
     def test_a_profile_may_name_an_instance_supplied_by_the_environment(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

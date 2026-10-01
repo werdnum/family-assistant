@@ -20,6 +20,10 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.security.taint import (
+    SourceTrustTier,  # noqa: TC001 - pydantic's ToolMessage embeds ToolResult and resolves its fields
+)
+
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
 
@@ -751,6 +755,12 @@ class ToolResult:
     data: dict[str, Any] | list[Any] | str | int | float | bool | None = (
         None  # Structured data for tests/scripts
     )
+    # The trust tier of what this particular result contains, for a tool that
+    # can tell. Honoured only for a tool registered with a
+    # ``cleanest_result_tier``, which also bounds how clean it may claim to be;
+    # any other tool is graded by its static output tag.
+    provenance: SourceTrustTier | None = None
+    provenance_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Ensure at least one of text or data is populated"""

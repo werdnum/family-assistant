@@ -32,6 +32,7 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any, cast
 
+from family_assistant.security.taint import SourceTrustTier
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 
     from family_assistant.tools.types import ToolDefinition
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
 _ORIGINS = frozenset({"local", "mcp"})
 
@@ -60,6 +61,7 @@ DESCRIPTOR_FIELDS = (
     "summary",
     "destination_argument_paths",
     "deferred_confirmation_eligible",
+    "cleanest_result_tier",
 )
 
 
@@ -93,6 +95,11 @@ def descriptors_to_snapshot(
             "destination_argument_paths": list(descriptor.destination_argument_paths),
             "deferred_confirmation_eligible": (
                 descriptor.deferred_confirmation_eligible
+            ),
+            "cleanest_result_tier": (
+                descriptor.cleanest_result_tier.config_value
+                if descriptor.cleanest_result_tier is not None
+                else None
             ),
         }
         if set(serialized) != set(DESCRIPTOR_FIELDS):
@@ -191,6 +198,7 @@ def _descriptor_from_entry(name: str, entry: object) -> ToolDescriptor:
         deferred_confirmation_eligible=_bool_from_entry(
             name, fields["deferred_confirmation_eligible"]
         ),
+        cleanest_result_tier=_tier_from_entry(name, fields["cleanest_result_tier"]),
     )
 
 
@@ -277,6 +285,19 @@ def _optional_str(name: str, field: str, raw: object) -> str | None:
         return raw
     raise RegistrySnapshotError(
         f"Snapshot entry for {name!r} has a non-string {field}."
+    )
+
+
+def _tier_from_entry(name: str, raw: object) -> SourceTrustTier | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            return SourceTrustTier.from_value(raw)
+        except ValueError:
+            pass
+    raise RegistrySnapshotError(
+        f"Snapshot entry for {name!r} has an unknown cleanest_result_tier {raw!r}."
     )
 
 

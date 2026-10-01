@@ -1815,8 +1815,30 @@ def derive_tool_result_taint_source(
     descriptor: ToolDescriptor,
     call_id: str | None,
     default_unspecified_tool_output_tier: SourceTrustTier = SourceTrustTier.UNKNOWN_EXTERNAL,
+    claimed_tier: SourceTrustTier | None = None,
+    claimed_reason: str | None = None,
 ) -> TaintSource | None:
-    """Derive result taint from static tool output metadata."""
+    """Derive result taint from the tool's metadata and, if allowed, its own grade.
+
+    ``claimed_tier`` is the grade a result gave itself. It counts only for a
+    tool declaring ``cleanest_result_tier``, and never grades cleaner than that.
+    """
+    if claimed_tier is not None:
+        floor = descriptor.cleanest_result_tier
+        if floor is not None:
+            return TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=call_id or descriptor.name,
+                tier=max(claimed_tier, floor),
+                labels=frozenset(),
+                reason=claimed_reason
+                or f"Tool '{descriptor.name}' graded its own result.",
+            )
+        logger.error(
+            "Tool '%s' graded its own result but declares no cleanest_result_tier; "
+            "grading it by its output tags instead.",
+            descriptor.name,
+        )
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
     # Conflicting output tags resolve to the least trusted one; output_trusted
     # only applies when no other output tag is present.

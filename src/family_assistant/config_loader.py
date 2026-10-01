@@ -132,6 +132,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("HOMEASSISTANT_URL", "plugins.home_assistant.default.api_url"),
     EnvVarMapping("HOMEASSISTANT_API_KEY", "plugins.home_assistant.default.token"),
     EnvVarMapping("REOLINK_CAMERAS", "plugins.reolink.default.cameras", JsonObject),
+    EnvVarMapping("TRINO_URL", "plugins.trino.default.url"),
+    EnvVarMapping("TRINO_USER", "plugins.trino.default.user"),
+    EnvVarMapping("TRINO_PASSWORD", "plugins.trino.default.password"),
     EnvVarMapping(
         "MCP_INITIALIZATION_TIMEOUT_SECONDS",
         "default_profile_settings.tools_config.mcp_initialization_timeout_seconds",

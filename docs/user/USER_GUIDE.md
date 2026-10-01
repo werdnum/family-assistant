@@ -19,23 +19,24 @@ just the part you need.
 
 ## Everyday features
 
-| Guide                                                | Covers                                                                   |
-| ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| [household-tasks.md](household-tasks.md)             | Capturing and managing household tasks in Tuit                           |
-| [notes-and-skills.md](notes-and-skills.md)           | Saving facts as notes, and teaching the assistant reusable skills        |
-| [memory.md](memory.md)                               | What it remembers about your household on its own, and how to forget     |
-| [calendar.md](calendar.md)                           | Adding, finding, changing, and deleting calendar events, incl. Google    |
-| [scheduling.md](scheduling.md)                       | Reminders, follow-ups, one-off callbacks, and recurring schedules        |
-| [documents-and-search.md](documents-and-search.md)   | Indexing files and web pages, and searching everything you've stored     |
-| [attachments.md](attachments.md)                     | Sending photos and files, and moving them between tools                  |
-| [email.md](email.md)                                 | Emailing or forwarding mail to the assistant, and what it may do with it |
-| [google-workspace.md](google-workspace.md)           | Connecting your Google account for Gmail, Drive and Calendar access      |
-| [smart-home.md](smart-home.md)                       | Controlling Home Assistant devices, and who's home                       |
-| [automations.md](automations.md)                     | Automations that react to events or run on a schedule                    |
-| [research-and-browsing.md](research-and-browsing.md) | Web search, page summaries, browsing sites, and deep research            |
-| [council.md](council.md)                             | Putting a hard question to a council of several models                   |
-| [media.md](media.md)                                 | Analysing photos, and generating or editing images and video             |
-| [shopping.md](shopping.md)                           | Finding products online and getting a checkout link                      |
+| Guide                                                | Covers                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| [household-tasks.md](household-tasks.md)             | Capturing and managing household tasks in Tuit                            |
+| [notes-and-skills.md](notes-and-skills.md)           | Saving facts as notes, and teaching the assistant reusable skills         |
+| [memory.md](memory.md)                               | What it remembers about your household on its own, and how to forget      |
+| [calendar.md](calendar.md)                           | Adding, finding, changing, and deleting calendar events, incl. Google     |
+| [scheduling.md](scheduling.md)                       | Reminders, follow-ups, one-off callbacks, and recurring schedules         |
+| [documents-and-search.md](documents-and-search.md)   | Indexing files and web pages, and searching everything you've stored      |
+| [attachments.md](attachments.md)                     | Sending photos and files, and moving them between tools                   |
+| [email.md](email.md)                                 | Emailing or forwarding mail to the assistant, and what it may do with it  |
+| [google-workspace.md](google-workspace.md)           | Connecting your Google account for Gmail, Drive and Calendar access       |
+| [smart-home.md](smart-home.md)                       | Controlling Home Assistant devices, and who's home                        |
+| [automations.md](automations.md)                     | Automations that react to events or run on a schedule                     |
+| [research-and-browsing.md](research-and-browsing.md) | Web search, page summaries, browsing sites, and deep research             |
+| [council.md](council.md)                             | Putting a hard question to a council of several models                    |
+| [media.md](media.md)                                 | Analysing photos, and generating or editing images and video              |
+| [shopping.md](shopping.md)                           | Finding products online and getting a checkout link                       |
+| [household-data.md](household-data.md)               | Asking questions about health, spending and home history in the data lake |
 
 ## Deeper dives
 

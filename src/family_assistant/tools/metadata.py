@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 
+    from family_assistant.security.taint import SourceTrustTier
     from family_assistant.tools.confirmation_format import ConfirmationRenderer
     from family_assistant.tools.types import ToolDefinition
 
@@ -77,6 +78,9 @@ class LocalToolMetadata:
     summary: str | None = None
     destination_argument_paths: tuple[str, ...] = ()
     deferred_confirmation_eligible: bool = False
+    # Lets the tool grade each result itself (``ToolResult.provenance``), never
+    # cleaner than this. Without it the static output tag grades every result.
+    cleanest_result_tier: SourceTrustTier | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +127,7 @@ class ToolDescriptor:
     summary: str | None = None
     destination_argument_paths: tuple[str, ...] = ()
     deferred_confirmation_eligible: bool = False
+    cleanest_result_tier: SourceTrustTier | None = None
 
 
 def normalize_tool_tags(
@@ -145,6 +150,7 @@ def make_local_tool_metadata(
     summary: str | None = None,
     destination_argument_paths: tuple[str, ...] = (),
     deferred_confirmation_eligible: bool = False,
+    cleanest_result_tier: SourceTrustTier | None = None,
 ) -> LocalToolMetadata:
     """Create validated local tool metadata."""
     return LocalToolMetadata(
@@ -152,6 +158,7 @@ def make_local_tool_metadata(
         summary=summary,
         destination_argument_paths=destination_argument_paths,
         deferred_confirmation_eligible=deferred_confirmation_eligible,
+        cleanest_result_tier=cleanest_result_tier,
     )
 
 
@@ -187,6 +194,7 @@ def build_tool_descriptor(
     summary: str | None = None,
     destination_argument_paths: tuple[str, ...] = (),
     deferred_confirmation_eligible: bool = False,
+    cleanest_result_tier: SourceTrustTier | None = None,
 ) -> ToolDescriptor:
     """Build a tool descriptor from a definition and tag set."""
     return ToolDescriptor(
@@ -198,6 +206,7 @@ def build_tool_descriptor(
         summary=summary or extract_tool_summary(definition),
         destination_argument_paths=destination_argument_paths,
         deferred_confirmation_eligible=deferred_confirmation_eligible,
+        cleanest_result_tier=cleanest_result_tier,
     )
 
 
@@ -283,6 +292,7 @@ def build_local_tool_descriptors(
             deferred_confirmation_eligible=(
                 registration.metadata.deferred_confirmation_eligible
             ),
+            cleanest_result_tier=registration.metadata.cleanest_result_tier,
         )
         for registration in registrations
     ]
@@ -305,6 +315,9 @@ def build_local_tool_descriptors_from_definitions(
                 metadata_by_name[
                     get_tool_name(definition)
                 ].deferred_confirmation_eligible
+            ),
+            cleanest_result_tier=(
+                metadata_by_name[get_tool_name(definition)].cleanest_result_tier
             ),
         )
         for definition in definitions
