@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class TrinoConfig(BaseModel):
     """Where Trino is, who to query it as, and how trustworthy each table is."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_by_name=True)
 
     # Optional here because deployments usually supply them through the
     # TRINO_URL, TRINO_USER and TRINO_PASSWORD environment variables, which are
