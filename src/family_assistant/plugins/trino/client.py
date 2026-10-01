@@ -106,9 +106,15 @@ class TrinoClient:
 
     async def _cancel(self, next_uri: str) -> None:
         try:
-            await self._client.delete(next_uri)
+            response = await self._client.delete(next_uri)
         except httpx.HTTPError:
             logger.warning("Could not cancel a truncated Trino query", exc_info=True)
+            return
+        if response.is_error:
+            logger.warning(
+                "Could not cancel a truncated Trino query: HTTP %s",
+                response.status_code,
+            )
 
     async def close(self) -> None:
         await self._client.aclose()
