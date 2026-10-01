@@ -1,76 +1,48 @@
 """Build the deployment-effective local tool registry.
 
 The source registry is customized at startup before it is exposed: deployment
-configuration changes some schemas, and unavailable OAuth-backed tools are
-removed. Consumers that describe the running tool surface must use the same
-construction path or they can silently accept calls the deployment could not
-have made.
+configuration changes some schemas, plugins serve the tools their configuration
+supports, and unavailable OAuth-backed tools are removed. Consumers that
+describe the running tool surface must use the same construction path or they
+can silently accept calls the deployment could not have made.
 """
 
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
+from family_assistant.plugins.registry import PLUGINS
 from family_assistant.services.oauth_integration_state import (
     filter_oauth_tool_registrations,
 )
-from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS,
-    LOCAL_TOOL_METADATA_BY_NAME,
-    TOOLS_DEFINITION,
-    _scan_user_docs,
-    build_local_tool_registrations,
-)
-from family_assistant.tools.worker import WORKER_TOOLS_DEFINITION
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS, _scan_user_docs
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.services.oauth_integration_state import OAuthIntegrationState
-    from family_assistant.tools import ToolDefinition, ToolRegistration
+    from family_assistant.tools import ToolRegistration
 
 logger = logging.getLogger(__name__)
 
-WORKER_TOOL_NAMES = frozenset(
-    definition["function"]["name"] for definition in WORKER_TOOLS_DEFINITION
-)
+_DOCUMENTATION_TOOL_NAME = "get_user_documentation_content"
 
 
-def build_effective_local_tool_definitions(config: AppConfig) -> list[ToolDefinition]:
-    """Return local definitions customized for one deployment."""
+def _with_documentation_inventory(registration: ToolRegistration) -> ToolRegistration:
+    """The documentation tool, with the files it can read listed."""
     available_doc_files = _scan_user_docs()
     formatted_doc_list = ", ".join(available_doc_files) or "None"
-    definitions = copy.deepcopy(TOOLS_DEFINITION)
-
-    for definition in definitions:
-        function = definition.get("function", {})
-        if function.get("name") != "get_user_documentation_content":
-            continue
-        try:
-            function["description"] = function["description"].format(
-                available_doc_files=formatted_doc_list
-            )
-        except KeyError as exc:
-            logger.error(
-                "Failed to format doc tool description during tool setup: %s", exc
-            )
-        break
-
-    available_agents = config.ai_worker_config.available_agents
-    for definition in definitions:
-        function = definition.get("function", {})
-        if function.get("name") != "spawn_worker":
-            continue
-        agent_parameter = (
-            function.get("parameters", {}).get("properties", {}).get("agent")
+    definition = copy.deepcopy(registration.definition)
+    function = definition["function"]
+    try:
+        function["description"] = function["description"].format(
+            available_doc_files=formatted_doc_list
         )
-        if agent_parameter:
-            agent_parameter["enum"] = available_agents
-            logger.debug("Updated spawn_worker agent enum to %s", available_agents)
-        break
-
-    return definitions
+    except KeyError as exc:
+        logger.error("Failed to format doc tool description during tool setup: %s", exc)
+    return dataclasses.replace(registration, definition=definition)
 
 
 def build_effective_local_tool_registrations(
@@ -79,19 +51,25 @@ def build_effective_local_tool_registrations(
 ) -> list[ToolRegistration]:
     """Return the root local registrations the deployment actually serves.
 
-    The AI worker tools are dropped when ``ai_worker_config`` is disabled:
-    there is no backend to run, cancel or report on a worker, so offering
-    them only invites calls that cannot succeed.
+    Each plugin serves the tools its configured instances support (see
+    ``Plugin.served_tools``), in the catalogue's order.
     """
-    registrations = build_local_tool_registrations(
-        definitions=build_effective_local_tool_definitions(config),
-        implementations=AVAILABLE_FUNCTIONS,
-        metadata_by_name=LOCAL_TOOL_METADATA_BY_NAME,
-    )
-    if not config.ai_worker_config.enabled:
-        registrations = [
-            registration
-            for registration in registrations
-            if registration.name not in WORKER_TOOL_NAMES
-        ]
+    plugin_tool_names = {
+        registration.name for plugin in PLUGINS for registration in plugin.tools
+    }
+    served_plugin_tools = {
+        registration.name: registration
+        for plugin in PLUGINS
+        for registration in plugin.served_tools(config.plugins.instances(plugin.id))
+    }
+    registrations: list[ToolRegistration] = []
+    for registration in LOCAL_TOOL_REGISTRATIONS:
+        if registration.name in plugin_tool_names:
+            served = served_plugin_tools.get(registration.name)
+            if served is not None:
+                registrations.append(served)
+        elif registration.name == _DOCUMENTATION_TOOL_NAME:
+            registrations.append(_with_documentation_inventory(registration))
+        else:
+            registrations.append(registration)
     return filter_oauth_tool_registrations(registrations, google_integration_state)

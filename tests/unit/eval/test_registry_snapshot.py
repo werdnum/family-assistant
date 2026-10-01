@@ -379,7 +379,7 @@ def test_local_only_dump_uses_the_deployment_effective_registry(
     script = _load_dump_registry_script()
     overlay = tmp_path / "deployment.yaml"
     overlay.write_text(
-        "ai_worker_config:\n  enabled: true\n  available_agents: [codex]\n",
+        "plugins:\n  ai_workers:\n    default:\n      available_agents: [codex]\n",
         encoding="utf-8",
     )
     snapshot_path = tmp_path / "registry.json"

@@ -1,7 +1,7 @@
-"""Workspace path utilities for AI worker tools.
+"""Paths in the shared workspace.
 
-This module provides shared utilities for validating and resolving
-workspace-relative paths, used by both workspace_files and worker tools.
+Validates and resolves workspace-relative paths for the workspace file tools
+and the AI worker plugin.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 def get_workspace_root(exec_context: ToolExecutionContext) -> Path:
-    """Get the workspace root path from configuration.
+    """Get the shared workspace root from configuration.
 
     Args:
         exec_context: The tool execution context
@@ -29,7 +29,7 @@ def get_workspace_root(exec_context: ToolExecutionContext) -> Path:
         raise ValueError("processing_service not available in exec_context")
 
     app_config = exec_context.processing_service.app_config
-    return Path(app_config.ai_worker_config.workspace_mount_path)
+    return Path(app_config.shared_workspace_path)
 
 
 def validate_workspace_path(relative_path: str, workspace_root: Path) -> Path:

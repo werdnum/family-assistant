@@ -277,13 +277,6 @@ from family_assistant.tools.video_generation import (
     VIDEO_GENERATION_TOOLS_DEFINITION,
     generate_video_tool,
 )
-from family_assistant.tools.worker import (
-    WORKER_TOOLS_DEFINITION,
-    cancel_worker_task_tool,
-    list_worker_tasks_tool,
-    read_task_result_tool,
-    spawn_worker_tool,
-)
 from family_assistant.tools.workspace_files import (
     WORKSPACE_TOOLS_DEFINITION,
     workspace_delete_tool,
@@ -343,8 +336,6 @@ __all__ = [
     # Confirmation renderers
     "TOOL_CONFIRMATION_RENDERERS",
     "VIDEO_GENERATION_TOOLS_DEFINITION",
-    # Worker tools
-    "WORKER_TOOLS_DEFINITION",
     # Workspace file tools
     "WORKSPACE_TOOLS_DEFINITION",
     "CompositeToolsProvider",
@@ -398,7 +389,6 @@ __all__ = [
     "browser_wait_tool",
     "build_local_tool_registrations",
     "cancel_pending_callback_tool",
-    "cancel_worker_task_tool",
     "collect_system_prompt_addition",
     "computer_use_click",
     "computer_use_double_click",
@@ -459,7 +449,6 @@ __all__ = [
     "list_notes_tool",
     "list_pending_callbacks_tool",
     "list_scripts_tool",
-    "list_worker_tasks_tool",
     "mock_camera_snapshot_tool",
     "modify_pending_callback_tool",
     "mqtt_publish_tool",
@@ -469,7 +458,6 @@ __all__ = [
     "read_error_logs",
     "read_frontend_telemetry",
     "read_source_file",
-    "read_task_result_tool",
     "reconnect_mcp_server",
     "reindex_email_tool",
     "render_delete_calendar_event_confirmation",
@@ -487,7 +475,6 @@ __all__ = [
     "search_source_code",
     "send_message_to_user_tool",
     "send_to_my_chat_tool",
-    "spawn_worker_tool",
     "storage",
     "test_event_listener_tool",
     "test_script_with_simulated_tools_tool",
@@ -565,7 +552,6 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + BROWSER_AUTOFILL_TOOLS_DEFINITION
     + AUTHENTICATED_SITE_TOOLS_DEFINITION
     + WORKSPACE_TOOLS_DEFINITION
-    + WORKER_TOOLS_DEFINITION
     + ENGINEERING_TOOLS_DEFINITION
     + MQTT_TOOLS_DEFINITION
     + SHOPPING_TOOLS_DEFINITION
@@ -683,11 +669,6 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "workspace_mkdir": workspace_mkdir_tool,
     "workspace_export_notes": workspace_export_notes_tool,
     "workspace_import_note": workspace_import_note_tool,
-    # Worker tools
-    "spawn_worker": spawn_worker_tool,
-    "read_task_result": read_task_result_tool,
-    "list_worker_tasks": list_worker_tasks_tool,
-    "cancel_worker_task": cancel_worker_task_tool,
     # Engineering tools
     "read_source_file": read_source_file,
     "search_source_code": search_source_code,
@@ -1372,32 +1353,6 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.FILE_SYSTEM,
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,
-    ),
-    "spawn_worker": _metadata(
-        ToolTag.CODE_EXECUTION,
-        ToolTag.STATE_CHANGING,
-        ToolTag.WORKER,
-        ToolTag.OUTPUT_UNSPECIFIED,
-    ),
-    "read_task_result": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.WORKER,
-        ToolTag.OUTPUT_UNSPECIFIED,
-    ),
-    "cancel_worker_task": _metadata(
-        ToolTag.DESTRUCTIVE,
-        ToolTag.STATE_CHANGING,
-        ToolTag.WORKER,
-        ToolTag.OUTPUT_TRUSTED,
-    ),
-    "list_worker_tasks": _metadata(
-        ToolTag.READ_ONLY,
-        ToolTag.SENSITIVE_DATA,
-        ToolTag.WORKER,
-        # OUTPUT_UNTRUSTED: returns stored task descriptions and results, which are
-        # authored by whoever's content shaped the task.
-        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_source_file": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,

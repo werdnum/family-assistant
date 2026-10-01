@@ -739,9 +739,7 @@ async def _import(
     context.processing_service = cast(
         "ProcessingService",
         SimpleNamespace(
-            app_config=SimpleNamespace(
-                ai_worker_config=SimpleNamespace(workspace_mount_path=str(tmp_path))
-            ),
+            app_config=SimpleNamespace(shared_workspace_path=str(tmp_path)),
             tools_provider=None,
         ),
     )
