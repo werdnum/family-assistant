@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import cloudcoil.models.kubernetes.core.v1 as k8s
 import pytest
 
-from family_assistant.config_models import KubernetesBackendConfig
-from family_assistant.services.backends.kubernetes import KubernetesBackend
-from family_assistant.services.worker_backend import WorkerStatus
+from family_assistant.plugins.ai_workers.backend import WorkerStatus
+from family_assistant.plugins.ai_workers.backends.kubernetes import KubernetesBackend
+from family_assistant.plugins.ai_workers.config import KubernetesBackendConfig
 
 
 @pytest.fixture
@@ -76,11 +76,11 @@ async def _spawn_backend_task(
 
     with (
         patch(
-            "family_assistant.services.backends.kubernetes.ApiClient",
+            "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
             return_value=mock_client,
         ),
         patch(
-            "family_assistant.services.backends.kubernetes.BatchV1Api",
+            "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
             return_value=mock_batch_api,
         ),
     ):
@@ -106,11 +106,11 @@ class TestKubernetesBackendSpawnTask:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -148,11 +148,11 @@ class TestKubernetesBackendSpawnTask:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
             pytest.raises(RuntimeError, match="Failed to create Kubernetes Job"),
@@ -731,11 +731,11 @@ class TestKubernetesBackendGetTaskStatus:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -762,11 +762,11 @@ class TestKubernetesBackendGetTaskStatus:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -794,11 +794,11 @@ class TestKubernetesBackendGetTaskStatus:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -831,11 +831,11 @@ class TestKubernetesBackendGetTaskStatus:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -862,11 +862,11 @@ class TestKubernetesBackendCancelTask:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -900,11 +900,11 @@ class TestKubernetesBackendCancelTask:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.BatchV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.BatchV1Api",
                 return_value=mock_batch_api,
             ),
         ):
@@ -975,11 +975,11 @@ class TestKubernetesBackendGetJobLogs:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.CoreV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.CoreV1Api",
                 return_value=mock_core_api,
             ),
         ):
@@ -1005,11 +1005,11 @@ class TestKubernetesBackendGetJobLogs:
 
         with (
             patch(
-                "family_assistant.services.backends.kubernetes.ApiClient",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.ApiClient",
                 return_value=mock_client,
             ),
             patch(
-                "family_assistant.services.backends.kubernetes.CoreV1Api",
+                "family_assistant.plugins.ai_workers.backends.kubernetes.CoreV1Api",
                 return_value=mock_core_api,
             ),
         ):

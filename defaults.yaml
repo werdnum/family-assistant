@@ -2861,31 +2861,6 @@ attachment_config:
   # Storage path for chat attachments
   # Can be overridden by chat_attachment_storage_path for backward compatibility
   storage_path: "/tmp/chat_attachments"
-# AI Worker Sandbox configuration
-# Enables spawning isolated AI coding agents for complex computing tasks
-ai_worker_config:
-  enabled: false
-  backend_type: "kubernetes" # "kubernetes", "docker", "mock"
-  workspace_mount_path: "/workspace"
-  default_timeout_minutes: 30
-  max_timeout_minutes: 120
-  max_concurrent_workers: 3
-  task_retention_hours: 48
-  resources:
-    memory_request: "512Mi"
-    memory_limit: "2Gi"
-    cpu_request: "500m"
-    cpu_limit: "2000m"
-  kubernetes:
-    namespace: "ml-bot"
-    ai_coder_image: "ghcr.io/werdnum/ai-coding-base:latest"
-    service_account: "ai-worker"
-    runtime_class: "gvisor"
-    job_ttl_seconds: 3600
-    enable_rootless_podman: false
-  docker:
-    image: "ghcr.io/werdnum/ai-coding-base:latest"
-    network: "bridge"
 # Optional integration with an external browser-server (handoff service).
 # When enabled, the semantic DOM browser tools run against a remote browser
 # session that can be transferred to a human via noVNC. Disabled by default;

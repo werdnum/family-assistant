@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.config_loader import load_config
+from family_assistant.plugins.ai_workers.config import AIWorkersConfig
+from family_assistant.plugins.ai_workers.plugin import AI_WORKERS_PLUGIN
 from family_assistant.services.effective_tool_registry import (
-    WORKER_TOOL_NAMES,
-    build_effective_local_tool_definitions,
     build_effective_local_tool_registrations,
 )
 from family_assistant.services.oauth_integration_state import OAuthIntegrationState
@@ -24,9 +24,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
-    from family_assistant.tools import ToolDefinition
+    from family_assistant.tools import ToolDefinition, ToolRegistration
 
 pytestmark = pytest.mark.no_db
+
+WORKER_TOOL_NAMES = frozenset(
+    registration.name for registration in AI_WORKERS_PLUGIN.tools
+)
 
 
 def _load_defaults(tmp_path: Path) -> AppConfig:
@@ -44,6 +48,15 @@ def _definition_by_name(definitions: list[ToolDefinition], name: str) -> ToolDef
     )
 
 
+def _served_definitions(
+    config: AppConfig, google_state: OAuthIntegrationState | None = None
+) -> list[ToolDefinition]:
+    registrations: list[ToolRegistration] = build_effective_local_tool_registrations(
+        config, google_state or _google_state(frozenset())
+    )
+    return [registration.definition for registration in registrations]
+
+
 def _google_state(enabled_tool_names: frozenset[str]) -> OAuthIntegrationState:
     return OAuthIntegrationState(
         provider="google",
@@ -59,9 +72,9 @@ def test_deployment_config_customizes_worker_schema_without_mutating_source(
     tmp_path: Path,
 ) -> None:
     config = _load_defaults(tmp_path)
-    config.ai_worker_config.available_agents = ["codex"]
+    config.plugins.ai_workers = {"default": AIWorkersConfig(available_agents=["codex"])}
 
-    effective = build_effective_local_tool_definitions(config)
+    effective = _served_definitions(config)
     effective_worker = _definition_by_name(effective, "spawn_worker")
     source_worker = _definition_by_name(list(TOOLS_DEFINITION), "spawn_worker")
 
@@ -83,7 +96,7 @@ def test_deployment_document_inventory_customizes_documentation_schema(
     (docs_dir / "smart-home.md").write_text("Smart home guide")
     monkeypatch.chdir(tmp_path)
 
-    definitions = build_effective_local_tool_definitions(config)
+    definitions = _served_definitions(config)
     documentation_tool = _definition_by_name(
         definitions, "get_user_documentation_content"
     )
@@ -115,9 +128,9 @@ def test_disabled_google_integration_removes_every_governed_tool(
     )
 
 
-def test_disabled_ai_worker_removes_every_worker_tool(tmp_path: Path) -> None:
+def test_unconfigured_ai_workers_serve_no_worker_tool(tmp_path: Path) -> None:
     config = _load_defaults(tmp_path)
-    config.ai_worker_config.enabled = False
+    config.plugins.ai_workers = {}
 
     registrations = build_effective_local_tool_registrations(
         config, _google_state(frozenset())
@@ -128,9 +141,9 @@ def test_disabled_ai_worker_removes_every_worker_tool(tmp_path: Path) -> None:
     )
 
 
-def test_enabled_ai_worker_serves_every_worker_tool(tmp_path: Path) -> None:
+def test_configured_ai_workers_serve_every_worker_tool(tmp_path: Path) -> None:
     config = _load_defaults(tmp_path)
-    config.ai_worker_config.enabled = True
+    config.plugins.ai_workers = {"default": AIWorkersConfig()}
 
     registrations = build_effective_local_tool_registrations(
         config, _google_state(frozenset())

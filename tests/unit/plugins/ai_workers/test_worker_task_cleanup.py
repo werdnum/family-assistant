@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import update
 
+from family_assistant.plugins.ai_workers.tasks import handle_worker_task_cleanup
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
-from family_assistant.task_worker import handle_worker_task_cleanup
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -32,7 +32,6 @@ class MinimalContext:
     conversation_id: str
     user_name: str
     db_context: Database
-    processing_service: None = None  # Not needed when workspace_path is in payload
 
 
 @pytest.fixture
@@ -181,3 +180,21 @@ class TestWorkerTaskCleanup:
 
         # Should not raise
         await handle_worker_task_cleanup(exec_context, payload)  # type: ignore[arg-type]  # MinimalContext duck-types ToolExecutionContext
+
+    @pytest.mark.asyncio
+    async def test_cleanup_leaves_the_workspace_alone_unless_named(
+        self, exec_context: MinimalContext, tmp_path: Path
+    ) -> None:
+        """Only a payload the plugin seeded names the workspace to sweep.
+
+        A cleanup task queued before the plugin was removed still runs, and
+        must not sweep a shared workspace that no worker writes to any more.
+        """
+        old_task_dir = tmp_path / "tasks" / "not-a-worker"
+        old_task_dir.mkdir(parents=True)
+        old_time = (datetime.now(UTC) - timedelta(hours=96)).timestamp()
+        os.utime(old_task_dir, (old_time, old_time))
+
+        await handle_worker_task_cleanup(exec_context, {"retention_hours": 24})  # type: ignore[arg-type]  # MinimalContext duck-types ToolExecutionContext
+
+        assert old_task_dir.exists()

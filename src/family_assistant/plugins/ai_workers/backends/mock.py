@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from family_assistant.services.worker_backend import WorkerStatus, WorkerTaskResult
+from family_assistant.plugins.ai_workers.backend import WorkerStatus, WorkerTaskResult
 
 logger = logging.getLogger(__name__)
 

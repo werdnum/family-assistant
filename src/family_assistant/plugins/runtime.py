@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 
     from family_assistant.context_providers import ContextProvider
     from family_assistant.events.sources import EventSource
-    from family_assistant.plugins.base import PluginInstance, PluginProfileContext
+    from family_assistant.plugins.base import (
+        PluginInstance,
+        PluginProfileContext,
+        PluginStartupContext,
+    )
     from family_assistant.plugins.config import PluginsConfig
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,18 @@ class PluginRuntime:
                     raise ValueError(msg)
                 sources[source.source_id] = source
         return sources
+
+    async def on_startup(self, context: PluginStartupContext) -> None:
+        """Run every instance's startup hook, logging any that fails."""
+        for (plugin_id, instance_name), instance in self._instances.items():
+            try:
+                await instance.on_startup(context)
+            except Exception:
+                logger.exception(
+                    "Startup hook of plugin %s instance %r failed",
+                    plugin_id,
+                    instance_name,
+                )
 
     async def close(self) -> None:
         """Close every instance."""

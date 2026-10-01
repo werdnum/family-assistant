@@ -10,8 +10,9 @@ rule. Registration lives in `src/family_assistant/tools/__init__.py`; runtime ac
 unless `tools_policy` also allows it, so both are required.
 
 A tool that belongs to an integration packaged as a plugin (`src/family_assistant/plugins/`, e.g.
-Home Assistant, Reolink cameras) is declared on the plugin as a `ToolRegistration` instead, and
-reaches its client through `exec_context.plugins`. See
+Home Assistant, Reolink cameras, AI workers) is declared on the plugin as a `ToolRegistration`
+instead, and reaches its client through `exec_context.plugins`. A plugin tool's confirmation prompt
+goes on that registration too (`ToolConfirmation`), not in `confirmation.py`. See
 [docs/design/plugin-architecture.md](../../../docs/design/plugin-architecture.md).
 
 ### Step 1: Create the Tool Implementation

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from family_assistant import calendar_integration
 from family_assistant.calendar_integration import CalendarSource
@@ -18,16 +18,24 @@ from family_assistant.google_calendar import (
     google_event_to_calendar_event,
     is_google_source_id,
 )
+from family_assistant.plugins.registry import plugin_tool_registrations
 from family_assistant.services.api_backend import ApiBackendError
 from family_assistant.services.google_api import GoogleApiError
 from family_assistant.services.oauth_credentials import OAuthCredentialError
 from family_assistant.tools.calendar import resolve_target_caldav_url
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
+from family_assistant.tools.confirmation_format import (
+    ConfirmationRenderer,
+    confirmation_field,
+    confirmation_value,
+    markdown_code_block,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from zoneinfo import ZoneInfo
 
+    from family_assistant.tools.metadata import ToolConfirmation
     from family_assistant.tools.types import (
         CalendarEvent,
         ToolArgumentsView,
@@ -35,54 +43,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-
-def _markdown_code_block(text: str) -> str:
-    """Render text as inert markdown using a fence longer than any content fence."""
-    fence = "```"
-    while fence in text:
-        fence += "`"
-    return f"{fence}\n{text}\n{fence}"
-
-
-def _confirmation_value(value: object) -> str:
-    """Render a value for a confirmation prompt.
-
-    Never truncates: an approver must see the whole payload they are approving,
-    and whether it can be displayed is the delivering interface's call, not a
-    renderer's (see docs/design/confirmation-prompt-capacity.md).
-    """
-    return "" if value is None else str(value)
-
-
-def _confirmation_field(label: str, value: object) -> str:
-    """Format a single confirmation field."""
-    return f"- {label}:\n{_markdown_code_block(_confirmation_value(value))}"
-
-
-class ConfirmationRenderer(Protocol):
-    """Protocol for confirmation prompt renderers.
-
-    Confirmation renderers are responsible for fetching any necessary data
-    and formatting a human-readable confirmation prompt. They receive the
-    full ToolExecutionContext to access configuration, timezone, etc.
-    """
-
-    async def __call__(
-        self,
-        args: ToolArgumentsView,
-        context: ToolExecutionContext,
-    ) -> str:
-        """Render a confirmation prompt from tool arguments.
-
-        Args:
-            args: Tool arguments (e.g., uid, calendar_url for calendar tools)
-            context: Execution context with timezone, calendar config, etc.
-
-        Returns:
-            Formatted confirmation prompt string
-        """
-        ...
 
 
 def append_review_reason_to_confirmation(
@@ -210,7 +170,7 @@ async def render_delete_calendar_event_confirmation(
 
     return (
         "Please confirm you want to *delete* the event:\n"
-        f"Event:\n{_markdown_code_block(event_desc)}"
+        f"Event:\n{markdown_code_block(event_desc)}"
     )
 
 
@@ -239,32 +199,32 @@ async def render_modify_calendar_event_confirmation(
     if args.get("new_summary") is not None:
         changes.append(
             "- Set summary to:\n"
-            f"{_markdown_code_block(_confirmation_value(args['new_summary']))}"
+            f"{markdown_code_block(confirmation_value(args['new_summary']))}"
         )
     if args.get("new_start_time") is not None:
         changes.append(
             "- Set start time to:\n"
-            f"{_markdown_code_block(_confirmation_value(args['new_start_time']))}"
+            f"{markdown_code_block(confirmation_value(args['new_start_time']))}"
         )
     if args.get("new_end_time") is not None:
         changes.append(
             "- Set end time to:\n"
-            f"{_markdown_code_block(_confirmation_value(args['new_end_time']))}"
+            f"{markdown_code_block(confirmation_value(args['new_end_time']))}"
         )
     if args.get("new_description") is not None:
         changes.append(
             "- Set description to:\n"
-            f"{_markdown_code_block(_confirmation_value(args['new_description']))}"
+            f"{markdown_code_block(confirmation_value(args['new_description']))}"
         )
     if args.get("new_all_day") is not None:
         changes.append(
             "- Set all-day status to:\n"
-            f"{_markdown_code_block(_confirmation_value(args['new_all_day']))}"
+            f"{markdown_code_block(confirmation_value(args['new_all_day']))}"
         )
 
     return (
         f"Please confirm you want to *modify* the event:\n"
-        f"Event:\n{_markdown_code_block(event_desc)}\n"
+        f"Event:\n{markdown_code_block(event_desc)}\n"
         f"With the following changes:\n" + "\n".join(changes)
     )
 
@@ -275,7 +235,7 @@ async def render_add_calendar_event_confirmation(
 ) -> str:
     """Render a confirmation prompt for creating a calendar event."""
     fields = [
-        _confirmation_field("Title", args.get("summary")),
+        confirmation_field("Title", args.get("summary")),
     ]
 
     calendar_config = context.calendar_config
@@ -311,19 +271,19 @@ async def render_add_calendar_event_confirmation(
         calendar_label = calendar_url
 
     if calendar_label:
-        fields.append(_confirmation_field("Calendar", calendar_label))
+        fields.append(confirmation_field("Calendar", calendar_label))
 
     fields.extend([
-        _confirmation_field("Start", args.get("start_time")),
-        _confirmation_field("End", args.get("end_time")),
-        _confirmation_field("All day", args.get("all_day", False)),
+        confirmation_field("Start", args.get("start_time")),
+        confirmation_field("End", args.get("end_time")),
+        confirmation_field("All day", args.get("all_day", False)),
     ])
     if args.get("location"):
-        fields.append(_confirmation_field("Location", args.get("location")))
+        fields.append(confirmation_field("Location", args.get("location")))
     if args.get("recurrence_rule"):
-        fields.append(_confirmation_field("Recurrence", args.get("recurrence_rule")))
+        fields.append(confirmation_field("Recurrence", args.get("recurrence_rule")))
     if args.get("description"):
-        fields.append(_confirmation_field("Description", args.get("description")))
+        fields.append(confirmation_field("Description", args.get("description")))
     return "Please confirm you want to *create* this calendar event:\n" + "\n".join(
         fields
     )
@@ -340,20 +300,20 @@ async def render_add_or_update_note_confirmation(
     visibility differs from what the runtime will actually persist.
     """
     fields = [
-        _confirmation_field("Title", args.get("title")),
-        _confirmation_field("Append", args.get("append", False)),
-        _confirmation_field("Include in prompt", args.get("include_in_prompt", False)),
-        _confirmation_field("Content", args.get("content")),
+        confirmation_field("Title", args.get("title")),
+        confirmation_field("Append", args.get("append", False)),
+        confirmation_field("Include in prompt", args.get("include_in_prompt", False)),
+        confirmation_field("Content", args.get("content")),
     ]
 
     requested_raw = args.get("visibility_labels")
     requested_labels: list[str] | None = None
     if isinstance(requested_raw, list):
         requested_labels = [str(label) for label in requested_raw]
-        fields.append(_confirmation_field("Requested visibility labels", requested_raw))
+        fields.append(confirmation_field("Requested visibility labels", requested_raw))
 
     fields.append(
-        _confirmation_field(
+        confirmation_field(
             "Effective visibility labels",
             await _effective_note_labels(args, context, requested_labels),
         )
@@ -413,14 +373,14 @@ async def render_schedule_reminder_confirmation(
     """Render a confirmation prompt for scheduling a reminder."""
     _ = context
     fields = [
-        _confirmation_field("Reminder time", args.get("reminder_time")),
-        _confirmation_field("Message", args.get("message")),
+        confirmation_field("Reminder time", args.get("reminder_time")),
+        confirmation_field("Message", args.get("message")),
     ]
     if args.get("follow_up"):
         fields.extend([
-            _confirmation_field("Follow up", args.get("follow_up")),
-            _confirmation_field("Follow-up interval", args.get("follow_up_interval")),
-            _confirmation_field("Max follow-ups", args.get("max_follow_ups")),
+            confirmation_field("Follow up", args.get("follow_up")),
+            confirmation_field("Follow-up interval", args.get("follow_up_interval")),
+            confirmation_field("Max follow-ups", args.get("max_follow_ups")),
         ])
     return "Please confirm you want to *schedule* this reminder:\n" + "\n".join(fields)
 
@@ -432,8 +392,8 @@ async def render_schedule_future_callback_confirmation(
     """Render a confirmation prompt for scheduling a future assistant callback."""
     _ = context
     fields = [
-        _confirmation_field("Callback time", args.get("callback_time")),
-        _confirmation_field("Context", args.get("context")),
+        confirmation_field("Callback time", args.get("callback_time")),
+        confirmation_field("Context", args.get("context")),
     ]
     return (
         "Please confirm you want to *schedule* this future assistant callback:\n"
@@ -447,11 +407,11 @@ async def render_modify_pending_callback_confirmation(
 ) -> str:
     """Render a confirmation prompt for modifying a pending callback."""
     _ = context
-    fields = [_confirmation_field("Task ID", args.get("task_id"))]
+    fields = [confirmation_field("Task ID", args.get("task_id"))]
     if args.get("new_callback_time") is not None:
-        fields.append(_confirmation_field("New time", args.get("new_callback_time")))
+        fields.append(confirmation_field("New time", args.get("new_callback_time")))
     if args.get("new_context") is not None:
-        fields.append(_confirmation_field("New context", args.get("new_context")))
+        fields.append(confirmation_field("New context", args.get("new_context")))
     return "Please confirm you want to *modify* this callback:\n" + "\n".join(fields)
 
 
@@ -462,11 +422,11 @@ async def render_send_message_to_user_confirmation(
     """Render a confirmation prompt for sending a message to a known user."""
     _ = context
     fields = [
-        _confirmation_field("Target conversation", args.get("target_chat_id")),
-        _confirmation_field("Message", args.get("message_content")),
+        confirmation_field("Target conversation", args.get("target_chat_id")),
+        confirmation_field("Message", args.get("message_content")),
     ]
     if args.get("attachment_ids"):
-        fields.append(_confirmation_field("Attachments", args.get("attachment_ids")))
+        fields.append(confirmation_field("Attachments", args.get("attachment_ids")))
     return "Please confirm you want to *send* this message:\n" + "\n".join(fields)
 
 
@@ -477,16 +437,16 @@ async def render_gmail_create_draft_confirmation(
     """Render the recipients and content of an unsent Gmail draft."""
     _ = context
     fields = [
-        _confirmation_field("To", args.get("to")),
-        _confirmation_field("Subject", args.get("subject")),
-        _confirmation_field("Body", args.get("body")),
+        confirmation_field("To", args.get("to")),
+        confirmation_field("Subject", args.get("subject")),
+        confirmation_field("Body", args.get("body")),
     ]
     if args.get("cc"):
-        fields.append(_confirmation_field("CC", args.get("cc")))
+        fields.append(confirmation_field("CC", args.get("cc")))
     if args.get("bcc"):
-        fields.append(_confirmation_field("BCC", args.get("bcc")))
+        fields.append(confirmation_field("BCC", args.get("bcc")))
     if args.get("attachment_ids"):
-        fields.append(_confirmation_field("Attachments", args.get("attachment_ids")))
+        fields.append(confirmation_field("Attachments", args.get("attachment_ids")))
     return "Please confirm you want to create this *unsent Gmail draft*:\n" + "\n".join(
         fields
     )
@@ -499,16 +459,16 @@ async def render_drive_write_file_confirmation(
     """Render the destination name and content source of an app-folder write."""
     _ = context
     fields = [
-        _confirmation_field("Name", args.get("name") or "Use the attachment filename"),
-        _confirmation_field("Overwrite existing app file", bool(args.get("overwrite"))),
+        confirmation_field("Name", args.get("name") or "Use the attachment filename"),
+        confirmation_field("Overwrite existing app file", bool(args.get("overwrite"))),
     ]
     if args.get("attachment_id"):
-        fields.append(_confirmation_field("Attachment", args.get("attachment_id")))
+        fields.append(confirmation_field("Attachment", args.get("attachment_id")))
     else:
         fields.append(
-            _confirmation_field("File type", args.get("file_type", "google_doc"))
+            confirmation_field("File type", args.get("file_type", "google_doc"))
         )
-        fields.append(_confirmation_field("Content", args.get("content")))
+        fields.append(confirmation_field("Content", args.get("content")))
     return (
         "Please confirm you want to write this file inside the app's dedicated "
         "Google Drive folder:\n" + "\n".join(fields)
@@ -522,14 +482,14 @@ async def render_ingest_document_from_url_confirmation(
     """Render a confirmation prompt for ingesting a document from a URL."""
     _ = context
     fields = [
-        _confirmation_field("URL", args.get("url_to_ingest")),
-        _confirmation_field("Source type", args.get("source_type")),
-        _confirmation_field("Source ID", args.get("source_id")),
+        confirmation_field("URL", args.get("url_to_ingest")),
+        confirmation_field("Source type", args.get("source_type")),
+        confirmation_field("Source ID", args.get("source_id")),
     ]
     if args.get("title"):
-        fields.append(_confirmation_field("Title", args.get("title")))
+        fields.append(confirmation_field("Title", args.get("title")))
     if args.get("metadata_json"):
-        fields.append(_confirmation_field("Metadata", args.get("metadata_json")))
+        fields.append(confirmation_field("Metadata", args.get("metadata_json")))
     return (
         "Please confirm you want to *fetch and index* this document"
         " (the source type and ID determine which document record is created or overwritten):\n"
@@ -553,17 +513,17 @@ async def render_delegate_to_service_confirmation(
 
     _ = context
     fields = [
-        _confirmation_field("Target profile", target_service_id or "target service"),
-        f"- Request:\n{_markdown_code_block(user_request)}",
+        confirmation_field("Target profile", target_service_id or "target service"),
+        f"- Request:\n{markdown_code_block(user_request)}",
     ]
     if attachment_ids:
-        fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
+        fields.append(confirmation_field("Attachments", ", ".join(attachment_ids)))
     model_tier = str(args.get("model_tier", "")).strip()
     if model_tier:
         # Named because it is a spending decision the approver is being asked
         # to make alongside the delegation itself.
         fields.append(
-            _confirmation_field(
+            confirmation_field(
                 "Intelligence",
                 f"{model_tier} — the target profile runs this request on that "
                 "model tier rather than its usual one.",
@@ -572,7 +532,7 @@ async def render_delegate_to_service_confirmation(
     resume_delegation_id = str(args.get("resume_delegation_id", "")).strip()
     if resume_delegation_id:
         fields.append(
-            _confirmation_field(
+            confirmation_field(
                 "Resuming delegation",
                 f"{resume_delegation_id} — the target profile continues this earlier "
                 "delegation's conversation and keeps its prior context, rather than "
@@ -580,88 +540,6 @@ async def render_delegate_to_service_confirmation(
             )
         )
     return "Do you want to delegate this task to another profile?\n" + "\n".join(fields)
-
-
-def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
-    """Build the full spawn_worker confirmation prompt."""
-    task_description = str(arguments.get("task_description", "")).strip()
-
-    fields = [
-        _confirmation_field("Agent", arguments.get("agent", "claude")),
-        f"- Task description:\n{_markdown_code_block(task_description)}",
-    ]
-    raw_context_paths = arguments.get("context_paths")
-    if isinstance(raw_context_paths, (list, tuple)):
-        if raw_context_paths:
-            fields.append(
-                _confirmation_field(
-                    "Context paths", ", ".join(str(path) for path in raw_context_paths)
-                )
-            )
-    elif raw_context_paths is not None:
-        # Script callers bypass JSON-schema validation, so a non-list value
-        # (e.g. a mapping whose keys the tool would later iterate as paths)
-        # must not be silently omitted from the prompt: the guard refuses the
-        # call (see confirmation_arguments_block_reason), and the prompt says so.
-        fields.append(
-            f"- Context paths: ⚠️ Malformed value of type "
-            f"{type(raw_context_paths).__name__} — context_paths must be an array of "
-            "workspace path strings. The worker will not be launched."
-        )
-    fields.append(
-        _confirmation_field("Timeout (minutes)", arguments.get("timeout_minutes", 30))
-    )
-    return (
-        "Do you want to launch an isolated AI coding worker? It executes code in a "
-        "sandboxed container with network access — it can clone public git "
-        "repositories, including this application's — but has no access to Family "
-        "Assistant tools or data. It works from the task description below and "
-        "returns output files:\n" + "\n".join(fields)
-    )
-
-
-async def render_spawn_worker_confirmation(
-    args: ToolArgumentsView,
-    context: ToolExecutionContext,
-) -> str:
-    """Render a confirmation prompt for launching an isolated AI coding worker."""
-    _ = context
-    return _spawn_worker_confirmation_prompt(args)
-
-
-async def render_cancel_worker_task_confirmation(
-    args: ToolArgumentsView,
-    context: ToolExecutionContext,
-) -> str:
-    """Render a confirmation prompt for cancelling a worker task.
-
-    Looks the task up so the approver sees what they are stopping, not just an
-    opaque id. Mirrors cancel_worker_task_tool's conversation scoping: a task
-    belonging to a different conversation is treated as not found, so the
-    prompt never leaks another conversation's task details for a cancel that
-    would be refused anyway.
-    """
-    task_id = str(args.get("task_id", "")).strip()
-    fields = [_confirmation_field("Task ID", task_id)]
-
-    task = None
-    db_context = getattr(context, "db_context", None)
-    if task_id and db_context is not None:
-        task = await db_context.worker_tasks.get_task(task_id)
-        if task is not None and task.get("conversation_id") != context.conversation_id:
-            task = None
-
-    if task is not None:
-        fields.append(_confirmation_field("Status", task.get("status")))
-        fields.append(
-            _confirmation_field("Task description", task.get("task_description"))
-        )
-    else:
-        fields.append(
-            "- Task details: not found — the task may have already finished or the "
-            "id may be wrong."
-        )
-    return "Do you want to *cancel* this worker task?\n" + "\n".join(fields)
 
 
 def _generic_arguments_json(arguments: Mapping[str, object]) -> str:
@@ -685,8 +563,8 @@ def render_generic_tool_confirmation(
     return (
         "Do you want to run this tool call? It runs with the arguments below, "
         "exactly as shown:\n"
-        f"{_confirmation_field('Tool', tool_name)}\n"
-        f"- Arguments:\n{_markdown_code_block(arguments_json)}"
+        f"{confirmation_field('Tool', tool_name)}\n"
+        f"- Arguments:\n{markdown_code_block(arguments_json)}"
     )
 
 
@@ -701,23 +579,13 @@ def confirmation_arguments_block_reason(
     refuse on those grounds -- see
     docs/design/confirmation-prompt-capacity.md. What is left here are
     arguments no interface could show correctly at any length, because the
-    prompt they produce would not describe what the tool would do.
+    prompt they produce would not describe what the tool would do. A plugin
+    tool declares that check on its registration.
     """
-    if tool_name == "spawn_worker":
-        # The context paths scope what the worker can read. Script callers
-        # bypass JSON-schema validation, so a present-but-non-list value is
-        # refused outright: the tool would later iterate it (a mapping's keys
-        # would become paths) while the prompt showed the approver no paths.
-        raw_context_paths = arguments.get("context_paths")
-        if raw_context_paths is not None and not isinstance(
-            raw_context_paths, (list, tuple)
-        ):
-            return (
-                f"Error: context_paths must be an array of workspace path strings, "
-                f"got {type(raw_context_paths).__name__}. Pass the paths as a JSON "
-                'array (e.g. ["shared/data/input.csv"]).'
-            )
-    return None
+    confirmation = _PLUGIN_TOOL_CONFIRMATIONS.get(tool_name)
+    if confirmation is None or confirmation.block_reason is None:
+        return None
+    return confirmation.block_reason(arguments)
 
 
 def make_computer_use_safety_confirmation_renderer(
@@ -743,16 +611,16 @@ def make_computer_use_safety_confirmation_renderer(
             explanation = str(safety_decision.get("explanation", explanation))
 
         fields = [
-            _confirmation_field("Action", action_name),
-            _confirmation_field("Explanation", explanation),
+            confirmation_field("Action", action_name),
+            confirmation_field("Explanation", explanation),
         ]
 
         if args.get("intent"):
-            fields.append(_confirmation_field("Intent", args.get("intent")))
+            fields.append(confirmation_field("Intent", args.get("intent")))
 
         for key, value in sorted(args.items()):
             if key not in {"safety_decision", "intent"}:
-                fields.append(_confirmation_field(key, value))
+                fields.append(confirmation_field(key, value))
 
         return (
             "Computer-use safety check: the model has flagged a potential safety "
@@ -777,12 +645,21 @@ _base_renderers: dict[str, ConfirmationRenderer] = {
     "drive_write_file": render_drive_write_file_confirmation,
     "ingest_document_from_url": render_ingest_document_from_url_confirmation,
     "delegate_to_service": render_delegate_to_service_confirmation,
-    "spawn_worker": render_spawn_worker_confirmation,
-    "cancel_worker_task": render_cancel_worker_task_confirmation,
+}
+
+# Plugin tools carry their confirmation on their registration.
+_PLUGIN_TOOL_CONFIRMATIONS: dict[str, ToolConfirmation] = {
+    registration.name: registration.confirmation
+    for registration in plugin_tool_registrations()
+    if registration.confirmation is not None
 }
 
 TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
     **_base_renderers,
+    **{
+        name: confirmation.render
+        for name, confirmation in _PLUGIN_TOOL_CONFIRMATIONS.items()
+    },
     **{
         name: make_computer_use_safety_confirmation_renderer(name)
         for name in COMPUTER_USE_FUNCTION_NAMES

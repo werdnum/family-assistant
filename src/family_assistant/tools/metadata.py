@@ -7,9 +7,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable, Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 
     from family_assistant.security.taint import SourceTrustTier
+    from family_assistant.tools.confirmation_format import ConfirmationRenderer
     from family_assistant.tools.types import ToolDefinition
 
 type ToolOrigin = Literal["local", "mcp"]
@@ -83,12 +84,25 @@ class LocalToolMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolConfirmation:
+    """How a plugin tool is shown to the person asked to approve a call.
+
+    ``block_reason`` refuses arguments no prompt could describe faithfully,
+    returning why, or ``None`` to let the call be rendered.
+    """
+
+    render: ConfirmationRenderer
+    block_reason: Callable[[Mapping[str, object]], str | None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ToolRegistration:
     """Registration record for a local tool."""
 
     definition: ToolDefinition
     implementation: ToolImplementation
     metadata: LocalToolMetadata
+    confirmation: ToolConfirmation | None = None
 
     @property
     def name(self) -> str:

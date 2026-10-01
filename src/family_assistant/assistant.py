@@ -100,7 +100,8 @@ from family_assistant.memory.sweep import (
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
-from family_assistant.plugins.base import PluginProfileContext
+from family_assistant.plugins.base import PluginProfileContext, PluginStartupContext
+from family_assistant.plugins.registry import plugin_task_handlers
 from family_assistant.plugins.runtime import PluginRuntime
 from family_assistant.processing import (
     DelegatableService,
@@ -135,7 +136,6 @@ from family_assistant.services.oauth_integration_state import (
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.tool_call_review import ToolCallReviewer
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
@@ -159,7 +159,6 @@ from family_assistant.task_worker import (
     handle_stale_automation_cleanup,
     handle_system_error_log_cleanup,
     handle_system_event_cleanup,
-    handle_worker_task_cleanup,
 )
 from family_assistant.task_worker import (
     handle_log_message as original_handle_log_message,
@@ -182,7 +181,6 @@ from family_assistant.tools import (
 from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
-from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
@@ -201,7 +199,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.config_models import (
-        AIWorkerConfig,
         ModelTierConfig,
         ServiceProfile,
     )
@@ -563,6 +560,7 @@ class Assistant:
         self.metrics_server: WSGIServer | None = None
         self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
+        self.plugin_startup_task: asyncio.Task | None = None
         self._tool_call_reviewer: ToolCallReviewer | None = None
         self._is_shutdown_complete = False
 
@@ -2111,9 +2109,6 @@ class Assistant:
 
         await self._run_startup_tasks()
 
-        # Reconcile stale worker tasks asynchronously
-        asyncio.create_task(self._reconcile_worker_tasks())
-
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
 
@@ -2145,6 +2140,18 @@ class Assistant:
         await self._seed_memory_review_sweep()
         await self._seed_egress_credential_rotation()
 
+        if self.plugin_runtime is None:
+            return
+        assert self.database_engine is not None
+        self.plugin_startup_task = asyncio.create_task(
+            self.plugin_runtime.on_startup(
+                PluginStartupContext(
+                    database=Database(self.database_engine),
+                    shared_workspace_path=Path(self.config.shared_workspace_path),
+                )
+            )
+        )
+
     def initiate_shutdown(self, signal_name: str) -> None:
         """Sets the shutdown event to begin graceful shutdown."""
         if not self.shutdown_event.is_set():
@@ -2156,35 +2163,6 @@ class Assistant:
             logger.warning(
                 f"Shutdown already in progress. Signal {signal_name} received again."
             )
-
-    async def _reconcile_worker_tasks(self) -> None:
-        """Reconcile stale worker tasks against backend state on startup."""
-        worker_config = self.config.ai_worker_config
-        if not worker_config.enabled:
-            return
-
-        try:
-            await self._reconcile_stale_worker_tasks(worker_config)
-        except Exception:
-            logger.warning(
-                "Worker task reconciliation failed on startup", exc_info=True
-            )
-
-    async def _reconcile_stale_worker_tasks(
-        self, worker_config: AIWorkerConfig
-    ) -> None:
-        """Reconcile stale tasks with the configured worker backend."""
-        assert self.database_engine is not None
-        db_ctx = Database(self.database_engine)
-        backend = get_worker_backend(
-            worker_config.backend_type,
-            workspace_root=worker_config.workspace_mount_path,
-            docker_config=worker_config.docker,
-            kubernetes_config=worker_config.kubernetes,
-        )
-        reconciled = await reconcile_stale_tasks(db_ctx, backend)
-        if reconciled:
-            logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
 
     def _memory_contributing_profiles(self) -> set[str]:
         """The profiles that actually feed the memory curator.
@@ -2407,23 +2385,6 @@ class Assistant:
                 # If task already exists, this is fine - just log it
                 logger.info(f"System error log cleanup task setup: {e}")
 
-            # Upsert the worker task cleanup task
-            try:
-                await db_ctx.tasks.enqueue(
-                    task_id="system_worker_task_cleanup_daily",
-                    task_type="worker_task_cleanup",
-                    payload={"retention_hours": 48},
-                    scheduled_at=next_3am_utc,
-                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                    max_retries_override=5,
-                    priority=TaskPriority.BACKGROUND,
-                )
-                logger.info(
-                    f"Worker task cleanup task scheduled for {next_3am_local} ({local_tz})"
-                )
-            except Exception as e:
-                logger.info(f"Worker task cleanup task setup: {e}")
-
             # Upsert the stale delegation run reaper (runs hourly so a
             # stranded run that never retried is surfaced reasonably soon).
             try:
@@ -2625,7 +2586,6 @@ class Assistant:
             CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
             handle_confirmation_tool_execution,
         )
-        worker.register_task_handler("worker_task_cleanup", handle_worker_task_cleanup)
         worker.register_task_handler(
             "completed_automation_cleanup", handle_completed_automation_cleanup
         )
@@ -2669,6 +2629,11 @@ class Assistant:
                 ),
             ),
         )
+        for task_type, handler in plugin_task_handlers().items():
+            if task_type in worker.task_handlers:
+                msg = f"A plugin registers core task type {task_type!r}"
+                raise ValueError(msg)
+            worker.register_task_handler(task_type, handler)
         logger.info(f"Registered task handlers for worker {worker.worker_id}")
         return worker
 
@@ -2797,6 +2762,8 @@ class Assistant:
             owned_tasks.append(self.health_monitor_task)
         if self.event_processor_task and not self.event_processor_task.done():
             owned_tasks.append(self.event_processor_task)
+        if self.plugin_startup_task and not self.plugin_startup_task.done():
+            owned_tasks.append(self.plugin_startup_task)
         owned_tasks.extend(task for task in self.task_worker_tasks if not task.done())
 
         if owned_tasks:

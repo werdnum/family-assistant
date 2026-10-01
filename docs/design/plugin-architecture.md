@@ -2,8 +2,8 @@
 
 ## Status
 
-Milestones 1 and 2 implemented: the plugin seam with Home Assistant as its first plugin, then
-Reolink cameras. Later milestones are proposals.
+Milestones 1 to 3 implemented: the plugin seam with Home Assistant as its first plugin, then Reolink
+cameras, then AI workers. Later milestones are proposals.
 
 ## Problem
 
@@ -119,14 +119,48 @@ which keeps working.
   startup error rather than ignored, as for any other config; a value that isn't a JSON object is
   logged and ignored, as before.
 
+## Milestone 3: AI workers
+
+Implemented. The worker tools, config, backends, cleanup task and startup reconciliation live in
+`plugins/ai_workers/`; the tool registry, task worker and startup no longer mention workers. Tool
+names, tags and policy behaviour are unchanged.
+
+- **The shared workspace moved out first.** Its path is the top-level `shared_workspace_path`,
+  because the workspace file tools use it as much as workers do.
+- **Plugins contribute task handlers.** They are declared on the plugin beside its tools and, like
+  tools, registered with every task worker whether or not the plugin is configured, so a recurring
+  task seeded while it was configured still has a handler once it is removed. A handler finds an
+  instance it needs the way a tool does. A task type claimed twice is a startup error.
+- **Instances get a startup hook.** It runs once, in the background, after the task worker pool is
+  up, with the database and the shared workspace path; a failure is logged and does not stop other
+  instances' hooks. `close()` remains the shutdown hook. Home Assistant needs neither and is
+  unchanged.
+- **Plugins shape the tools they serve.** The catalogue still holds every plugin tool, so policy can
+  name them, but the tools a deployment offers come from each plugin given its configured instances.
+  Workers offer nothing without an instance, as the old `enabled: false` did, and fill
+  `spawn_worker`'s agent choices from config.
+- **A plugin tool's confirmation travels on its registration**: the prompt renderer and the check
+  that refuses arguments no prompt could show faithfully.
+- `ai_worker_config` became `plugins.ai_workers.<instance>`, and an instance is what enables the
+  plugin. The `AI_WORKER_*` environment variables went with it; no deployment set them.
+
+### Deliberate simplifications
+
+- **One sandbox.** A worker task does not record which instance ran it, so reconciling a second
+  backend would fail the first one's live tasks; configuring two is a config error.
+- **Worker lifecycle webhooks stay in the generic webhook router.** Workers report on the generic
+  event endpoint under its existing authentication, and handling that from the plugin needs a
+  webhook hook nothing else wants yet. The `worker_tasks` table and repository stay in core storage,
+  with the other tables and their migrations.
+- **Removing the plugin does not unschedule its daily cleanup.** The task already seeded keeps
+  running, and keeps expiring old worker task rows, listeners and `tasks/` directories on the
+  retention it was seeded with, which is what it did before workers were a plugin.
+
 ## Later milestones
 
-1. **AI workers.** Needs task handlers and a startup hook on `PluginInstance`, and the shared
-   workspace path moved out of the worker config first. Verified by removing the worker special
-   cases from the tool registry, task worker and startup.
-2. **Per-result grading, then Trino** (done) as a native plugin that grades each result from the
+1. **Per-result grading, then Trino** (done) as a native plugin that grades each result from the
    tables a query reads. Verified by a query over household tables grading `recognized_machine`
    while a `lake.messages` query still grades `unknown_external`. Deliberate simplification: the
    plugin grades from the plan Trino reports just before running the query, so a view redefined in
    between is graded by its old definition.
-3. Google data and UCP if still worthwhile by then.
+2. Google data and UCP if still worthwhile by then.
