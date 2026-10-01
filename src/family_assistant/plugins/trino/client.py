@@ -94,13 +94,14 @@ class TrinoClient:
                 columns = [str(column["name"]) for column in payload["columns"]]
             rows.extend(payload.get("data") or [])
             next_uri = payload.get("nextUri")
-            if next_uri is None:
-                return QueryResult(columns=columns or [], rows=rows)
             if len(rows) > self._max_rows:
-                await self._cancel(next_uri)
+                if next_uri is not None:
+                    await self._cancel(next_uri)
                 return QueryResult(
                     columns=columns or [], rows=rows[: self._max_rows], truncated=True
                 )
+            if next_uri is None:
+                return QueryResult(columns=columns or [], rows=rows)
             response = await self._client.get(next_uri)
 
     async def _cancel(self, next_uri: str) -> None:

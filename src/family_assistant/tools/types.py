@@ -21,7 +21,7 @@ from typing import (
 )
 
 from family_assistant.security.taint import (
-    SourceTrustTier,  # noqa: TC001 - ToolResult is a pydantic field type, resolved at runtime
+    SourceTrustTier,  # noqa: TC001 - pydantic's ToolMessage embeds ToolResult and resolves its fields
 )
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions

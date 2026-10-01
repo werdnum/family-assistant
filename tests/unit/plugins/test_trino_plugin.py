@@ -290,6 +290,26 @@ class TestClient:
         assert fake.requests[-1].method == "DELETE"
 
     @pytest.mark.asyncio
+    async def test_truncates_a_final_page_over_the_row_limit(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={"columns": [{"name": "n"}], "data": [[i] for i in range(5)]},
+            )
+
+        config = TrinoConfig.model_validate({
+            "url": "http://trino",
+            "user": "fa",
+            "max_rows": 2,
+        })
+        client = TrinoClient(config, transport=httpx.MockTransport(handler))
+
+        result = await client.execute("SELECT n FROM t")
+
+        assert result.rows == [[0], [1]]
+        assert result.truncated is True
+
+    @pytest.mark.asyncio
     async def test_error_message_is_raised(self) -> None:
         fake = FakeTrino()
 
