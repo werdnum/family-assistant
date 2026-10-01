@@ -1396,7 +1396,7 @@ service_profiles:
 
 A profile naming a plugin or instance that isn't configured is a startup error. A plugin's tools are
 registered whether or not it is configured, so `tools_policy` still decides what a profile may call.
-Plugins so far: `home_assistant`, [`reolink`](#reolink-cameras).
+Plugins so far: `home_assistant`, [`reolink`](#reolink-cameras), [`trino`](#trino).
 
 ______________________________________________________________________
 
@@ -2615,6 +2615,57 @@ camera id with the fields above.
 | Example   | `{"coop": {"host": "192.168.1.100", "username": "admin", "password": "secret", "name": "Chicken Coop"}}` |
 
 A value that isn't a JSON object is logged and ignored.
+
+______________________________________________________________________
+
+## Trino
+
+Trino is a plugin (see [Plugins](#plugins)) that backs `query_trino`, a read-only SQL tool over a
+Trino coordinator. Each query is graded for taint by the tables it reads: before running it, the
+plugin asks Trino for the query's IO plan (`EXPLAIN (TYPE IO)`, which expands views to the tables
+underneath) and looks each table up in `table_tiers`. The result takes the least trusted tier of any
+table it read, and never grades cleaner than `recognized_machine`. A statement Trino cannot plan is
+not run, and a statement that writes to a table is refused. Write protection belongs in Trino's own
+access control too: give the plugin's user a read-only catalog rule.
+
+```yaml
+plugins:
+  trino:
+    default:
+      # url, user and password usually come from TRINO_URL, TRINO_USER, TRINO_PASSWORD.
+      catalog: "lake"
+      table_tiers:
+        "lake.messages.*": "unknown_external"   # message bodies written by anyone
+        "*": "recognized_machine"
+```
+
+| Key                       | Default              | Notes                                                            |
+| ------------------------- | -------------------- | ---------------------------------------------------------------- |
+| `url`                     | —                    | Coordinator base URL, e.g. `http://trino:8080`. Required.        |
+| `user`                    | —                    | Trino user to query as. Required.                                |
+| `password`                | None                 | **Sensitive.** HTTP Basic password, if the coordinator uses one. |
+| `catalog`                 | None                 | Default catalog for unqualified names.                           |
+| `schema`                  | None                 | Default schema for unqualified names.                            |
+| `source`                  | `"family-assistant"` | Sent as `X-Trino-Source`.                                        |
+| `request_timeout_seconds` | `60`                 | Per HTTP request to the coordinator.                             |
+| `max_rows`                | `200`                | Rows returned to the model; the query is cancelled beyond it.    |
+| `table_tiers`             | `{}`                 | Glob over lower-case `catalog.schema.table` to a trust tier.     |
+
+A table matching several patterns takes the least trusted of them, and a table matching none is
+`unknown_external`, so an empty `table_tiers` grades every result as untrusted and a new schema is
+untrusted until someone maps it. Tiers are written by name. An instance without a URL or user is not
+started, with a warning at startup.
+
+### TRINO_URL, TRINO_USER, TRINO_PASSWORD
+
+The `default` instance's `url`, `user` and `password` (`plugins.trino.default.*`).
+
+| Property  | Value                                       |
+| --------- | ------------------------------------------- |
+| Required  | No                                          |
+| Default   | None                                        |
+| Sensitive | **Yes** (`TRINO_PASSWORD`)                  |
+| Example   | `http://trino.trino.svc.cluster.local:8080` |
 
 ______________________________________________________________________
 

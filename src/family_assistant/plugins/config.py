@@ -12,6 +12,9 @@ from family_assistant.plugins.home_assistant.config import (
 from family_assistant.plugins.reolink.config import (
     ReolinkConfig,  # noqa: TC001 - Pydantic needs at runtime
 )
+from family_assistant.plugins.trino.config import (
+    TrinoConfig,  # noqa: TC001 - Pydantic needs at runtime
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -30,6 +33,7 @@ class PluginsConfig(BaseModel):
 
     home_assistant: dict[str, HomeAssistantConfig] = Field(default_factory=dict)
     reolink: dict[str, ReolinkConfig] = Field(default_factory=dict)
+    trino: dict[str, TrinoConfig] = Field(default_factory=dict)
 
     def instances(self, plugin_id: str) -> Mapping[str, BaseModel]:
         """The configured instances of one plugin."""

@@ -57,9 +57,13 @@ that the integration isn't configured, as before.
 
 ### Taint and sinks
 
-Unchanged in this milestone: plugin tools declare the same tags as before. The intended next step
-for per-result grading is a typed return value on plugin tools, capped by the tool's declared floor,
-with the host recording it; today native tools do it by reaching into the execution context.
+Plugin tools declare the same static tags as other tools. A tool may also grade each result itself:
+it returns `ToolResult.provenance`, and the host records it, but only for a tool registered with a
+`cleanest_result_tier`, and never cleaner than that tier. A grading bug can therefore only err as
+far as the tool's declared floor, and a tool that declares no floor keeps its static grade whatever
+it returns. The Trino plugin is the first user: it grades a query by the tables `EXPLAIN (TYPE IO)`
+says it reads, against an operator-supplied table-to-tier map. Native tools outside plugins can use
+the same return value; the older pattern of adding sources to the execution context still works.
 
 ## Milestone 1: the seam and Home Assistant
 
@@ -120,7 +124,9 @@ which keeps working.
 1. **AI workers.** Needs task handlers and a startup hook on `PluginInstance`, and the shared
    workspace path moved out of the worker config first. Verified by removing the worker special
    cases from the tool registry, task worker and startup.
-2. **Per-result grading, then Trino** as a native plugin that grades each result from the tables a
-   query reads. Verified by a turn reading only Home Assistant tables carrying no `unknown_external`
-   source, while a `lake.messages` query still does.
+2. **Per-result grading, then Trino** (done) as a native plugin that grades each result from the
+   tables a query reads. Verified by a query over household tables grading `recognized_machine`
+   while a `lake.messages` query still grades `unknown_external`. Deliberate simplification: the
+   plugin grades from the plan Trino reports just before running the query, so a view redefined in
+   between is graded by its old definition.
 3. Google data and UCP if still worthwhile by then.

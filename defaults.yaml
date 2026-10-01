@@ -889,6 +889,7 @@ default_profile_settings:
       - "ucp_add_to_cart"
       - "ucp_get_cart"
       - "ucp_transfer_checkout_to_human"
+      - "query_trino"
     on_demand_mcp_server_ids:
       - "homeassistant"
   tools_policy:
@@ -960,6 +961,7 @@ default_profile_settings:
             - "ucp_add_to_cart"
             - "ucp_get_cart"
             - "ucp_transfer_checkout_to_human"
+            - "query_trino"
             - "gmail_search"
             - "gmail_get_message"
             - "gmail_get_attachment"
@@ -2256,6 +2258,7 @@ service_profiles:
         - "ucp_add_to_cart"
         - "ucp_get_cart"
         - "ucp_transfer_checkout_to_human"
+        - "query_trino"
       on_demand_mcp_server_ids:
         - "homeassistant"
     tools_policy:
@@ -2331,6 +2334,7 @@ service_profiles:
               - "ucp_add_to_cart"
               - "ucp_get_cart"
               - "ucp_transfer_checkout_to_human"
+              - "query_trino"
               - "gmail_search"
               - "gmail_get_message"
               - "gmail_get_attachment"

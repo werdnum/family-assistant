@@ -2963,6 +2963,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 context=context,
                 call_id=call_id,
                 state_before_execution=state_before_execution,
+                result=result,
             )
         return result
 
@@ -3954,13 +3955,17 @@ class TaintTrackingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         call_id: str | None,
         state_before_execution: TurnTaintState | None,
+        result: object = None,
     ) -> TurnTaintState | None:
+        graded = result if isinstance(result, ToolResult) else None
         source = derive_tool_result_taint_source(
             descriptor=descriptor,
             call_id=call_id,
             default_unspecified_tool_output_tier=(
                 self._taint_policy_config.default_unspecified_tool_output_tier
             ),
+            claimed_tier=graded.provenance if graded is not None else None,
+            claimed_reason=graded.provenance_reason if graded is not None else None,
         )
         if context.taint_tracker is None:
             return None
@@ -4000,12 +4005,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         call_id: str | None,
         state_before_execution: TurnTaintState | None,
+        result: object = None,
     ) -> None:
         recorded_state = self._record_result_taint(
             descriptor=descriptor,
             context=context,
             call_id=call_id,
             state_before_execution=state_before_execution,
+            result=result,
         )
         if recorded_state is not None:
             await self._record_result_taint_audit(

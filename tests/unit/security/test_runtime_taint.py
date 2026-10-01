@@ -3685,3 +3685,56 @@ def test_an_unparseable_persisted_read_still_counts_as_a_read() -> None:
     })
 
     assert len(state.sensitive_reads) == 1
+
+
+def _self_grading_descriptor(
+    cleanest_result_tier: SourceTrustTier | None,
+) -> ToolDescriptor:
+    return ToolDescriptor(
+        name="self_grading",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "self_grading",
+                    "description": "Grade its own result.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=frozenset({ToolTag.OUTPUT_UNTRUSTED}),
+        origin="local",
+        cleanest_result_tier=cleanest_result_tier,
+    )
+
+
+def test_result_grade_is_honoured_down_to_the_declared_floor() -> None:
+    descriptor = _self_grading_descriptor(SourceTrustTier.RECOGNIZED_MACHINE)
+
+    clean = derive_tool_result_taint_source(
+        descriptor=descriptor,
+        call_id="c1",
+        claimed_tier=SourceTrustTier.TRUSTED_USER,
+    )
+    external = derive_tool_result_taint_source(
+        descriptor=descriptor,
+        call_id="c2",
+        claimed_tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+    )
+
+    assert clean is not None
+    assert clean.tier is SourceTrustTier.RECOGNIZED_MACHINE
+    assert external is not None
+    assert external.tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+def test_result_grade_is_ignored_without_a_declared_floor() -> None:
+    source = derive_tool_result_taint_source(
+        descriptor=_self_grading_descriptor(None),
+        call_id="c1",
+        claimed_tier=SourceTrustTier.RECOGNIZED_MACHINE,
+    )
+
+    assert source is not None
+    assert source.tier is SourceTrustTier.UNKNOWN_EXTERNAL
