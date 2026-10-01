@@ -2636,7 +2636,9 @@ plugins:
       catalog: "lake"
       table_tiers:
         "lake.messages.*": "unknown_external"   # message bodies written by anyone
-        "*": "recognized_machine"
+        "lake.health.*": "recognized_machine"
+        "lake.home_assistant.*": "recognized_machine"
+        "*.information_schema.*": "recognized_machine"   # SHOW and DESCRIBE
 ```
 
 | Key                       | Default              | Notes                                                            |
@@ -2652,9 +2654,9 @@ plugins:
 | `table_tiers`             | `{}`                 | Glob over lower-case `catalog.schema.table` to a trust tier.     |
 
 A table matching several patterns takes the least trusted of them, and a table matching none is
-`unknown_external`, so an empty `table_tiers` grades every result as untrusted and a new schema is
-untrusted until someone maps it. Tiers are written by name. An instance without a URL or user is not
-started, with a warning at startup.
+`unknown_external`, so an empty `table_tiers` grades every result as untrusted. List trusted schemas
+rather than using a `*` catch-all, so a new schema stays untrusted until someone maps it. Tiers are
+written by name. An instance without a URL or user is not started, with a warning at startup.
 
 ### TRINO_URL, TRINO_USER, TRINO_PASSWORD
 
