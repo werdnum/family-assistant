@@ -40,7 +40,15 @@ class AIWorkersInstance(PluginInstance):
         )
 
     async def on_startup(self, context: PluginStartupContext) -> None:
-        """Seed the daily cleanup and settle tasks a restart left running."""
+        """Settle tasks a restart left running, then seed the daily cleanup."""
+        # Reconcile first: the cleanup runs as soon as it is enqueued, and it
+        # would mark a stale task failed before the backend could report how
+        # it actually ended.
+        reconciled = await reconcile_stale_tasks(
+            context.database, self.backend(context.shared_workspace_path)
+        )
+        if reconciled:
+            logger.info("Reconciled %s stale worker tasks on startup", reconciled)
         await context.database.tasks.enqueue(
             task_id=CLEANUP_TASK_ID,
             task_type=WORKER_TASK_CLEANUP_TASK_TYPE,
@@ -53,8 +61,3 @@ class AIWorkersInstance(PluginInstance):
             max_retries_override=5,
             priority=TaskPriority.BACKGROUND,
         )
-        reconciled = await reconcile_stale_tasks(
-            context.database, self.backend(context.shared_workspace_path)
-        )
-        if reconciled:
-            logger.info("Reconciled %s stale worker tasks on startup", reconciled)
