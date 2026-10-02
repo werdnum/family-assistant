@@ -145,7 +145,11 @@ final class FamilyAssistantUITests: XCTestCase {
         app.buttons["chat-send-button"].tap()
 
         XCTAssertTrue(app.staticTexts["Native reply to Hello"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["search_notes"].waitForExistence(timeout: 20))
+        // The tool shows under its readable name, on its card or in the group's summary.
+        let toolCall = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Search notes"))
+            .firstMatch
+        XCTAssertTrue(toolCall.waitForExistence(timeout: 20))
         attachScreenshot(named: "native-chat-streamed-tool-call")
     }
 
