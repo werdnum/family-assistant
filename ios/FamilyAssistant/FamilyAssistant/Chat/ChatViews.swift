@@ -950,7 +950,7 @@ private struct ChatComposerView: View {
                         Image(systemName: "camera")
                             .font(.title3)
                             .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 44)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
@@ -961,7 +961,7 @@ private struct ChatComposerView: View {
                         Image(systemName: "photo")
                             .font(.title3)
                             .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 44)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Add Photo")
@@ -972,7 +972,7 @@ private struct ChatComposerView: View {
                         Image(systemName: "paperclip")
                             .font(.title3)
                             .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 44)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Add File")
