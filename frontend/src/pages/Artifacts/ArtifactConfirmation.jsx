@@ -18,6 +18,9 @@ export const artifactKindLabels = {
 };
 
 export const artifactStatus = (artifact) => {
+  if (!['trusted_user', 'trusted_internal', 'machine_reviewed'].includes(artifact.trust_tier)) {
+    return 'Needs review';
+  }
   if (artifact.disposition === 'human_confirmed') {
     return 'User confirmed';
   }
@@ -89,9 +92,9 @@ const ArtifactConfirmation = ({ artifact, onConfirmed }) => {
           setError(null);
           setOpen(true);
         }}
-        disabled={artifact.disposition === 'human_confirmed'}
+        disabled={artifactStatus(artifact) === 'User confirmed'}
       >
-        {artifact.disposition === 'human_confirmed' ? 'User confirmed' : 'Review and confirm'}
+        {artifactStatus(artifact) === 'User confirmed' ? 'User confirmed' : 'Review and confirm'}
       </Button>
       <DialogContent className="flex max-h-[90dvh] max-w-3xl flex-col">
         <DialogHeader>

@@ -59,6 +59,25 @@ describe('Artifact review', () => {
     }
   );
 
+  it('allows a new confirmation when a previous human decision did not cure taint', async () => {
+    const artifact = { ...makeArtifact('script'), disposition: 'human_confirmed' };
+    server.use(
+      http.post('/api/artifacts/script/42/confirm', () =>
+        HttpResponse.json({
+          ...artifact,
+          trust_tier: 'machine_reviewed',
+        })
+      )
+    );
+    setup(artifact);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Review and confirm' }));
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Confirm as user reviewed' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'User confirmed' })).toBeDisabled();
+  });
+
   it('keeps the review open when confirmation fails', async () => {
     setup(makeArtifact('script'));
     server.use(

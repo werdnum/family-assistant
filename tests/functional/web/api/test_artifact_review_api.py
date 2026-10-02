@@ -7,6 +7,10 @@ from httpx import AsyncClient
 from sqlalchemy import select, update
 
 from family_assistant.security.definition_records import (
+    CreationDisposition,
+    DefinitionGateOutcome,
+    GateLayer,
+    GateProvenance,
     automation_definition_content,
     definition_record_from_row,
     listener_definition_content,
@@ -259,3 +263,42 @@ async def test_note_edit_does_not_inherit_confirmation_status(
         "Review me", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note is not None and note.content == "new machine content"
+
+
+@pytest.mark.asyncio
+async def test_uncured_human_decision_can_be_confirmed_in_full(
+    api_test_client: AsyncClient,
+    api_db_context: Database,
+) -> None:
+    script = await api_db_context.scripts.save(
+        "partial-approval",
+        "A previously incomplete approval",
+        "print('hello')",
+        definition_taint_state=external_state(),
+        definition_gate=DefinitionGateOutcome(
+            disposition=CreationDisposition.HUMAN_CONFIRMED,
+            gate=GateProvenance(layer=GateLayer.CONFIRMATION, mode="enforce"),
+            cure_permitted=False,
+        ),
+    )
+    listing = await api_test_client.get("/api/artifacts/")
+    artifact = next(
+        item
+        for item in listing.json()
+        if item["kind"] == "script" and item["id"] == script.id
+    )
+
+    response = await api_test_client.post(
+        f"/api/artifacts/script/{script.id}/confirm",
+        json={"content_hash": artifact["content_hash"]},
+    )
+
+    assert artifact["disposition"] == "human_confirmed"
+    assert artifact["trust_tier"] == "unknown_external"
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "human_confirmed"
+    assert response.json()["trust_tier"] == "machine_reviewed"
+    updated = await api_db_context.scripts.get_by_name(script.name)
+    assert updated is not None
+    record = definition_record_from_row(updated.definition_record)
+    assert record is not None and record.cures
