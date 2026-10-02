@@ -176,11 +176,7 @@ from family_assistant.storage.tasks import (
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.authenticated_site_results import authenticated_site_result
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
-from family_assistant.tools.confirmation import (
-    TOOL_CONFIRMATION_RENDERERS,
-    append_review_reason_to_confirmation,
-    render_generic_tool_confirmation,
-)
+from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -3414,12 +3410,7 @@ class TaskWorker:
         ) -> ConfirmationOutcome:
             _ = interface_type
             _ = conversation_id
-            renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
-            if renderer:
-                prompt_text = await renderer(tool_args, context)
-            else:
-                prompt_text = render_generic_tool_confirmation(tool_name, tool_args)
-            prompt_text = append_review_reason_to_confirmation(prompt_text, context)
+            prompt_text = await render_tool_confirmation(tool_name, tool_args, context)
 
             display_turn_id = run["source_turn_id"] or turn_id
             execution_turn_id = turn_id

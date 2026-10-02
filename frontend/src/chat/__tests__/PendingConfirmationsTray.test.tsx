@@ -145,8 +145,10 @@ describe('PendingConfirmationsTray', () => {
     expect(within(tray).getByText('save').tagName).toBe('EM');
     expect(within(tray).getByText('Trip').closest('pre')).not.toBeNull();
     expect(tray).not.toHaveTextContent('```');
-    // The prompt already shows the payload, so the raw JSON is not repeated.
-    expect(tray).not.toHaveTextContent('"title"');
+    // The prompt already shows the payload; the raw JSON is collapsed behind a disclosure.
+    const rawArguments = within(tray).getByText('Raw arguments').closest('details');
+    expect(rawArguments).not.toHaveAttribute('open');
+    expect(rawArguments).toHaveTextContent('"title": "Trip"');
     expect(within(tray).getByText(/From another conversation/)).toBeInTheDocument();
 
     await user.click(within(tray).getByRole('button', { name: 'Open it' }));

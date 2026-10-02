@@ -100,9 +100,7 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
   const secondsRemaining = useSecondsRemaining(confirmation);
   const expired = secondsRemaining === 0;
   const prompt = confirmation.confirmation_prompt?.trim();
-  // The rendered prompt already lists what will run; the raw arguments are only
-  // needed when there is no prompt to show.
-  const argsText = prompt ? null : formatArgs(confirmation.args);
+  const argsText = formatArgs(confirmation.args);
 
   const decide = async (approved: boolean) => {
     if (pendingDecision !== null || expired) {
@@ -171,11 +169,23 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
             {humanizeToolName(confirmation.tool_name)} is waiting for your approval.
           </p>
         )}
-        {argsText && (
-          <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted p-2 text-xs">
-            {argsText}
-          </pre>
-        )}
+        {argsText &&
+          (prompt ? (
+            // The rendered prompt lists the payload; the raw arguments stay one
+            // click away for checking it against exactly what will run.
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
+                Raw arguments
+              </summary>
+              <pre className="mt-1 whitespace-pre-wrap break-words rounded-md border bg-muted p-2">
+                {argsText}
+              </pre>
+            </details>
+          ) : (
+            <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted p-2 text-xs">
+              {argsText}
+            </pre>
+          ))}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/40 px-4 py-2">

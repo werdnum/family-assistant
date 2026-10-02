@@ -66,7 +66,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.conversation_shares import ConversationShare
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
-from family_assistant.tools.confirmation import append_review_reason_to_confirmation
+from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.outcomes import (
     NOT_RUN_YET_NOTE,
@@ -2593,9 +2593,8 @@ async def run_non_streaming_turn(
                 tool_name=tool_name,
                 tool_call_id=call_id,
                 tool_args=tool_args,
-                confirmation_prompt=append_review_reason_to_confirmation(
-                    f"Do you want to execute '{tool_name}' with these parameters?",
-                    context,
+                confirmation_prompt=await render_tool_confirmation(
+                    tool_name, tool_args, context
                 ),
                 timeout_seconds=timeout_seconds,
                 turn_id=turn_id,
