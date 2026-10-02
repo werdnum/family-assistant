@@ -1245,6 +1245,13 @@ private struct DraftAttachmentStrip: View {
                             if attachment.uploadState == .failed {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.red)
+                                Button {
+                                    Task { await viewModel.retryDraftAttachment(attachment) }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise.circle.fill")
+                                }
+                                .accessibilityLabel("Retry uploading \(attachment.name)")
+                                .accessibilityIdentifier("draft-attachment-retry-\(attachment.id)")
                             }
                             Button {
                                 Task { await viewModel.removeDraftAttachment(attachment) }

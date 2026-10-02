@@ -108,6 +108,10 @@ message. If you close the tab, or the send doesn't go through, that upload is cl
 automatically about a day later. Anything that reached the assistant — in a message, or attached to
 a note — stays.
 
+**If an upload fails:** the message can't be sent until every attachment has uploaded. In the iOS
+app, a failed attachment shows a retry button that uploads the same file again without touching the
+rest of your message; you can also remove it instead.
+
 ## Sending attachments to other people
 
 The assistant can forward an attachment to another known user — "send this image to John" — as part
