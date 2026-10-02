@@ -32,6 +32,7 @@ from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
 from family_assistant.web import jwt_tokens, route_auth
+from family_assistant.web.auth import JWT_ACCESS_COOKIE_NAME, extract_api_credential
 from family_assistant.web.dependencies import (
     get_current_api_user,
     get_current_user,
@@ -64,7 +65,7 @@ API_TOKEN_EXPIRY_SECONDS = API_TOKEN_EXPIRY_DAYS * 86400
 # HttpOnly cookie carrying the browser's short-lived JWT past the gateway.
 # SameSite=Lax so browser-managed flows that return from cross-site redirects
 # (OAuth callbacks) keep authenticating; cross-site POSTs never carry it.
-BROWSER_TOKEN_COOKIE_NAME = "fa_access_token"
+BROWSER_TOKEN_COOKIE_NAME = JWT_ACCESS_COOKIE_NAME
 
 # Name of the internal api_tokens row backing browser-session JWTs. One live
 # row per user, reused across bridge calls; never issued as a credential.
@@ -650,8 +651,8 @@ async def browser_token(
     # Only an OIDC session may mint a renewable browser credential. The iOS
     # token-session cookie is bounded by the JWT that established it; treating
     # that cookie as renewal proof would turn a short-lived JWT into a refresh
-    # credential. Embedded app web views therefore keep their established LAN
-    # session but do not opt into the public edge bridge.
+    # credential. Embedded app web views receive the native access JWT through
+    # token-session instead, and native refresh owns its renewal.
     if current_user.get("source") == "app_token_session":
         return JSONResponse(content={"enabled": False})
 
@@ -745,6 +746,7 @@ async def browser_token(
 @api_auth_router.post("/token-session")
 async def token_session(
     request: Request,
+    response: Response,
     current_user: Annotated[dict, Depends(get_current_api_user)],
 ) -> TokenSessionResponse:
     """Exchange a valid API Bearer token for a session cookie.
@@ -775,6 +777,22 @@ async def token_session(
         current_user.get("sub", current_user.get("user_identifier")),
         token_id,
     )
+
+    # Forward the presented JWT unchanged: the native refresh token remains the
+    # only renewal proof, and this cookie cannot outlive its access credential.
+    if jwt_exp is not None:
+        credential = extract_api_credential(request)
+        if credential is None:
+            raise HTTPException(status_code=401, detail="Access credential required.")
+        response.set_cookie(
+            key=BROWSER_TOKEN_COOKIE_NAME,
+            value=credential,
+            max_age=max(0, int(jwt_exp) - int(time.time())),
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/api",
+        )
 
     return TokenSessionResponse(ok=True)
 

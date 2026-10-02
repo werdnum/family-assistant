@@ -114,6 +114,13 @@ steering box:
 This is the web equivalent of Telegram's `/interrupt` and mid-reply follow-ups. Native iOS Chat has
 the same controls.
 
+**Replies survive a restart.** If the assistant is restarted while it is working on a web or iOS
+reply, it picks the reply back up where it left off, usually within a minute or two, and the chat
+fills in when it does. It won't carry on if you've sent something else in the meantime, or if the
+reply was waiting for you to approve an action (the approval prompt still works). If it can't
+continue, the reply is marked as interrupted, so ask again. Telegram replies are not picked back up
+yet.
+
 ### Voice
 
 The **Voice** page holds a spoken conversation with the assistant. It shows a running transcript of
@@ -351,6 +358,9 @@ the connection actually dropped; watching the stream live doesn't produce an ext
 **If the connection drops while a reply is streaming,** the app reconnects and continues the same
 reply, or quietly reloads the finished reply from history. Opening a conversation whose reply is
 still running — one you started on another device, say — streams it live from that point.
+
+Documents and the pages in More use your iOS sign-in, including away from your home network. If a
+page cannot connect, use Retry; if your credentials have expired or been revoked, use Sign in.
 
 ## Email
 

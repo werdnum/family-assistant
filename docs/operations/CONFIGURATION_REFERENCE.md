@@ -191,6 +191,19 @@ but everything else in the queue waits behind the pending decision for as long a
 default of two general workers and one reserved worker keeps the rest of the queue moving while a
 run is parked.
 
+### Restarts and in-progress turns
+
+A web or iOS chat turn that is running when the process stops is resumed by the next process. On
+SIGTERM the process suspends running turns at a safe point (letting a tool that has started finish),
+waits up to 15 seconds for them, and hands them off so the replacement resumes them as soon as its
+task workers start. A turn killed without a graceful shutdown (SIGKILL, OOM, node loss) is resumed
+about two minutes later, once its lease expires. Resumption runs on the task worker pool as an
+interactive `resume_interrupted_turn` task.
+
+Give the pod at least 45 seconds to stop (`terminationGracePeriodSeconds`; Kubernetes defaults to
+30\) so the suspension window and the rest of shutdown fit inside it. See
+[docs/design/turn-resumption-across-restarts.md](../design/turn-resumption-across-restarts.md).
+
 ______________________________________________________________________
 
 ## Privacy Policy Page
@@ -4077,3 +4090,19 @@ to `tools_config.on_demand_mcp_server_ids`. This does not enable notifications.
 `tool_name_prefix` optionally prefixes exposed tool names (for shared or per-user servers). For
 example, `tuit_` exposes `create_task` as `tuit_create_task`, while MCP calls and `tool_metadata` /
 `parameter_overrides` configuration use the original server tool name.
+
+### Embedded iOS web pages
+
+The iOS app opens Documents and More under `/api/app/pages`; their frontend assets are served under
+`/api/app/assets`. Both use the existing default API authentication policy. Where `/api` is
+protected by an edge JWT verifier, keep the same verifier on these paths and extract the HttpOnly
+`fa_access_token` cookie as well as the Authorization bearer header. Do not add embedded paths to
+bootstrap exemptions. A deployment with the Cloudflare `/api/*` Access bypass needs no additional
+Access bypass for embedded pages; normal website paths retain their Access policy.
+
+`npm run build --prefix frontend` builds both the normal site and embedded assets beneath
+`static/dist/embedded`. Deploy the complete `static/dist` tree before distributing an iOS build that
+uses the embedded paths. The `/api/auth/token-session` bridge installs the native access JWT
+unchanged with its remaining lifetime; the native refresh flow renews it. Embedded sessions cannot
+renew through the OIDC-only browser bridge. No additional credentials or configuration variables are
+required.

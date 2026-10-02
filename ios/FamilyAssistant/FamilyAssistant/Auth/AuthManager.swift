@@ -687,6 +687,21 @@ final class AuthManager {
 
     // MARK: - Session Establishment
 
+    /// Renew embedded-browser credentials only from the native token flow.
+    @MainActor
+    func prepareWebSession() async throws {
+        let epoch = authEpoch
+        let token = try await validAccessToken()
+        guard isCurrentAuthEpoch(epoch), !authRequired else { throw AuthError.noCredentials }
+        do {
+            try await establishSession(apiToken: token)
+        } catch AuthError.authRejected {
+            if isCurrentAuthEpoch(epoch) { markAuthRequired() }
+            throw AuthError.authRejected
+        }
+        guard isCurrentAuthEpoch(epoch) else { throw AuthError.noCredentials }
+    }
+
     func establishSession(apiToken: String) async throws {
         guard let baseURL = validatedServerURL() else {
             throw AuthError.invalidServerURL

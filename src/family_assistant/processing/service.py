@@ -958,8 +958,17 @@ class ProcessingService:
         subconversation_id: str | None,
         *,
         acting_user_id: str | None,
-    ) -> tuple[list[LLMMessage], str]:
-        """Load history and optional full-thread context for LLM processing."""
+        resume_turn_id: str | None = None,
+    ) -> tuple[list[LLMMessage], str, LLMMessage | None]:
+        """Load history and optional full-thread context for LLM processing.
+
+        ``resume_turn_id`` names a turn being resumed. The history window
+        bounds what came before it, but the turn itself is replayed whole: a
+        long tool loop can outgrow the window, and losing its opening rows
+        would resume the turn without the request it is answering. The third
+        element is that turn's opening message as it appears in the returned
+        history, so the caller can put the turn's scaffolding back beside it.
+        """
         history_limit, history_max_age = self.context_preparer.get_history_limits(
             interface_type
         )
@@ -971,12 +980,25 @@ class ProcessingService:
             processing_profile_id=self.service_config.id,
             subconversation_id=subconversation_id,
             current_time=self.clock.now(),
+            exclude_turn_id=resume_turn_id,
+        )
+        resumed_turn_messages = (
+            await db_context.message_history.get_by_turn_id(resume_turn_id)
+            if resume_turn_id is not None
+            else []
         )
         logger.debug("Raw history messages fetched (%d).", len(raw_history_messages))
 
         initial_messages_for_llm = await self.context_preparer.format_history(
             raw_history_messages
         )
+        resumed_turn_opening: LLMMessage | None = None
+        if resumed_turn_messages:
+            formatted_turn = await self.context_preparer.format_history(
+                resumed_turn_messages
+            )
+            resumed_turn_opening = formatted_turn[0] if formatted_turn else None
+            initial_messages_for_llm.extend(formatted_turn)
         logger.debug(
             "Initial messages for LLM after formatting history (%d).",
             len(initial_messages_for_llm),
@@ -1015,7 +1037,11 @@ class ProcessingService:
                     "Extracted attachment context from thread messages for LLM."
                 )
 
-        return initial_messages_for_llm, thread_attachments_context
+        return (
+            initial_messages_for_llm,
+            thread_attachments_context,
+            resumed_turn_opening,
+        )
 
     async def _append_missing_pinned_history_messages(
         self,
@@ -1155,6 +1181,14 @@ class ProcessingService:
                 synthesized += 1
         messages_for_llm[:] = repaired
         return synthesized, dropped
+
+    @staticmethod
+    def _index_after(messages_for_llm: list[LLMMessage], anchor: LLMMessage) -> int:
+        """Position just after ``anchor`` (by identity), or the end if absent."""
+        for index, message in enumerate(messages_for_llm):
+            if message is anchor:
+                return index + 1
+        return len(messages_for_llm)
 
     def render_available_service_profiles(self) -> str:
         """Render the catalog of delegatable service profiles.
@@ -1399,13 +1433,23 @@ class ProcessingService:
     def _inject_trigger_attachment_metadata(
         messages_for_llm: list[LLMMessage],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
+        target: LLMMessage | None = None,
     ) -> None:
-        """Inject trigger-attachment metadata into the latest trigger message."""
+        """Inject trigger-attachment metadata into the latest trigger message.
+
+        ``target`` names the trigger explicitly where it is not the latest
+        message: a resumed turn's opening prompt can be followed by steering
+        messages it accepted later.
+        """
         if not trigger_attachments:
             return
 
         metadata_text = format_attachment_metadata_block(trigger_attachments)
         if not metadata_text:
+            return
+
+        if isinstance(target, UserMessage):
+            inject_metadata_into_user_message(target, metadata_text)
             return
 
         for i in range(len(messages_for_llm) - 1, -1, -1):
@@ -1549,8 +1593,15 @@ class ProcessingService:
         trigger_role: Literal["user", "system"] = "user",
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        resume: bool = False,
     ) -> tuple[int | None, list[LLMMessage], tuple[TaintSource, ...]]:
-        """Build the full pre-LLM turn state shared by sync and streaming flows."""
+        """Build the full pre-LLM turn state shared by sync and streaming flows.
+
+        ``resume`` continues a turn whose earlier run was interrupted: its user
+        row and every row it produced are already in history, so nothing is
+        inserted and the turn-context block goes back where the original run
+        had it -- after the turn's prompt, not after its trailing tool results.
+        """
         thread_root_id_for_turn = thread_root_id
         if thread_root_id_for_turn is None:
             thread_root_id_for_turn = await self._resolve_thread_root_id(
@@ -1581,9 +1632,13 @@ class ProcessingService:
         # read on their (often single-connection SQLite) db_context.
         existing_user_row = (
             await db_context.message_history.get_user_row_by_turn_id(turn_id)
-            if reuse_existing_user_row and trigger_role == "user"
+            if (reuse_existing_user_row or resume) and trigger_role == "user"
             else None
         )
+        if resume and existing_user_row is None:
+            raise RuntimeError(
+                f"Cannot resume turn {turn_id}: its user message is not in history"
+            )
         if existing_user_row is not None:
             saved_user_msg_record = existing_user_row["internal_id"]
         else:
@@ -1608,6 +1663,7 @@ class ProcessingService:
         (
             messages_for_llm,
             thread_attachments_context,
+            resumed_turn_opening,
         ) = await self._build_initial_messages_for_llm(
             db_context=db_context,
             interface_type=interface_type,
@@ -1616,6 +1672,7 @@ class ProcessingService:
             thread_root_id_for_turn=thread_root_id_for_turn,
             subconversation_id=subconversation_id,
             acting_user_id=user_id,
+            resume_turn_id=turn_id if resume else None,
         )
         if trigger_role == "system" and is_delegation_wake_trigger(
             user_content_for_history
@@ -1697,6 +1754,7 @@ class ProcessingService:
         # it to transform_image or any other attachment-taking tool.
         self._inject_trigger_attachment_metadata(
             messages_for_llm=messages_for_llm,
+            target=resumed_turn_opening,
             trigger_attachments=merge_attachment_metadata(
                 trigger_attachments, processed_content_parts.attachments
             ),
@@ -1705,12 +1763,17 @@ class ProcessingService:
         # Last, and after the attachment-metadata injection above: that scans back
         # for the newest user message, and would fasten the trigger's attachment
         # list onto this block instead of onto the trigger.
-        messages_for_llm.append(
-            build_turn_context_message(
-                current_time_str=self.current_time_str(),
-                aggregated_context=aggregated_other_context_str,
-            )
+        turn_context_message = build_turn_context_message(
+            current_time_str=self.current_time_str(),
+            aggregated_context=aggregated_other_context_str,
         )
+        if resumed_turn_opening is not None:
+            messages_for_llm.insert(
+                self._index_after(messages_for_llm, resumed_turn_opening),
+                turn_context_message,
+            )
+        else:
+            messages_for_llm.append(turn_context_message)
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
             db_context, messages_for_llm, acting_user_id=user_id
         )
@@ -1799,6 +1862,7 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        completed_iterations: int = 0,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -1831,6 +1895,7 @@ class ProcessingService:
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
+            completed_iterations=completed_iterations,
         ):
             yield item
 
@@ -2146,6 +2211,7 @@ class ProcessingService:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         model_selection: ResolvedModelSelection | None = None,
+        resume: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -2154,7 +2220,9 @@ class ProcessingService:
         real-time updates on text generation, tool calls, and tool results.
 
         Args:
-            Same as handle_chat_interaction
+            Same as handle_chat_interaction, plus ``resume`` to continue an
+            interrupted turn from the rows it already persisted (see
+            ``_prepare_turn_messages_for_llm``).
 
         Yields:
             LLMStreamEvent objects representing different stages of processing
@@ -2178,7 +2246,7 @@ class ProcessingService:
             # turn that reaches it is somebody's own request.
             trigger_is_internal=False,
             trigger_role="user",
-            exclude_turn_id=turn_id if reuse_existing_user_row else None,
+            exclude_turn_id=turn_id if reuse_existing_user_row or resume else None,
         )
 
         span = tracer.start_span(
@@ -2225,9 +2293,21 @@ class ProcessingService:
                 subconversation_id=subconversation_id,
                 reuse_existing_user_row=reuse_existing_user_row,
                 llm_client=run_llm_client,
+                resume=resume,
             )
 
             # --- 3. Stream LLM Processing ---
+            completed_iterations = (
+                sum(
+                    1
+                    for message in await db_context.message_history.get_by_turn_id(
+                        turn_id
+                    )
+                    if isinstance(message, AssistantMessage) and message.tool_calls
+                )
+                if resume
+                else 0
+            )
             # Ids already recorded on a tool row of this turn, so the
             # closing assistant row doesn't repeat them.
             recorded_on_tool_rows: set[str] = set()
@@ -2253,6 +2333,7 @@ class ProcessingService:
                 ),
                 taint_tracker=taint_tracker,
                 tool_call_review_trigger=tool_call_review_trigger,
+                completed_iterations=completed_iterations,
             ):
                 # A ``user_input`` echo is the client's proof that its
                 # steering message was delivered: seeing one is what

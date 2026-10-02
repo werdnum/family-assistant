@@ -13,6 +13,7 @@ from .context_viewer import context_viewer_router
 from .debug_api import debug_api_router
 from .diagnostics_api import diagnostics_api_router
 from .documents_api import documents_api_router
+from .embedded_pages import embedded_pages_router
 from .errors_api import errors_api_router
 from .events_api import events_api_router
 from .me_api import me_router
@@ -61,3 +62,5 @@ api_router.include_router(
 api_router.include_router(me_router, tags=["Identity"])
 api_router.include_router(a2a_router, prefix="/a2a", tags=["A2A Protocol"])
 api_router.include_router(api_auth_router, tags=["App Auth API"])
+
+api_router.include_router(embedded_pages_router, prefix="/app", tags=["Embedded Pages"])

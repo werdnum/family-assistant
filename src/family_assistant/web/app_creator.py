@@ -22,6 +22,7 @@ from family_assistant.paths import (
     TEMPLATES_DIR,
     get_docs_user_dir,
 )
+from family_assistant.services.turn_resumption import TurnLeaseRegistry
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.web.auth import (
     AUTH_ENABLED,
@@ -70,6 +71,7 @@ from family_assistant.web.routers.ucp import router as ucp_router
 from family_assistant.web.routers.vite_pages import vite_pages_router
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
+from family_assistant.web.turn_resumption import WEB_STREAM_RESUMER, WebTurnResumer
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +263,13 @@ def create_app() -> FastAPI:
     # background_chat_tasks set. See web/conversation_stream_hub.py.
     new_app.state.conversation_stream_hub = ConversationStreamHub()
 
+    # Leases that let another process resume a turn this one was running when
+    # it went away. See docs/design/turn-resumption-across-restarts.md.
+    new_app.state.turn_lease_registry = TurnLeaseRegistry()
+    new_app.state.turn_lease_registry.register_resumer(
+        WEB_STREAM_RESUMER, WebTurnResumer(new_app.state)
+    )
+
     # Initialize tool_definitions for development mode
     # This will be populated by Assistant.setup_dependencies() in production
     # For development, we load them directly here
@@ -281,6 +290,14 @@ def create_app() -> FastAPI:
         logger.error(
             f"Static directory '{static_dir}' not found or not a directory. Static files will not be served."
         )
+
+    new_app.mount(
+        "/api/app/assets",
+        StaticFiles(
+            directory=static_dir / "dist" / "embedded" / "assets", check_dir=False
+        ),
+        name="embedded_assets",
+    )
 
     # --- Include Routers ---
     # Note: Auth router will be added after AuthService is initialized

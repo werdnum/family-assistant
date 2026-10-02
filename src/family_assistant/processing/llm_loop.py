@@ -277,6 +277,7 @@ class LLMStreamingLoop:
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
+        completed_iterations: int = 0,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """Run a turn, attributing its telemetry to this profile.
 
@@ -309,6 +310,7 @@ class LLMStreamingLoop:
             tool_call_review_trigger=tool_call_review_trigger,
             memory_review=memory_review,
             allow_quiet_end=allow_quiet_end,
+            completed_iterations=completed_iterations,
         )
         try:
             attribution = CallAttribution(
@@ -353,6 +355,7 @@ class LLMStreamingLoop:
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
+        completed_iterations: int = 0,
         # AsyncGenerator rather than AsyncIterator: run_stream closes this
         # deterministically, and only the generator protocol offers aclose().
     ) -> AsyncGenerator[tuple[LLMStreamEvent, LLMMessage | None]]:
@@ -368,7 +371,10 @@ class LLMStreamingLoop:
         final_content: str | None = None
         final_reasoning_info: MessageReasoningInfo | None = None
         max_iterations = self.config.max_iterations
-        current_iteration = 1
+        # A resumed turn has already spent iterations on the rounds it replays;
+        # it continues on the same budget rather than starting a fresh one,
+        # though always with at least the final iteration left to answer in.
+        current_iteration = min(1 + completed_iterations, max_iterations)
         pending_attachment_ids: list[
             str
         ] = []  # Track attachment IDs from attach_to_response calls

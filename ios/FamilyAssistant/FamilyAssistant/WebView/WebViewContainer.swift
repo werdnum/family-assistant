@@ -175,7 +175,17 @@ struct WebViewContainer: UIViewRepresentable {
                     return
                 }
 
-                if onInternalNavigation(url) {
+                let appURL = EmbeddedWebRoute.appURL(url, relativeTo: serverBaseURL)
+                if onInternalNavigation(appURL) {
+                    decisionHandler(.cancel)
+                    return
+                }
+            }
+            if let url = navigationAction.request.url,
+               navigationAction.targetFrame?.isMainFrame == true {
+                let embeddedURL = EmbeddedWebRoute.pageURL(url, relativeTo: serverBaseURL)
+                if embeddedURL != url {
+                    webView.load(URLRequest(url: embeddedURL))
                     decisionHandler(.cancel)
                     return
                 }
@@ -221,7 +231,7 @@ struct WebViewContainer: UIViewRepresentable {
             else {
                 return false
             }
-            return onInternalNavigation(url)
+            return onInternalNavigation(EmbeddedWebRoute.appURL(url, relativeTo: serverBaseURL))
         }
     }
 }

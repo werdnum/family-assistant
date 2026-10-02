@@ -155,6 +155,10 @@ class TurnRecord:
     # producer's first slice). Lets the web layer persist a durable stopped
     # marker the never-run producer couldn't. Cleared with ``task``.
     on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None
+    # Set when a graceful shutdown suspends the turn so another process can
+    # resume it. A suspended turn is deliberately left open: the done-callback
+    # safety net must not close it as failed.
+    suspended: bool = False
 
 
 @dataclass(slots=True)
@@ -1016,7 +1020,7 @@ class ConversationStreamHub:
             # is cancelled before its coroutine's first slice — e.g. Stop arrives
             # in the window after attach_producer_task but before run_turn_producer
             # runs — so its try/except never executes. End the turn now.
-            if record.status == "running":
+            if record.status == "running" and not record.suspended:
                 # Classify like the producer's own cancellation path: a user Stop
                 # set the controller's interrupt flag -> 'cancelled'; any other
                 # cancellation (app shutdown, supervisor teardown) -> 'failed'.

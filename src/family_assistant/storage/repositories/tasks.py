@@ -1,7 +1,7 @@
 """Repository for tasks storage operations."""
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -350,6 +350,40 @@ class TasksRepository(BaseRepository):
             tasks_table.c.status.in_(TERMINAL_TASK_STATUSES),
         )
         return (await self._db.execute(stmt)).rowcount > 0
+
+    async def delete_pending(self, task_id: str) -> bool:
+        """Remove a task row only while no worker has claimed it.
+
+        For work that turned out not to be needed before it ran. A claimed
+        (``processing``) row is left alone: its handler is already running and
+        owns the outcome.
+        """
+        stmt = delete(tasks_table).where(
+            tasks_table.c.task_id == task_id,
+            tasks_table.c.status == "pending",
+        )
+        return (await self._db.execute(stmt)).rowcount > 0
+
+    async def reschedule_pending(
+        self, task_ids: Sequence[str], scheduled_at: datetime
+    ) -> int:
+        """Move the due time of still-pending tasks, returning how many moved.
+
+        A claimed row is left alone, as in :meth:`delete_pending`.
+        """
+        if scheduled_at.tzinfo is None:
+            raise ValueError("scheduled_at must be timezone-aware")
+        if not task_ids:
+            return 0
+        stmt = (
+            update(tasks_table)
+            .where(
+                tasks_table.c.task_id.in_(list(task_ids)),
+                tasks_table.c.status == "pending",
+            )
+            .values(scheduled_at=scheduled_at.astimezone(UTC))
+        )
+        return (await self._db.execute(stmt)).rowcount
 
     async def dequeue(
         self,

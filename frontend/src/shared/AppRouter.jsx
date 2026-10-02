@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { EMBEDDED_PAGE_BASE, isEmbeddedPage } from './embeddedNavigation';
 
 // Lazy load all route components for code splitting
 const Layout = lazy(() => import('./Layout.tsx'));
@@ -56,7 +57,7 @@ const withLayout = (element) => (
 
 const AppRouter = () => {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={isEmbeddedPage() ? EMBEDDED_PAGE_BASE : undefined}>
       <Routes>
         {/* Chat routes - no Layout wrapper as ChatApp has its own complete UI */}
         <Route

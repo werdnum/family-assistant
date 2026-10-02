@@ -163,8 +163,8 @@ The review of this design established two constraints that shape everything else
 - **LAN path enforcement**: LAN/Tailscale traffic enters through the local ingress and may not
   traverse the public gateway, so edge JWT enforcement applies to the internet path; LAN relies on
   backend auth (now actually enforced everywhere, see milestone 1). No posture regression.
-- **Embedded web views off-LAN**: WKWebView-hosted pages (e.g. Documents) still hit interactive
-  Access when off-Tailscale. Pre-existing behaviour, out of scope here.
+- **Embedded web views**: pages and assets use the JWT-protected `/api/app` surface. Native token
+  refresh owns their cookie renewal; see [embedded iOS pages](ios-embedded-web-auth.md).
 - **Single signing key**: one key, stable `kid`; rotation is future work the JWKS shape already
   accommodates.
 

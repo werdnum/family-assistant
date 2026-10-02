@@ -145,7 +145,12 @@ def _agent_interaction_response(response: object) -> Interaction:
     if isinstance(response, Interaction):
         return response
     if isinstance(response, dict):
-        return Interaction.model_validate(response)
+        # The API returns environment.env as a list of single-key maps,
+        # while the SDK expects a dict. No caller reads the response's
+        # environment; keep validating the fields used to deliver the result.
+        return Interaction.model_validate({
+            key: value for key, value in response.items() if key != "environment"
+        })
     raise TypeError(
         f"Expected an Interactions API Interaction, got {type(response).__name__}"
     )
