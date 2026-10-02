@@ -22,6 +22,8 @@ struct ChatStreamEvent: Equatable {
     let confirmationResult: ChatConfirmationResult?
     let errorMessage: String?
     let status: String?
+    /// A `tool_result` event's outcome, as the backend classified it.
+    var toolOutcome: ChatToolStatus? = nil
 }
 
 enum ChatAttachmentSource: String, Equatable {
@@ -167,12 +169,14 @@ final class SSEParser {
            let result = payload["result"]
         {
             let attachments = decodeAttachments(payload["attachments"])
-            return baseEvent(
+            var event = baseEvent(
                 type: .toolResult,
                 toolCallID: toolCallID,
                 toolResult: result.displayString,
                 attachments: attachments
             )
+            event.toolOutcome = ChatToolStatus(backendOutcome: payload["outcome"]?.stringValue)
+            return event
         }
 
         if case .string(let requestID) = payload["request_id"],

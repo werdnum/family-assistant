@@ -48,6 +48,13 @@ tool calls at any time, and it stays the way you left it.
 ![Collapsed Tool Calls](../../screenshots/desktop/chat-tool-calls-collapsed.png) *Completed tool
 calls stay collapsed while keeping the details available*
 
+Each tool call says how it went, on the web and in the iOS app alike: running, waiting for your
+approval, succeeded, failed, or not run (you declined it, its approval expired, or it is waiting for
+your approval from the pending confirmations list). Only a call that succeeded shows a check mark,
+and a failed call keeps its error message. A call that never reported back before its reply
+finished, such as one cut off when you stopped a turn, says that no result was recorded rather than
+looking finished or still running.
+
 **Copy a reply.** Hover over an assistant reply or Tab to its **Copy response** button, then
 activate it to copy the response text. A checkmark confirms success. If the browser cannot write to
 the clipboard, an error appears below the reply; select the text and copy it manually instead.

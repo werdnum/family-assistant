@@ -265,7 +265,11 @@ export const AddOrUpdateNoteToolUI = ({ args, result, status }) => {
     <div className="tool-call-container tool-note" data-ui="tool-call-content">
       <div className="tool-call-header">
         <span className="tool-name">📝 Note</span>
+        {status?.type === 'running' && <ClockIcon size={16} className="animate-spin" />}
         {status?.type === 'complete' && <CheckCircleIcon size={16} className="tool-success" />}
+        {status?.type === 'incomplete' && status?.reason === 'error' && (
+          <AlertCircleIcon size={16} className="tool-error" />
+        )}
       </div>
 
       <div className="tool-note-content">

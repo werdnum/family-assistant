@@ -164,6 +164,7 @@ describe('ToolGroup', () => {
         <ToolGroupShell
           toolNames={toolNames}
           toolCount={toolCount}
+          unsuccessfulCount={0}
           isExpanded={false}
           onOpenChange={() => {}}
         >
@@ -204,5 +205,23 @@ describe('ToolGroup', () => {
       expect(trigger).toHaveTextContent('2 tool calls');
       expect(categoryIconCount(trigger)).toBe(0);
     });
+  });
+
+  it('counts calls that did not succeed in the collapsed header', () => {
+    render(
+      <ToolGroupShell
+        toolNames={[]}
+        toolCount={3}
+        unsuccessfulCount={1}
+        isExpanded={false}
+        onOpenChange={() => {}}
+      >
+        {mockChildren}
+      </ToolGroupShell>
+    );
+
+    expect(screen.getByTestId('tool-group-trigger')).toHaveTextContent(
+      "3 tool calls · 1 didn't finish"
+    );
   });
 });

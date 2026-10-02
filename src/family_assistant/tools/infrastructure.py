@@ -96,6 +96,11 @@ from family_assistant.tools.metadata import (
     ToolTag,
     build_local_tool_descriptors,
 )
+from family_assistant.tools.outcomes import (
+    ACTION_BLOCKED_PREFIX,
+    ACTION_CANCELLED_PREFIX,
+    ACTION_DECLINED_PREFIX,
+)
 from family_assistant.tools.policy import (
     PolicyEngine,
     PolicyEvaluation,
@@ -338,16 +343,14 @@ def confirmation_outcome_to_tool_result(
     if outcome.kind == "completed":
         return outcome.result if outcome.result is not None else ""
     if outcome.kind == "timed_out":
-        return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+        return f"{ACTION_CANCELLED_PREFIX} Confirmation request for tool '{name}' timed out."
     if outcome.kind == "cancelled":
-        return (
-            f"Action cancelled: Confirmation request for tool '{name}' was cancelled."
-        )
+        return f"{ACTION_CANCELLED_PREFIX} Confirmation request for tool '{name}' was cancelled."
     if outcome.kind == "failed":
         if outcome.result is not None:
             return outcome.result
         return f"Error executing approved tool '{name}'."
-    return f"OK. Action cancelled by user for tool '{name}'."
+    return f"{ACTION_DECLINED_PREFIX} for tool '{name}'."
 
 
 class ToolConfirmationRequired(Exception):
@@ -1473,13 +1476,13 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     )
             except TimeoutError:
                 logger.warning("Confirmation request for tool '%s' timed out.", name)
-                return f"Action cancelled: Confirmation request for tool '{name}' timed out."
+                return f"{ACTION_CANCELLED_PREFIX} Confirmation request for tool '{name}' timed out."
             except asyncio.CancelledError:
                 logger.info(
                     "Confirmation request for tool '%s' was cancelled.",
                     name,
                 )
-                return f"Action cancelled: Confirmation request for tool '{name}' was cancelled."
+                return f"{ACTION_CANCELLED_PREFIX} Confirmation request for tool '{name}' was cancelled."
             except Exception as conf_err:
                 logger.exception(
                     "Error during confirmation request for tool '%s': %s",
@@ -3566,7 +3569,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         name: str,
         result: ToolCallReviewResult,
     ) -> ToolResult:
-        text = f"Action blocked by automatic review for tool '{name}': {result.reason}"
+        text = f"{ACTION_BLOCKED_PREFIX} for tool '{name}': {result.reason}"
         if result.safer_alternative:
             text += f" Safer alternative: {result.safer_alternative}"
         return ToolResult(text=text, attachments=None)
@@ -3586,7 +3589,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             return _ConfirmationGateResult(
                 result=ToolResult(
                     text=(
-                        f"Action blocked by automatic review for tool '{name}': "
+                        f"{ACTION_BLOCKED_PREFIX} for tool '{name}': "
                         f"human confirmation is required but unavailable. {reason}"
                     ),
                     attachments=None,
@@ -3604,7 +3607,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             return _ConfirmationGateResult(
                 result=ToolResult(
                     text=(
-                        f"Action blocked by automatic review for tool '{name}': "
+                        f"{ACTION_BLOCKED_PREFIX} for tool '{name}': "
                         "human confirmation is required, but deferred execution is "
                         "unsafe because this call's result is not independent and "
                         f"terminal. {reason}"

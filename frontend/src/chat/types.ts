@@ -1,3 +1,5 @@
+import type { TerminalToolOutcome } from './toolOutcome';
+
 export interface Conversation {
   conversation_id: string;
   last_message: string;
@@ -66,6 +68,9 @@ export interface MessageContent {
   args?: Record<string, unknown>;
   argsText?: string;
   result?: string | Record<string, unknown>;
+  outcome?: TerminalToolOutcome;
+  // A history row from a turn the server still reports as running.
+  awaitingResult?: boolean;
   attachments?: Array<Record<string, unknown>>;
   artifact?: {
     attachments?: Array<Record<string, unknown>>;
@@ -112,6 +117,8 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   metadata?: BackendMessageMetadata;
   tool_calls?: BackendToolCall[];
   tool_call_id?: string;
+  // For tool rows: how the call ended, classified by the backend.
+  tool_outcome?: TerminalToolOutcome | null;
   processing_profile_id?: string | null;
   reasoning_info?: MessageReasoningInfo | null;
 }

@@ -51,8 +51,106 @@ final class ToolRenderingTests: XCTestCase {
         let toolCall = try XCTUnwrap(messages.first?.toolCalls.first)
         XCTAssertEqual(toolCall.name, "search_notes")
         XCTAssertEqual(toolCall.resultText, #"{"status":"ok"}"#)
-        XCTAssertEqual(toolCall.status, .complete)
+        XCTAssertEqual(toolCall.status, .succeeded)
         XCTAssertEqual(toolCall.attachments.first?.name, "notes.md")
+    }
+
+    func testRenderMessagesUsesBackendOutcomeAndNeverMarksMissingResultsRunning() throws {
+        let json = """
+        [
+          {
+            "internal_id": 20,
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-06-08T12:00:00Z",
+            "tool_calls": [
+              {"id": "call-failed", "type": "function", "function": {"name": "add_or_update_note", "arguments": "{}"}},
+              {"id": "call-declined", "type": "function", "function": {"name": "delete_note", "arguments": "{}"}},
+              {"id": "call-raised", "type": "function", "function": {"name": "get_note", "arguments": "{}"}},
+              {"id": "call-missing", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+            ]
+          },
+          {
+            "internal_id": 21,
+            "role": "tool",
+            "content": "Error: Database temporarily unavailable",
+            "timestamp": "2026-06-08T12:00:01Z",
+            "tool_call_id": "call-failed",
+            "tool_outcome": "failed"
+          },
+          {
+            "internal_id": 22,
+            "role": "tool",
+            "content": "OK. Action cancelled by user for tool 'delete_note'.",
+            "timestamp": "2026-06-08T12:00:02Z",
+            "tool_call_id": "call-declined",
+            "tool_outcome": "rejected"
+          },
+          {
+            "internal_id": 23,
+            "role": "tool",
+            "content": "Error executing get_note: boom",
+            "timestamp": "2026-06-08T12:00:03Z",
+            "tool_call_id": "call-raised",
+            "error_traceback": "Traceback ..."
+          }
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let toolCalls = try XCTUnwrap(ChatViewModel.renderMessages(from: backendMessages).first?.toolCalls)
+
+        XCTAssertEqual(toolCalls.map(\.status), [.failed, .rejected, .failed, .unknown])
+        XCTAssertEqual(toolCalls.first?.resultText, "Error: Database temporarily unavailable")
+        XCTAssertFalse(toolCalls.contains { $0.status.isPending })
+    }
+
+    func testRenderMessagesKeepsUnansweredCallsOfARunningTurnRunning() throws {
+        let json = """
+        [
+          {
+            "internal_id": 30,
+            "turn_id": "turn-live",
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-06-08T12:00:00Z",
+            "tool_calls": [
+              {"id": "call-live", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+            ]
+          },
+          {
+            "internal_id": 31,
+            "turn_id": "turn-old",
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-06-08T11:00:00Z",
+            "tool_calls": [
+              {"id": "call-old", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+            ]
+          }
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let messages = ChatViewModel.renderMessages(from: backendMessages, runningTurnIDs: ["turn-live"])
+
+        XCTAssertEqual(messages.flatMap(\.toolCalls).map(\.status), [.running, .unknown])
+    }
+
+    func testToolStatusLabelsDistinguishEveryOutcome() {
+        let statuses: [ChatToolStatus] = [.running, .awaitingApproval, .succeeded, .failed, .rejected, .unknown]
+
+        let labels = statuses.compactMap(\.displayLabel)
+
+        // Success is the quiet state; every other outcome is named, and named differently.
+        XCTAssertNil(ChatToolStatus.succeeded.displayLabel)
+        XCTAssertEqual(labels.count, statuses.count - 1)
+        XCTAssertEqual(Set(labels).count, labels.count)
+        XCTAssertEqual(ChatToolStatus(backendOutcome: "succeeded"), .succeeded)
+        XCTAssertEqual(ChatToolStatus(backendOutcome: "failed"), .failed)
+        XCTAssertEqual(ChatToolStatus(backendOutcome: "rejected"), .rejected)
+        XCTAssertNil(ChatToolStatus(backendOutcome: "running"))
+        XCTAssertNil(ChatToolStatus(backendOutcome: nil))
     }
 
     func testRenderMessagesKeepsGenericUnknownToolFallback() throws {
@@ -218,7 +316,7 @@ final class ToolRenderingTests: XCTestCase {
                     argumentsText: "{}",
                     resultText: "ok",
                     attachments: [image],
-                    status: .complete
+                    status: .succeeded
                 ),
             ],
             attachments: [image],
@@ -280,7 +378,7 @@ final class ToolRenderingTests: XCTestCase {
                         errorMessage: nil
                     ),
                 ],
-                status: .complete
+                status: .succeeded
             )
         }
         let message = ChatMessage(
@@ -704,7 +802,7 @@ final class ToolRenderingTests: XCTestCase {
         name: String = "query_trino",
         arguments: String,
         result: String? = nil,
-        status: ChatToolStatus = .complete
+        status: ChatToolStatus = .succeeded
     ) -> ChatToolCall {
         ChatToolCall(id: "call", name: name, argumentsText: arguments, resultText: result, attachments: [], status: status)
     }
@@ -765,11 +863,11 @@ final class ToolRenderingTests: XCTestCase {
     func testOnlyInFlightToolCallsWantAttention() {
         XCTAssertTrue(ChatToolStatus.running.wantsAttention)
         XCTAssertTrue(ChatToolStatus.awaitingApproval.wantsAttention)
-        XCTAssertTrue(ChatToolStatus.approved.wantsAttention)
-        XCTAssertFalse(ChatToolStatus.complete.wantsAttention)
+        XCTAssertFalse(ChatToolStatus.succeeded.wantsAttention)
         XCTAssertFalse(ChatToolStatus.failed.wantsAttention)
         XCTAssertFalse(ChatToolStatus.rejected.wantsAttention)
-        XCTAssertNil(ChatToolStatus.complete.displayLabel)
+        XCTAssertFalse(ChatToolStatus.unknown.wantsAttention)
+        XCTAssertNil(ChatToolStatus.succeeded.displayLabel)
         XCTAssertEqual(ChatToolStatus.failed.displayLabel, "Failed")
     }
 }

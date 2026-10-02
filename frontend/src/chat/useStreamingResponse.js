@@ -724,13 +724,15 @@ export const useStreamingResponse = ({
               }
 
               // Handle tool result
-              if (payload.tool_call_id && payload.result) {
+              // An empty result is still a result: the call finished.
+              if (payload.tool_call_id && payload.result !== undefined && payload.result !== null) {
                 const toolCallIndex = toolCalls.findIndex((tc) => tc.id === payload.tool_call_id);
                 if (toolCallIndex !== -1) {
                   // Create a new tool call object to ensure React detects the change
                   const updatedToolCall = {
                     ...toolCalls[toolCallIndex],
                     result: payload.result,
+                    outcome: payload.outcome,
                     attachments: payload.attachments || toolCalls[toolCallIndex].attachments,
                   };
 

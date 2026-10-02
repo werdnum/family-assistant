@@ -2099,7 +2099,7 @@ private struct ToolGroupView: View {
         for call in toolCalls where !names.contains(call.displayName) {
             names.append(call.displayName)
         }
-        let unsuccessful = toolCalls.filter { $0.status == .failed || $0.status == .rejected }.count
+        let unsuccessful = toolCalls.filter { $0.status.didNotSucceed }.count
         var text = names.prefix(3).joined(separator: ", ")
         if names.count > 3 {
             text += " +\(names.count - 3)"
@@ -2150,7 +2150,8 @@ private struct ToolCallCard: View {
                 if let label = toolCall.status.displayLabel {
                     Text(label)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(toolCall.status == .failed ? Color.red : Color.secondary)
+                        .accessibilityIdentifier("tool-call-status-\(toolCall.id)")
                 }
             }
             if let summary = toolCall.argumentsSummary {
@@ -2197,12 +2198,14 @@ private struct ToolCallCard: View {
             "hourglass"
         case .awaitingApproval:
             "hand.raised"
-        case .approved:
+        case .succeeded:
             "checkmark.circle"
-        case .rejected, .failed:
+        case .failed:
             "xmark.octagon"
-        case .complete:
-            "checkmark.circle"
+        case .rejected:
+            "nosign"
+        case .unknown:
+            "questionmark.circle"
         }
     }
 }

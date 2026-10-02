@@ -68,6 +68,11 @@ from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.confirmation import append_review_reason_to_confirmation
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
+from family_assistant.tools.outcomes import (
+    NOT_RUN_YET_NOTE,
+    ToolOutcome,
+    classify_tool_outcome,
+)
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
@@ -518,6 +523,13 @@ class ConversationMessage(BaseModel):
     tool_calls: list[dict] | None = Field(None, description="Tool calls if any")
     tool_call_id: str | None = Field(None, description="Tool call ID for tool messages")
     error_traceback: str | None = Field(None, description="Error traceback if any")
+    tool_outcome: ToolOutcome | None = Field(
+        None,
+        description=(
+            "For tool messages: whether the call succeeded, failed, or was not "
+            "run because its confirmation was declined, cancelled or timed out"
+        ),
+    )
     attachments: list[MessageAttachmentMetadata] | None = Field(
         None, description="Attachment metadata if any"
     )
@@ -2592,7 +2604,7 @@ async def run_non_streaming_turn(
                 kind="completed",
                 result=(
                     f"I've requested your approval to run '{tool_name}' "
-                    f"(request {durable_request['id']}). It hasn't run yet — approve it "
+                    f"(request {durable_request['id']}). {NOT_RUN_YET_NOTE} — approve it "
                     "from your pending confirmations to continue."
                 ),
             )
@@ -2903,6 +2915,13 @@ def _serialize_conversation_messages(
                 tool_calls=tool_calls_dicts,
                 tool_call_id=msg.get("tool_call_id"),
                 error_traceback=msg.get("error_traceback"),
+                tool_outcome=(
+                    classify_tool_outcome(
+                        msg.get("content"), msg.get("error_traceback")
+                    )
+                    if msg["role"] == "tool"
+                    else None
+                ),
                 attachments=msg.get("attachments"),
                 processing_profile_id=msg.get("processing_profile_id"),
                 reasoning_info=msg.get("reasoning_info"),
