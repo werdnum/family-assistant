@@ -10,10 +10,12 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import type { ConversationShareLink } from './useConversationShareLink';
 
 interface ShareConversationButtonProps {
   conversationId: string | null;
   hasPersistedMessages: boolean;
+  shareLink: ConversationShareLink;
 }
 
 type ShareStatus = 'loading' | 'active' | 'inactive' | 'error';
@@ -21,17 +23,25 @@ type ShareStatus = 'loading' | 'active' | 'inactive' | 'error';
 export const ShareConversationButton: React.FC<ShareConversationButtonProps> = ({
   conversationId,
   hasPersistedMessages,
+  shareLink,
 }) =>
   conversationId && hasPersistedMessages ? (
-    <ConversationShareDialog key={conversationId} conversationId={conversationId} />
+    <ConversationShareDialog
+      key={conversationId}
+      conversationId={conversationId}
+      shareLink={shareLink}
+    />
   ) : null;
 
-const ConversationShareDialog: React.FC<{ conversationId: string }> = ({ conversationId }) => {
+const ConversationShareDialog: React.FC<{
+  conversationId: string;
+  shareLink: ConversationShareLink;
+}> = ({ conversationId, shareLink }) => {
   const [shareStatus, setShareStatus] = useState<ShareStatus>('loading');
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const { url: shareUrl, setUrl: setShareUrl } = shareLink;
   const [copyFailed, setCopyFailed] = useState(false);
   const [statusRequestVersion, setStatusRequestVersion] = useState(0);
   const urlInputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +55,9 @@ const ConversationShareDialog: React.FC<{ conversationId: string }> = ({ convers
       .then((response) => (response.ok ? response.json() : Promise.reject(response)))
       .then((data: { active: boolean }) => {
         setShareStatus(data.active ? 'active' : 'inactive');
+        if (!data.active) {
+          setShareUrl(null);
+        }
       })
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -53,7 +66,7 @@ const ConversationShareDialog: React.FC<{ conversationId: string }> = ({ convers
         }
       });
     return () => controller.abort();
-  }, [conversationId, statusRequestVersion]);
+  }, [conversationId, statusRequestVersion, setShareUrl]);
 
   useEffect(() => {
     if (copyFailed) {

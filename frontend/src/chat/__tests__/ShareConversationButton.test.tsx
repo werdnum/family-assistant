@@ -4,6 +4,12 @@ import { http, HttpResponse } from 'msw';
 import { vi } from 'vitest';
 import { server } from '../../test/setup.js';
 import { ShareConversationButton } from '../ShareConversationButton';
+import { useConversationShareLink } from '../useConversationShareLink';
+
+function ShareControl(props: { conversationId: string | null; hasPersistedMessages: boolean }) {
+  const shareLink = useConversationShareLink(props.conversationId);
+  return <ShareConversationButton {...props} shareLink={shareLink} />;
+}
 
 const endpoint = '/api/v1/chat/conversations/conversation-1/share';
 
@@ -22,9 +28,7 @@ function setup(active = false) {
     http.post(endpoint, create),
     http.delete(endpoint, revoke)
   );
-  const view = render(
-    <ShareConversationButton conversationId="conversation-1" hasPersistedMessages={true} />
-  );
+  const view = render(<ShareControl conversationId="conversation-1" hasPersistedMessages={true} />);
   return { user, writeText, create, revoke, ...view };
 }
 
@@ -155,7 +159,7 @@ describe('ShareConversationButton', () => {
       })
     );
     server.use(http.post(endpoint, create));
-    render(<ShareConversationButton conversationId="conversation-1" hasPersistedMessages={true} />);
+    render(<ShareControl conversationId="conversation-1" hasPersistedMessages={true} />);
     await openDialog(user);
     await screen.findByRole('alert');
     expect(screen.queryByRole('button', { name: /and copy link/ })).not.toBeInTheDocument();
@@ -168,13 +172,11 @@ describe('ShareConversationButton', () => {
     const statusRequest = vi.fn(() => HttpResponse.json({ active: false }));
     server.use(http.get(endpoint, statusRequest));
     const { rerender } = render(
-      <ShareConversationButton conversationId="conversation-1" hasPersistedMessages={false} />
+      <ShareControl conversationId="conversation-1" hasPersistedMessages={false} />
     );
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(statusRequest).not.toHaveBeenCalled();
-    rerender(
-      <ShareConversationButton conversationId="conversation-1" hasPersistedMessages={true} />
-    );
+    rerender(<ShareControl conversationId="conversation-1" hasPersistedMessages={true} />);
     await waitFor(() => expect(statusRequest).toHaveBeenCalledOnce());
   });
 
@@ -188,9 +190,7 @@ describe('ShareConversationButton', () => {
         HttpResponse.json({ active: true })
       )
     );
-    rerender(
-      <ShareConversationButton conversationId="conversation-2" hasPersistedMessages={true} />
-    );
+    rerender(<ShareControl conversationId="conversation-2" hasPersistedMessages={true} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await openDialog(user);
     await screen.findByText(/existing URL cannot be retrieved/);

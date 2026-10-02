@@ -25,6 +25,7 @@ import ProfileSelector from './ProfileSelector';
 import { type ModelTier, ProfilesProvider, useProfiles } from './profilesContext';
 import { PushNotificationButton } from './PushNotificationButton';
 import { ShareConversationButton } from './ShareConversationButton';
+import { useConversationShareLink } from './useConversationShareLink';
 import {
   ChatControlsContext,
   type ConversationLoadStatus,
@@ -457,6 +458,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const shareLink = useConversationShareLink(conversationId);
   const { delegations: pendingDelegations, refresh: refreshPendingDelegations } =
     usePendingDelegations(conversationId);
   const [persistedConversationId, setPersistedConversationId] = useState<string | null>(null);
@@ -2870,6 +2872,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                 <h2 className="min-w-0 flex-1 truncate text-xl font-semibold">Chat</h2>
                 <div className="flex flex-wrap items-center justify-end gap-1">
                   <ShareConversationButton
+                    shareLink={shareLink}
                     conversationId={conversationId}
                     hasPersistedMessages={
                       messages.length > 0 && persistedConversationId === conversationId
@@ -2970,6 +2973,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
               <div className="flex items-center gap-2 ml-auto">
                 <ShareConversationButton
+                  shareLink={shareLink}
                   conversationId={conversationId}
                   hasPersistedMessages={
                     messages.length > 0 && persistedConversationId === conversationId
