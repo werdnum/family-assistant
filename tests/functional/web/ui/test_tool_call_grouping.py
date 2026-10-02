@@ -272,7 +272,9 @@ async def test_single_tool_call_uses_toolgroup(
     await tool_group.wait_for(state="visible", timeout=10000)
 
     trigger = page.locator('[data-testid="tool-group-trigger"]')
-    await expect(trigger).to_have_text("1 note")
+    # add_or_update_note asks for confirmation, which no one answers here, so
+    # the call ends not run and the collapsed header says so.
+    await expect(trigger).to_have_text("1 note · 1 didn't finish")
 
     # Verify the group is still functional (can be expanded)
     content = page.locator('[data-testid="tool-group-content"]')
