@@ -1,9 +1,9 @@
 """Tests that hovering chat messages does not shift surrounding content.
 
 Regression coverage for the action bar layout jump: the per-message action bar
-(the Copy button row) autohides on non-last assistant messages and is re-inserted
-on hover. If it renders in normal flow rather than floating, its height pushes all
-content below it down, so hovering a tool call result made everything jump.
+(the Copy button row) is revealed on hover or keyboard focus. If it renders in
+normal flow rather than floating, its height pushes all content below it down,
+so hovering a tool call result made everything jump.
 """
 
 from collections.abc import Callable, Mapping
@@ -54,8 +54,7 @@ async def test_hovering_tool_result_does_not_shift_content_below(
     chat_page = ChatPage(page, web_test_fixture.base_url)
 
     # First turn produces a tool call; second turn is a plain reply. The second
-    # turn is what makes the first assistant message non-last, so its action bar
-    # autohides and is re-inserted on hover.
+    # turn makes the first assistant message non-last.
     mock_llm_client.rules = [
         (
             _last_is_user_containing("buy milk"),
@@ -97,8 +96,8 @@ async def test_hovering_tool_result_does_not_shift_content_below(
     await below.wait_for(state="visible", timeout=10000)
 
     action_bar = first_assistant.locator('[data-testid="assistant-action-bar"]')
-    # Action bar is autohidden (absent from the DOM) before hovering.
-    await expect(action_bar).to_have_count(0)
+    # Keep controls mounted for keyboard navigation, but hidden until interaction.
+    await expect(action_bar).to_have_css("opacity", "0")
 
     before_box = await below.bounding_box()
     assert before_box is not None
@@ -106,9 +105,9 @@ async def test_hovering_tool_result_does_not_shift_content_below(
     # Hover the tool call result, exactly the interaction from the bug report.
     await tool_group.hover()
 
-    # The action bar appears in floating mode (out of normal flow)...
-    await expect(action_bar).to_have_count(1)
-    await expect(action_bar).to_have_attribute("data-floating", "true")
+    # The action bar appears out of normal flow...
+    await expect(action_bar).to_have_css("opacity", "1")
+    await expect(action_bar).to_have_css("position", "absolute")
 
     # ...and crucially does not push the content below it down.
     after_box = await below.bounding_box()
