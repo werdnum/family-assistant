@@ -48,6 +48,10 @@ tool calls at any time, and it stays the way you left it.
 ![Collapsed Tool Calls](../../screenshots/desktop/chat-tool-calls-collapsed.png) *Completed tool
 calls stay collapsed while keeping the details available*
 
+**Copy a reply.** Hover over an assistant reply or Tab to its **Copy response** button, then
+activate it to copy the response text. A checkmark confirms success. If the browser cannot write to
+the clipboard, an error appears below the reply; select the text and copy it manually instead.
+
 A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
 messages** to bring in older ones, as many times as you need to reach the start.
 
