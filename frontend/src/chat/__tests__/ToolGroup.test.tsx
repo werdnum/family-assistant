@@ -164,6 +164,7 @@ describe('ToolGroup', () => {
         <ToolGroupShell
           toolNames={toolNames}
           toolCount={toolCount}
+          unsuccessfulCount={0}
           isExpanded={false}
           onOpenChange={() => {}}
         >

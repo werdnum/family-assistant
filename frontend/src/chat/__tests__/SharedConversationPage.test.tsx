@@ -101,6 +101,79 @@ describe('SharedConversationPage', () => {
     expect(screen.getByText('Raw tool output')).toBeInTheDocument();
   });
 
+  it('shows which shared calls did not succeed', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v1/shared-conversations/outcomes/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: '1',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:00Z',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_ok',
+                  type: 'function',
+                  function: { name: 'get_note', arguments: '{}' },
+                },
+                {
+                  id: 'call_failed',
+                  type: 'function',
+                  function: { name: 'add_or_update_note', arguments: '{}' },
+                },
+                {
+                  id: 'call_missing',
+                  type: 'function',
+                  function: { name: 'get_weather', arguments: '{}' },
+                },
+              ],
+            },
+            {
+              internal_id: '2',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:01Z',
+              tool_call_id: 'call_ok',
+              content: 'Gifts: blue',
+              tool_outcome: 'succeeded',
+            },
+            {
+              internal_id: '3',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:02Z',
+              tool_call_id: 'call_failed',
+              content: 'Error: Database temporarily unavailable',
+              tool_outcome: 'failed',
+            },
+            {
+              internal_id: '4',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:03Z',
+              content: 'Done.',
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('outcomes');
+
+    expect(await screen.findByText('Done.')).toBeInTheDocument();
+    const trigger = screen.getByTestId('tool-group-trigger');
+    expect(trigger).toHaveTextContent("2 didn't finish");
+
+    await user.click(trigger);
+
+    const calls = screen.getAllByTestId('shared-tool-call');
+    expect(calls.map((call) => call.getAttribute('data-tool-outcome'))).toEqual([
+      'succeeded',
+      'failed',
+      'unknown',
+    ]);
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText('No result recorded')).toBeInTheDocument();
+  });
+
   it('merges a multi-iteration agentic turn into one group', async () => {
     const user = userEvent.setup();
     server.use(
@@ -199,6 +272,14 @@ describe('SharedConversationPage', () => {
                   function: { name: 'search_calendar_events', arguments: '{}' },
                 },
               ],
+            },
+            {
+              internal_id: '2',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:01Z',
+              tool_call_id: 'call_1',
+              content: 'No events',
+              tool_outcome: 'succeeded',
             },
           ],
         })
@@ -330,6 +411,14 @@ describe('SharedConversationPage', () => {
                   function: { name: 'search_calendar_events', arguments: '{}' },
                 },
               ],
+            },
+            {
+              internal_id: '2',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:01Z',
+              tool_call_id: 'call_1',
+              content: 'No events',
+              tool_outcome: 'succeeded',
             },
           ],
         })

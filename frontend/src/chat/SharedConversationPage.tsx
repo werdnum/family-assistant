@@ -7,6 +7,7 @@ import type { BackendAttachment, BackendConversationMessage, BackendToolCall } f
 import { MarkdownText } from './MarkdownText';
 import { ToolGroupShell } from './ToolGroupShell';
 import { getToolIconInfo } from './toolIconMapping';
+import { isTerminalToolOutcome, TOOL_OUTCOME_LABELS, type ToolOutcome } from './toolOutcome';
 
 function messageText(message: BackendConversationMessage): string {
   if (typeof message.content === 'string') {
@@ -26,11 +27,13 @@ interface SharedToolCall {
   name: string;
   argsText: string;
   resultText: string;
+  outcome: ToolOutcome;
 }
 
 interface ToolResult {
   text: string;
   attachments: BackendAttachment[];
+  outcome?: ToolOutcome;
 }
 
 function toolCallName(toolCall: BackendToolCall): string {
@@ -56,6 +59,7 @@ function collectToolResults(messages: BackendConversationMessage[]): Map<string,
       results.set(message.tool_call_id, {
         text: messageText(message),
         attachments: message.attachments ?? [],
+        outcome: isTerminalToolOutcome(message.tool_outcome) ? message.tool_outcome : undefined,
       });
     }
   }
@@ -114,12 +118,18 @@ function buildSharedToolCalls(
   message: BackendConversationMessage,
   toolResults: Map<string, ToolResult>
 ): SharedToolCall[] {
-  return (message.tool_calls ?? []).map((toolCall) => ({
-    id: toolCall.id,
-    name: toolCallName(toolCall),
-    argsText: toolCallArgsText(toolCall),
-    resultText: toolResults.get(toolCall.id)?.text ?? '',
-  }));
+  return (message.tool_calls ?? []).map((toolCall) => {
+    const result = toolResults.get(toolCall.id);
+    return {
+      id: toolCall.id,
+      name: toolCallName(toolCall),
+      argsText: toolCallArgsText(toolCall),
+      resultText: result?.text ?? '',
+      // A shared transcript is a snapshot: a call with no result is not shown
+      // as running, and one whose row predates outcomes is taken as succeeded.
+      outcome: result ? (result.outcome ?? 'succeeded') : 'unknown',
+    };
+  });
 }
 
 const SharedToolGroup: React.FC<{ toolCalls: SharedToolCall[] }> = ({ toolCalls }) => {
@@ -129,16 +139,31 @@ const SharedToolGroup: React.FC<{ toolCalls: SharedToolCall[] }> = ({ toolCalls 
     <ToolGroupShell
       toolNames={toolCalls.map((toolCall) => toolCall.name)}
       toolCount={toolCalls.length}
+      unsuccessfulCount={toolCalls.filter((toolCall) => toolCall.outcome !== 'succeeded').length}
       isExpanded={isExpanded}
       onOpenChange={setIsExpanded}
     >
       {toolCalls.map((toolCall) => {
         const { icon: Icon } = getToolIconInfo(toolCall.name);
         return (
-          <div key={toolCall.id} className="rounded-md border border-border/50 p-2">
+          <div
+            key={toolCall.id}
+            className="rounded-md border border-border/50 p-2"
+            data-testid="shared-tool-call"
+            data-tool-outcome={toolCall.outcome}
+          >
             <div className="flex items-center gap-2 text-xs font-medium">
               <Icon className="h-3.5 w-3.5" />
               {toolCall.name}
+              {toolCall.outcome !== 'succeeded' && (
+                <span
+                  className={
+                    toolCall.outcome === 'failed' ? 'text-destructive' : 'text-muted-foreground'
+                  }
+                >
+                  {TOOL_OUTCOME_LABELS[toolCall.outcome]}
+                </span>
+              )}
             </div>
             {toolCall.argsText && (
               <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">
@@ -213,7 +238,17 @@ const SharedMessage: React.FC<{
   // call for it would render an empty group instead of skipping the message.
   const toolCalls = isOrphanToolResult
     ? orphanResultText
-      ? [{ id: message.internal_id, name: 'unknown', argsText: '', resultText: orphanResultText }]
+      ? [
+          {
+            id: message.internal_id,
+            name: 'unknown',
+            argsText: '',
+            resultText: orphanResultText,
+            outcome: isTerminalToolOutcome(message.tool_outcome)
+              ? message.tool_outcome
+              : 'succeeded',
+          },
+        ]
       : []
     : buildSharedToolCalls(message, toolResults);
   // Attachments produced by this message's tools belong with the response, not

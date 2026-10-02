@@ -13,7 +13,7 @@ interface ToolGroupShellProps {
   toolNames: string[];
   toolCount: number;
   /** Calls in the group that finished without succeeding. */
-  unsuccessfulCount?: number;
+  unsuccessfulCount: number;
   isExpanded: boolean;
   onOpenChange: (open: boolean) => void;
   children: React.ReactNode;
@@ -27,7 +27,7 @@ interface ToolGroupShellProps {
 const ToolGroupShell: React.FC<ToolGroupShellProps> = ({
   toolNames,
   toolCount,
-  unsuccessfulCount = 0,
+  unsuccessfulCount,
   isExpanded,
   onOpenChange,
   children,
