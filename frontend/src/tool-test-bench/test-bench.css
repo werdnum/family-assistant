@@ -30,7 +30,8 @@
 
 .tool-test-section {
   min-width: 0;
-  overflow-wrap: anywhere;  background: hsl(var(--card));
+  overflow-wrap: anywhere;
+  background: hsl(var(--card));
   border-radius: 8px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
@@ -44,6 +45,15 @@
   font-size: 1.3rem;
   border-bottom: 2px solid hsl(var(--muted));
   padding-bottom: 10px;
+}
+
+.tool-test-section pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.tool-test-section .tool-document-content-display pre {
+  white-space: pre-wrap;
 }
 
 .test-bench-footer {
