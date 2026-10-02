@@ -1,7 +1,10 @@
+import { ArrowLeft } from 'lucide-react';
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { PageContainer, PageHeader } from '@/components/layout/PageHeader';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -12,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { describeRecurrenceRule } from '../automationFormat';
 
 const logDev = (...args) => {
   if (import.meta.env.DEV) {
@@ -138,9 +142,24 @@ const CreateScheduleAutomation = ({ onSuccess, onCancel }) => {
     }
   };
 
+  const recurrenceSummary = describeRecurrenceRule(formData.recurrence_rule);
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Create Schedule Automation</h1>
+    <PageContainer className="max-w-3xl space-y-6">
+      <PageHeader
+        className="mb-0"
+        title="Create Schedule Automation"
+        description="Run an action on a recurring schedule."
+        eyebrow={
+          <Link
+            to="/automations"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            Back to Automations
+          </Link>
+        }
+      />
 
       {error && (
         <Alert variant="destructive">
@@ -149,10 +168,7 @@ const CreateScheduleAutomation = ({ onSuccess, onCancel }) => {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Schedule Automation Configuration</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-6 pt-6">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="name">Name *</Label>
@@ -197,6 +213,9 @@ const CreateScheduleAutomation = ({ onSuccess, onCancel }) => {
                   <AlertDescription>{validationErrors.recurrence_rule}</AlertDescription>
                 </Alert>
               )}
+              {recurrenceSummary ? (
+                <p className="text-sm font-medium">Runs: {recurrenceSummary}</p>
+              ) : null}
               <p className="text-sm text-muted-foreground">
                 Examples: FREQ=DAILY;BYHOUR=9 (daily at 9am), FREQ=WEEKLY;BYDAY=MO (every Monday)
               </p>
@@ -208,7 +227,7 @@ const CreateScheduleAutomation = ({ onSuccess, onCancel }) => {
                 value={formData.action_type}
                 onValueChange={(value) => handleSelectChange('action_type', value)}
               >
-                <SelectTrigger>
+                <SelectTrigger id="action_type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -270,18 +289,18 @@ const CreateScheduleAutomation = ({ onSuccess, onCancel }) => {
               </div>
             )}
 
-            <div className="flex gap-4 pt-6">
+            <div className="flex flex-wrap justify-end gap-2 border-t pt-6">
+              <Button type="button" variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
               <Button type="submit" disabled={loading}>
                 {loading ? 'Creating...' : 'Create Automation'}
-              </Button>
-              <Button type="button" variant="secondary" onClick={onCancel}>
-                Cancel
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   );
 };
 

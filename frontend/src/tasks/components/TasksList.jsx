@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getDiagnosticsUrl } from '@/utils/diagnosticsUrl';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { PageContainer } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import TaskCard from './TaskCard';
 import TasksFilter from './TasksFilter';
@@ -175,7 +176,7 @@ const TasksList = ({ onLoadingChange }) => {
   }
 
   return (
-    <div className={styles.tasksList}>
+    <PageContainer className={styles.tasksList}>
       <header className={styles.header}>
         <h1>Task Queue</h1>
         <p>View and manage background tasks. Shows up to 500 tasks based on current filters.</p>
@@ -236,7 +237,7 @@ const TasksList = ({ onLoadingChange }) => {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 };
 

@@ -23,8 +23,8 @@
     --muted: 210 40% 96%;
     --muted-foreground: 215.4 16.3% 46.9%;
     
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 222.2 84% 4.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
     
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
@@ -96,6 +96,17 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* Preflight strips heading styles. Pages that have not opted into utility classes still need a
+     readable hierarchy, so unclassed headings inside the main layout get sensible defaults. */
+  main h1:not([class]) {
+    @apply mb-6 text-3xl font-bold tracking-tight;
+  }
+  main h2:not([class]) {
+    @apply text-xl font-semibold tracking-tight;
+  }
+  main h3:not([class]) {
+    @apply text-lg font-semibold;
   }
   html {
     scroll-behavior: smooth;

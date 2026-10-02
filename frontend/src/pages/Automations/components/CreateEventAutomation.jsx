@@ -1,7 +1,10 @@
+import { ArrowLeft } from 'lucide-react';
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { PageContainer, PageHeader } from '@/components/layout/PageHeader';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -146,8 +149,21 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
   };
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Create Event Automation</h1>
+    <PageContainer className="max-w-3xl space-y-6">
+      <PageHeader
+        className="mb-0"
+        title="Create Event Automation"
+        description="Run an action whenever a matching event arrives from your home or a webhook."
+        eyebrow={
+          <Link
+            to="/automations"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            Back to Automations
+          </Link>
+        }
+      />
 
       {error && (
         <Alert variant="destructive">
@@ -156,10 +172,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Event Automation Configuration</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-6 pt-6">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="name">Name *</Label>
@@ -195,7 +208,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                 value={formData.event_source}
                 onValueChange={(value) => handleSelectChange('event_source', value)}
               >
-                <SelectTrigger>
+                <SelectTrigger id="event_source">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -212,7 +225,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                 value={formData.action_type}
                 onValueChange={(value) => handleSelectChange('action_type', value)}
               >
-                <SelectTrigger>
+                <SelectTrigger id="action_type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -222,8 +235,8 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
               </Select>
             </div>
 
-            <div className="space-y-4">
-              <Label>Trigger Conditions</Label>
+            <fieldset className="space-y-4 rounded-lg border p-4">
+              <legend className="px-1 text-sm font-medium">Trigger Conditions</legend>
               <p className="text-sm text-muted-foreground">
                 If both are provided, both must match (AND logic).
               </p>
@@ -261,7 +274,7 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
                   Python script that returns True/False
                 </p>
               </div>
-            </div>
+            </fieldset>
 
             {formData.action_type === 'script' && (
               <>
@@ -312,18 +325,18 @@ const CreateEventAutomation = ({ onSuccess, onCancel }) => {
               </div>
             )}
 
-            <div className="flex gap-4 pt-6">
+            <div className="flex flex-wrap justify-end gap-2 border-t pt-6">
+              <Button type="button" variant="ghost" onClick={onCancel}>
+                Cancel
+              </Button>
               <Button type="submit" disabled={loading}>
                 {loading ? 'Creating...' : 'Create Automation'}
-              </Button>
-              <Button type="button" variant="secondary" onClick={onCancel}>
-                Cancel
               </Button>
             </div>
           </form>
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   );
 };
 

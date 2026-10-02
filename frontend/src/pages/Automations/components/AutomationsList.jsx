@@ -1,102 +1,191 @@
-import { ArrowRight, Bot, CalendarClock, Filter, Loader2, ScrollText, Zap } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import { CalendarClock, ChevronRight, Loader2, Plus, Workflow, Zap } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { PageContainer, PageHeader } from '@/components/layout/PageHeader';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader } from '@/components/ui/card';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import styles from './AutomationsList.module.css';
+import { Card } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { NativeSelect } from '@/components/ui/native-select';
+import { Switch } from '@/components/ui/switch';
+import {
+  automationPath,
+  describeRecurrenceRule,
+  formatSourceId,
+  formatTimestamp,
+  getActionMeta,
+  getTypeMeta,
+} from '../automationFormat';
 
-const CREATION_OPTIONS = [
-  {
-    id: 'event',
-    title: 'Event automation',
-    description:
-      'React instantly when Family Assistant detects an event, alert, or webhook from your tools.',
-    icon: Zap,
-    to: '/automations/create/event',
-    ctaLabel: 'Create Event Automation',
-  },
-  {
-    id: 'schedule',
-    title: 'Schedule automation',
-    description: 'Run recurring workflows on a dependable cadence using flexible schedule rules.',
-    icon: CalendarClock,
-    to: '/automations/create/schedule',
-    ctaLabel: 'Create Schedule Automation',
-  },
-];
+const MetaItem = ({ label, children }) => (
+  <div className="min-w-0">
+    <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+    <dd className="mt-0.5 truncate text-sm">{children}</dd>
+  </div>
+);
 
-const TYPE_METADATA = {
-  event: { label: 'Event-Based', icon: Zap },
-  schedule: { label: 'Schedule-Based', icon: CalendarClock },
-};
+const AutomationCard = ({ automation, onToggle, toggling }) => {
+  const typeMeta = getTypeMeta(automation.type);
+  const actionMeta = getActionMeta(automation.action_type);
+  const TypeIcon = typeMeta.icon;
+  const ActionIcon = actionMeta.icon;
+  const scheduleSummary =
+    automation.type === 'schedule' ? describeRecurrenceRule(automation.recurrence_rule) : null;
+  const switchId = `automation-enabled-${automation.type}-${automation.id}`;
 
-const ACTION_METADATA = {
-  wake_llm: { label: 'LLM Callback', icon: Bot },
-  run_script: { label: 'Script Execution', icon: ScrollText },
+  return (
+    <Card
+      className={`transition-colors hover:border-foreground/20 ${
+        automation.enabled ? '' : 'bg-muted/40'
+      }`}
+      data-testid="automation-card"
+      data-automation-name={automation.name}
+    >
+      <div className="flex gap-4 p-4 sm:p-5">
+        <div
+          className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${
+            automation.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+          }`}
+          aria-hidden="true"
+        >
+          <TypeIcon className="size-5" />
+        </div>
+
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="text-base font-semibold leading-tight">
+                <Link
+                  to={automationPath(automation)}
+                  className="hover:underline focus-visible:underline"
+                >
+                  {automation.name}
+                </Link>
+              </h3>
+              {automation.description ? (
+                <p className="line-clamp-2 text-sm text-muted-foreground">
+                  {automation.description}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Label
+                htmlFor={switchId}
+                className={`hidden text-xs font-medium sm:inline ${
+                  automation.enabled ? 'text-foreground' : 'text-muted-foreground'
+                }`}
+              >
+                {automation.enabled ? 'Enabled' : 'Disabled'}
+              </Label>
+              <Switch
+                id={switchId}
+                checked={automation.enabled}
+                disabled={toggling}
+                onCheckedChange={() => onToggle(automation)}
+                aria-label={`${automation.enabled ? 'Disable' : 'Enable'} ${automation.name}`}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="gap-1 font-medium">
+              <TypeIcon className="size-3" aria-hidden="true" />
+              {typeMeta.shortLabel}
+            </Badge>
+            <Badge variant="outline" className="gap-1 font-medium">
+              <ActionIcon className="size-3" aria-hidden="true" />
+              {actionMeta.label}
+            </Badge>
+            {automation.type === 'event' && automation.source_id ? (
+              <span className="text-sm text-muted-foreground">
+                on {formatSourceId(automation.source_id)} events
+              </span>
+            ) : null}
+            {automation.type === 'schedule' && automation.recurrence_rule ? (
+              scheduleSummary ? (
+                <span className="text-sm text-muted-foreground" title={automation.recurrence_rule}>
+                  {scheduleSummary}
+                </span>
+              ) : (
+                <code className="break-all rounded bg-muted px-1.5 py-0.5 text-xs">
+                  {automation.recurrence_rule}
+                </code>
+              )
+            ) : null}
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3 sm:grid-cols-4">
+            {automation.type === 'schedule' ? (
+              <MetaItem label="Next run">
+                {automation.enabled && automation.next_scheduled_at
+                  ? formatTimestamp(automation.next_scheduled_at)
+                  : '—'}
+              </MetaItem>
+            ) : null}
+            <MetaItem label="Last run">{formatTimestamp(automation.last_execution_at)}</MetaItem>
+            <MetaItem label="Runs">{automation.execution_count || 0}</MetaItem>
+            <MetaItem label="Conversation">
+              <span className="font-mono text-xs">{automation.conversation_id}</span>
+            </MetaItem>
+          </dl>
+        </div>
+
+        <Link
+          to={automationPath(automation)}
+          className="hidden self-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground sm:block"
+          aria-label={`View details for ${automation.name}`}
+        >
+          <ChevronRight className="size-5" aria-hidden="true" />
+        </Link>
+      </div>
+    </Card>
+  );
 };
 
 const AutomationsList = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [automations, setAutomations] = useState([]);
-  const [allAutomations, setAllAutomations] = useState([]);
+  const [conversationIds, setConversationIds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isFiltersOpen, setIsFiltersOpen] = useState(true);
+  const [togglingKey, setTogglingKey] = useState(null);
 
-  // Get current filter values from URL params
   const currentType = searchParams.get('type') || 'all';
   const currentEnabled = searchParams.get('enabled') || '';
   const currentConversation = searchParams.get('conversation') || 'all';
+  const filtersActive =
+    currentType !== 'all' || currentEnabled !== '' || currentConversation !== 'all';
 
-  // Form state for filters
-  const [filters, setFilters] = useState({
-    type: currentType,
-    enabled: currentEnabled,
-    conversation: currentConversation,
-  });
-
-  const updateSearchParams = (typeValue, enabledValue, conversationValue) => {
-    const newParams = new URLSearchParams();
-    if (typeValue && typeValue !== 'all') {
-      newParams.set('type', typeValue);
+  const updateFilter = (key, value, defaultValue) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (value && value !== defaultValue) {
+      nextParams.set(key, value);
+    } else {
+      nextParams.delete(key);
     }
-    if (enabledValue) {
-      newParams.set('enabled', enabledValue);
-    }
-    if (conversationValue && conversationValue !== 'all') {
-      newParams.set('conversation', conversationValue);
-    }
-    setSearchParams(newParams);
+    setSearchParams(nextParams);
   };
 
-  useEffect(() => {
-    setFilters({ type: currentType, enabled: currentEnabled, conversation: currentConversation });
-  }, [currentType, currentEnabled, currentConversation]);
-
-  const fetchAutomations = async (type, enabled, conversation) => {
+  const fetchAutomations = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     try {
       const params = new URLSearchParams();
-
-      if (type && type !== 'all') {
-        params.append('automation_type', type);
+      if (currentType !== 'all') {
+        params.append('automation_type', currentType);
       }
-      if (enabled) {
-        params.append('enabled', enabled);
+      if (currentEnabled) {
+        params.append('enabled', currentEnabled);
       }
-      if (conversation && conversation !== 'all') {
-        params.append('conversation_id', conversation);
+      if (currentConversation !== 'all') {
+        params.append('conversation_id', currentConversation);
       }
 
       const response = await fetch(`/api/automations?${params}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch automations: ${response.statusText}`);
       }
-
       const data = await response.json();
       setAutomations(data.automations || []);
     } catch (err) {
@@ -104,421 +193,216 @@ const AutomationsList = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentType, currentEnabled, currentConversation]);
 
-  // Fetch all automations for the filter dropdown on component mount
   useEffect(() => {
-    const fetchAllAutomations = async () => {
+    fetchAutomations();
+  }, [fetchAutomations]);
+
+  // The conversation filter offers every conversation that has automations, not just the ones in
+  // the currently filtered list, so it is fetched separately and unfiltered.
+  useEffect(() => {
+    const fetchConversationIds = async () => {
       try {
         const response = await fetch('/api/automations');
         if (!response.ok) {
-          throw new Error(`Failed to fetch automations: ${response.statusText}`);
+          return;
         }
-
         const data = await response.json();
-        setAllAutomations(data.automations || []);
+        const ids = new Set(
+          (data.automations || [])
+            .map((a) => a.conversation_id)
+            .filter((id) => id !== null && id !== undefined)
+        );
+        setConversationIds(Array.from(ids).sort());
       } catch (_err) {
-        // Silently handle errors for the all automations fetch
-        // This is only for the filter dropdown, not critical
+        // Only the conversation dropdown depends on this; the main list reports its own errors.
       }
     };
-
-    fetchAllAutomations();
+    fetchConversationIds();
   }, []);
 
-  // Fetch data when filters change
-  useEffect(() => {
-    fetchAutomations(currentType, currentEnabled, currentConversation);
-  }, [currentType, currentEnabled, currentConversation]);
-
-  const handleFiltersSubmit = (e) => {
-    e.preventDefault();
-
-    updateSearchParams(filters.type, filters.enabled, filters.conversation);
-  };
-
-  const clearFilters = () => {
-    setFilters({ type: 'all', enabled: '', conversation: 'all' });
-    setSearchParams({});
-  };
-
-  const toggleEnabled = async (automationType, automationId, currentEnabled) => {
+  const toggleEnabled = async (automation) => {
+    const key = `${automation.type}-${automation.id}`;
+    setTogglingKey(key);
     try {
-      const response = await fetch(`/api/automations/${automationType}/${automationId}`, {
+      const response = await fetch(`/api/automations/${automation.type}/${automation.id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ enabled: !currentEnabled }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !automation.enabled }),
       });
-
       if (!response.ok) {
         throw new Error('Failed to update automation');
       }
-
-      // Refresh the list
-      fetchAutomations(currentType, currentEnabled, currentConversation);
+      await fetchAutomations();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setTogglingKey(null);
     }
-  };
-
-  const formatTimestamp = (timestamp) => {
-    if (!timestamp) {
-      return 'Never';
-    }
-    return new Date(timestamp).toLocaleString();
-  };
-
-  const formatSourceId = (sourceId) => {
-    if (!sourceId) {
-      return '';
-    }
-    return sourceId.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-  };
-
-  const formatRecurrenceRule = (rule) => {
-    if (!rule) {
-      return '';
-    }
-    return rule;
   };
 
   const hasAutomations = automations.length > 0;
-  const filtersActive =
-    currentType !== 'all' || currentEnabled !== '' || currentConversation !== 'all';
-
-  // Extract unique conversation IDs from all automations (not filtered)
-  // Filter out null/undefined and sort
-  const uniqueConversations = Array.from(
-    new Set(
-      allAutomations.map((a) => a.conversation_id).filter((id) => id !== null && id !== undefined)
-    )
-  ).sort();
-
-  useEffect(() => {
-    if (filtersActive) {
-      setIsFiltersOpen(true);
-    }
-  }, [filtersActive]);
-
-  const hero = (
-    <section className={styles.hero}>
-      <div className={styles.heroHeading}>
-        <h1 className={styles.heroTitle}>Automations</h1>
-        <p className={styles.heroDescription}>
-          Offload recurring work by letting Family Assistant run workflows based on events or
-          schedules.
-        </p>
-      </div>
-      {!loading && (
-        <span className={styles.countPill}>
-          Found {automations.length} automation{automations.length !== 1 ? 's' : ''}
-        </span>
-      )}
-    </section>
-  );
-
-  const renderIconBadge = (meta) => {
-    const Icon = meta.icon;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className={styles.iconBadge} aria-label={meta.label}>
-            <Icon size={18} aria-hidden="true" />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top">{meta.label}</TooltipContent>
-      </Tooltip>
-    );
-  };
-
-  const shouldShowList = !loading && hasAutomations;
-  const shouldShowEmpty = !loading && !error && !hasAutomations;
 
   return (
-    <TooltipProvider>
-      <div className={styles.automationsPage}>
-        {hero}
+    <PageContainer>
+      <PageHeader
+        title="Automations"
+        description="Let Family Assistant act on its own when something happens or on a regular schedule."
+        actions={
+          <>
+            <Button asChild variant="outline" className="gap-2">
+              <Link to="/automations/create/event">
+                <Zap className="size-4" aria-hidden="true" />
+                Create Event Automation
+              </Link>
+            </Button>
+            <Button asChild className="gap-2">
+              <Link to="/automations/create/schedule">
+                <CalendarClock className="size-4" aria-hidden="true" />
+                Create Schedule Automation
+              </Link>
+            </Button>
+          </>
+        }
+      />
 
-        {error ? (
-          <Alert variant="destructive" className={styles.error}>
-            <AlertDescription>Error: {error}</AlertDescription>
-          </Alert>
-        ) : null}
+      <section
+        aria-label="Filters"
+        className="mb-4 grid grid-cols-2 gap-3 rounded-lg border bg-card p-4 sm:flex sm:flex-wrap sm:items-end"
+      >
+        <h2 className="sr-only">Filters</h2>
+        <div className="space-y-1.5 sm:w-44">
+          <Label htmlFor="type" className="text-xs text-muted-foreground">
+            Type
+          </Label>
+          <NativeSelect
+            name="type"
+            id="type"
+            value={currentType}
+            onChange={(e) => updateFilter('type', e.target.value, 'all')}
+          >
+            <option value="all">All types</option>
+            <option value="event">Event-based</option>
+            <option value="schedule">Schedule-based</option>
+          </NativeSelect>
+        </div>
 
-        <section className={styles.ctaGrid} aria-label="Automation quick starts">
-          {CREATION_OPTIONS.map((option) => {
-            const Icon = option.icon;
-            return (
-              <Card key={option.id} className={styles.ctaCard}>
-                <CardHeader className={styles.ctaHeader}>
-                  <div className={styles.ctaIcon} aria-hidden="true">
-                    <Icon size={22} />
-                  </div>
-                  <h2 className={styles.ctaTitle}>{option.title}</h2>
-                  <p className={styles.ctaDescription}>{option.description}</p>
-                </CardHeader>
-                <CardFooter className={styles.ctaFooter}>
-                  <Button asChild>
-                    <Link to={option.to}>{option.ctaLabel}</Link>
-                  </Button>
-                </CardFooter>
-              </Card>
-            );
-          })}
-        </section>
+        <div className="space-y-1.5 sm:w-44">
+          <Label htmlFor="enabled" className="text-xs text-muted-foreground">
+            Status
+          </Label>
+          <NativeSelect
+            name="enabled"
+            id="enabled"
+            value={currentEnabled}
+            onChange={(e) => updateFilter('enabled', e.target.value, '')}
+          >
+            <option value="">Any status</option>
+            <option value="true">Enabled only</option>
+            <option value="false">Disabled only</option>
+          </NativeSelect>
+        </div>
 
-        <section className={styles.filtersSection}>
-          <form onSubmit={handleFiltersSubmit}>
-            <details
-              className={styles.filtersDetails}
-              open={isFiltersOpen}
-              onToggle={(event) => setIsFiltersOpen(event.target.open)}
+        {conversationIds.length > 0 ? (
+          <div className="col-span-2 space-y-1.5 sm:w-56">
+            <Label htmlFor="conversation" className="text-xs text-muted-foreground">
+              Conversation
+            </Label>
+            <NativeSelect
+              name="conversation"
+              id="conversation"
+              value={currentConversation}
+              onChange={(e) => updateFilter('conversation', e.target.value, 'all')}
             >
-              <summary>
-                <Filter size={16} aria-hidden="true" />
-                Filters
-              </summary>
+              <option value="all">All conversations</option>
+              {conversationIds.map((conv) => (
+                <option key={conv} value={conv}>
+                  {conv}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+        ) : null}
 
-              <div className={styles.filtersBody}>
-                <div className={styles.filtersRow}>
-                  <div className={styles.fieldGroup}>
-                    <label htmlFor="type" className={styles.fieldLabel}>
-                      Automation Type
-                    </label>
-                    <select
-                      name="type"
-                      id="type"
-                      value={filters.type}
-                      onChange={(e) => {
-                        const nextType = e.target.value;
-                        setFilters((prev) => ({ ...prev, type: nextType }));
-                        updateSearchParams(nextType, filters.enabled, filters.conversation);
-                      }}
-                    >
-                      <option value="all">All Types</option>
-                      <option value="event">Event-Based</option>
-                      <option value="schedule">Schedule-Based</option>
-                    </select>
-                  </div>
+        <div className="col-span-2 flex items-center justify-between gap-3 sm:ml-auto">
+          {!loading ? (
+            <span className="text-sm text-muted-foreground" aria-live="polite">
+              Found {automations.length} automation{automations.length !== 1 ? 's' : ''}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setSearchParams({})}
+            disabled={!filtersActive}
+          >
+            Clear Filters
+          </Button>
+        </div>
+      </section>
 
-                  <div className={styles.fieldGroup}>
-                    <label htmlFor="enabled" className={styles.fieldLabel}>
-                      Status
-                    </label>
-                    <select
-                      name="enabled"
-                      id="enabled"
-                      value={filters.enabled}
-                      onChange={(e) => {
-                        const nextEnabled = e.target.value;
-                        setFilters((prev) => ({ ...prev, enabled: nextEnabled }));
-                        updateSearchParams(filters.type, nextEnabled, filters.conversation);
-                      }}
-                    >
-                      <option value="">All</option>
-                      <option value="true">Enabled Only</option>
-                      <option value="false">Disabled Only</option>
-                    </select>
-                  </div>
+      {error ? (
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>Error: {error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-                  {uniqueConversations.length > 0 && (
-                    <div className={styles.fieldGroup}>
-                      <label htmlFor="conversation" className={styles.fieldLabel}>
-                        Conversation
-                      </label>
-                      <select
-                        name="conversation"
-                        id="conversation"
-                        value={filters.conversation}
-                        onChange={(e) => {
-                          const nextConversation = e.target.value;
-                          setFilters((prev) => ({ ...prev, conversation: nextConversation }));
-                          updateSearchParams(filters.type, filters.enabled, nextConversation);
-                        }}
-                      >
-                        <option value="all">All Conversations</option>
-                        {uniqueConversations.map((conv) => (
-                          <option key={conv} value={conv}>
-                            {conv}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+          <span>Loading automations...</span>
+        </div>
+      ) : null}
 
-                <div className={styles.filtersActions}>
-                  <Button type="submit">Apply Filters</Button>
-                  <Button type="button" variant="secondary" onClick={clearFilters}>
-                    Clear Filters
-                  </Button>
-                </div>
+      {!loading && hasAutomations ? (
+        <div className="grid gap-3">
+          {automations.map((automation) => (
+            <AutomationCard
+              key={`${automation.type}-${automation.id}`}
+              automation={automation}
+              onToggle={toggleEnabled}
+              toggling={togglingKey === `${automation.type}-${automation.id}`}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {!loading && !error && !hasAutomations ? (
+        <div className="flex flex-col items-center rounded-lg border border-dashed px-6 py-16 text-center">
+          <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <Workflow className="size-6 text-muted-foreground" aria-hidden="true" />
+          </div>
+          {filtersActive ? (
+            <>
+              <h2 className="text-lg font-semibold">No automations match these filters</h2>
+              <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                Try a different type or status, or clear the filters to see everything.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold">No automations yet</h2>
+              <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                Automations let Family Assistant follow through on routines by itself: reacting to
+                events from your home, or running on a schedule. You can also ask for one in chat.
+              </p>
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
+                <Button asChild className="gap-2">
+                  <Link to="/automations/create/schedule">
+                    <Plus className="size-4" aria-hidden="true" />
+                    New schedule automation
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" className="gap-2">
+                  <Link to="/docs/automations.md">Learn more</Link>
+                </Button>
               </div>
-            </details>
-          </form>
-        </section>
-
-        {loading ? (
-          <div className={styles.loading}>
-            <Loader2 className="animate-spin" aria-hidden="true" />
-            <span>Loading automations...</span>
-          </div>
-        ) : null}
-
-        {shouldShowList ? (
-          <div className={styles.automationsGrid}>
-            {automations.map((automation) => {
-              const typeMeta = TYPE_METADATA[automation.type] || {
-                label: 'Automation',
-                icon: Zap,
-              };
-              const actionMeta = ACTION_METADATA[automation.action_type] || {
-                label: 'Script Execution',
-                icon: ScrollText,
-              };
-              const statusClassName = `${styles.statusBadge} ${
-                automation.enabled ? styles.enabled : styles.disabled
-              }`;
-
-              return (
-                <article
-                  key={automation.id}
-                  className={styles.automationCard}
-                  data-testid="automation-card"
-                  data-automation-name={automation.name}
-                >
-                  <div className={styles.automationHeader}>
-                    <div className={styles.automationTitle}>
-                      <h3>
-                        <Link
-                          to={{
-                            pathname: `/automations/${automation.type}/${automation.id}`,
-                            search: `?conversation_id=${encodeURIComponent(
-                              automation.conversation_id
-                            )}`,
-                          }}
-                        >
-                          {automation.name}
-                        </Link>
-                      </h3>
-                      {automation.description ? (
-                        <p className={styles.automationDescription}>{automation.description}</p>
-                      ) : null}
-                    </div>
-                    <div className={styles.iconStack}>
-                      {renderIconBadge(typeMeta)}
-                      {renderIconBadge(actionMeta)}
-                    </div>
-                  </div>
-
-                  <div className={styles.metaGrid}>
-                    <div className={styles.metaItem}>
-                      <span className={styles.metaLabel}>Type</span>
-                      <span className={styles.metaValue}>{typeMeta.label}</span>
-                    </div>
-
-                    <div className={styles.metaItem}>
-                      <span className={styles.metaLabel}>Conversation</span>
-                      <span className={styles.metaValue}>{automation.conversation_id}</span>
-                    </div>
-
-                    {automation.type === 'event' && automation.source_id ? (
-                      <div className={styles.metaItem}>
-                        <span className={styles.metaLabel}>Source</span>
-                        <span className={styles.metaValue}>
-                          {formatSourceId(automation.source_id)}
-                        </span>
-                      </div>
-                    ) : null}
-
-                    {automation.type === 'schedule' && automation.recurrence_rule ? (
-                      <div className={styles.metaItem}>
-                        <span className={styles.metaLabel}>Schedule</span>
-                        <span className={styles.metaValue}>
-                          {formatRecurrenceRule(automation.recurrence_rule)}
-                        </span>
-                      </div>
-                    ) : null}
-
-                    <div className={styles.metaItem}>
-                      <span className={styles.metaLabel}>Status</span>
-                      <div className={styles.statusRow}>
-                        <span className={statusClassName}>
-                          {automation.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            toggleEnabled(automation.type, automation.id, automation.enabled)
-                          }
-                        >
-                          {automation.enabled ? 'Disable' : 'Enable'}
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className={styles.metaItem}>
-                      <span className={styles.metaLabel}>Executions</span>
-                      <span className={styles.metaValue}>
-                        {automation.execution_count || 0} total
-                        {automation.type === 'schedule' && automation.next_scheduled_at ? (
-                          <span> (next: {formatTimestamp(automation.next_scheduled_at)})</span>
-                        ) : null}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className={styles.automationFooter}>
-                    <div className={styles.timestampGroup}>
-                      <span>
-                        <strong>Last executed:</strong>{' '}
-                        {formatTimestamp(automation.last_execution_at)}
-                      </span>
-                      <span>
-                        <strong>Created:</strong> {formatTimestamp(automation.created_at)}
-                      </span>
-                    </div>
-                    <Link
-                      to={{
-                        pathname: `/automations/${automation.type}/${automation.id}`,
-                        search: `?conversation_id=${encodeURIComponent(
-                          automation.conversation_id
-                        )}`,
-                      }}
-                      className={styles.viewLink}
-                    >
-                      View Details
-                      <ArrowRight size={16} aria-hidden="true" />
-                    </Link>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : null}
-
-        {shouldShowEmpty ? (
-          <div className={styles.emptyState}>
-            <h2 className={styles.emptyTitle}>You haven&apos;t created any automations yet</h2>
-            <p className={styles.emptyDescription}>
-              Automations help Family Assistant follow through on your routines automatically. Start
-              with an event or schedule to see tasks happen hands-free.
-            </p>
-            <div className={styles.emptyActions}>
-              <Button asChild>
-                <Link to="/automations/create/event">Create your first automation</Link>
-              </Button>
-              <Button asChild variant="secondary">
-                <Link to="/docs/">Explore documentation</Link>
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </TooltipProvider>
+            </>
+          )}
+        </div>
+      ) : null}
+    </PageContainer>
   );
 };
 

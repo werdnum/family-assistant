@@ -33,23 +33,6 @@
   color: var(--text);
 }
 
-.filterInput,
-.filterSelect {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.25rem;
-  background-color: var(--bg);
-  color: var(--text);
-  font-size: 1rem;
-}
-
-.filterInput:focus,
-.filterSelect:focus {
-  outline: 2px solid hsl(var(--ring));
-  border-color: hsl(var(--ring));
-}
-
 /* Clear filters button container */
 .clearButtonContainer {
   display: flex;

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 import styles from './TasksFilter.module.css';
 
 const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onClearFilters }) => {
@@ -51,35 +53,33 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
         {/* Status Filter */}
         <div className={styles.filterField}>
           <label htmlFor="status-filter" className={styles.filterLabel}>
-            Status:
+            Status
           </label>
-          <select
+          <NativeSelect
             id="status-filter"
             value={localFilters.status}
             onChange={(e) => handleInputChange('status', e.target.value)}
-            className={styles.filterSelect}
           >
             <option value="">All</option>
             <option value="pending">Pending</option>
             <option value="processing">Processing</option>
             <option value="done">Done</option>
             <option value="failed">Failed</option>
-          </select>
+          </NativeSelect>
         </div>
 
         {/* Task Type Filter with autocomplete */}
         <div className={styles.filterField}>
           <label htmlFor="task-type-filter" className={styles.filterLabel}>
-            Task Type:
+            Task Type
           </label>
-          <input
+          <Input
             type="text"
             id="task-type-filter"
             list="task-types"
             value={localFilters.task_type}
             onChange={(e) => handleInputChange('task_type', e.target.value)}
             placeholder="Filter by task type..."
-            className={styles.filterInput}
           />
           <datalist id="task-types">
             {taskTypes.map((type) => (
@@ -91,45 +91,42 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
         {/* Date From Filter */}
         <div className={styles.filterField}>
           <label htmlFor="date-from-filter" className={styles.filterLabel}>
-            From Date:
+            From Date
           </label>
-          <input
+          <Input
             type="datetime-local"
             id="date-from-filter"
             value={formatDateForInput(localFilters.date_from)}
             onChange={(e) => handleDateChange('date_from', e.target.value)}
-            className={styles.filterInput}
           />
         </div>
 
         {/* Date To Filter */}
         <div className={styles.filterField}>
           <label htmlFor="date-to-filter" className={styles.filterLabel}>
-            To Date:
+            To Date
           </label>
-          <input
+          <Input
             type="datetime-local"
             id="date-to-filter"
             value={formatDateForInput(localFilters.date_to)}
             onChange={(e) => handleDateChange('date_to', e.target.value)}
-            className={styles.filterInput}
           />
         </div>
 
         {/* Sort Order Filter */}
         <div className={styles.filterField}>
           <label htmlFor="sort-filter" className={styles.filterLabel}>
-            Sort Order:
+            Sort Order
           </label>
-          <select
+          <NativeSelect
             id="sort-filter"
             value={localFilters.sort}
             onChange={(e) => handleInputChange('sort', e.target.value)}
-            className={styles.filterSelect}
           >
             <option value="desc">Newest First</option>
             <option value="asc">Oldest First</option>
-          </select>
+          </NativeSelect>
         </div>
 
         {/* Clear Filters Button */}
