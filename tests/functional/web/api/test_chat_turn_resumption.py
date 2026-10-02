@@ -35,6 +35,7 @@ from family_assistant.services.turn_resumption import (
     TurnResumePayload,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskAttempt
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.turn_resumption import (
@@ -173,7 +174,9 @@ async def _add_tool_rounds(
         )
 
 
-def _exec_context(db: Database) -> ToolExecutionContext:
+def _exec_context(
+    db: Database, task_attempt: TaskAttempt | None = None
+) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="unknown",
         conversation_id="unknown",
@@ -188,11 +191,16 @@ def _exec_context(db: Database) -> ToolExecutionContext:
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
+        task_attempt=task_attempt,
     )
 
 
 async def _resume(
-    registry: TurnLeaseRegistry, db: Database, conversation_id: str, turn_id: str
+    registry: TurnLeaseRegistry,
+    db: Database,
+    conversation_id: str,
+    turn_id: str,
+    task_attempt: TaskAttempt | None = None,
 ) -> None:
     payload = TurnResumePayload(
         resumer=WEB_STREAM_RESUMER,
@@ -204,7 +212,7 @@ async def _resume(
         processing_profile_id=PROFILE,
     )
     await registry.handle_resume_task(
-        _exec_context(db), payload.model_dump(mode="json")
+        _exec_context(db, task_attempt), payload.model_dump(mode="json")
     )
 
 
@@ -580,3 +588,47 @@ async def test_resumed_turn_continues_on_its_remaining_iteration_budget(
         description="resumed turn complete",
     )
     assert offered_tools == [None]
+
+
+async def test_resume_that_fails_before_launch_can_be_retried(
+    app_fixture: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    lease_registry: TurnLeaseRegistry,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient failure between registering the turn and launching it must
+    not leave a record that makes the task queue's retry a silent no-op."""
+    api_mock_llm_client.rules.append((
+        _reply_after_tool_result,
+        LLMOutput(content=RESUMED_REPLY, tool_calls=None, reasoning_info=_usage()),
+    ))
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    await _seed_turn_interrupted_after_tool(db, conversation_id, turn_id)
+    real_arm = lease_registry.arm
+    attempts: list[int] = []
+
+    async def arm_failing_once(tasks: object, payload: TurnResumePayload) -> object:
+        attempts.append(payload.attempt)
+        if len(attempts) == 1:
+            raise RuntimeError("transient database error")
+        return await real_arm(tasks, payload)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(lease_registry, "arm", arm_failing_once)
+    with pytest.raises(RuntimeError, match="transient"):
+        await _resume(
+            lease_registry,
+            db,
+            conversation_id,
+            turn_id,
+            TaskAttempt(retry_count=0, max_retries=3),
+        )
+
+    await _resume(lease_registry, db, conversation_id, turn_id)
+
+    await wait_for_condition(
+        _turn_status(hub, conversation_id, turn_id, "complete"),
+        description="retried resume complete",
+    )

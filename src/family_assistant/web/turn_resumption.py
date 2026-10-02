@@ -127,12 +127,18 @@ class WebTurnResumer:
             )
             lease = await registry.arm(db.tasks, payload.next_attempt())
         except Exception:
-            await hub.end_turn(
-                payload.conversation_id,
-                turn_id=payload.turn_id,
-                status="failed",
-                error="An internal error occurred.",
-            )
+            # The task queue retries this resume. The record holds no producer
+            # yet, so drop it once ended -- a retained failed record would make
+            # the retry's start_turn refuse the turn_id and strand the turn.
+            try:
+                await hub.end_turn(
+                    payload.conversation_id,
+                    turn_id=payload.turn_id,
+                    status="failed",
+                    error="An internal error occurred.",
+                )
+            finally:
+                await hub.discard_turn(payload.conversation_id, payload.turn_id)
             raise
 
         await hub.publish_activity(
