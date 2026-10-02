@@ -64,7 +64,6 @@ from family_assistant.security.taint import (
     TaintPolicyEvaluator,
     TaintPolicyMode,
     TaintPolicyOutcome,
-    TaintSource,
     TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
@@ -564,28 +563,6 @@ async def _prepare_script_call(
         policy=policy_context,
     )
     context.prepared_script = invocation
-    definition = invocation.review.definition
-    if definition is not None and context.taint_tracker is not None:
-        if definition.taint_metadata is not None:
-            # Stored authorship is provenance, not a live profile authorization.
-            definition_state = replace(
-                TurnTaintState.from_metadata(definition.taint_metadata),
-                approved_sinks=frozenset(),
-            )
-            merge_taint_state_into_tracker(
-                context.taint_tracker,
-                definition_state,
-            )
-        context.taint_tracker.add_source(
-            TaintSource(
-                source_type=TaintSourceType.TOOL_OUTPUT,
-                source_id=f"script:{invocation.review.stored_name}",
-                tier=definition.tier,
-                labels=frozenset({"script_definition"}),
-                reason="Provenance of the exact loaded script definition.",
-            )
-        )
-        context.taint_policy_snapshot = None
     return invocation.arguments()
 
 
@@ -2380,6 +2357,31 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None = None,
     ) -> str | ToolResult:
         """The taint-tracked execution itself, without the accounting."""
+        try:
+            return await self._execute_tool_with_policy(
+                name, arguments, context, call_id
+            )
+        finally:
+            # Preparation failures and other early exits bypass result recording.
+            # Preserve any result-specific provenance already recorded by execution.
+            if (
+                call_id is not None
+                and call_id not in context.tool_result_taint_metadata
+                and context.taint_tracker is not None
+            ):
+                context.tool_result_taint_metadata[call_id] = (
+                    context.taint_tracker.snapshot().to_metadata()
+                )
+
+    async def _execute_tool_with_policy(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+    ) -> str | ToolResult:
+        """Resolve policy and script preparation before authorizing execution."""
         policy_provider = (
             self.wrapped_provider
             if isinstance(self.wrapped_provider, PolicyCoordinatingToolsProvider)

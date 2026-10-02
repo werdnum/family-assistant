@@ -2653,3 +2653,62 @@ async def test_legacy_script_firing_starts_tainted(db_engine: AsyncEngine) -> No
     first = firing.taint_tracker.snapshot().sources[0]
     assert first.source_type is TaintSourceType.AUTOMATION_TRIGGER
     assert first.tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("external_name", ["child", "grandchild"])
+@pytest.mark.parametrize(
+    ("external_source", "error_text"),
+    [
+        (
+            'execute_script(name="external-dependency-text")',
+            "external-dependency-text",
+        ),
+        ("def broken(", "Cannot parse script closure source"),
+    ],
+    ids=["missing_dependency", "invalid_source"],
+)
+async def test_closure_preparation_error_inherits_loaded_descendant_taint(
+    db_engine: AsyncEngine,
+    external_name: str,
+    external_source: str,
+    error_text: str,
+) -> None:
+    """Failed discovery retains provenance from every definition already loaded."""
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [_real_registration("execute_script")],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+    for name, source in (
+        ("parent", 'execute_script(name="child")'),
+        ("child", 'execute_script(name="grandchild")'),
+        ("grandchild", "1"),
+    ):
+        is_external = name == external_name
+        await context.db_context.scripts.save(
+            name=name,
+            description=f"Definition {name}",
+            script_code=external_source if is_external else source,
+            definition_taint_state=(
+                _unknown_external_state() if is_external else TurnTaintState.empty()
+            ),
+            definition_human_direct=not is_external,
+        )
+
+    result = await _execute_script(provider, context, name="parent")
+
+    assert isinstance(result, ToolResult)
+    assert error_text in result.get_text()
+    assert reviewer.calls == []
+    metadata = context.tool_result_taint_metadata["outer-script"]
+    assert metadata.get("max_tier") == SourceTrustTier.UNKNOWN_EXTERNAL.config_value
+    state = TurnTaintState.from_metadata(metadata)
+    assert any(
+        source.source_id == f"script:{external_name}"
+        and source.tier is SourceTrustTier.UNKNOWN_EXTERNAL
+        and "script_definition" in source.labels
+        for source in state.sources
+    )

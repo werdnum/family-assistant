@@ -3,6 +3,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -13,13 +14,16 @@ from family_assistant.llm.messages import (
     ToolMessage,
 )
 from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
     SensitiveReadScope,
     SourceTrustTier,
+    TaintPolicyConfig,
+    TaintPolicyMode,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
 )
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, set_engine_history_taint_epoch
 from family_assistant.storage.message_history import (
     add_message_to_history,
     get_message_by_interface_id,
@@ -28,6 +32,18 @@ from family_assistant.storage.message_history import (
     get_recent_history,
     update_message_interface_id,
 )
+from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
+)
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
+)
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 
 @pytest.fixture
@@ -659,4 +675,96 @@ async def test_subconversation_taint_merges_tool_rows_after_assistant(
     assert (
         TurnTaintState.from_metadata(merged_metadata).max_tier
         == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("external_taint", [False, True])
+async def test_script_preparation_error_persists_taint_metadata(
+    db_engine: AsyncEngine,
+    db_context: Database,
+    caplog: pytest.LogCaptureFixture,
+    external_taint: bool,
+) -> None:
+    """Preparation errors persist classified history without write or read alarms."""
+    now = datetime.now(UTC)
+    set_engine_history_taint_epoch(db_engine, now - timedelta(days=1))
+    conversation_id = str(uuid.uuid4())
+    state = TurnTaintState.empty()
+    if external_taint:
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="external-message",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="External content already present in the turn.",
+            )
+        )
+    provider = TaintTrackingToolsProvider(
+        PolicyEnforcingToolsProvider(
+            LocalToolsProvider(
+                registrations=[
+                    item
+                    for item in LOCAL_TOOL_REGISTRATIONS
+                    if item.definition["function"]["name"] == "execute_script"
+                ]
+            ),
+            PolicyEngine.from_policy_config(
+                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+            ),
+        ),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id=conversation_id,
+        user_name="Test User",
+        turn_id=str(uuid.uuid4()),
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        taint_tracker=InMemoryTurnTaintTracker(state),
+    )
+
+    result = await provider.execute_tool(
+        "execute_script", {"script": "def broken("}, context, "script-error"
+    )
+    assert isinstance(result, ToolResult)
+    assert "Syntax error" in result.get_text()
+    internal_id = await db_context.message_history.add_message(
+        ToolMessage(
+            tool_call_id="script-error",
+            name="execute_script",
+            content=result.get_text(),
+            taint_metadata=context.tool_result_taint_metadata.get("script-error"),
+        ),
+        interface_type="test",
+        conversation_id=conversation_id,
+        timestamp=now,
+    )
+    history = await db_context.message_history.get_recent(
+        interface_type="test", conversation_id=conversation_id, limit=5
+    )
+
+    assert internal_id is not None
+    row = await db_context.message_history.get_row_by_internal_id(internal_id)
+    assert row is not None
+    assert row["taint_metadata_version"] == "runtime_v2"
+    assert len(history) == 1
+    assert isinstance(history[0], ToolMessage)
+    assert history[0].taint_metadata == state.with_authorship_floor().to_metadata()
+    assert not any(
+        alarm in record.getMessage()
+        for record in caplog.records
+        for alarm in (
+            "taint_metadata_missing_at_write",
+            "post_epoch_missing_taint_metadata",
+        )
     )

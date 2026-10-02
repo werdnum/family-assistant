@@ -23,7 +23,7 @@ from family_assistant.security.definition_records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from family_assistant.storage.database import Database
     from family_assistant.storage.repositories.scripts import ScriptRow
@@ -206,6 +206,7 @@ async def resolve_script_closure(
     source: str,
     *,
     loaded_root: ScriptRow | None = None,
+    on_artifact: Callable[[ScriptArtifact], None] | None = None,
     limits: ScriptClosureLimits = DEFAULT_SCRIPT_CLOSURE_LIMITS,
 ) -> ScriptClosure:
     """Discover literal descendants without executing any source.
@@ -216,7 +217,9 @@ async def resolve_script_closure(
     by name, including in cycles and diamonds. Inline replay consequently
     discovers the same binding names as the original stored invocation.
     Missing static dependencies and exceeded limits raise ScriptClosureError;
-    no partial closure is returned. Runtime must recheck pins at child use.
+    no partial closure is returned. The optional callback receives each loaded
+    artifact before its source is inspected, including when discovery later fails.
+    Runtime must recheck pins at child use.
     """
     if loaded_root is not None and loaded_root.script_code != source:
         raise ScriptClosureError("Stored root does not match script closure source")
@@ -241,9 +244,10 @@ async def resolve_script_closure(
         pinned = row.model_copy(deep=True)
         content = _script_content(pinned)
         current = resolve_definition_record(pinned.definition_record, content)
-        artifacts.append(
-            ScriptArtifact(pinned, definition_content_hash(content), current)
-        )
+        artifact = ScriptArtifact(pinned, definition_content_hash(content), current)
+        artifacts.append(artifact)
+        if on_artifact is not None:
+            on_artifact(artifact)
         resolution = current if resolution is None else resolution.combine(current)
         if loaded_root is None or pinned.name != loaded_root.name:
             discover(pinned.script_code)
