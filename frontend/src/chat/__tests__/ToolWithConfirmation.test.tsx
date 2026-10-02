@@ -162,6 +162,50 @@ describe('ToolWithConfirmation', () => {
     30000
   );
 
+  it('keeps the card and announces an error when the decision fails, then retries', async () => {
+    const { ready, turnIdRef } = installOpenStream();
+    let failNext = true;
+    const confirmBodies: Array<Record<string, unknown>> = [];
+    server.use(
+      http.post('/api/v1/chat/confirm_tool', async ({ request }) => {
+        confirmBodies.push((await request.json()) as Record<string, unknown>);
+        if (failNext) {
+          failNext = false;
+          return HttpResponse.json({ detail: 'unavailable' }, { status: 503 });
+        }
+        return HttpResponse.json({ success: true, message: 'Tool execution decided' });
+      })
+    );
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+    await sendMessage(user, 'Add a note about groceries');
+
+    const controller = await ready;
+    controller.enqueue(toolCallEvent(turnIdRef.current, 'call-1'));
+    controller.enqueue(confirmationRequestEvent(turnIdRef.current, 'call-1'));
+
+    await screen.findByText('Confirmation Required:', undefined, WAIT);
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    const alert = await screen.findByRole('alert', undefined, WAIT);
+    expect(alert).toHaveTextContent('Could not send this decision. Try again.');
+    expect(screen.getByText('Confirmation Required:')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Confirmation Required:')).not.toBeInTheDocument();
+    }, WAIT);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(confirmBodies).toHaveLength(2);
+
+    controller.enqueue(sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete' }));
+    controller.close();
+  }, 30000);
+
   it('counts down the confirmation timeout and shows Expired once it lapses', async () => {
     const { ready, turnIdRef } = installOpenStream();
 

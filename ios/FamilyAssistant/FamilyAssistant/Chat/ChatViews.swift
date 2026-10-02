@@ -909,6 +909,11 @@ private struct ChatComposerView: View {
         return hasComposerText ? "arrow.up" : "stop.fill"
     }
 
+    private var actionButtonLabel: String {
+        guard viewModel.isStreaming else { return "Send" }
+        return hasComposerText ? "Steer" : "Stop"
+    }
+
     private var actionButtonIdentifier: String {
         guard viewModel.isStreaming else { return "chat-send-button" }
         return hasComposerText ? "chat-steer-button" : "chat-stop-button"
@@ -945,7 +950,8 @@ private struct ChatComposerView: View {
                         Image(systemName: "camera")
                             .font(.title3)
                             .foregroundStyle(.secondary)
-                            .frame(width: 32, height: 36)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
                     .accessibilityLabel("Take Photo")
@@ -955,7 +961,8 @@ private struct ChatComposerView: View {
                         Image(systemName: "photo")
                             .font(.title3)
                             .foregroundStyle(.secondary)
-                            .frame(width: 32, height: 36)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Add Photo")
 
@@ -965,7 +972,8 @@ private struct ChatComposerView: View {
                         Image(systemName: "paperclip")
                             .font(.title3)
                             .foregroundStyle(.secondary)
-                            .frame(width: 32, height: 36)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Add File")
 
@@ -987,7 +995,7 @@ private struct ChatComposerView: View {
                     }
                     .labelStyle(.iconOnly)
                     .buttonBorderShape(.capsule)
-                    .frame(height: 36)
+                    .frame(height: 44)
                     .accessibilityLabel("Paste Image")
                     .accessibilityIdentifier("chat-paste-button")
                 }
@@ -1002,7 +1010,7 @@ private struct ChatComposerView: View {
                 )
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
-                    .frame(minHeight: 36)
+                    .frame(minHeight: 44)
                     .padding(.horizontal, 4)
                     .accessibilityIdentifier("chat-composer")
                     .focused($isComposerFocused)
@@ -1021,13 +1029,17 @@ private struct ChatComposerView: View {
                     Image(systemName: actionButtonImage)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 30, height: 30)
+                        .frame(width: 32, height: 32)
                         .background(sendButtonEnabled ? Color.accentColor : Color.secondary.opacity(0.4))
                         .clipShape(Circle())
+                        // The visible circle stays compact; the tappable area
+                        // is the 44pt minimum touch target.
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!viewModel.isStreaming && !viewModel.canSendDraft)
-                .padding(.vertical, 3)
+                .accessibilityLabel(actionButtonLabel)
                 .accessibilityIdentifier(actionButtonIdentifier)
             }
             .padding(.horizontal, 6)

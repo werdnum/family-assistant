@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
-from playwright.async_api import expect
+from playwright.async_api import Route, expect
 
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
@@ -493,4 +493,74 @@ async def test_mobile_chat_input_visibility(
     )
 
     # Reset viewport
+    await page.set_viewport_size({"width": 1280, "height": 720})
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [390, 320, 195])
+async def test_mobile_header_actions_stay_in_viewport(
+    web_test_fixture: WebTestFixture,
+    mock_llm_client: RuleBasedMockLLMClient,
+    width: int,
+) -> None:
+    """Every mobile header control stays reachable at phone widths and 200% zoom (195px).
+
+    The header is at its fullest once the conversation can be shared and the
+    profile offers a choice of tiers, so the test sends a message and gives
+    every profile two tiers with deliberately long labels.
+    """
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+    mock_llm_client.rules = [
+        (
+            lambda args: "header check" in str(args.get("messages", [])),
+            LLMOutput(content="Header check response"),
+        )
+    ]
+
+    async def add_model_tiers(route: Route) -> None:
+        response = await route.fetch()
+        body = await response.json()
+        for profile in body["profiles"]:
+            profile["model_tiers"] = [
+                {
+                    "id": "standard",
+                    "label": "Standard everyday model",
+                    "description": None,
+                },
+                {"id": "deep", "label": "Deep reasoning model", "description": None},
+            ]
+            profile["default_model_tier"] = "standard"
+        await route.fulfill(response=response, json=body)
+
+    await page.route("**/api/v1/profiles", add_model_tiers)
+    await page.set_viewport_size({"width": width, "height": 844})
+    await chat_page.navigate_to_chat()
+    await chat_page.send_message("header check")
+    await chat_page.wait_for_assistant_response(timeout=15000)
+
+    header = page.get_by_test_id("mobile-chat-header")
+    await expect(header.get_by_role("button", name="Share conversation")).to_be_visible(
+        timeout=10000
+    )
+    await expect(header.get_by_role("combobox")).to_have_count(2)
+
+    controls = header.locator("button, [role='combobox']")
+    count = await controls.count()
+    assert count >= 5
+    for index in range(count):
+        control = controls.nth(index)
+        if not await control.is_visible():
+            continue
+        box = await control.bounding_box()
+        assert box is not None
+        label = await control.get_attribute("aria-label") or await control.inner_text()
+        assert box["x"] >= 0, f"{label!r} starts left of the viewport"
+        assert box["x"] + box["width"] <= width, (
+            f"{label!r} ends at x={box['x'] + box['width']}, past the {width}px viewport"
+        )
+
+    await expect(page.get_by_role("button", name="Send message")).to_be_visible()
+
     await page.set_viewport_size({"width": 1280, "height": 720})

@@ -23,7 +23,9 @@ lookups can pause for approval too. It's why a search that normally just runs so
 
 - **Telegram:** inline **✅ Confirm** and **❌ Cancel** buttons.
 - **Web interface:** a dialog showing what the assistant wants to do, with approve and reject
-  options.
+  options. If your decision can't be sent (for example, the assistant is briefly unavailable), the
+  request stays on screen with a "Could not send this decision" message, and you can press Approve
+  or Reject again.
 - **iOS:** confirmation notifications are actionable — long-press (or pull down) the notification to
   approve or reject from the lock screen, or tap it to open an in-app dialog showing the full
   request.

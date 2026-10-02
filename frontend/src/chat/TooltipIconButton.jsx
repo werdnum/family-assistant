@@ -11,6 +11,11 @@ export const TooltipIconButton = React.forwardRef(
     const [position, setPosition] = useState({ top: 0, left: 0 });
     const tooltipId = useId();
     const buttonRef = useRef(null);
+    // Icon-only buttons have no text content, so a string tooltip doubles as
+    // the accessible name unless the caller supplies one. When it is the name,
+    // pointing aria-describedby at it as well would announce it twice.
+    const ariaLabel = props['aria-label'] ?? (typeof tooltip === 'string' ? tooltip : undefined);
+    const describedBy = tooltip && ariaLabel !== tooltip ? tooltipId : undefined;
 
     useEffect(() => {
       if (showTooltip && buttonRef.current) {
@@ -44,8 +49,9 @@ export const TooltipIconButton = React.forwardRef(
           onMouseLeave={() => setShowTooltip(false)}
           onFocus={() => setShowTooltip(true)}
           onBlur={() => setShowTooltip(false)}
-          aria-describedby={tooltip ? tooltipId : undefined}
+          aria-describedby={describedBy}
           {...props}
+          aria-label={ariaLabel}
         >
           {children}
         </Button>
