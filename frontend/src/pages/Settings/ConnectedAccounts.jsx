@@ -1,5 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,6 +52,7 @@ const formatDate = (dateString) => {
 };
 
 const ConnectedAccounts = () => {
+  const disconnectButtonRef = useRef(null);
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -151,8 +161,10 @@ const ConnectedAccounts = () => {
       <h1 className="text-2xl font-bold mb-6">Connected Accounts</h1>
 
       {successBanner && (
-        <Alert className="mb-4 border-green-200 bg-green-50">
-          <AlertDescription className="text-green-800">{successBanner}</AlertDescription>
+        <Alert className="mb-4 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30">
+          <AlertDescription className="text-green-800 dark:text-green-200">
+            {successBanner}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -179,7 +191,9 @@ const ConnectedAccounts = () => {
                 <div className="space-y-3">
                   <div>
                     <span className="text-sm font-medium">Account: </span>
-                    <span className="text-sm">{status.provider_account_email ?? 'Unknown'}</span>
+                    <span className="text-sm break-all">
+                      {status.provider_account_email ?? 'Unknown'}
+                    </span>
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Your Google account is still connected. New connections are unavailable while
@@ -187,7 +201,11 @@ const ConnectedAccounts = () => {
                   </p>
                   <Button
                     variant="destructive"
-                    onClick={() => setConfirmDisconnect(true)}
+                    ref={disconnectButtonRef}
+                    onClick={() => {
+                      setError(null);
+                      setConfirmDisconnect(true);
+                    }}
                     disabled={disconnecting}
                   >
                     Disconnect
@@ -238,7 +256,9 @@ const ConnectedAccounts = () => {
               <div className="space-y-2">
                 <div>
                   <span className="text-sm font-medium">Account: </span>
-                  <span className="text-sm">{status.provider_account_email ?? 'Unknown'}</span>
+                  <span className="text-sm break-all">
+                    {status.provider_account_email ?? 'Unknown'}
+                  </span>
                 </div>
 
                 {status.last_used_at && (
@@ -255,7 +275,11 @@ const ConnectedAccounts = () => {
                     <p className="text-sm font-medium mb-1">Granted permissions:</p>
                     <div className="flex flex-wrap gap-1">
                       {status.granted_scopes.map((scope) => (
-                        <Badge key={scope} variant="secondary" className="text-xs">
+                        <Badge
+                          key={scope}
+                          variant="secondary"
+                          className="text-xs max-w-full break-all whitespace-normal"
+                        >
                           {scopeLabel(scope)}
                         </Badge>
                       ))}
@@ -276,7 +300,11 @@ const ConnectedAccounts = () => {
                 </Button>
                 <Button
                   variant="destructive"
-                  onClick={() => setConfirmDisconnect(true)}
+                  ref={disconnectButtonRef}
+                  onClick={() => {
+                    setError(null);
+                    setConfirmDisconnect(true);
+                  }}
                   disabled={disconnecting}
                 >
                   Disconnect
@@ -287,44 +315,41 @@ const ConnectedAccounts = () => {
         </CardContent>
       </Card>
 
-      {confirmDisconnect && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50,
+      <AlertDialog
+        open={confirmDisconnect}
+        onOpenChange={(open) => {
+          if (!disconnecting) {
+            setConfirmDisconnect(open);
+          }
+        }}
+      >
+        <AlertDialogContent
+          className="max-w-[calc(100vw-2rem)] sm:max-w-lg rounded-lg"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            disconnectButtonRef.current?.focus();
           }}
         >
-          <div
-            style={{
-              background: 'var(--background, white)',
-              borderRadius: '0.5rem',
-              padding: '1.5rem',
-              maxWidth: '28rem',
-              width: '90%',
-              boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
-            }}
-          >
-            <h3 className="text-lg font-semibold mb-2">Disconnect Google account?</h3>
-            <p className="text-sm text-muted-foreground mb-4">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect Google account?</AlertDialogTitle>
+            <AlertDialogDescription>
               This will remove your Google connection. The assistant will no longer be able to
               access your Gmail or Drive. You can reconnect at any time.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <Button variant="destructive" onClick={disconnect} disabled={disconnecting}>
-                {disconnecting ? 'Disconnecting...' : 'Yes, disconnect'}
-              </Button>
-              <Button variant="secondary" onClick={() => setConfirmDisconnect(false)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={disconnecting}>Cancel</AlertDialogCancel>
+            <Button variant="destructive" onClick={disconnect} disabled={disconnecting}>
+              {disconnecting ? 'Disconnecting...' : 'Yes, disconnect'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

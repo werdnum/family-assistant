@@ -28,8 +28,16 @@ messages as you would to a person.
 
 ## Web interface
 
-Open the web app at the URL your operator gave you (`{{ SERVER_URL }}`). It opens on the chat page,
+Open the web app at the URL your operator gave you (`{{ SERVER_URL }}`). It opens on the home page,
 works on phones and tablets, and supports dark mode.
+
+Use the top navigation on a large screen or open the navigation menu on a phone or tablet. Choosing
+a page closes the menu. The Family Assistant title takes you home; the menu also offers Chat, Voice,
+your notes and documents, and settings. Choose light, dark, or system appearance with the theme
+control.
+
+The home page cards can be opened with a tap, click, or keyboard. In **Internal → Tools**, use
+**Search tools** to find a tool by its name or description before opening its details.
 
 ![Landing Page](../../screenshots/desktop/landing-page.png) *The landing page gives quick access to
 every section*
@@ -131,7 +139,8 @@ you can ask "are you still there?" at any point without it starting over.
 
 ### Pages
 
-The menu is grouped into **Information**, **Operations**, and **Settings**:
+The navigation groups notes and context under **Data**, files under **Documents**, and background
+work under **Automations** and **Internal**. **Help** opens the documentation:
 
 - **Notes** — list, search, edit, and delete notes, and control which ones are included in the
   assistant's context automatically.
@@ -173,7 +182,10 @@ The menu is grouped into **Information**, **Operations**, and **Settings**:
 
   ![Tools Page](../../screenshots/desktop/tools.png)
 
-- **Settings → API Tokens** — manage tokens for programmatic access.
+- **Settings → API Tokens** — manage tokens for programmatic access. Copy a newly created token
+  while it is visible; **Copied!** confirms clipboard success. The list distinguishes active,
+  expired, and revoked tokens. Revoking a token asks for confirmation; use **Cancel** or Escape to
+  leave it active.
 
   ![Settings Page](../../screenshots/desktop/settings.png)
 

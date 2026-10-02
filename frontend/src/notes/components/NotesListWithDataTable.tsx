@@ -2,6 +2,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { PaperclipIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DataTable, SortableHeader } from '@/components/ui/data-table';
 
@@ -92,7 +93,14 @@ const NotesListWithDataTable = () => {
     {
       accessorKey: 'title',
       header: ({ column }) => <SortableHeader column={column} title="Title" />,
-      cell: ({ row }) => <div className="font-medium">{row.getValue('title')}</div>,
+      cell: ({ row }) => (
+        <Link
+          to={`/notes/edit/${encodeURIComponent(row.original.title)}`}
+          className="font-medium text-primary hover:underline break-words"
+        >
+          {row.getValue('title')}
+        </Link>
+      ),
     },
     {
       accessorKey: 'include_in_prompt',
@@ -150,11 +158,9 @@ const NotesListWithDataTable = () => {
         const note = row.original;
         return (
           <div className="flex items-center gap-2">
-            <Link to={`/notes/edit/${encodeURIComponent(note.title)}`}>
-              <Button size="sm" variant="outline">
-                Edit
-              </Button>
-            </Link>
+            <Button asChild size="sm" variant="outline">
+              <Link to={`/notes/edit/${encodeURIComponent(note.title)}`}>Edit</Link>
+            </Button>
             <Button onClick={() => handleDelete(note.title)} variant="destructive" size="sm">
               Delete
             </Button>
@@ -164,36 +170,46 @@ const NotesListWithDataTable = () => {
     },
   ];
 
-  if (loading) {
-    return <div className="flex items-center justify-center p-8">Loading notes...</div>;
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-destructive">Error loading notes: {error}</div>
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto py-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-3xl font-bold tracking-tight">Notes</h1>
-        <Link to="/notes/add">
-          <Button>Add New Note</Button>
-        </Link>
+        <Button asChild>
+          <Link to="/notes/add">Add New Note</Link>
+        </Button>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={notes}
-        searchable={true}
-        searchColumnId="title"
-        searchPlaceholder="Search notes by title..."
-        pageSize={10}
-        emptyStateMessage="No notes found"
-      />
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {loading ? (
+        <div role="status" className="p-8 text-center text-muted-foreground">
+          Loading notes...
+        </div>
+      ) : error && notes.length === 0 ? (
+        <Button
+          variant="outline"
+          onClick={() => {
+            const controller = new AbortController();
+            abortControllerRef.current = controller;
+            fetchNotes(controller.signal);
+          }}
+        >
+          Try again
+        </Button>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={notes}
+          searchable={true}
+          searchColumnId="title"
+          searchPlaceholder="Search notes by title..."
+          pageSize={10}
+          emptyStateMessage="No notes found"
+        />
+      )}
     </div>
   );
 };

@@ -1,16 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import styles from './TasksFilter.module.css';
 
 const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onClearFilters }) => {
-  const [localFilters, setLocalFilters] = useState(filters);
+  const localFilters = filters;
 
   // Handle input changes
   const handleInputChange = (field, value) => {
     const newFilters = { ...localFilters, [field]: value };
-    setLocalFilters(newFilters);
     onFilterChange(newFilters);
   };
 
@@ -21,7 +20,11 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
     }
     try {
       const date = new Date(isoString.replace('Z', '+00:00'));
-      return date.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
+      if (Number.isNaN(date.getTime())) {
+        return '';
+      }
+      const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+      return localDate.toISOString().slice(0, 16);
     } catch {
       return '';
     }
@@ -65,6 +68,7 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
             <option value="processing">Processing</option>
             <option value="done">Done</option>
             <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
           </NativeSelect>
         </div>
 
@@ -132,7 +136,7 @@ const TasksFilter = ({ filters, taskTypes, onFilterChange, hasActiveFilters, onC
         {/* Clear Filters Button */}
         {hasActiveFilters && (
           <div className={styles.clearButtonContainer}>
-            <Button onClick={onClearFilters} variant="destructive" size="sm">
+            <Button onClick={onClearFilters} variant="outline" size="sm">
               Clear All Filters
             </Button>
           </div>

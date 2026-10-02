@@ -1,5 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -7,12 +16,14 @@ import { Label } from '@/components/ui/label';
 import styles from './TokenManagement.module.css';
 
 const TokenManagement = () => {
+  const revokeButtonRef = useRef(null);
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createdToken, setCreatedToken] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState({});
   const [tokenToRevoke, setTokenToRevoke] = useState(null);
 
@@ -72,6 +83,7 @@ const TokenManagement = () => {
 
       const newToken = await response.json();
       setCreatedToken(newToken);
+      setCopied(false);
       setFormData({ name: '', expires_at: '' });
       setShowCreateForm(false);
       fetchTokens(); // Refresh the list
@@ -110,25 +122,13 @@ const TokenManagement = () => {
     }
   };
 
-  // Copy to clipboard
   const copyToClipboard = async (text) => {
+    setCopied(false);
     try {
       await window.navigator.clipboard.writeText(text);
-      // You could add a toast notification here
-    } catch (err) {
-      console.error('Failed to copy to clipboard:', err);
-      // Fallback for older browsers
-      const textArea = document.createElement('textarea');
-      textArea.value = text;
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
-      try {
-        document.execCommand('copy');
-      } catch (fallbackErr) {
-        console.error('Fallback copy failed:', fallbackErr);
-      }
-      document.body.removeChild(textArea);
+      setCopied(true);
+    } catch {
+      setError('Could not copy the token. Select the token text and copy it manually.');
     }
   };
 
@@ -199,22 +199,24 @@ const TokenManagement = () => {
 
       {/* Created Token Display */}
       {createdToken && (
-        <Card className="mb-6 border-green-200 bg-green-50">
+        <Card className="mb-6 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30">
           <CardHeader>
-            <CardTitle className="text-green-800">Token Created Successfully!</CardTitle>
+            <CardTitle className="text-green-800 dark:text-green-200">
+              Token Created Successfully!
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-green-700">
+            <p className="text-green-700 dark:text-green-300">
               <strong>Copy this token now - it won't be shown again:</strong>
             </p>
-            <div className="flex gap-2 p-3 bg-gray-100 rounded-md">
-              <code className="flex-1 text-sm break-all">{createdToken.full_token}</code>
+            <div className="flex items-start gap-2 p-3 bg-muted rounded-md">
+              <code className="min-w-0 flex-1 text-sm break-all">{createdToken.full_token}</code>
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => copyToClipboard(createdToken.full_token)}
               >
-                Copy
+                {copied ? 'Copied!' : 'Copy'}
               </Button>
             </div>
             <Button variant="ghost" onClick={() => setCreatedToken(null)}>
@@ -311,9 +313,17 @@ const TokenManagement = () => {
                       </span>
                     )}
                     <span
-                      className={`${styles.status} ${token.is_revoked ? styles.revokedStatus : styles.activeStatus}`}
+                      className={`${styles.status} ${
+                        token.is_revoked || isExpired(token.expires_at)
+                          ? styles.revokedStatus
+                          : styles.activeStatus
+                      }`}
                     >
-                      {token.is_revoked ? 'REVOKED' : 'ACTIVE'}
+                      {token.is_revoked
+                        ? 'REVOKED'
+                        : isExpired(token.expires_at)
+                          ? 'EXPIRED'
+                          : 'ACTIVE'}
                     </span>
                   </div>
                 </div>
@@ -323,7 +333,11 @@ const TokenManagement = () => {
                     <Button
                       variant="destructive"
                       size="sm"
-                      onClick={() => setTokenToRevoke(token)}
+                      onClick={(event) => {
+                        revokeButtonRef.current = event.currentTarget;
+                        setError(null);
+                        setTokenToRevoke(token);
+                      }}
                       disabled={revoking[token.id]}
                     >
                       {revoking[token.id] ? 'Revoking...' : 'Revoke'}
@@ -336,31 +350,45 @@ const TokenManagement = () => {
         )}
       </div>
 
-      {/* Revocation Confirmation Modal */}
-      {tokenToRevoke && (
-        <div className={styles.modal}>
-          <div className={styles.modalContent}>
-            <h3>Confirm Token Revocation</h3>
-            <p>
-              Are you sure you want to revoke the token <strong>"{tokenToRevoke.name}"</strong>?
-            </p>
-            <p>This action cannot be undone and will immediately invalidate the token.</p>
-
-            <div className={styles.modalActions}>
-              <Button
-                variant="destructive"
-                onClick={() => revokeToken(tokenToRevoke.id)}
-                disabled={revoking[tokenToRevoke.id]}
-              >
-                {revoking[tokenToRevoke.id] ? 'Revoking...' : 'Yes, Revoke Token'}
-              </Button>
-              <Button variant="secondary" onClick={() => setTokenToRevoke(null)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AlertDialog
+        open={Boolean(tokenToRevoke)}
+        onOpenChange={(open) => {
+          if (!open && !revoking[tokenToRevoke?.id]) {
+            setTokenToRevoke(null);
+          }
+        }}
+      >
+        <AlertDialogContent
+          className="max-w-[calc(100vw-2rem)] sm:max-w-lg rounded-lg"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            revokeButtonRef.current?.focus();
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Token Revocation</AlertDialogTitle>
+            <AlertDialogDescription className="break-words">
+              Revoke the token <strong>"{tokenToRevoke?.name}"</strong>? This action cannot be
+              undone and will immediately invalidate the token.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revoking[tokenToRevoke?.id]}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={() => revokeToken(tokenToRevoke.id)}
+              disabled={revoking[tokenToRevoke?.id]}
+            >
+              {revoking[tokenToRevoke?.id] ? 'Revoking...' : 'Yes, Revoke Token'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

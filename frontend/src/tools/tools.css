@@ -1,5 +1,4 @@
 .tools-app {
-  min-height: 100vh;
   background: var(--bg);
   color: var(--text);
 }
@@ -23,12 +22,13 @@
 .tools-header h1 {
   color: var(--text);
   margin-bottom: 10px;
-  font-size: 2.5rem;
+  font-size: 1.875rem;
+  font-weight: 600;
 }
 
 .tools-description {
   color: var(--text-light);
-  font-size: 1.1rem;
+  font-size: 0.875rem;
 }
 
 .tools-container {
@@ -43,7 +43,7 @@
 .tools-sidebar {
   flex: 0 0 300px;
   background: var(--bg);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid hsl(var(--border));
   padding: 20px;
   overflow-y: auto;
   max-height: calc(100vh - 200px);
@@ -55,7 +55,7 @@
   color: var(--text);
   font-size: 1.2rem;
   padding-bottom: 10px;
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid hsl(var(--border));
 }
 
 .tools-list {
@@ -66,7 +66,7 @@
 
 .tool-item {
   background: var(--accent-bg);
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
   padding: 12px;
   cursor: pointer;
@@ -101,6 +101,10 @@
 }
 
 .tool-item .tool-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   font-size: 12px;
   color: var(--text-light);
   line-height: 1.3;
@@ -120,7 +124,7 @@
 
 .tool-details {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   padding: 30px;
 }
@@ -129,9 +133,10 @@
   margin-top: 0;
   margin-bottom: 15px;
   color: var(--text);
-  font-size: 1.8rem;
+  font-size: 1.5rem;
+  overflow-wrap: anywhere;
   padding-bottom: 10px;
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid hsl(var(--border));
 }
 
 .tool-full-description {
@@ -156,7 +161,7 @@
 
 /* JSON Editor styling */
 .json-editor-container {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 6px;
   padding: 15px;
   background: var(--accent-bg);
@@ -186,7 +191,7 @@
 .json-editor-container .je-object__property {
   margin-bottom: 15px;
   padding: 10px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   background: var(--bg);
 }
@@ -203,7 +208,7 @@
 .json-editor-container select {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   font-size: 14px;
   box-sizing: border-box;
@@ -234,8 +239,8 @@
 }
 
 .btn-execute {
-  background: #28a745;
-  color: white;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
   border: none;
   border-radius: 6px;
   padding: 12px 24px;
@@ -246,7 +251,7 @@
 }
 
 .btn-execute:hover:not(:disabled) {
-  background: #218838;
+  background: hsl(var(--primary) / 0.9);
 }
 
 .btn-execute:disabled {
@@ -259,7 +264,7 @@
 .execution-results {
   margin-top: 30px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   padding: 20px;
   background: var(--bg);
 }
@@ -332,7 +337,7 @@
 
 .result-content pre {
   background: var(--accent-bg);
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   padding: 15px;
   margin: 0;
@@ -354,8 +359,8 @@
   .tools-sidebar {
     flex: none;
     border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: none;
+    border-bottom: 1px solid hsl(var(--border));
+    max-height: 320px;
     padding: 15px;
   }
 
@@ -368,3 +373,41 @@
   }
 }
 
+
+.tools-search {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.tool-name,
+.tool-description,
+.tool-full-description {
+  overflow-wrap: anywhere;
+}
+
+.tool-item:focus-visible,
+.btn-execute:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.tools-empty {
+  padding: 1rem 0;
+  color: var(--text-light);
+}
+
+.json-editor-container input[type='checkbox'] {
+  width: auto;
+  margin-right: 0.5rem;
+}
+
+@media (max-width: 480px) {
+  .tools-container {
+    padding: 1rem;
+  }
+
+  .tool-details {
+    padding: 1rem;
+  }
+}

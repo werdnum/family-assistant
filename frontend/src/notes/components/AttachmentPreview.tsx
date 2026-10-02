@@ -1,14 +1,7 @@
 import { FileIcon, ImageIcon, XIcon } from 'lucide-react';
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
 interface AttachmentPreviewProps {
   attachmentId: string;
@@ -42,6 +35,10 @@ export const AttachmentPreview: React.FC<AttachmentPreviewProps> = ({
             Accept: 'application/json',
           },
         });
+        if (!response.ok) {
+          setLoadError(true);
+          return;
+        }
         if (response.ok) {
           const data = await response.json();
           setMetadata({
@@ -82,31 +79,48 @@ export const AttachmentPreview: React.FC<AttachmentPreviewProps> = ({
 
   if (loadError) {
     return (
-      <div className="relative flex h-20 w-32 items-center justify-center gap-2 rounded-lg border border-red-300 bg-red-50 p-2">
-        <FileIcon className="size-6 text-red-500" />
-        <span className="text-xs text-red-600">Error loading</span>
+      <div className="relative flex h-20 w-32 items-center justify-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2">
+        <FileIcon className="size-6 text-destructive" />
+        <span className="text-xs text-destructive">Error loading</span>
+        {canRemove && onRemove && (
+          <Button
+            type="button"
+            size="icon"
+            variant="destructive"
+            className="absolute right-1 top-1 size-6 rounded-full p-0"
+            onClick={handleRemove}
+            aria-label="Remove attachment"
+            title="Remove attachment"
+          >
+            <XIcon className="size-4" />
+          </Button>
+        )}
       </div>
     );
   }
 
   if (!metadata) {
     return (
-      <div className="relative flex h-20 w-32 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2 animate-pulse">
-        <FileIcon className="size-6 text-gray-400" />
-        <span className="text-xs text-gray-500">Loading...</span>
+      <div className="relative flex h-20 w-32 items-center justify-center gap-2 rounded-lg border border-border bg-muted p-2 animate-pulse">
+        <FileIcon className="size-6 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Loading...</span>
       </div>
     );
   }
 
   const PreviewContent = () => (
-    <div className="relative flex h-20 w-32 flex-col rounded-lg border border-gray-300 overflow-hidden hover:border-gray-400 transition-colors">
+    <div className="relative flex h-20 w-32 flex-col rounded-lg border border-border overflow-hidden hover:border-primary/50 transition-colors">
       {isImage ? (
         <Dialog>
           <DialogTrigger asChild>
-            <div className="relative flex h-full cursor-pointer items-center justify-center bg-gray-50">
+            <button
+              type="button"
+              aria-label={`Preview ${metadata.filename}`}
+              className="relative flex h-full cursor-pointer items-center justify-center bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
               {!imageLoaded && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <ImageIcon className="size-6 text-gray-400" />
+                  <ImageIcon className="size-6 text-muted-foreground" />
                 </div>
               )}
               <img
@@ -117,37 +131,36 @@ export const AttachmentPreview: React.FC<AttachmentPreviewProps> = ({
                 onError={() => setLoadError(true)}
                 style={{ display: imageLoaded ? 'block' : 'none' }}
               />
-            </div>
+            </button>
           </DialogTrigger>
-          <DialogPortal>
-            <DialogOverlay />
-            <DialogContent className="max-w-[90vw] max-h-[90vh]">
-              <DialogTitle>{metadata.filename}</DialogTitle>
-              <img
-                src={attachmentUrl}
-                alt={metadata.filename}
-                className="max-w-full max-h-[80vh] object-contain"
-              />
-            </DialogContent>
-          </DialogPortal>
+          <DialogContent className="max-w-[90vw] max-h-[90vh]">
+            <DialogTitle>{metadata.filename}</DialogTitle>
+            <img
+              src={attachmentUrl}
+              alt={metadata.filename}
+              className="max-w-full max-h-[80vh] object-contain"
+            />
+          </DialogContent>
         </Dialog>
       ) : (
-        <div className="flex h-full items-center justify-center gap-2 bg-gray-50 p-2">
-          <FileIcon className="size-6 text-gray-600" />
+        <div className="flex h-full items-center justify-center gap-2 bg-muted p-2">
+          <FileIcon className="size-6 text-muted-foreground" />
           <div className="flex flex-col text-xs overflow-hidden">
             <span className="font-medium truncate" title={metadata.filename}>
               {metadata.filename}
             </span>
-            <span className="text-gray-500">{formatFileSize(metadata.size)}</span>
+            <span className="text-muted-foreground">{formatFileSize(metadata.size)}</span>
           </div>
         </div>
       )}
       {canRemove && onRemove && (
         <Button
+          type="button"
           size="sm"
           variant="destructive"
-          className="absolute -right-2 -top-2 size-6 rounded-full p-0"
+          className="absolute right-1 top-1 size-6 rounded-full p-0"
           onClick={handleRemove}
+          aria-label="Remove attachment"
           title="Remove attachment"
         >
           <XIcon className="size-4" />

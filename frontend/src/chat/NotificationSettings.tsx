@@ -58,7 +58,7 @@ export const NotificationSettings: React.FC<NotificationSettingsProps> = ({
           <span className="sr-only">Notification settings</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
+      <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)]">
         <DropdownMenuLabel>Notification Settings</DropdownMenuLabel>
         <DropdownMenuSeparator />
 

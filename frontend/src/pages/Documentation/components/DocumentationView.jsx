@@ -35,7 +35,7 @@ const DocumentationView = ({ onBackToList }) => {
         const docsResponse = await fetch('/api/documentation/');
         if (docsResponse.ok) {
           const docsData = await docsResponse.json();
-          setAvailableDocs(docsData);
+          setAvailableDocs([...docsData].sort((a, b) => a.localeCompare(b)));
         }
       } catch (err) {
         console.error('Error fetching documentation:', err);
@@ -98,7 +98,7 @@ const DocumentationView = ({ onBackToList }) => {
                     size="sm"
                     className={styles.docNavItem}
                   >
-                    {docFilename.replace(/\.md$/, '').replace(/_/g, ' ')}
+                    {docFilename.replace(/\.md$/, '').replace(/[_-]/g, ' ')}
                   </Button>
                 </li>
               ))}
@@ -110,7 +110,7 @@ const DocumentationView = ({ onBackToList }) => {
       {/* Main content */}
       <div className={styles.content}>
         <div className={styles.contentHeader}>
-          <h1>{docTitle.replace(/\.md$/, '').replace(/_/g, ' ')}</h1>
+          <h1>{docTitle.replace(/\.md$/, '').replace(/[_-]/g, ' ')}</h1>
         </div>
 
         <div className={styles.markdownContent}>
@@ -142,6 +142,11 @@ const DocumentationView = ({ onBackToList }) => {
                   </a>
                 );
               },
+              table: ({ node: _node, children, ...props }) => (
+                <div className={styles.tableWrapper}>
+                  <table {...props}>{children}</table>
+                </div>
+              ),
               // Style code blocks
               pre: ({ node: _node, children, ...props }) => (
                 <pre className={styles.codeBlock} {...props}>
@@ -149,11 +154,7 @@ const DocumentationView = ({ onBackToList }) => {
                 </pre>
               ),
               // Style inline code
-              code: ({ node: _node, inline, children, ...props }) => (
-                <code className={inline ? styles.inlineCode : ''} {...props}>
-                  {children}
-                </code>
-              ),
+              code: ({ node: _node, children, ...props }) => <code {...props}>{children}</code>,
             }}
           >
             {content}

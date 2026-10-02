@@ -31,7 +31,6 @@ const VectorSearch = () => {
     },
   });
 
-  const [advancedMode, setAdvancedMode] = useState(false);
   const [metadataFilterRows, setMetadataFilterRows] = useState([]);
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -288,8 +287,8 @@ const VectorSearch = () => {
               </div>
 
               <div>
-                <details className={styles.advancedOptions} open={advancedMode}>
-                  <summary onClick={() => setAdvancedMode(!advancedMode)}>Advanced Options</summary>
+                <details className={styles.advancedOptions}>
+                  <summary>Advanced Options</summary>
                   <div className="space-y-4 mt-4">
                     <div className="space-y-2">
                       <Label>Filter by Embedding Type</Label>
@@ -318,7 +317,10 @@ const VectorSearch = () => {
                       <Label>Metadata Filters</Label>
                       <div className="space-y-2">
                         {metadataFilterRows.map((row) => (
-                          <div key={row.id} className="flex gap-2 items-end">
+                          <div
+                            key={row.id}
+                            className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+                          >
                             <div className="flex-1">
                               <Select
                                 value={row.key}
@@ -326,7 +328,7 @@ const VectorSearch = () => {
                                   updateMetadataFilter(row.id, 'key', value)
                                 }
                               >
-                                <SelectTrigger>
+                                <SelectTrigger aria-label="Metadata key">
                                   <SelectValue placeholder="Select Key" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -342,6 +344,7 @@ const VectorSearch = () => {
                               <Input
                                 type="text"
                                 placeholder="Value"
+                                aria-label="Metadata value"
                                 value={row.value}
                                 onChange={(e) =>
                                   updateMetadataFilter(row.id, 'value', e.target.value)

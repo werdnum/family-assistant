@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   MessageSquare,
   Mic,
@@ -75,7 +75,7 @@ const LandingPage: React.FC = () => {
       title: 'History',
       description: 'Review your past conversations and activity.',
       icon: <History className="w-6 h-6 text-gray-500" />,
-      link: '/chat', // History is often inside chat
+      link: '/history',
       color: 'bg-gray-50 dark:bg-gray-900/20',
     },
   ];
@@ -88,8 +88,8 @@ const LandingPage: React.FC = () => {
   ];
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-6xl min-h-[calc(100vh-4rem)] flex flex-col justify-center">
-      <div className="text-center mb-12">
+    <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="text-center mb-8 sm:mb-12">
         <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4 bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
           Family Assistant
         </h1>
@@ -98,16 +98,18 @@ const LandingPage: React.FC = () => {
         </p>
       </div>
 
-      <div className="max-w-3xl mx-auto w-full mb-16">
+      <div className="max-w-3xl mx-auto w-full mb-10 sm:mb-16">
         <form onSubmit={handleSearch} className="relative group">
           <Input
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            aria-label="Message the assistant"
             placeholder="How can I help you today?"
             className="h-14 pl-6 pr-16 text-lg rounded-2xl shadow-xl border-primary/20 focus:border-primary transition-all"
           />
           <Button
             type="submit"
+            aria-label="Start chat"
             size="icon"
             className="absolute right-2 top-2 h-10 w-10 rounded-xl transition-transform group-focus-within:scale-105"
           >
@@ -123,7 +125,7 @@ const LandingPage: React.FC = () => {
                 setPrompt(s);
                 navigate(`/chat?q=${encodeURIComponent(s)}`);
               }}
-              className="text-xs bg-secondary hover:bg-secondary/80 text-secondary-foreground px-3 py-1.5 rounded-full transition-colors flex items-center gap-1"
+              className="text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring bg-secondary hover:bg-secondary/80 text-secondary-foreground px-3 py-1.5 rounded-full transition-colors flex items-center gap-1"
             >
               {s} <ArrowRight className="w-3 h-3" />
             </button>
@@ -133,28 +135,30 @@ const LandingPage: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {menuItems.map((item, index) => (
-          <Card
+          <Link
             key={index}
-            className="group hover:shadow-lg transition-all cursor-pointer border-none shadow-md overflow-hidden"
-            onClick={() => navigate(item.link)}
+            to={item.link}
+            className="group rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
-            <CardHeader className="pb-2">
-              <div
-                className={`w-12 h-12 rounded-2xl ${item.color} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform`}
-              >
-                {item.icon}
-              </div>
-              <CardTitle className="text-xl">{item.title}</CardTitle>
-              <CardDescription className="text-sm leading-relaxed">
-                {item.description}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center text-primary text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                Get started <ArrowRight className="w-4 h-4 ml-1" />
-              </div>
-            </CardContent>
-          </Card>
+            <Card className="h-full hover:shadow-lg transition-shadow shadow-sm overflow-hidden">
+              <CardHeader className="pb-2">
+                <div
+                  className={`w-12 h-12 rounded-2xl ${item.color} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform`}
+                >
+                  {item.icon}
+                </div>
+                <CardTitle className="text-xl">{item.title}</CardTitle>
+                <CardDescription className="text-sm leading-relaxed">
+                  {item.description}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center text-primary text-sm font-medium ">
+                  Get started <ArrowRight className="w-4 h-4 ml-1" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
     </div>

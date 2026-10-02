@@ -17,6 +17,16 @@ function renderSharedPage(token: string) {
 }
 
 describe('SharedConversationPage', () => {
+  it('shows an empty state when the shared transcript has no messages', async () => {
+    server.use(
+      http.get('/api/v1/shared-conversations/empty/messages', () =>
+        HttpResponse.json({ messages: [] })
+      )
+    );
+    renderSharedPage('empty');
+    expect(await screen.findByRole('heading', { name: 'No messages to show' })).toBeInTheDocument();
+  });
+
   it('renders a read-only transcript from the share endpoint', async () => {
     server.use(
       http.get('/api/v1/shared-conversations/share-token/messages', () =>

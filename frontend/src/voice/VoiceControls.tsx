@@ -32,11 +32,11 @@ export function VoiceControls({
           disabled={disabled}
           className={`
             px-8 py-4 rounded-full text-lg font-semibold
-            transition-all duration-200
+            transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
             ${
               disabled
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-green-500 hover:bg-green-600 text-white shadow-lg hover:shadow-xl active:scale-95'
+                : 'bg-green-700 hover:bg-green-800 text-white shadow-lg hover:shadow-xl active:scale-95'
             }
           `}
         >
@@ -52,17 +52,17 @@ export function VoiceControls({
           disabled={isConnecting}
           className={`
             px-8 py-4 rounded-full text-lg font-semibold
-            transition-all duration-200
+            transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
             ${
               isConnecting
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl active:scale-95'
+                : 'bg-red-700 hover:bg-red-800 text-white shadow-lg hover:shadow-xl active:scale-95'
             }
           `}
         >
           <span className="flex items-center gap-2">
             <PhoneOffIcon />
-            End Call
+            {isConnecting ? 'Connecting…' : 'End Call'}
           </span>
         </button>
       )}

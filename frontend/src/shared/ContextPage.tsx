@@ -49,11 +49,15 @@ const ContextPage: React.FC = () => {
           // Set default profile if none selected
           if (profilesData.length > 0 && !selectedProfileId) {
             setSelectedProfileId(profilesData[0].id);
+          } else if (profilesData.length === 0) {
+            setLoading(false);
           }
         } else {
+          setLoading(false);
           setError(`Failed to load profiles: ${response.status}`);
         }
       } catch (err) {
+        setLoading(false);
         setError(`Error loading profiles: ${(err as Error).message}`);
       }
     };
@@ -67,17 +71,22 @@ const ContextPage: React.FC = () => {
       return;
     }
 
+    const controller = new AbortController();
     const fetchContext = async () => {
       setLoading(true);
+      setContextData(null);
       setError(null);
       try {
         const url = selectedProfileId
           ? `/api/v1/context?profile_id=${encodeURIComponent(selectedProfileId)}`
           : '/api/v1/context';
 
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: controller.signal });
         if (response.ok) {
           const data = await response.json();
+          if (controller.signal.aborted) {
+            return;
+          }
           setContextData(data);
           // Expand the two halves of what the model actually receives by default
           setExpandedSections(new Set(['formatted-system-prompt', 'turn-context']));
@@ -85,13 +94,19 @@ const ContextPage: React.FC = () => {
           setError(`Failed to load context: ${response.status}`);
         }
       } catch (err) {
+        if (controller.signal.aborted) {
+          return;
+        }
         setError(`Error loading context: ${(err as Error).message}`);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchContext();
+    return () => controller.abort();
   }, [selectedProfileId]);
 
   // Set page title and coordinate data-app-ready with loading state
@@ -130,6 +145,7 @@ const ContextPage: React.FC = () => {
         <label htmlFor="profile-select">Processing Profile:</label>
         <select
           id="profile-select"
+          disabled={profiles.length === 0}
           value={selectedProfileId}
           onChange={(e) => setSelectedProfileId(e.target.value)}
           className={styles['profile-select']}
@@ -143,12 +159,19 @@ const ContextPage: React.FC = () => {
       </div>
 
       {error && (
-        <div className={styles['error-message']}>
+        <div className={styles['error-message']} role="alert">
           <p>Error: {error}</p>
         </div>
       )}
 
-      {loading && <div className={styles.loading}>Loading context data...</div>}
+      {loading && (
+        <div className={styles.loading} role="status">
+          Loading context data...
+        </div>
+      )}
+      {!loading && !error && profiles.length === 0 && (
+        <p className={styles['no-context']}>No processing profiles are available.</p>
+      )}
 
       {contextData && selectedProfile && (
         <div className={styles['context-content']}>
@@ -156,6 +179,7 @@ const ContextPage: React.FC = () => {
           <div className={styles['context-section']}>
             <button
               className={styles['section-header']}
+              aria-expanded={expandedSections.has('profile-info')}
               onClick={() => toggleSection('profile-info')}
             >
               <span className={styles['toggle-icon']}>
@@ -209,6 +233,7 @@ const ContextPage: React.FC = () => {
           <div className={styles['context-section']}>
             <button
               className={styles['section-header']}
+              aria-expanded={expandedSections.has('formatted-system-prompt')}
               onClick={() => toggleSection('formatted-system-prompt')}
             >
               <span className={styles['toggle-icon']}>
@@ -229,6 +254,7 @@ const ContextPage: React.FC = () => {
           <div className={styles['context-section']}>
             <button
               className={styles['section-header']}
+              aria-expanded={expandedSections.has('turn-context')}
               onClick={() => toggleSection('turn-context')}
             >
               <span className={styles['toggle-icon']}>
@@ -246,7 +272,7 @@ const ContextPage: React.FC = () => {
                     include_aggregated_context.
                   </p>
                   {!contextData.include_aggregated_context && (
-                    <div className={styles['provider-error']}>
+                    <div className={styles['context-notice']}>
                       <p>
                         <strong>This profile does not receive the aggregated context.</strong>{' '}
                         include_aggregated_context is off for {contextData.profile_id}, so the
@@ -269,6 +295,7 @@ const ContextPage: React.FC = () => {
           <div className={styles['context-section']}>
             <button
               className={styles['section-header']}
+              aria-expanded={expandedSections.has('system-prompt')}
               onClick={() => toggleSection('system-prompt')}
             >
               <span className={styles['toggle-icon']}>
@@ -291,6 +318,7 @@ const ContextPage: React.FC = () => {
           <div className={styles['context-section']}>
             <button
               className={styles['section-header']}
+              aria-expanded={expandedSections.has('aggregated-context')}
               onClick={() => toggleSection('aggregated-context')}
             >
               <span className={styles['toggle-icon']}>
@@ -305,7 +333,7 @@ const ContextPage: React.FC = () => {
               <div className={styles['section-content']}>
                 <div className={styles['provider-fragments']}>
                   {!contextData.include_aggregated_context && (
-                    <div className={styles['provider-error']}>
+                    <div className={styles['context-notice']}>
                       <p>
                         Not sent to {contextData.profile_id} — this is what the context providers
                         produced, but the profile has include_aggregated_context off, so none of it
@@ -330,6 +358,7 @@ const ContextPage: React.FC = () => {
             <div key={provider.provider_name} className={styles['context-section']}>
               <button
                 className={styles['section-header']}
+                aria-expanded={expandedSections.has(provider.provider_name)}
                 onClick={() => toggleSection(provider.provider_name)}
               >
                 <span className={styles['toggle-icon']}>

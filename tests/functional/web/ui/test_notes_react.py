@@ -201,7 +201,9 @@ async def test_react_ui_error_handling(
 
     await expect(page.get_by_role("heading", name="Edit Note")).to_be_visible()
     await expect(page.get_by_role("alert")).to_contain_text("404")
-    await expect(page.get_by_label("Title *")).to_be_empty()
+    await expect(page.get_by_label("Title *")).to_have_count(0)
+    await expect(page.get_by_role("button", name="Save", exact=True)).to_have_count(0)
+    await expect(page.get_by_role("button", name="Try again")).to_be_visible()
 
 
 @pytest.mark.playwright

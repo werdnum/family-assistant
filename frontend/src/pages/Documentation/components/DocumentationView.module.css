@@ -1,15 +1,17 @@
 /* Documentation view container */
 .container {
   display: flex;
-  height: calc(100vh - 80px); /* Adjust based on layout */
-  overflow: hidden;
+  align-items: flex-start;
+  gap: 1.5rem;
+  min-width: 0;
+  padding: 1.5rem 2rem;
 }
 
 /* Loading and error states */
 .loading {
   padding: 2rem;
   text-align: center;
-  color: var(--text-light);
+  color: hsl(var(--muted-foreground));
   font-style: italic;
   width: 100%;
   display: flex;
@@ -19,9 +21,9 @@
 
 .error {
   padding: 2rem;
-  background-color: var(--accent-bg);
+  background-color: hsl(var(--muted));
   border-left: 4px solid #e74c3c;
-  color: var(--text);
+  color: hsl(var(--foreground));
   border-radius: 4px;
   width: 100%;
   max-width: 600px;
@@ -35,10 +37,15 @@
 
 /* Sidebar */
 .sidebar {
-  width: 280px;
-  min-width: 280px;
-  background-color: var(--accent-bg);
-  border-right: 1px solid var(--border);
+  width: 240px;
+  min-width: 240px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100dvh - 2rem);
+  background-color: hsl(var(--muted));
+  border-right: 1px solid hsl(var(--border));
   padding: 1rem;
   overflow-y: auto;
   flex-shrink: 0;
@@ -47,13 +54,13 @@
 .sidebarHeader {
   margin-bottom: 1.5rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
 }
 
 .backButton {
   background: none;
-  border: 1px solid var(--border);
-  color: var(--text);
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground));
   padding: 0.5rem 1rem;
   border-radius: 4px;
   cursor: pointer;
@@ -62,15 +69,15 @@
 }
 
 .backButton:hover {
-  background-color: var(--accent);
-  border-color: var(--accent);
+  background-color: hsl(var(--accent));
+  border-color: hsl(var(--accent));
 }
 
 /* Document navigation */
 .docNav h3 {
   margin: 0 0 1rem 0;
   font-size: 1em;
-  color: var(--text);
+  color: hsl(var(--foreground));
 }
 
 .docList {
@@ -84,64 +91,46 @@
 }
 
 .docNavItem {
-  display: block;
+  justify-content: flex-start;
   width: 100%;
+  height: auto;
+  min-height: 2.25rem;
   text-align: left;
-  background: none;
-  border: none;
-  color: var(--text-light);
-  padding: 0.5rem 0.75rem;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 0.9em;
+  white-space: normal;
+  overflow-wrap: anywhere;
   text-transform: capitalize;
-  transition: all 0.2s ease;
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.docNavItem:hover {
-  background-color: var(--accent);
-  color: var(--text);
-}
-
-.docNavItem.active {
-  background-color: var(--accent);
-  color: var(--text);
-  font-weight: 600;
 }
 
 /* Main content area */
 .content {
   flex: 1;
-  overflow-y: auto;
+  min-width: 0;
   padding: 0;
 }
 
 .contentHeader {
-  background-color: var(--bg);
-  padding: 1.5rem 2rem 1rem 2rem;
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  background-color: hsl(var(--background));
+  padding: 0 0 1rem;
+  border-bottom: 1px solid hsl(var(--border));
+
 }
 
 .contentHeader h1 {
   margin: 0;
-  color: var(--text);
-  font-size: 2rem;
+  color: hsl(var(--foreground));
+  font-size: 1.875rem;
+  font-weight: 700;
   text-transform: capitalize;
 }
 
 /* Markdown content styling */
 .markdownContent {
-  padding: 2rem;
+  padding: 1.5rem 0;
+  overflow-wrap: anywhere;
   max-width: 900px;
   margin: 0 auto;
   line-height: 1.7;
-  color: var(--text);
+  color: hsl(var(--foreground));
 }
 
 /* Markdown element styles */
@@ -151,18 +140,18 @@
 .markdownContent h4,
 .markdownContent h5,
 .markdownContent h6 {
-  color: var(--text);
+  color: hsl(var(--foreground));
   margin-top: 2rem;
   margin-bottom: 1rem;
 }
 
 .markdownContent h1 {
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid hsl(var(--border));
   padding-bottom: 0.5rem;
 }
 
 .markdownContent h2 {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
   padding-bottom: 0.25rem;
 }
 
@@ -181,11 +170,11 @@
 }
 
 .markdownContent blockquote {
-  border-left: 4px solid var(--accent);
+  border-left: 4px solid hsl(var(--accent));
   margin: 1rem 0;
   padding: 0.5rem 1rem;
-  background-color: var(--accent-bg);
-  color: var(--text-light);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
 }
 
 .markdownContent table {
@@ -196,20 +185,20 @@
 
 .markdownContent th,
 .markdownContent td {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   padding: 0.5rem;
   text-align: left;
 }
 
 .markdownContent th {
-  background-color: var(--accent-bg);
+  background-color: hsl(var(--muted));
   font-weight: 600;
 }
 
 /* Code styling */
 .codeBlock {
-  background-color: var(--accent-bg) !important;
-  border: 1px solid var(--border);
+  background-color: hsl(var(--muted)) !important;
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   padding: 1rem !important;
   overflow-x: auto;
@@ -220,8 +209,8 @@
 }
 
 .inlineCode {
-  background-color: var(--accent-bg);
-  border: 1px solid var(--border);
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 3px;
   padding: 0.2rem 0.4rem;
   font-family: 'Courier New', Courier, monospace;
@@ -229,7 +218,7 @@
 }
 
 .markdownContent a {
-  color: #0066cc;
+  color: hsl(var(--primary));
   text-decoration: none;
 }
 
@@ -245,11 +234,12 @@
   }
   
   .sidebar {
+    position: static;
     width: 100%;
     min-width: unset;
     border-right: none;
-    border-bottom: 1px solid var(--border);
-    max-height: 200px;
+    border-bottom: 1px solid hsl(var(--border));
+    max-height: none;
   }
   
   .content {
@@ -263,8 +253,25 @@
   .markdownContent {
     padding: 1rem;
   }
-  
+
+  .docNav { display: none; }
+
   .contentHeader h1 {
     font-size: 1.5rem;
   }
 }
+
+.markdownContent h1 { font-size: 1.75rem; font-weight: 700; }
+.markdownContent h2 { font-size: 1.5rem; font-weight: 600; }
+.markdownContent h3 { font-size: 1.25rem; font-weight: 600; }
+.markdownContent ul { list-style: disc; }
+.markdownContent ol { list-style: decimal; }
+.markdownContent :not(pre) > code { background: hsl(var(--muted)); border-radius: 0.25rem; padding: 0.1rem 0.3rem; }
+.markdownContent pre { overflow-wrap: normal; }
+.tableWrapper { width: 100%; overflow-x: auto; }
+@media (max-width: 768px) {
+  .content { width: 100%; }
+  .sidebarHeader { margin: 0; padding: 0; border: 0; }
+}
+
+@media (max-width: 768px) { .container { padding: 1rem; } }

@@ -152,7 +152,7 @@ const SharedToolGroup: React.FC<{ toolCalls: SharedToolCall[] }> = ({ toolCalls 
             data-testid="shared-tool-call"
             data-tool-outcome={toolCall.outcome}
           >
-            <div className="flex items-center gap-2 text-xs font-medium">
+            <div className="flex flex-wrap items-center gap-2 break-all text-xs font-medium">
               <Icon className="h-3.5 w-3.5" />
               {toolCall.name}
               {toolCall.outcome !== 'succeeded' && (
@@ -198,7 +198,7 @@ const SharedAttachments: React.FC<{ attachments?: BackendAttachment[] }> = ({ at
     return null;
   }
   return (
-    <div className="mt-3 flex flex-wrap gap-3">
+    <div className="mt-3 flex min-w-0 flex-wrap gap-3">
       {attachments.map((attachment) => {
         const url = attachment.content_url;
         if (!url || !attachment.attachment_id) {
@@ -207,14 +207,24 @@ const SharedAttachments: React.FC<{ attachments?: BackendAttachment[] }> = ({ at
         const name = attachment.name || String(attachment.description || 'Attachment');
         const mimeType = String(attachment.mime_type || '');
         return mimeType.startsWith('image/') ? (
-          <a key={attachment.attachment_id} href={url} target="_blank" rel="noreferrer">
-            <img src={url} alt={name} className="max-h-80 rounded-lg border object-contain" />
+          <a
+            key={attachment.attachment_id}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="min-w-0 max-w-full"
+          >
+            <img
+              src={url}
+              alt={name}
+              className="max-h-80 max-w-full rounded-lg border object-contain"
+            />
           </a>
         ) : (
           <a
             key={attachment.attachment_id}
             href={url}
-            className="text-sm text-primary underline underline-offset-4"
+            className="min-w-0 break-all text-sm text-primary underline underline-offset-4"
           >
             {name}
           </a>
@@ -263,7 +273,7 @@ const SharedMessage: React.FC<{
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <Card
-        className={`max-w-[85%] px-4 py-3 ${
+        className={`min-w-0 max-w-[95%] sm:max-w-[85%] px-4 py-3 ${
           isUser ? 'bg-primary text-primary-foreground' : 'bg-card'
         }`}
       >
@@ -351,7 +361,7 @@ const SharedConversationPage: React.FC = () => {
   }, [token, requestVersion]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-full bg-background">
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center gap-3 px-4 py-3">
           <Button asChild variant="ghost" size="sm">
@@ -399,6 +409,14 @@ const SharedConversationPage: React.FC = () => {
             <Button className="mt-4" onClick={() => setRequestVersion((version) => version + 1)}>
               Try again
             </Button>
+          </Card>
+        )}
+        {loadState === 'ready' && visibleMessages.length === 0 && (
+          <Card className="p-6 text-center">
+            <h2 className="font-semibold">No messages to show</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This shared conversation does not contain any messages yet.
+            </p>
           </Card>
         )}
         {loadState === 'ready' &&

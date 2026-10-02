@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import './tools.css';
 
 // Global variable to cache the dynamic import promise
@@ -6,6 +8,7 @@ let jsonEditorImportPromise = null;
 
 const ToolsApp = () => {
   const [tools, setTools] = useState([]);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedTool, setSelectedTool] = useState(null);
@@ -181,6 +184,12 @@ const ToolsApp = () => {
     return <div className="tools-error">Error: {error}</div>;
   }
 
+  const matchingTools = tools.filter((tool) =>
+    `${tool.function?.name || tool.name} ${tool.function?.description || ''}`
+      .toLowerCase()
+      .includes(search.toLowerCase())
+  );
+
   return (
     <div className="tools-app">
       <div className="tools-header">
@@ -194,13 +203,29 @@ const ToolsApp = () => {
         {/* Tool list sidebar */}
         <div className="tools-sidebar">
           <h2>Available Tools</h2>
+          <div className="tools-search">
+            <Label htmlFor="tool-search">Search tools</Label>
+            <Input
+              id="tool-search"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Name or description..."
+            />
+          </div>
           <div className="tools-list">
-            {tools.map((tool) => (
+            {matchingTools.length === 0 && (
+              <p className="tools-empty">
+                {tools.length === 0 ? 'No tools are available.' : 'No tools match your search.'}
+              </p>
+            )}
+            {matchingTools.map((tool) => (
               <button
                 key={tool.function?.name || tool.name}
                 className={`tool-item ${
                   selectedTool === (tool.function?.name || tool.name) ? 'selected' : ''
                 }`}
+                aria-pressed={selectedTool === (tool.function?.name || tool.name)}
                 onClick={() => handleToolSelect(tool.function?.name || tool.name)}
               >
                 <span className="tool-name">{tool.function?.name || tool.name}</span>
@@ -282,7 +307,11 @@ const ToolsApp = () => {
             </>
           ) : (
             <div className="no-tool-selected">
-              <p>Select a tool from the list to view details and test it</p>
+              <p>
+                {tools.length === 0
+                  ? 'No tools are available for this session.'
+                  : 'Select a tool from the list to view details and test it'}
+              </p>
             </div>
           )}
         </div>

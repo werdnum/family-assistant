@@ -68,7 +68,7 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
               }
               disabled={loading}
             >
-              <SelectTrigger data-testid="interface-type-select">
+              <SelectTrigger id="interface_type" data-testid="interface-type-select">
                 <SelectValue placeholder="All Interfaces" />
               </SelectTrigger>
               <SelectContent>
@@ -89,7 +89,6 @@ const HistoryFilters = ({ filters, onFiltersChange, onClearFilters, loading = fa
               id="conversation_id"
               value={filters.conversation_id || ''}
               onChange={(e) => handleFilterChange('conversation_id', e.target.value)}
-              disabled={loading}
               placeholder="Enter conversation ID (e.g., web_conv_...)"
             />
           </div>

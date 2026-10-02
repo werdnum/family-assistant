@@ -20,7 +20,7 @@ const DocumentationList = () => {
         }
 
         const docsData = await response.json();
-        setDocs(docsData);
+        setDocs([...docsData].sort((a, b) => a.localeCompare(b)));
       } catch (err) {
         console.error('Error fetching docs:', err);
         // More detailed error message for debugging
@@ -70,7 +70,7 @@ const DocumentationList = () => {
               className={styles.docItem}
             >
               <div className={styles.docTitle}>
-                {filename.replace(/\.md$/, '').replace(/_/g, ' ')}
+                {filename.replace(/\.md$/, '').replace(/[_-]/g, ' ')}
               </div>
               <div className={styles.docFilename}>{filename}</div>
             </Link>

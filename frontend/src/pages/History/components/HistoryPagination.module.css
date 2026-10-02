@@ -16,6 +16,8 @@
 }
 
 .paginationControls {
+  flex-wrap: wrap;
+  justify-content: center;
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -33,8 +35,8 @@
 }
 
 .paginationButton:hover:not(:disabled) {
-  background-color: var(--bg-secondary);
-  border-color: var(--accent);
+  background-color: var(--accent-bg);
+  border-color: hsl(var(--link));
 }
 
 .paginationButton:disabled {
