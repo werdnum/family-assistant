@@ -74,11 +74,13 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
 
   const isAwaitingSearch =
     trimmedQuery !== '' && searchResults?.query !== trimmedQuery && !searchFailed;
+  // While a refined query is in flight, the previous query's matches stay on
+  // screen (dimmed) rather than blanking the list on every keystroke.
   let displayedConversations: Conversation[] = conversations;
   if (trimmedQuery) {
-    displayedConversations =
-      searchResults?.query === trimmedQuery ? searchResults.conversations : [];
+    displayedConversations = searchResults?.conversations ?? [];
   }
+  const showSearchingPlaceholder = isAwaitingSearch && displayedConversations.length === 0;
 
   // Format timestamp for display
   const formatTimestamp = (timestamp: string): string => {
@@ -158,12 +160,12 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
               Search failed. Try again.
             </div>
           )}
-          {(conversationsLoading && !trimmedQuery) || isAwaitingSearch ? (
+          {(conversationsLoading && !trimmedQuery) || showSearchingPlaceholder ? (
             <div
               className="py-8 text-center text-sm text-muted-foreground/60"
               data-loading-indicator="true"
             >
-              {isAwaitingSearch ? 'Searching...' : 'Loading...'}
+              {showSearchingPlaceholder ? 'Searching...' : 'Loading...'}
             </div>
           ) : displayedConversations.length === 0 ? (
             !searchFailed && (
@@ -172,7 +174,10 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
               </div>
             )
           ) : (
-            <div className="space-y-0.5">
+            <div
+              className={`space-y-0.5 transition-opacity ${isAwaitingSearch ? 'opacity-60' : ''}`}
+              aria-busy={isAwaitingSearch}
+            >
               {displayedConversations.map((conv: Conversation) => {
                 const isActive = conv.conversation_id === currentConversationId;
                 return (

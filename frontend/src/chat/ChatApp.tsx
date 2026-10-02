@@ -142,7 +142,7 @@ function hasTerminalReplyForTurn(
 function buildUnconfirmedReplyError(conversationId: string, turnId: string): Message {
   const diagnosticsUrl = getDiagnosticsUrl({ conversationId });
   return {
-    id: `msg_unconfirmed_${generateUUID()}`,
+    id: `msg_unconfirmed_${turnId}`,
     role: 'assistant',
     turnId,
     content: [
@@ -456,6 +456,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     convId: string;
     status: ConversationLoadStatus;
   } | null>(null);
+  const conversationLoadRef = useRef(conversationLoad);
+  conversationLoadRef.current = conversationLoad;
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const shareLink = useConversationShareLink(conversationId);
@@ -2060,6 +2062,17 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const handleConversationSelect = useCallback(
     (convId: string) => {
       if (composerSendingRef.current) {
+        return;
+      }
+      // Reopening the conversation already on screen (back to the list and into
+      // it again on mobile, or its own row on desktop) keeps the transcript, the
+      // widened history window and any live stream, and catches up quietly
+      // instead of reopening it from scratch behind a loading placeholder.
+      if (convId === conversationIdRef.current && conversationLoadRef.current === null) {
+        setMobileShowList(false);
+        if (activeStreamConversationIdRef.current !== convId) {
+          void loadConversationMessages(convId, true);
+        }
         return;
       }
       // Cancel any active streaming before switching conversations

@@ -122,6 +122,85 @@ describe('ConversationSidebar', () => {
     expect(window.location.search).toBe('?conversation_id=conv-2');
   });
 
+  it('reopens the conversation already on screen without a loading placeholder', async () => {
+    const user = userEvent.setup();
+    serveConversationHistories();
+
+    await renderChatApp({ waitForReady: true });
+    await user.click(await screen.findByTestId('conversation-item-conv-1'));
+    expect(await screen.findByText('Hello from conv-1')).toBeInTheDocument();
+
+    let releaseReload: (() => void) | undefined;
+    const reloads: URL[] = [];
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', async ({ request }) => {
+        reloads.push(new URL(request.url));
+        await new Promise<void>((resolve) => {
+          releaseReload = resolve;
+        });
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: 'conv-1-msg-1',
+              role: 'user',
+              content: 'Hello from conv-1',
+              timestamp: '2025-01-01T09:00:00Z',
+            },
+          ],
+        });
+      })
+    );
+
+    await user.click(screen.getByTestId('conversation-item-conv-1'));
+    await waitFor(() => expect(releaseReload).toBeDefined());
+
+    expect(screen.queryByTestId('conversation-loading')).not.toBeInTheDocument();
+    expect(screen.getByText('Hello from conv-1')).toBeInTheDocument();
+    expect(reloads[0].searchParams.has('include_conversation_profile')).toBe(false);
+    releaseReload?.();
+  });
+
+  it('keeps the previous matches on screen while a refined search runs', async () => {
+    const user = userEvent.setup();
+    let releaseRefinedSearch: (() => void) | undefined;
+    server.use(
+      http.get('/api/v1/chat/conversations', async ({ request }) => {
+        const query = new URL(request.url).searchParams.get('q');
+        if (query === null) {
+          return HttpResponse.json({ conversations: [], count: 0 });
+        }
+        if (query !== 'pass') {
+          await new Promise<void>((resolve) => {
+            releaseRefinedSearch = resolve;
+          });
+        }
+        return HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'conv-passport',
+              last_message: 'You are welcome',
+              last_timestamp: '2025-01-01T09:00:00Z',
+              message_count: 6,
+              match_excerpt: 'renew the passport before the trip',
+            },
+          ],
+          count: 1,
+        });
+      })
+    );
+
+    await renderChatApp({ waitForReady: true });
+    const searchBox = screen.getByPlaceholderText('Search...');
+    await user.type(searchBox, 'pass');
+    expect(await screen.findByTestId('conversation-item-conv-passport')).toBeInTheDocument();
+
+    await user.type(searchBox, 'port');
+    await waitFor(() => expect(releaseRefinedSearch).toBeDefined());
+    expect(screen.getByTestId('conversation-item-conv-passport')).toBeInTheDocument();
+    expect(screen.queryByText('Searching...')).not.toBeInTheDocument();
+    releaseRefinedSearch?.();
+  });
+
   it('toggles sidebar open/closed on desktop', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
