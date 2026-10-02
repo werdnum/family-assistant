@@ -125,7 +125,11 @@ export const describeRecurrenceRule = (rule) => {
       : isWeekend
         ? 'Saturday and Sunday'
         : joinList(sorted.map((day) => WEEKDAYS[day]));
-    if (parts.FREQ === 'DAILY' || parts.FREQ === 'WEEKLY') {
+    // A daily interval filtered by weekday (e.g. every 2nd day, if it is a weekend) has no
+    // faithful weekly phrasing.
+    if (parts.FREQ === 'DAILY' && interval === 1) {
+      phrase = `Every ${dayText}`;
+    } else if (parts.FREQ === 'WEEKLY') {
       phrase = interval === 1 ? `Every ${dayText}` : `Every ${interval} weeks on ${dayText}`;
     } else {
       return null;

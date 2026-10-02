@@ -17,6 +17,7 @@ describe('describeRecurrenceRule', () => {
     ['FREQ=MONTHLY;BYMONTHDAY=1;BYHOUR=9', 'Monthly on the 1st at 9am'],
     ['FREQ=HOURLY;INTERVAL=4', 'Every 4 hours'],
     ['RRULE:FREQ=DAILY', 'Daily'],
+    ['FREQ=DAILY;BYDAY=SA,SU;BYHOUR=10', 'Every Saturday and Sunday at 10am'],
   ])('describes %s', (rule, expected) => {
     expect(describeRecurrenceRule(rule)).toBe(expected);
   });
@@ -27,6 +28,7 @@ describe('describeRecurrenceRule', () => {
     ['FREQ=DAILY;COUNT=5'],
     ['FREQ=DAILY;BYMINUTE=0,30;BYHOUR=9'],
     ['FREQ=HOURLY;BYHOUR=9'],
+    ['FREQ=DAILY;INTERVAL=2;BYDAY=SA,SU'],
     ['nonsense'],
   ])('returns null for rules it cannot summarise faithfully: %s', (rule) => {
     expect(describeRecurrenceRule(rule)).toBeNull();
