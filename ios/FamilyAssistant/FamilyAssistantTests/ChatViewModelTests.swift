@@ -9408,6 +9408,70 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.draftAttachments.isEmpty)
     }
 
+    func testFailedAttachmentRetryReuploadsLocalFileAndKeepsDraft() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("vm-retry.txt")
+        try Data("file".utf8).write(to: fileURL)
+        let uploads = AtomicCounter()
+
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                if uploads.increment() == 1 {
+                    return .json(#"{"detail":"unavailable"}"#, statusCode: 503)
+                }
+                return .json(
+                    """
+                    {
+                      "attachment_id": "77777777-7777-7777-7777-777777777777",
+                      "filename": "vm-retry.txt",
+                      "content_type": "text/plain",
+                      "size": 4,
+                      "url": "/api/attachments/77777777-7777-7777-7777-777777777777"
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_retry")
+        model.draftText = "Keep this text"
+        await model.addAttachment(fileURL: fileURL)
+        try await waitUntil { model.draftAttachments.first?.uploadState == .failed }
+        let failed = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertNotNil(failed.errorMessage)
+        XCTAssertFalse(model.canSendDraft)
+
+        await model.retryDraftAttachment(failed)
+
+        let retried = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertEqual(model.draftAttachments.count, 1)
+        XCTAssertEqual(retried.id, failed.id)
+        XCTAssertEqual(retried.uploadState, .uploaded)
+        XCTAssertEqual(retried.attachmentID, "77777777-7777-7777-7777-777777777777")
+        XCTAssertNil(retried.errorMessage)
+        XCTAssertEqual(uploads.value, 2)
+        XCTAssertEqual(model.draftText, "Keep this text")
+        XCTAssertTrue(model.canSendDraft)
+    }
+
+    func testRetryWithoutLocalFileKeepsAttachmentFailedWithInlineError() async throws {
+        let model = makeViewModel(conversationID: "web_conv_retry_missing")
+        model.draftAttachments = [
+            makeAttachment(uploadState: .failed),
+        ]
+
+        await model.retryDraftAttachment(try XCTUnwrap(model.draftAttachments.first))
+
+        let attachment = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertEqual(attachment.uploadState, .failed)
+        XCTAssertEqual(
+            attachment.errorMessage,
+            "The original file is no longer available. Remove it and attach it again."
+        )
+    }
+
     // MARK: - Pasted images
 
     /// Formats the backend accepts pass through the paste pipeline untouched;
@@ -9820,7 +9884,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.draftText, "Fix attachment")
         XCTAssertEqual(model.draftAttachments.first?.uploadState, .failed)
         XCTAssertTrue(model.messages.isEmpty)
-        XCTAssertEqual(model.errorMessage, "Remove failed attachments before sending.")
+        XCTAssertEqual(model.errorMessage, "Retry or remove failed attachments before sending.")
     }
 
     func testConfirmUpdatesToolStatusBeforeRemovingPendingConfirmation() async {

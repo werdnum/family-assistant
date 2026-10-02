@@ -1737,7 +1737,7 @@ final class ChatViewModel {
         }
         guard draftAttachments.allSatisfy({ $0.uploadState == .uploaded }) else {
             presentErrorAlert(
-                "Remove failed attachments before sending.",
+                "Retry or remove failed attachments before sending.",
                 reason: .sendAttachmentFailed
             )
             return false
@@ -3520,7 +3520,7 @@ final class ChatViewModel {
         displayName: String,
         isTemporaryImport: Bool = false
     ) async {
-        var attachment = ChatAttachment(
+        let attachment = ChatAttachment(
             id: UUID().uuidString,
             attachmentID: nil,
             type: ChatAttachmentType.from(mimeType: mimeType),
@@ -3536,6 +3536,37 @@ final class ChatViewModel {
         if isTemporaryImport {
             importedDraftFileURLByAttachmentID[attachment.id] = fileURL
         }
+        await uploadDraftAttachment(attachment, fileURL: fileURL, mimeType: mimeType)
+    }
+
+    /// Re-upload a failed draft attachment from the local file it was picked,
+    /// captured or shared from, leaving the rest of the draft untouched.
+    func retryDraftAttachment(_ attachment: ChatAttachment) async {
+        guard let index = draftAttachments.firstIndex(where: { $0.id == attachment.id }),
+              draftAttachments[index].uploadState == .failed else {
+            return
+        }
+        var current = draftAttachments[index]
+        guard let fileURL = current.localFileURL, let mimeType = current.mimeType else {
+            setDraftAttachmentError(current, "The original file is no longer available. Remove it and attach it again.")
+            return
+        }
+        current.uploadState = .uploading
+        current.errorMessage = nil
+        draftAttachments[index] = current
+        // Files from the document picker are security-scoped; access has to be
+        // reacquired for the re-read.
+        let scoped = fileURL.startAccessingSecurityScopedResource()
+        defer {
+            if scoped {
+                fileURL.stopAccessingSecurityScopedResource()
+            }
+        }
+        await uploadDraftAttachment(current, fileURL: fileURL, mimeType: mimeType)
+    }
+
+    private func uploadDraftAttachment(_ pending: ChatAttachment, fileURL: URL, mimeType: String) async {
+        var attachment = pending
         do {
             let upload = try await apiClient.uploadAttachment(fileURL: fileURL, mimeType: mimeType)
             attachment.attachmentID = upload.attachmentID
