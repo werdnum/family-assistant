@@ -136,8 +136,14 @@ For web turns, the relaunch goes through the same producer as a new turn, with t
   loop stalls for longer than `LEASE_SECONDS` could have a live turn resumed beside it. The registry
   guards the same-process case. Fencing across processes would need lease ownership tokens on every
   write, and for a single-replica deployment that is out of proportion to the risk.
-- **The resumed turn reuses the envelope that was admitted.** An Auto-routed turn that was resumed
-  runs on the tier it was admitted with, frozen. It is not re-routed partway through.
+- **A resumed turn stays on the tier its rows ran on.** The tier stamped on the turn's last
+  assistant row is reused, frozen, so an Auto-routed turn is not re-routed partway through. Only a
+  turn that made no model call yet goes back through the envelope it was admitted with.
+- **A resumed turn rebuilds what its rows record, not the loop's in-memory state.** The prompt,
+  attachments, tool rounds, steering, tier and iteration count are recovered from history. Tools
+  activated on demand and attachments queued for the reply are not. History shows the model that it
+  activated or attached them, so it can repeat that call. Rebuilding them would mean threading more
+  turn-local state through the loop for a turn that has already been interrupted.
 
 ## Work plan
 
