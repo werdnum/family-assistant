@@ -386,7 +386,6 @@ final class AuthManager {
     /// cannot mutate auth state after this transition. See ``authEpoch``.
     @MainActor
     private func bumpAuthEpoch() {
-        bridgedAccessToken = nil
         authEpoch += 1
         companionSessionID = UUID().uuidString
         UserDefaults.standard.set(companionSessionID, forKey: "fa_companion_session_id")
@@ -688,21 +687,17 @@ final class AuthManager {
 
     // MARK: - Session Establishment
 
-    @ObservationIgnored @MainActor private var bridgedAccessToken: String?
-
     /// Renew embedded-browser credentials only from the native token flow.
     @MainActor
     func prepareWebSession() async throws {
         let epoch = authEpoch
         let token = try await validAccessToken()
         guard isCurrentAuthEpoch(epoch), !authRequired else { throw AuthError.noCredentials }
-        if token != bridgedAccessToken {
-            do {
-                try await establishSession(apiToken: token)
-            } catch AuthError.authRejected {
-                if isCurrentAuthEpoch(epoch) { markAuthRequired() }
-                throw AuthError.authRejected
-            }
+        do {
+            try await establishSession(apiToken: token)
+        } catch AuthError.authRejected {
+            if isCurrentAuthEpoch(epoch) { markAuthRequired() }
+            throw AuthError.authRejected
         }
         guard isCurrentAuthEpoch(epoch) else { throw AuthError.noCredentials }
     }
@@ -782,9 +777,6 @@ final class AuthManager {
             }
         }
         #endif
-        if await isCurrentAuthEpoch(capturedEpoch) {
-            await MainActor.run { bridgedAccessToken = apiToken }
-        }
     }
 
     // MARK: - Logout

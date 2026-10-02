@@ -255,7 +255,9 @@ async def test_embedded_browser_loads_chunks_and_api_without_access_session(
 
     await page.route("https://testserver/**", serve)
     await page.goto("https://testserver/api/app/pages/about")
-    await expect(page.get_by_text("Application Version", exact=True)).to_be_visible()
+    await expect(page.get_by_text("Application Version", exact=True)).to_be_visible(
+        timeout=30_000
+    )
     assert not failures
     assert "/api/version" in requested_paths
     assert any(

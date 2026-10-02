@@ -23,7 +23,7 @@ final class AuthManagerTests: XCTestCase {
         super.tearDown()
     }
 
-    func testWebSessionBridgesOnlyWhenTheNativeTokenChanges() async throws {
+    func testWebSessionRevalidatesTheNativeTokenOnEveryMaintenancePass() async throws {
         seedStoredAuth(apiToken: "native-token", refreshToken: "refresh", expiresIn: 7200)
         let auth = makeAuthManager()
         var bridges = 0
@@ -34,10 +34,10 @@ final class AuthManagerTests: XCTestCase {
         }
         try await auth.prepareWebSession()
         try await auth.prepareWebSession()
-        XCTAssertEqual(bridges, 1)
+        XCTAssertEqual(bridges, 2)
         KeychainHelper.save(key: "fa_api_token", string: "rotated-token")
         try await auth.prepareWebSession()
-        XCTAssertEqual(bridges, 2)
+        XCTAssertEqual(bridges, 3)
     }
 
     func testWebSessionRefreshesBeforeBridgingAnExpiredToken() async throws {
@@ -59,8 +59,13 @@ final class AuthManagerTests: XCTestCase {
     func testRejectedWebBridgeRequiresNativeSignIn() async {
         seedStoredAuth(apiToken: "revoked", refreshToken: "refresh", expiresIn: 7200)
         let auth = makeAuthManager()
-        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+        var bridges = 0
+        AuthBackendURLProtocol.respond { _ in
+            bridges += 1
+            return .json("{}", statusCode: bridges == 1 ? 200 : 401)
+        }
         do {
+            try await auth.prepareWebSession()
             try await auth.prepareWebSession()
             XCTFail("Rejected bridge must fail")
         } catch {

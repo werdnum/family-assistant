@@ -583,7 +583,15 @@ class AuthService:
         request.session.pop("user", None)
         _clear_token_session_binding(request)
         logger.info("User logged out.")
-        return RedirectResponse(url="/")
+        response = RedirectResponse(url="/")
+        response.delete_cookie(
+            JWT_ACCESS_COOKIE_NAME,
+            path="/api",
+            secure=True,
+            httponly=True,
+            samesite="lax",
+        )
+        return response
 
 
 # ast-grep-ignore: no-dict-any - ASGI receive() messages are untyped dicts by protocol definition
