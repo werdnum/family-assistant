@@ -958,8 +958,15 @@ class ProcessingService:
         subconversation_id: str | None,
         *,
         acting_user_id: str | None,
+        resume_turn_id: str | None = None,
     ) -> tuple[list[LLMMessage], str]:
-        """Load history and optional full-thread context for LLM processing."""
+        """Load history and optional full-thread context for LLM processing.
+
+        ``resume_turn_id`` names a turn being resumed. The history window
+        bounds what came before it, but the turn itself is replayed whole: a
+        long tool loop can outgrow the window, and losing its opening rows
+        would resume the turn without the request it is answering.
+        """
         history_limit, history_max_age = self.context_preparer.get_history_limits(
             interface_type
         )
@@ -971,7 +978,12 @@ class ProcessingService:
             processing_profile_id=self.service_config.id,
             subconversation_id=subconversation_id,
             current_time=self.clock.now(),
+            exclude_turn_id=resume_turn_id,
         )
+        if resume_turn_id is not None:
+            raw_history_messages.extend(
+                await db_context.message_history.get_by_turn_id(resume_turn_id)
+            )
         logger.debug("Raw history messages fetched (%d).", len(raw_history_messages))
 
         initial_messages_for_llm = await self.context_preparer.format_history(
@@ -1635,6 +1647,7 @@ class ProcessingService:
             thread_root_id_for_turn=thread_root_id_for_turn,
             subconversation_id=subconversation_id,
             acting_user_id=user_id,
+            resume_turn_id=turn_id if resume else None,
         )
         if trigger_role == "system" and is_delegation_wake_trigger(
             user_content_for_history

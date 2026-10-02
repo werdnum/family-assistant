@@ -1902,6 +1902,31 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return any(not row["tool_calls"] for row in rows)
 
+    async def get_assistant_reasoning_infos_for_turn(
+        self, turn_id: str
+    ) -> list[MessageReasoningInfo]:
+        """The usage recorded on a turn's assistant rows, oldest first.
+
+        Rows that recorded none are skipped. Read from the column directly:
+        typed history messages do not carry it.
+        """
+        stmt = (
+            select(message_history_table.c.reasoning_info)
+            .where(
+                message_history_table.c.turn_id == turn_id,
+                message_history_table.c.role == "assistant",
+            )
+            .order_by(message_history_table.c.internal_id.asc())
+        )
+        infos: list[MessageReasoningInfo] = []
+        for row in await self._db.fetch_all(stmt):
+            value = row["reasoning_info"]
+            if isinstance(value, str):
+                value = json.loads(value)
+            if isinstance(value, dict):
+                infos.append(cast("MessageReasoningInfo", value))
+        return infos
+
     async def conversation_moved_past_turn(
         self,
         *,

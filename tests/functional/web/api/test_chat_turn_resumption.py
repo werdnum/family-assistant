@@ -25,6 +25,10 @@ from family_assistant.llm.messages import (
     UserMessage,
     is_turn_scaffolding,
 )
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    stamp_model_selection,
+)
 from family_assistant.services.turn_resumption import (
     TURN_RESUME_TASK_TYPE,
     TurnLeaseRegistry,
@@ -33,7 +37,11 @@ from family_assistant.services.turn_resumption import (
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
-from family_assistant.web.turn_resumption import WEB_STREAM_RESUMER, WebTurnResumer
+from family_assistant.web.turn_resumption import (
+    WEB_STREAM_RESUMER,
+    WebTurnResumer,
+    resumed_model_selection,
+)
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -359,3 +367,118 @@ async def test_suspension_lets_the_running_round_record_its_result(
 
     rows = await db.message_history.get_by_turn_id(turn_id)
     assert [row.role for row in rows] == ["user", "assistant", "tool"]
+
+
+async def test_resumed_turn_longer_than_the_history_window_keeps_its_prompt(
+    app_fixture: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    lease_registry: TurnLeaseRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn whose own rows outgrow the history window is replayed whole, so
+    the resumed model still sees the request it is answering."""
+    prompts_seen: list[bool] = []
+
+    def record_prompt(args: dict) -> bool:
+        prompts_seen.append(
+            any(
+                message.role == "user" and message.content == PROMPT
+                for message in args["messages"]
+            )
+        )
+        return True
+
+    api_mock_llm_client.rules.append((
+        record_prompt,
+        LLMOutput(content=RESUMED_REPLY, tool_calls=None, reasoning_info=_usage()),
+    ))
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    # Three tool rounds after the prompt: seven rows, against a window of five.
+    await _seed_turn_interrupted_after_tool(db, conversation_id, turn_id)
+    for round_number in (2, 3):
+        call_id = f"call_{round_number}"
+        for message in (
+            AssistantMessage(
+                content="",
+                tool_calls=[
+                    ToolCallItem(
+                        id=call_id,
+                        type="function",
+                        function=ToolCallFunction(name="list_notes", arguments="{}"),
+                    )
+                ],
+            ),
+            ToolMessage(tool_call_id=call_id, name="list_notes", content="No notes."),
+        ):
+            await db.message_history.add_message(
+                message,
+                interface_type="web",
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                timestamp=datetime.now(UTC),
+                user_id=USER,
+                processing_profile_id=PROFILE,
+            )
+
+    await _resume(lease_registry, db, conversation_id, turn_id)
+
+    await wait_for_condition(
+        _turn_status(hub, conversation_id, turn_id, "complete"),
+        description="resumed turn complete",
+    )
+    assert prompts_seen == [True]
+
+
+async def test_resumed_turn_stays_on_the_tier_its_rows_ran_on(
+    db_engine: AsyncEngine,
+) -> None:
+    """Under Auto the lease holds the unrouted default; the continuation must
+    use the routed tier stamped on the turn's rows instead."""
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    routed = ResolvedModelSelection(
+        tier="deep",
+        requested=None,
+        source="default",
+        routing_outcome="decided",
+        classifier_model="classifier",
+    )
+    await _seed_turn_interrupted_after_tool(db, conversation_id, turn_id)
+    await db.message_history.add_message(
+        AssistantMessage(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_routed",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id=USER,
+        processing_profile_id=PROFILE,
+        reasoning_info=stamp_model_selection(_usage(), routed),
+    )
+    admitted_default = ResolvedModelSelection.unselected("standard")
+
+    selection = await resumed_model_selection(
+        db,
+        TurnResumePayload(
+            resumer=WEB_STREAM_RESUMER,
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            user_id=USER,
+            user_name="Test User",
+            processing_profile_id=PROFILE,
+            model_selection=admitted_default.to_json(),
+        ),
+    )
+
+    assert selection == routed.freeze()

@@ -8,13 +8,17 @@ interrupted run persisted.
 """
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from starlette.datastructures import State
 
 from family_assistant.llm.content_parts import text_content
-from family_assistant.llm.model_selection import ResolvedModelSelection
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    model_selection_from_reasoning,
+)
 from family_assistant.services.turn_resumption import (
     TurnLeaseRegistry,
     TurnResumePayload,
@@ -40,6 +44,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 WEB_STREAM_RESUMER = "web_stream"
+
+
+async def resumed_model_selection(
+    db: Database, payload: TurnResumePayload
+) -> ResolvedModelSelection | None:
+    """The tier the resumed turn runs on: the one its earlier rows ran on.
+
+    The lease holds the envelope the endpoint admitted, which under Auto is
+    the unrouted default. Once a model call has run, the routed envelope is
+    stamped on its row, and the continuation must stay on it rather than
+    switch tiers partway through the turn. If no call ran, nothing was decided
+    yet, so the admitted envelope goes through exactly as the endpoint passed
+    it -- still open to routing.
+    """
+    for reasoning in reversed(
+        await db.message_history.get_assistant_reasoning_infos_for_turn(payload.turn_id)
+    ):
+        stamped = model_selection_from_reasoning(reasoning)
+        if stamped is not None:
+            return stamped
+    if payload.model_selection is None:
+        return None
+    admitted = ResolvedModelSelection.from_json(payload.model_selection)
+    return replace(admitted, frozen=False)
 
 
 class WebTurnResumer:
@@ -75,11 +103,7 @@ class WebTurnResumer:
         user_row = await db.message_history.get_user_row_by_turn_id(payload.turn_id)
         if user_row is None:
             raise RuntimeError(f"Turn {payload.turn_id} has no user message to resume")
-        model_selection = (
-            ResolvedModelSelection.from_json(payload.model_selection)
-            if payload.model_selection is not None
-            else None
-        )
+        model_selection = await resumed_model_selection(db, payload)
 
         mid_turn_controller = WebMidTurnController()
         try:
