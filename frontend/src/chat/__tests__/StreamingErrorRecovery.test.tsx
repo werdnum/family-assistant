@@ -577,7 +577,7 @@ describe.sequential('Streaming Error Recovery', () => {
         await user.click(toolGroupTrigger);
       }
       expect(await screen.findByText('search_notes')).toBeInTheDocument();
-      expect(screen.queryByText('Executing tool...')).not.toBeInTheDocument();
+      expect(screen.queryByText('Running')).not.toBeInTheDocument();
       expect(screen.getByTestId('send-button')).toBeInTheDocument();
       expect(screen.queryByTestId('stop-button')).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText('Message Family Assistant...')).toBeEnabled();

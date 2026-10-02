@@ -1,9 +1,14 @@
-import { AlertCircleIcon, CheckCircleIcon, ClockIcon, DownloadIcon } from 'lucide-react';
+import { AlertCircleIcon, CheckCircleIcon, ClockIcon, CopyIcon, DownloadIcon } from 'lucide-react';
 import React, { lazy, Suspense } from 'react';
-import ToolParameterViewer from '@/components/tools/ToolParameterViewer';
 import { Button } from '@/components/ui/button';
 import { getAttachmentKey } from '../types/attachments';
 import { AttachToResponseTool } from './AttachToResponseTool';
+import {
+  formatRawToolValue,
+  humanizeToolName,
+  summarizeToolArgs,
+  summarizeToolResult,
+} from './toolSummary';
 
 // Lazy load syntax highlighter to reduce initial bundle size
 const LazyPrism = lazy(() =>
@@ -87,50 +92,132 @@ const ToolAttachmentDisplay = ({ attachment }) => {
   );
 };
 
-// Generic fallback tool UI that handles any tool call
-const ToolFallback = ({ toolName, args, result, status, attachments }) => {
-  // Determine the icon and styling based on status
-  let statusIcon = null;
-  let statusClass = '';
+const CopyRawButton = ({ text, label }) => {
+  const [copied, setCopied] = React.useState('');
+  const timeoutRef = React.useRef(null);
 
-  if (status?.type === 'running') {
-    statusIcon = <ClockIcon size={16} className="animate-spin" />;
-    statusClass = 'tool-running';
-  } else if (status?.type === 'complete' && result) {
-    statusIcon = <CheckCircleIcon size={16} />;
-    statusClass = 'tool-complete';
-  } else if (status?.type === 'incomplete' && status?.reason === 'error') {
-    statusIcon = <AlertCircleIcon size={16} />;
-    statusClass = 'tool-error';
-  }
+  React.useEffect(() => () => window.clearTimeout(timeoutRef.current), []);
+
+  const handleCopy = async () => {
+    window.clearTimeout(timeoutRef.current);
+    try {
+      await window.navigator.clipboard.writeText(text);
+      setCopied('Copied');
+    } catch (error) {
+      console.error('Failed to copy tool details:', error);
+      setCopied('Copy failed');
+    }
+    timeoutRef.current = window.setTimeout(() => setCopied(''), 2000);
+  };
 
   return (
-    <div className={`tool-call-container ${statusClass}`} data-ui="tool-call-content">
-      <div className="tool-call-header">
-        <span className="tool-name">{toolName}</span>
-        {statusIcon && <span className="tool-status-icon">{statusIcon}</span>}
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-6 px-2 text-xs"
+      onClick={handleCopy}
+      aria-label={`Copy ${label}`}
+    >
+      <CopyIcon size={12} />
+      {copied || 'Copy'}
+    </Button>
+  );
+};
+
+const RawToolSection = ({ label, text, testId }) => (
+  <div className="tool-raw-section" data-testid={testId}>
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <CopyRawButton text={text} label={label.toLowerCase()} />
+    </div>
+    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 text-xs">
+      {text}
+    </pre>
+  </div>
+);
+
+function describeFallbackStatus(status, result) {
+  if (status?.type === 'running') {
+    return {
+      icon: <ClockIcon size={14} className="animate-spin" />,
+      label: 'Running',
+      className: 'tool-running',
+    };
+  }
+  if (status?.type === 'requires-action') {
+    return {
+      icon: <ClockIcon size={14} />,
+      label: 'Waiting',
+      className: 'tool-waiting',
+    };
+  }
+  if (status?.type === 'incomplete' && status?.reason === 'error') {
+    return {
+      icon: <AlertCircleIcon size={14} />,
+      label: 'Failed',
+      className: 'tool-error',
+    };
+  }
+  if (status?.type === 'incomplete') {
+    return {
+      icon: <AlertCircleIcon size={14} />,
+      label: 'Stopped',
+      className: 'tool-incomplete',
+    };
+  }
+  if (status?.type === 'complete' && result) {
+    return {
+      icon: <CheckCircleIcon size={14} />,
+      label: null,
+      className: 'tool-complete',
+    };
+  }
+  return { icon: null, label: null, className: '' };
+}
+
+// Generic fallback tool UI that handles any tool call. It leads with a compact,
+// readable line (what the tool is, what it was asked, what came back) and keeps
+// the raw name, arguments and result behind Details, with copy buttons.
+const ToolFallback = ({ toolName, args, result, status, attachments }) => {
+  const statusInfo = describeFallbackStatus(status, result);
+  const hasArgs = args && typeof args === 'object' && Object.keys(args).length > 0;
+  const hasResult = result !== undefined && result !== null && result !== '';
+  const argSummary = summarizeToolArgs(args);
+  const resultPreview = summarizeToolResult(result);
+  const isError = statusInfo.className === 'tool-error';
+
+  return (
+    <div
+      className={`tool-call-container ${statusInfo.className} min-w-0 text-sm`}
+      data-ui="tool-call-content"
+    >
+      <div className="tool-call-header flex min-w-0 items-center gap-2">
+        <span className="tool-name shrink-0 font-medium">{humanizeToolName(toolName)}</span>
+        {argSummary && (
+          <span className="min-w-0 truncate text-muted-foreground" data-testid="tool-args-summary">
+            {argSummary}
+          </span>
+        )}
+        {(statusInfo.icon || statusInfo.label) && (
+          <span className="tool-status-icon ml-auto flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            {statusInfo.icon}
+            {statusInfo.label}
+          </span>
+        )}
       </div>
 
-      {args && Object.keys(args).length > 0 && (
-        <div className="tool-call-args">
-          <ToolParameterViewer data={args} toolName={toolName} />
-        </div>
-      )}
-
-      {result && (
-        <div className="tool-call-result" data-testid="tool-result">
-          <div className="tool-section-label">Result:</div>
-          {typeof result === 'string' ? (
-            <div className="tool-result-text">{result}</div>
-          ) : (
-            <pre className="tool-code-block">{JSON.stringify(result, null, 2)}</pre>
-          )}
+      {resultPreview && (
+        <div
+          className={`tool-call-result mt-1 line-clamp-3 break-words text-muted-foreground ${isError ? 'text-destructive' : ''}`}
+          data-testid="tool-result"
+        >
+          {resultPreview}
         </div>
       )}
 
       {attachments && attachments.length > 0 && (
-        <div className="tool-call-attachments">
-          <div className="tool-section-label">Attachments:</div>
+        <div className="tool-call-attachments mt-2">
           <div className="tool-attachments-list space-y-2">
             {attachments.map((attachment, index) => (
               <ToolAttachmentDisplay
@@ -142,7 +229,32 @@ const ToolFallback = ({ toolName, args, result, status, attachments }) => {
         </div>
       )}
 
-      {status?.type === 'running' && <div className="tool-running-message">Executing tool...</div>}
+      {(hasArgs || hasResult || toolName) && (
+        <details className="tool-call-details mt-1" data-testid="tool-details">
+          <summary className="cursor-pointer select-none text-xs text-muted-foreground hover:text-foreground">
+            Details
+          </summary>
+          <div className="mt-1 space-y-2">
+            <div className="text-xs text-muted-foreground">
+              Tool: <code>{toolName}</code>
+            </div>
+            {hasArgs && (
+              <RawToolSection
+                label="Arguments"
+                text={formatRawToolValue(args)}
+                testId="tool-raw-args"
+              />
+            )}
+            {hasResult && (
+              <RawToolSection
+                label="Result"
+                text={formatRawToolValue(result)}
+                testId="tool-raw-result"
+              />
+            )}
+          </div>
+        </details>
+      )}
     </div>
   );
 };
@@ -746,7 +858,8 @@ export const ListPendingCallbacksToolUI = ({ args, result, status }) => {
           {callbacks.length > 0 ? (
             <div className="tool-callbacks-list">
               <div className="tool-results-count">
-                Found {callbacks.length} callback{callbacks.length !== 1 ? 's' : ''}:
+                Found {callbacks.length} callback
+                {callbacks.length !== 1 ? 's' : ''}:
               </div>
               {callbacks.map((callback, index) => (
                 <div key={index} className="tool-callback-item">
@@ -1640,7 +1753,8 @@ export const QueryRecentEventsToolUI = ({ args, result, status }) => {
           ) : events.length > 0 ? (
             <div className="tool-events-list">
               <div className="tool-results-count">
-                Found {parsedResult.count || events.length} event{events.length !== 1 ? 's' : ''}:
+                Found {parsedResult.count || events.length} event
+                {events.length !== 1 ? 's' : ''}:
               </div>
               {events.map((event, index) => (
                 <div key={index} className="tool-event-item">
@@ -2528,7 +2642,8 @@ export const GetMessageHistoryToolUI = ({ args, result, status }) => {
           {messages.length > 0 ? (
             <div className="tool-messages-list">
               <div className="tool-results-count">
-                Found {messages.length} message{messages.length !== 1 ? 's' : ''}:
+                Found {messages.length} message
+                {messages.length !== 1 ? 's' : ''}:
               </div>
               {messages.map((message, index) => (
                 <div
@@ -3650,7 +3765,8 @@ export const SearchCameraEventsToolUI = ({ args, result, status }) => {
       {!hasError && events.length > 0 && (
         <div className="tool-events-list">
           <div className="tool-results-count">
-            Found {parsed?.count || events.length} event{events.length !== 1 ? 's' : ''}:
+            Found {parsed?.count || events.length} event
+            {events.length !== 1 ? 's' : ''}:
           </div>
           {events.map((event, index) => (
             <div key={index} className="tool-event-item">
