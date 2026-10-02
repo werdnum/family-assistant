@@ -1078,8 +1078,8 @@ enum JSONValue: Codable, Equatable, Hashable {
         case .string(let value):
             value
         case .number(let value):
-            if value.rounded() == value {
-                String(Int(value))
+            if let integer = Int(exactly: value) {
+                String(integer)
             } else {
                 String(value)
             }

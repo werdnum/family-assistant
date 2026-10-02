@@ -730,6 +730,13 @@ final class ToolRenderingTests: XCTestCase {
         XCTAssertNil(toolCall(arguments: "{}").resultPreview)
     }
 
+    /// An integral number too large for `Int` must not trap while a card renders.
+    func testHugeIntegralArgumentsSummariseWithoutTrapping() throws {
+        let summary = try XCTUnwrap(toolCall(arguments: #"{"limit": 1e100}"#).argumentsSummary)
+        XCTAssertTrue(summary.hasPrefix("limit: 1e+100"))
+        XCTAssertEqual(JSONValue.number(3).displayString, "3")
+    }
+
     func testLongArgumentsAreClippedInTheSummaryButKeptWholeInDetails() throws {
         let longQuery = String(repeating: "x", count: 500)
         let call = toolCall(arguments: #"{"query": "\#(longQuery)"}"#)
