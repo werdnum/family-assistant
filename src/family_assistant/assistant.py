@@ -5,6 +5,7 @@ import contextlib
 import copy
 import logging
 import os
+import signal
 import sys
 from asyncio import subprocess as asyncio_subprocess
 from collections import Counter
@@ -188,11 +189,13 @@ from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.mcp_adapter.config import require_authentication_for_adapter
 from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
+from .services.turn_resumption import TURN_RESUME_TASK_TYPE, TurnLeaseRegistry
 from .telegram.service import TelegramService
 
 if TYPE_CHECKING:
     import socket
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
+    from types import FrameType
     from wsgiref.simple_server import WSGIServer
 
     from fastapi import FastAPI
@@ -397,6 +400,32 @@ def delegation_sink_class(
     return RuntimeSinkClass.USER_LOCAL
 
 
+class ShutdownForwardingServer(uvicorn.Server):
+    """A uvicorn server whose exit signal also starts the app's own shutdown.
+
+    uvicorn replaces the process's SIGINT/SIGTERM handlers while it serves and
+    re-raises the signal only once it has drained every connection. The chat
+    streams that hold connections open close on the app's shutdown event, so
+    without forwarding, the drain waits on the streams, the streams wait on the
+    drain, and the process is killed with its turns still running instead of
+    suspending them.
+    """
+
+    def __init__(
+        self, config: uvicorn.Config, *, on_exit_signal: Callable[[str], None]
+    ) -> None:
+        """Must be constructed on the loop that will serve it."""
+        super().__init__(config)
+        self._on_exit_signal = on_exit_signal
+        self._loop = asyncio.get_running_loop()
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        super().handle_exit(sig, frame)
+        # A signal handler interrupts the loop between bytecodes; schedule the
+        # callback rather than touching asyncio state from inside it.
+        self._loop.call_soon_threadsafe(self._on_exit_signal, signal.Signals(sig).name)
+
+
 class NullChatInterface:
     """A null chat interface for when Telegram service is not configured."""
 
@@ -559,6 +588,7 @@ class Assistant:
         self.uvicorn_server_task: asyncio.Task | None = None
         self.metrics_server: WSGIServer | None = None
         self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
+        self.turn_lease_heartbeat_task: asyncio.Task[None] | None = None
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
         self.plugin_startup_task: asyncio.Task | None = None
         self._tool_call_reviewer: ToolCallReviewer | None = None
@@ -2054,7 +2084,9 @@ class Assistant:
             )
             logger.info(f"Web server running on http://0.0.0.0:{server_port}")
 
-        server = uvicorn.Server(uvicorn_config)
+        server = ShutdownForwardingServer(
+            uvicorn_config, on_exit_signal=self.initiate_shutdown
+        )
         self.uvicorn_server_task = asyncio.create_task(server.serve())
 
         if self.config.metrics_enabled:
@@ -2106,11 +2138,19 @@ class Assistant:
         self.health_monitor_task = asyncio.create_task(
             self._monitor_task_worker_health()
         )
+        self.turn_lease_heartbeat_task = asyncio.create_task(
+            self._turn_lease_registry().run_heartbeat(
+                Database(self._require_database_engine())
+            )
+        )
 
         await self._run_startup_tasks()
 
         await self.shutdown_event.wait()
         logger.info("Shutdown signal received by Assistant. Stopping services...")
+        # First, while uvicorn drains: the suspension grace is the part of the
+        # termination budget worth spending.
+        await self._suspend_turns()
 
         if server.started and self.uvicorn_server_task:
             server.should_exit = True
@@ -2151,6 +2191,29 @@ class Assistant:
                 )
             )
         )
+
+    def _turn_lease_registry(self) -> TurnLeaseRegistry:
+        assert self.fastapi_app is not None, "FastAPI app not initialized"
+        return self.fastapi_app.state.turn_lease_registry
+
+    async def _suspend_turns(self) -> None:
+        """Suspend in-progress turns so another process can resume them."""
+        if self.fastapi_app is None:
+            return
+        try:
+            await self._turn_lease_registry().suspend_all()
+        except Exception:
+            logger.exception("Failed to suspend in-progress turns for shutdown")
+
+    async def _hand_off_turn_leases(self) -> None:
+        """Make suspended turns' leases due now rather than when they expire."""
+        if self.fastapi_app is None or self.database_engine is None:
+            return
+        try:
+            await self._turn_lease_registry().hand_off(Database(self.database_engine))
+        except Exception:
+            # The leases still expire on their own; resumption is only delayed.
+            logger.exception("Failed to hand off suspended turn leases")
 
     def initiate_shutdown(self, signal_name: str) -> None:
         """Sets the shutdown event to begin graceful shutdown."""
@@ -2550,6 +2613,10 @@ class Assistant:
             )
         worker.register_task_handler("llm_callback", handle_llm_callback)
         worker.register_task_handler(
+            TURN_RESUME_TASK_TYPE,
+            self._turn_lease_registry().handle_resume_task,
+        )
+        worker.register_task_handler(
             "delegated_profile_run",
             worker.handle_delegated_profile_run,
         )
@@ -2755,11 +2822,16 @@ class Assistant:
             self.metrics_server.server_close()
             self.metrics_server = None
 
+        # Before the workers go: a turn may be waiting on work they service.
+        await self._suspend_turns()
+
         # Cancel only the background tasks we own (not all tasks in the event loop)
         # This prevents interfering with pytest-xdist workers and other infrastructure
         owned_tasks = []
         if self.health_monitor_task and not self.health_monitor_task.done():
             owned_tasks.append(self.health_monitor_task)
+        if self.turn_lease_heartbeat_task and not self.turn_lease_heartbeat_task.done():
+            owned_tasks.append(self.turn_lease_heartbeat_task)
         if self.event_processor_task and not self.event_processor_task.done():
             owned_tasks.append(self.event_processor_task)
         if self.plugin_startup_task and not self.plugin_startup_task.done():
@@ -2772,6 +2844,10 @@ class Assistant:
                 task.cancel()
             await asyncio.gather(*owned_tasks, return_exceptions=True)
             logger.info("Owned background tasks cancelled.")
+
+        # Only now that this process's workers are gone, so none of them can
+        # claim a lease and be torn down with it.
+        await self._hand_off_turn_leases()
 
         # Cancel in-flight non-blocking A2A send tasks so a shutdown does not
         # leave their a2a_tasks rows stuck in 'working'.

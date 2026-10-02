@@ -5,7 +5,9 @@ task runs the LLM loop, the cancel/steer HTTP endpoints reach this controller
 (stored on the hub's ``TurnRecord``) to:
 
 - request a graceful interrupt (``request_interrupt``), which the loop honors at
-  its next iteration boundary by raising ``asyncio.CancelledError``; and
+  its next iteration boundary by raising ``asyncio.CancelledError``;
+- suspend the turn for a graceful shutdown (``request_suspend``), honored at the
+  same boundary; and
 - inject a mid-turn user message (``add_input``), which the loop drains after the
   next tool round and re-feeds to the model as steering context.
 
@@ -26,6 +28,7 @@ class WebMidTurnController:
         self._lock = asyncio.Lock()
         self._pending: list[MidTurnUserInput] = []
         self._interrupted = False
+        self._suspend_requested = False
         # Every ``interface_message_id`` this turn has accepted, kept for the
         # turn's lifetime rather than cleared on drain: a retry can arrive after
         # the loop has already consumed the original.
@@ -35,9 +38,22 @@ class WebMidTurnController:
         """Mark the turn for a graceful stop at the next loop boundary."""
         self._interrupted = True
 
+    def request_suspend(self) -> None:
+        """Halt the turn at the next loop boundary so another process can resume it.
+
+        The loop sees this as an interrupt; the producer tells the two apart by
+        :attr:`suspend_requested` and, for a suspension, leaves the turn open
+        instead of closing it as stopped.
+        """
+        self._suspend_requested = True
+
+    @property
+    def suspend_requested(self) -> bool:
+        return self._suspend_requested
+
     def should_interrupt(self) -> bool:
-        """Return whether a stop has been requested for this turn."""
-        return self._interrupted
+        """Return whether the loop should halt before more work starts."""
+        return self._interrupted or self._suspend_requested
 
     async def add_input(self, user_input: MidTurnUserInput) -> bool:
         """Queue a steering message to inject into the next LLM iteration.

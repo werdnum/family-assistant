@@ -1902,6 +1902,40 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return any(not row["tool_calls"] for row in rows)
 
+    async def conversation_moved_past_turn(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str,
+    ) -> bool:
+        """Whether the conversation has rows from any other turn after this one's.
+
+        Row ids rather than timestamps decide "after", since they are assigned
+        in commit order. Internal rows count: an automation wake that ran in
+        the meantime is as much a later event as a new prompt.
+        """
+        last_turn_row = (
+            select(func.max(message_history_table.c.internal_id))
+            .where(message_history_table.c.turn_id == turn_id)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(message_history_table.c.internal_id)
+            .where(
+                message_history_table.c.interface_type == interface_type,
+                message_history_table.c.conversation_id == conversation_id,
+                message_history_table.c.subconversation_id.is_(None),
+                or_(
+                    message_history_table.c.turn_id.is_(None),
+                    message_history_table.c.turn_id != turn_id,
+                ),
+                message_history_table.c.internal_id > last_turn_row,
+            )
+            .limit(1)
+        )
+        return await self._db.fetch_one(stmt) is not None
+
     async def get_undelivered_terminal_reply(
         self,
         turn_id: str,

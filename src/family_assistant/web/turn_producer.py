@@ -20,8 +20,11 @@ and authentication. The producer:
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from starlette.datastructures import State
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.messages import (
@@ -45,7 +48,6 @@ from family_assistant.services.confirmation_waiters import (
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.database import Database
-from family_assistant.telegram.protocols import ConfirmationUIManager
 from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.outcomes import classify_tool_outcome
 from family_assistant.tools.types import (
@@ -60,29 +62,22 @@ from family_assistant.web.conversation_stream_hub import (
     TurnStatus,
 )
 from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.processing import ProcessingService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.turn_resumption import (
+        TurnLease,
+        TurnLeaseRegistry,
+    )
     from family_assistant.web.web_chat_interface import WebChatInterface
-
-
-class _AppStateProtocol:
-    """Subset of FastAPI app.state attributes the producer reads.
-
-    Used only for static typing; FastAPI's app.state is a free-form
-    namespace, so we duck-type at runtime.
-    """
-
-    database_engine: "AsyncEngine"
-    chat_interfaces: dict[str, "ChatInterface"] | None
-    confirmation_ui_managers: dict[str, ConfirmationUIManager] | None
-    debug_mode: bool
 
 
 logger = logging.getLogger(__name__)
@@ -101,6 +96,84 @@ DEFAULT_ACK_GRACE_SECONDS = 2.0
 GENERIC_TURN_ERROR_MESSAGE = "An internal error occurred."
 
 
+@dataclass(frozen=True, slots=True)
+class InitialTurnTaint:
+    """The taint a turn starts from, as the producer and the stop path need it."""
+
+    history: TaintMetadata
+    context: TaintMetadata
+    live: TaintMetadata
+
+
+async def initial_turn_taint(
+    db: Database,
+    processing_service: "ProcessingService",
+    *,
+    interface_type: str,
+    conversation_id: str,
+) -> InitialTurnTaint:
+    """Read the history and context taint a turn on this conversation starts with.
+
+    For a new turn this runs before its prompt is written. For a resumed turn
+    it runs after, so the history window includes the rows the interrupted run
+    already produced -- which is the taint that run had accumulated.
+    """
+    history_limit, history_max_age = (
+        processing_service.context_preparer.get_history_limits(interface_type)
+    )
+    history_messages = await db.message_history.get_recent(
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        limit=history_limit,
+        max_age=history_max_age,
+        processing_profile_id=processing_service.service_config.id,
+        subconversation_id=None,
+        current_time=processing_service.clock.now(),
+    )
+    history_taint = merge_history_taint(history_messages).to_metadata()
+    context_taint_state = TurnTaintState.empty()
+    # Gated exactly as the turn itself gates the context (see
+    # ProcessingService._prepare_turn_messages_for_llm): a profile that never
+    # receives the aggregated context was never exposed to its taint, and
+    # stamping it here anyway would make a web turn dirtier than the same
+    # profile's Telegram turn.
+    if processing_service.service_config.include_aggregated_context:
+        for source in (
+            await processing_service.context_preparer.aggregate_context_taint_sources()
+        ):
+            context_taint_state = context_taint_state.add_source(source)
+    live_taint_state = TurnTaintState.from_metadata(history_taint)
+    for source in context_taint_state.sources:
+        live_taint_state = live_taint_state.add_source(source)
+    return InitialTurnTaint(
+        history=history_taint,
+        context=context_taint_state.to_metadata(),
+        live=live_taint_state.to_metadata(),
+    )
+
+
+def confirmation_service_for_state(app_state: State) -> ConfirmationService:
+    """The app's shared ConfirmationService, created on first use."""
+    service = getattr(app_state, "confirmation_service", None)
+    if isinstance(service, ConfirmationService):
+        return service
+    service = ConfirmationService(db=Database(app_state.database_engine))
+    app_state.confirmation_service = service
+    return service
+
+
+def confirmation_result_waiters_for_state(
+    app_state: State,
+) -> ConfirmationResultWaiterRegistry:
+    """The app's shared confirmation waiter registry, created on first use."""
+    waiters = getattr(app_state, "confirmation_result_waiters", None)
+    if isinstance(waiters, ConfirmationResultWaiterRegistry):
+        return waiters
+    waiters = ConfirmationResultWaiterRegistry()
+    app_state.confirmation_result_waiters = waiters
+    return waiters
+
+
 def format_sse_event(event: StreamEvent) -> str:
     """Serialize a hub StreamEvent into the SSE wire format.
 
@@ -117,7 +190,7 @@ def format_sse_event(event: StreamEvent) -> str:
 
 async def run_turn_producer(
     *,
-    app_state: "_AppStateProtocol",
+    app_state: State,
     hub: ConversationStreamHub,
     processing_service: "ProcessingService",
     web_chat_interface: "WebChatInterface",
@@ -136,12 +209,16 @@ async def run_turn_producer(
     mid_turn_input_provider: "MidTurnInputProvider | None" = None,
     model_selection: "ResolvedModelSelection | None" = None,
     ack_grace_seconds: float = DEFAULT_ACK_GRACE_SECONDS,
+    resume: bool = False,
 ) -> None:
     """Run a single LLM turn end-to-end, publishing events to the hub.
 
     This is the background task POST /v1/chat/turns kicks off. The hub holds
     a strong reference to it via ``attach_producer_task`` so it survives any
     client disconnect.
+
+    ``resume`` continues a turn an earlier process was running when it went
+    away, from the rows that run persisted.
     """
     final_reply_parts: list[str] = []
     latex_normalizer = StreamingLatexNormalizer()
@@ -213,7 +290,9 @@ async def run_turn_producer(
 
     async def produce_turn() -> None:
         stream_db_context = Database(app_state.database_engine)
-        if trigger_attachments:
+        # A resumed turn's trigger attachments were announced by the original
+        # run and are in history.
+        if trigger_attachments and not resume:
             for attachment in trigger_attachments:
                 await hub.publish(
                     conversation_id,
@@ -259,6 +338,7 @@ async def run_turn_producer(
             # Already admitted by the endpoint, so a refusal reached the client
             # as a 400 rather than as an error partway through a stream.
             model_selection=model_selection,
+            resume=resume,
         ):
             reasoning_info = await _publish_llm_event(
                 hub=hub,
@@ -318,6 +398,12 @@ async def run_turn_producer(
     try:
         await produce_turn()
     except asyncio.CancelledError:
+        turn_record = hub.get_turn(conversation_id, turn_id)
+        if turn_record is not None and turn_record.suspended:
+            # A graceful shutdown suspended the turn so another process can
+            # resume it. It is not stopped: write no marker and publish no
+            # turn_ended, and leave its lease for the hand-off.
+            raise
         # The producer task was cancelled. This is the stop-generation path: the
         # cancel endpoint calls request_interrupt() (so should_interrupt() is
         # True here) and then task.cancel(). A bare loop teardown (no user stop)
@@ -374,6 +460,86 @@ async def run_turn_producer(
             latex_normalizer=latex_normalizer,
             error=error_detail,
         )
+
+
+def launch_turn_producer(
+    *,
+    app_state: State,
+    hub: ConversationStreamHub,
+    processing_service: "ProcessingService",
+    web_chat_interface: "WebChatInterface",
+    confirmation_service: ConfirmationService,
+    confirmation_result_waiters: ConfirmationResultWaiterRegistry,
+    attachment_registry: "AttachmentRegistry | None",
+    conversation_id: str,
+    turn_id: str,
+    user_id: str,
+    user_name: str,
+    interface_type: str,
+    trigger_content_parts: list[ContentPartDict],
+    trigger_attachments: list[MessageAttachmentMetadata] | None,
+    initial_history_taint_metadata: TaintMetadata,
+    initial_context_taint_metadata: TaintMetadata,
+    mid_turn_controller: WebMidTurnController,
+    model_selection: "ResolvedModelSelection | None",
+    on_orphan_cancel: "Callable[[], Awaitable[None]] | None",
+    lease_registry: "TurnLeaseRegistry | None",
+    lease: "TurnLease | None",
+    resume: bool = False,
+) -> "asyncio.Task[None]":
+    """Start a registered turn's producer and hand it to the hub and lease registry.
+
+    The turn must already be registered with ``hub.start_turn`` and its user
+    row persisted. Shared by new turns and resumed ones so both are owned,
+    stoppable and suspendable in the same way.
+    """
+    producer_task = asyncio.create_task(
+        run_turn_producer(
+            app_state=app_state,
+            hub=hub,
+            processing_service=processing_service,
+            web_chat_interface=web_chat_interface,
+            confirmation_service=confirmation_service,
+            confirmation_result_waiters=confirmation_result_waiters,
+            attachment_registry=attachment_registry,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            user_id=user_id,
+            user_name=user_name,
+            interface_type=interface_type,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            initial_history_taint_metadata=initial_history_taint_metadata,
+            initial_context_taint_metadata=initial_context_taint_metadata,
+            mid_turn_input_provider=mid_turn_controller,
+            model_selection=model_selection,
+            resume=resume,
+        ),
+        name=f"chat-turn:{conversation_id}:{turn_id}",
+    )
+    hub.attach_producer_task(
+        conversation_id,
+        turn_id,
+        producer_task,
+        on_orphan_cancel=on_orphan_cancel,
+    )
+    if lease_registry is not None and lease is not None:
+
+        def request_suspend() -> None:
+            # Flag the record before the controller, so a producer that halts
+            # on the controller's interrupt already sees itself as suspended.
+            record = hub.get_turn(conversation_id, turn_id)
+            if record is not None:
+                record.suspended = True
+            mid_turn_controller.request_suspend()
+
+        lease_registry.track(
+            lease,
+            producer_task,
+            database=Database(app_state.database_engine),
+            request_suspend=request_suspend,
+        )
+    return producer_task
 
 
 async def _fail_turn_best_effort(

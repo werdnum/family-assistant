@@ -42,7 +42,6 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
-    merge_history_taint,
 )
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
@@ -58,6 +57,11 @@ from family_assistant.services.confirmation_waiters import (
 )
 from family_assistant.services.deferred_tool_confirmation import (
     DeferredConfirmationCallbackAdapter,
+)
+from family_assistant.services.turn_resumption import (
+    TurnLease,
+    TurnLeaseRegistry,
+    TurnResumePayload,
 )
 from family_assistant.services.user_identity import (
     UserIdentityResolver,
@@ -101,10 +105,14 @@ from family_assistant.web.models import (
     VoiceSessionResponse,
 )
 from family_assistant.web.turn_producer import (
+    confirmation_result_waiters_for_state,
+    confirmation_service_for_state,
     format_sse_event,
+    initial_turn_taint,
+    launch_turn_producer,
     persist_stopped_reply,
-    run_turn_producer,
 )
+from family_assistant.web.turn_resumption import WEB_STREAM_RESUMER
 from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 
 if TYPE_CHECKING:
@@ -174,24 +182,13 @@ def _user_name_for_chat(current_user: Mapping[str, object]) -> str:
 
 
 def _get_confirmation_service(request: Request) -> ConfirmationService:
-    service = getattr(request.app.state, "confirmation_service", None)
-    if isinstance(service, ConfirmationService):
-        return service
-    engine = request.app.state.database_engine
-    service = ConfirmationService(db=Database(engine))
-    request.app.state.confirmation_service = service
-    return service
+    return confirmation_service_for_state(request.app.state)
 
 
 def _get_confirmation_result_waiters(
     request: Request,
 ) -> ConfirmationResultWaiterRegistry:
-    waiters = getattr(request.app.state, "confirmation_result_waiters", None)
-    if isinstance(waiters, ConfirmationResultWaiterRegistry):
-        return waiters
-    waiters = ConfirmationResultWaiterRegistry()
-    request.app.state.confirmation_result_waiters = waiters
-    return waiters
+    return confirmation_result_waiters_for_state(request.app.state)
 
 
 async def _enrich_persisted_attachments(
@@ -1491,8 +1488,12 @@ async def api_chat_create_turn(
     # idempotent on turn_id, so it reuses this row instead of inserting a
     # duplicate. ``payload.prompt`` matches what the producer would store (the
     # first text part of the trigger content).
+    lease_registry: TurnLeaseRegistry | None = getattr(
+        request.app.state, "turn_lease_registry", None
+    )
+
     async def persist_user_message() -> tuple[
-        "TaintMetadata", "TaintMetadata", "TaintMetadata"
+        "TaintMetadata", "TaintMetadata", "TaintMetadata", TurnLease | None
     ]:
         user_msg_db = Database(request.app.state.database_engine)
         # Read the pre-turn history and context taint BEFORE the prompt is
@@ -1502,62 +1503,58 @@ async def api_chat_create_turn(
         # Taint-wise this ordering is also the conservative one — the prompt
         # carries empty taint, so including it could only push an older (and
         # possibly tainted) row out of the history window.
-        history_limit, history_max_age = (
-            selected_processing_service.context_preparer.get_history_limits(
-                interface_type
-            )
-        )
-        initial_history_messages = await user_msg_db.message_history.get_recent(
+        initial_taint = await initial_turn_taint(
+            user_msg_db,
+            selected_processing_service,
             interface_type=interface_type,
             conversation_id=conversation_id,
-            limit=history_limit,
-            max_age=history_max_age,
-            processing_profile_id=(selected_processing_service.service_config.id),
-            subconversation_id=None,
-            current_time=selected_processing_service.clock.now(),
         )
-        initial_history_taint_metadata = merge_history_taint(
-            initial_history_messages
-        ).to_metadata()
-        initial_context_taint_state = TurnTaintState.empty()
-        # Gated exactly as the turn itself gates the context (see
-        # ProcessingService._prepare_turn_messages_for_llm): a profile that never
-        # receives the aggregated context was never exposed to its taint, and
-        # stamping it here anyway would make a web turn dirtier than the same
-        # profile's Telegram turn.
-        if selected_processing_service.service_config.include_aggregated_context:
-            for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
-                initial_context_taint_state = initial_context_taint_state.add_source(
-                    source
-                )
-        initial_context_taint_metadata = initial_context_taint_state.to_metadata()
-        initial_live_taint_state = TurnTaintState.from_metadata(
-            initial_history_taint_metadata
-        )
-        for source in initial_context_taint_state.sources:
-            initial_live_taint_state = initial_live_taint_state.add_source(source)
-        initial_live_taint_metadata = initial_live_taint_state.to_metadata()
 
-        await user_msg_db.message_history.add_message(
-            UserMessage(
-                content=payload.prompt,
-                taint_metadata=TurnTaintState.empty().to_metadata(),
-                authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
-            ),
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=f"temp_{payload.turn_id}",
-            turn_id=payload.turn_id,
-            timestamp=datetime.now(UTC),
-            user_id=user_id,
-            attachments=trigger_attachments,
-            processing_profile_id=selected_processing_service.service_config.id,
-        )
+        # The prompt and the lease commit together: a turn whose prompt is
+        # durable can always be resumed if this process goes away mid-turn.
+        lease: TurnLease | None = None
+        async with user_msg_db.transaction() as txn:
+            await txn.message_history.add_message(
+                UserMessage(
+                    content=payload.prompt,
+                    taint_metadata=TurnTaintState.empty().to_metadata(),
+                    authorship_taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=f"temp_{payload.turn_id}",
+                turn_id=payload.turn_id,
+                timestamp=datetime.now(UTC),
+                user_id=user_id,
+                attachments=trigger_attachments,
+                processing_profile_id=selected_processing_service.service_config.id,
+            )
+            if lease_registry is not None:
+                lease = await lease_registry.arm(
+                    txn.tasks,
+                    TurnResumePayload(
+                        resumer=WEB_STREAM_RESUMER,
+                        interface_type=interface_type,
+                        conversation_id=conversation_id,
+                        turn_id=payload.turn_id,
+                        user_id=user_id,
+                        user_name=user_name,
+                        processing_profile_id=(
+                            selected_processing_service.service_config.id
+                        ),
+                        model_selection=(
+                            resolved_model_selection.to_json()
+                            if resolved_model_selection is not None
+                            else None
+                        ),
+                    ),
+                )
 
         return (
-            initial_history_taint_metadata,
-            initial_context_taint_metadata,
-            initial_live_taint_metadata,
+            initial_taint.history,
+            initial_taint.context,
+            initial_taint.live,
+            lease,
         )
 
     try:
@@ -1565,6 +1562,7 @@ async def api_chat_create_turn(
             initial_history_taint_metadata,
             initial_context_taint_metadata,
             initial_live_taint_metadata,
+            turn_lease,
         ) = await persist_user_message()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
@@ -1607,34 +1605,28 @@ async def api_chat_create_turn(
             live_taint_metadata=initial_live_taint_metadata,
         )
 
-    producer_task = asyncio.create_task(
-        run_turn_producer(
-            app_state=request.app.state,
-            hub=hub,
-            processing_service=selected_processing_service,
-            web_chat_interface=web_chat_interface,
-            confirmation_service=confirmation_service,
-            confirmation_result_waiters=confirmation_result_waiters,
-            attachment_registry=attachment_registry,
-            conversation_id=conversation_id,
-            turn_id=payload.turn_id,
-            user_id=user_id,
-            user_name=user_name,
-            interface_type=interface_type,
-            trigger_content_parts=trigger_content_parts,
-            trigger_attachments=trigger_attachments,
-            initial_history_taint_metadata=initial_history_taint_metadata,
-            initial_context_taint_metadata=initial_context_taint_metadata,
-            mid_turn_input_provider=mid_turn_controller,
-            model_selection=resolved_model_selection,
-        ),
-        name=f"chat-turn:{conversation_id}:{payload.turn_id}",
-    )
-    hub.attach_producer_task(
-        conversation_id,
-        payload.turn_id,
-        producer_task,
+    launch_turn_producer(
+        app_state=request.app.state,
+        hub=hub,
+        processing_service=selected_processing_service,
+        web_chat_interface=web_chat_interface,
+        confirmation_service=confirmation_service,
+        confirmation_result_waiters=confirmation_result_waiters,
+        attachment_registry=attachment_registry,
+        conversation_id=conversation_id,
+        turn_id=payload.turn_id,
+        user_id=user_id,
+        user_name=user_name,
+        interface_type=interface_type,
+        trigger_content_parts=trigger_content_parts,
+        trigger_attachments=trigger_attachments,
+        initial_history_taint_metadata=initial_history_taint_metadata,
+        initial_context_taint_metadata=initial_context_taint_metadata,
+        mid_turn_controller=mid_turn_controller,
+        model_selection=resolved_model_selection,
         on_orphan_cancel=_persist_orphan_stopped_reply,
+        lease_registry=lease_registry,
+        lease=turn_lease,
     )
 
     return ChatTurnResponse(
