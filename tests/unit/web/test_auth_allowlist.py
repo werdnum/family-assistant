@@ -140,3 +140,7 @@ async def test_logout_clears_token_session_binding(
 
     assert response.status_code in {302, 307}
     assert mock_request.session == {}
+    cookie = response.headers["set-cookie"]
+    assert cookie.startswith('fa_access_token="";')
+    assert "Max-Age=0" in cookie
+    assert "Path=/api" in cookie

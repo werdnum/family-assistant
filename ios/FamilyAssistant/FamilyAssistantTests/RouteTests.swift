@@ -3,6 +3,36 @@ import XCTest
 @testable import FamilyAssistant
 
 final class RouteTests: XCTestCase {
+
+    func testEmbeddedPageRoundTripPreservesEncodedPathQueryAndFragment() throws {
+        let base = URL(string: "https://assistant.example.test")!
+        let original = URL(string: "https://assistant.example.test/docs/a%20b?x=1#section")!
+        let embedded = EmbeddedWebRoute.pageURL(original, relativeTo: base)
+        XCTAssertEqual(embedded.absoluteString,
+                       "https://assistant.example.test/api/app/pages/docs/a%20b?x=1#section")
+        XCTAssertEqual(EmbeddedWebRoute.appURL(embedded, relativeTo: base), original)
+        XCTAssertEqual(EmbeddedWebRoute.pageURL(embedded, relativeTo: base), embedded)
+    }
+
+    func testEmbeddedRouteDoesNotRewriteAPIOrExternalURLs() {
+        let base = URL(string: "https://assistant.example.test")!
+        for value in ["https://assistant.example.test/api/documents/1",
+                      "https://external.example.test/documents/"] {
+            let url = URL(string: value)!
+            XCTAssertEqual(EmbeddedWebRoute.pageURL(url, relativeTo: base), url)
+            XCTAssertEqual(EmbeddedWebRoute.appURL(url, relativeTo: base), url)
+        }
+    }
+
+    func testEmbeddedChatLinkCanRouteToNativeChat() {
+        let base = URL(string: "https://assistant.example.test")!
+        let embedded = URL(string: "https://assistant.example.test/api/app/pages/chat?conversation_id=abc")!
+        let router = AppRouter()
+        XCTAssertTrue(router.followWebLink(
+            EmbeddedWebRoute.appURL(embedded, relativeTo: base), from: .documents, relativeTo: base))
+        XCTAssertEqual(router.selectedTab, .chat)
+        XCTAssertEqual(router.chatSelection.conversationID, "abc")
+    }
     func testWatchComplicationLaunchesVoice() {
         XCTAssertTrue(WatchVoiceLaunch.opensVoice(WatchVoiceLaunch.url))
     }
