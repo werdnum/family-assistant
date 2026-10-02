@@ -978,10 +978,15 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # OUTPUT_TRUSTED: a script's result is computed from its inputs and source
+    # (the caller's own arguments, or a stored definition whose provenance is
+    # merged when the call is prepared) and from the tools, attachments and
+    # APIs it reaches, each of which adds its own taint to the turn as it runs.
+    # A blanket source on top would taint every turn that runs a script.
     "execute_script": _metadata(
         ToolTag.CODE_EXECUTION,
         ToolTag.STATE_CHANGING,
-        ToolTag.OUTPUT_UNSPECIFIED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "save_script": _metadata(
         ToolTag.CODE_EXECUTION,

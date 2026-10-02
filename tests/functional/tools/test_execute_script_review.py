@@ -384,6 +384,44 @@ async def test_unreviewed_outer_enriches_first_nested_review(
     _assert_program_source(reviewer.calls[0].review_input, source)
 
 
+@pytest.mark.parametrize(
+    ("output_tag", "expected_tier"),
+    [
+        (ToolTag.OUTPUT_TRUSTED, SourceTrustTier.TRUSTED_USER),
+        (ToolTag.OUTPUT_UNTRUSTED, SourceTrustTier.UNKNOWN_EXTERNAL),
+    ],
+)
+@pytest.mark.asyncio
+async def test_script_result_taint_is_what_the_script_read(
+    db_engine: AsyncEngine,
+    output_tag: ToolTag,
+    expected_tier: SourceTrustTier,
+) -> None:
+    async def read_value() -> str:
+        return "value"
+
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _registration(
+                "read_value",
+                cast("ToolImplementation", read_value),
+                tags=(ToolTag.READ_ONLY, output_tag),
+            ),
+        ],
+        reviewer=None,
+        rules=[],
+    )
+    context = _context(db_engine, provider)
+
+    result = await _execute_script(provider, context, script="read_value()")
+
+    assert isinstance(result, ToolResult)
+    assert "value" in result.get_text()
+    assert context.taint_tracker is not None
+    assert context.taint_tracker.snapshot().max_tier is expected_tier
+
+
 @pytest.mark.asyncio
 async def test_approved_program_covers_new_taint_and_ordinary_effects_once(
     db_engine: AsyncEngine,

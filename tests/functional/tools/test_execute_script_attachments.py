@@ -754,3 +754,50 @@ async def test_execute_script_keeps_oversized_attachments_as_references(
     [attachment] = result.attachments
     assert attachment.attachment_id == stored.attachment_id
     assert attachment.content is None
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        pytest.param('attachment_get("{id}")', id="attachment_get"),
+        pytest.param('["{id}"]', id="returned_oversized"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_execute_script_attachment_metadata_brings_its_taint(
+    db_engine: AsyncEngine,
+    attachment_registry: AttachmentRegistry,
+    script: str,
+) -> None:
+    """Metadata a script sees, such as a description, costs what content does."""
+    db = Database(engine=db_engine)
+    external = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="an email attachment",
+        )
+    )
+    stored = await attachment_registry.store_and_register_tool_attachment(
+        file_content=b"\xff\xd8\xff\xe0 too big",
+        filename="invoice.jpg",
+        content_type="image/jpeg",
+        tool_name="test",
+        description="Sender-chosen description",
+        db_context=db,
+        taint_state=external,
+    )
+    attachment_registry.max_multimodal_size = 4
+    tracker = InMemoryTurnTaintTracker()
+
+    result = await execute_script_tool(
+        _image_context(db, attachment_registry, tracker),
+        script.replace("{id}", stored.attachment_id),
+    )
+
+    assert isinstance(result, ToolResult)
+    assert "Error" not in result.get_text()
+
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
