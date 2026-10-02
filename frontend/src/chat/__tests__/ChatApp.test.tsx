@@ -7,7 +7,8 @@ import { capturedTurnModelTiers } from '../../test/mocks/handlers';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 import { waitForMessageSent } from '../../test/utils/waitHelpers';
-import { mergeConsecutiveToolOnlyAssistantMessages } from '../ChatApp';
+import { adoptPreviousMessageIds, mergeConsecutiveToolOnlyAssistantMessages } from '../ChatApp';
+import type { Message } from '../types';
 
 // Mock window.history for navigation
 Object.defineProperty(window, 'history', {
@@ -448,6 +449,82 @@ describe('ChatApp', () => {
     expect(document.querySelector('[data-loading-indicator="true"]')).toBeNull();
 
     releaseRefresh?.();
+  }, 30000);
+
+  it('keeps the bubbles this tab sent mounted when a reload swaps in server rows', async () => {
+    const user = userEvent.setup();
+    let sentTurn: { turnId: string; conversationId: string } | undefined;
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.clone().json()) as {
+          turn_id: string;
+          conversation_id: string;
+        };
+        sentTurn = { turnId: body.turn_id, conversationId: body.conversation_id };
+      }),
+      http.get('/api/v1/chat/conversations', () =>
+        HttpResponse.json({
+          conversations: sentTurn
+            ? [
+                {
+                  conversation_id: sentTurn.conversationId,
+                  last_message: 'Hello there!',
+                  last_timestamp: '2026-10-02T10:00:01Z',
+                  message_count: 2,
+                },
+              ]
+            : [],
+          count: sentTurn ? 1 : 0,
+        })
+      )
+    );
+
+    await renderChatApp({ waitForReady: true });
+    await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hello there!');
+    await user.keyboard('{Enter}');
+    await waitFor(
+      () =>
+        expect(screen.getByTestId('assistant-message')).toHaveTextContent(
+          'Hi there! How can I help you today?'
+        ),
+      { timeout: 10000 }
+    );
+    await waitFor(() => expect(screen.queryByTestId('stop-button')).not.toBeInTheDocument());
+    const userBubble = screen.getByTestId('user-message');
+    const assistantBubble = screen.getByTestId('assistant-message');
+    const turn = sentTurn;
+    if (!turn) {
+      throw new Error('The send did not start a turn');
+    }
+
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: 101,
+              role: 'user',
+              turn_id: turn.turnId,
+              content: 'Hello there!',
+              timestamp: '2026-10-02T10:00:00Z',
+            },
+            {
+              internal_id: 102,
+              role: 'assistant',
+              turn_id: turn.turnId,
+              content: 'Hi there! How can I help you today? (saved)',
+              timestamp: '2026-10-02T10:00:01Z',
+            },
+          ],
+          active_turns: [{ turn_id: turn.turnId, status: 'complete' }],
+        })
+      )
+    );
+    await user.click(screen.getByTestId(`conversation-item-${turn.conversationId}`));
+
+    expect(await screen.findByText(/\(saved\)/)).toBeInTheDocument();
+    expect(screen.getByTestId('user-message')).toBe(userBubble);
+    expect(screen.getByTestId('assistant-message')).toBe(assistantBubble);
   }, 30000);
 
   it('shows the after-running-tools error banner when tool call + error + turn_ended arrive in one chunk', async () => {
@@ -1110,5 +1187,85 @@ describe('mergeConsecutiveToolOnlyAssistantMessages', () => {
     ]);
 
     expect(messages).toHaveLength(3);
+  });
+});
+
+function textMessage(id: string, role: Message['role'], turnId?: string): Message {
+  return {
+    id,
+    role,
+    turnId,
+    content: [{ type: 'text', text: id }],
+    createdAt: new Date('2026-10-02T10:00:00Z'),
+  };
+}
+
+describe('adoptPreviousMessageIds', () => {
+  it('pairs the client ids of a sent turn with its server rows, per role and in order', () => {
+    const previous = [
+      textMessage('msg_1', 'user', 'turn-old'),
+      textMessage('msg_2', 'assistant', 'turn-old'),
+      textMessage('client_user', 'user', 'turn-new'),
+      textMessage('client_steer', 'user', 'turn-new'),
+      textMessage('client_assistant', 'assistant', 'turn-new'),
+    ];
+    const reloaded = [
+      textMessage('msg_1', 'user', 'turn-old'),
+      textMessage('msg_2', 'assistant', 'turn-old'),
+      textMessage('msg_3', 'user', 'turn-new'),
+      textMessage('msg_4', 'user', 'turn-new'),
+      textMessage('msg_5', 'assistant', 'turn-new'),
+      textMessage('msg_6', 'assistant', 'turn-new'),
+    ];
+
+    expect(adoptPreviousMessageIds(reloaded, previous).map((msg) => msg.id)).toEqual([
+      'msg_1',
+      'msg_2',
+      'client_user',
+      'client_steer',
+      'client_assistant',
+      'msg_6',
+    ]);
+  });
+
+  it('keeps the adopted ids on every later reload', () => {
+    const previous = [
+      textMessage('client_user', 'user', 'turn-new'),
+      textMessage('client_assistant', 'assistant', 'turn-new'),
+      textMessage('msg_6', 'assistant', 'turn-new'),
+    ];
+    const reloaded = [
+      textMessage('msg_3', 'user', 'turn-new'),
+      textMessage('msg_5', 'assistant', 'turn-new'),
+      textMessage('msg_6', 'assistant', 'turn-new'),
+    ];
+
+    expect(adoptPreviousMessageIds(reloaded, previous).map((msg) => msg.id)).toEqual([
+      'client_user',
+      'client_assistant',
+      'msg_6',
+    ]);
+  });
+
+  it('does not shift the ids of a turn the history window used to cut', () => {
+    const previous = [
+      textMessage('msg_5', 'assistant', 'turn-a'),
+      textMessage('msg_6', 'assistant', 'turn-a'),
+    ];
+    const reloaded = [
+      textMessage('msg_3', 'user', 'turn-a'),
+      textMessage('msg_4', 'assistant', 'turn-a'),
+      textMessage('msg_5', 'assistant', 'turn-a'),
+      textMessage('msg_6', 'assistant', 'turn-a'),
+    ];
+
+    expect(adoptPreviousMessageIds(reloaded, previous)).toBe(reloaded);
+  });
+
+  it('leaves messages without a turn id alone', () => {
+    const previous = [textMessage('client_user', 'user')];
+    const reloaded = [textMessage('msg_1', 'user')];
+
+    expect(adoptPreviousMessageIds(reloaded, previous)).toBe(reloaded);
   });
 });
