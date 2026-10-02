@@ -1262,6 +1262,21 @@ describe('adoptPreviousMessageIds', () => {
     expect(adoptPreviousMessageIds(reloaded, previous)).toBe(reloaded);
   });
 
+  it('leaves the ids of a sent turn the history window clipped as the reload names them', () => {
+    const previous = [
+      textMessage('client_user', 'user', 'turn-long'),
+      textMessage('client_steer', 'user', 'turn-long'),
+      textMessage('client_assistant', 'assistant', 'turn-long'),
+      textMessage('client_reply', 'assistant', 'turn-long'),
+    ];
+    const reloaded = [
+      textMessage('msg_60', 'user', 'turn-long'),
+      textMessage('msg_61', 'assistant', 'turn-long'),
+    ];
+
+    expect(adoptPreviousMessageIds(reloaded, previous)).toBe(reloaded);
+  });
+
   it('leaves messages without a turn id alone', () => {
     const previous = [textMessage('client_user', 'user')];
     const reloaded = [textMessage('msg_1', 'user')];

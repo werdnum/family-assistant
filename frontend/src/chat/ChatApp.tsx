@@ -243,16 +243,36 @@ function preserveRunningLoadingMessages(
  * whose id the reload doesn't contain are paired in order, per role, with the
  * reloaded messages whose id wasn't already on screen. Ids the two lists share
  * are left alone, which keeps a turn the history window cuts in half from
- * shifting its ids when an older page widens the window. */
+ * shifting its ids when an older page widens the window.
+ *
+ * Pairing from the front is only one-to-one when the reload holds the whole
+ * turn. The history window drops a turn's oldest rows first, and a turn opens
+ * with its user message, so a turn the reload holds fewer user rows for than
+ * the screen does has been clipped; its ids are left as the reload names them. */
 export function adoptPreviousMessageIds(
   reloadedMessages: Message[],
   previousMessages: Message[]
 ): Message[] {
+  const countUserRowsByTurn = (messages: Message[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const msg of messages) {
+      if (msg.turnId && msg.role === 'user') {
+        counts.set(msg.turnId, (counts.get(msg.turnId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  };
+  const reloadedUserRows = countUserRowsByTurn(reloadedMessages);
+  const previousUserRows = countUserRowsByTurn(previousMessages);
   const reloadedIds = new Set(reloadedMessages.map((msg) => msg.id));
   const previousIds = new Set(previousMessages.map((msg) => msg.id));
   const unmatchedPrevious = new Map<string, string[]>();
   for (const msg of previousMessages) {
     if (!msg.turnId || reloadedIds.has(msg.id)) {
+      continue;
+    }
+    const shownUserRows = previousUserRows.get(msg.turnId) ?? 0;
+    if (shownUserRows === 0 || (reloadedUserRows.get(msg.turnId) ?? 0) < shownUserRows) {
       continue;
     }
     const key = `${msg.role}\u0000${msg.turnId}`;
