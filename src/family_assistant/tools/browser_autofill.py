@@ -19,6 +19,7 @@ from family_assistant.tools.browser_backend import (
     resolve_authenticated_binding,
 )
 from family_assistant.tools.browser_session import browser_operation
+from family_assistant.tools.outcomes import NOT_RUN_YET_NOTE
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -154,7 +155,7 @@ def _approval_pending_result(response: JsonDict) -> ToolResult:
     return ToolResult(
         text=(
             "The household has to approve releasing this credential before it "
-            f"can be filled. {detail} Stop here and report that approval is "
+            f"can be filled. {NOT_RUN_YET_NOTE}. {detail} Stop here and report that approval is "
             "pending; the task can be resumed once they decide."
         ).strip(),
         data={

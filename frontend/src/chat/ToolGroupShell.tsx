@@ -12,6 +12,8 @@ import {
 interface ToolGroupShellProps {
   toolNames: string[];
   toolCount: number;
+  /** Calls in the group that finished without succeeding. */
+  unsuccessfulCount?: number;
   isExpanded: boolean;
   onOpenChange: (open: boolean) => void;
   children: React.ReactNode;
@@ -25,17 +27,19 @@ interface ToolGroupShellProps {
 const ToolGroupShell: React.FC<ToolGroupShellProps> = ({
   toolNames,
   toolCount,
+  unsuccessfulCount = 0,
   isExpanded,
   onOpenChange,
   children,
 }) => {
   const summaryText = useMemo(() => {
-    if (toolNames.length === 0) {
-      // Fallback to generic count when tool names unavailable
-      return `${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`;
-    }
-    return generateToolGroupSummary(toolNames);
-  }, [toolNames, toolCount]);
+    // Fallback to generic count when tool names unavailable
+    const names =
+      toolNames.length === 0
+        ? `${toolCount} tool ${toolCount === 1 ? 'call' : 'calls'}`
+        : generateToolGroupSummary(toolNames);
+    return unsuccessfulCount > 0 ? `${names} · ${unsuccessfulCount} didn't finish` : names;
+  }, [toolNames, toolCount, unsuccessfulCount]);
 
   // Get icons for the first few unique categories (max 4)
   const categoryIcons = useMemo(() => {

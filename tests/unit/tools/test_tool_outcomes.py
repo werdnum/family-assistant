@@ -29,6 +29,7 @@ from family_assistant.tools.types import ConfirmationOutcome
         ('{"success": false, "message": "no such callback"}', None, "failed"),
         ('{"status": "error", "message": "bad"}', None, "failed"),
         ('{"status": "failed", "site": "bank"}', None, "failed"),
+        ('{"status": "refused", "reason": "policy"}', None, "failed"),
         (
             "Waiting on the user to approve this in Telegram or the web UI "
             "(request 7). It hasn't run yet.",

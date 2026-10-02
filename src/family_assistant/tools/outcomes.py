@@ -83,5 +83,5 @@ def is_error_data(data: object) -> bool:
     return (
         bool(data.get("error"))
         or data.get("success") is False
-        or (isinstance(status, str) and status in {"error", "failed"})
+        or (isinstance(status, str) and status in {"error", "failed", "refused"})
     )

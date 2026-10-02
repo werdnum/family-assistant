@@ -588,8 +588,11 @@ describe('ChatApp', () => {
     await renderChatApp({ waitForReady: true });
 
     expect(await screen.findByText('Saving.')).toBeInTheDocument();
+    // The finished group is collapsed, so its header has to say what went wrong.
+    const trigger = await screen.findByTestId('tool-group-trigger');
+    expect(trigger).toHaveTextContent("2 didn't finish");
     const user = userEvent.setup();
-    await user.click(await screen.findByTestId('tool-group-trigger'));
+    await user.click(trigger);
     const calls = await screen.findAllByTestId('tool-call');
     expect(calls.map((call) => call.getAttribute('data-tool-outcome'))).toEqual([
       'failed',
