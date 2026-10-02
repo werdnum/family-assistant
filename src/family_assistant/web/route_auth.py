@@ -38,7 +38,7 @@ RouteExemption = TypedDict(
 class RouteClassificationDocument(TypedDict):
     """The document served at /.well-known/auth-route-classification."""
 
-    jwt_required_prefix: str
+    jwt_required_prefixes: list[str]
     no_jwt_routes: list["RouteExemption"]
 
 
@@ -88,6 +88,16 @@ def is_api_path(path: str) -> bool:
     return path == "/api" or path.startswith("/api/")
 
 
+def is_embedded_app_path(path: str) -> bool:
+    """Whether a request belongs to the JWT-authenticated embedded app."""
+    return path == "/app" or path.startswith("/app/")
+
+
+def is_token_authenticated_path(path: str) -> bool:
+    """API and embedded pages share credential validation, not route exemptions."""
+    return is_api_path(path) or is_embedded_app_path(path)
+
+
 def api_route_requires_default_auth(method: str, path: str) -> bool:
     """Whether an /api request must pass default middleware authentication.
 
@@ -122,7 +132,7 @@ def is_public_error_intake(method: str, path: str) -> bool:
 def api_route_classification() -> RouteClassificationDocument:
     """The published classification document for edge policy generation."""
     return {
-        "jwt_required_prefix": "/api/",
+        "jwt_required_prefixes": ["/api/", "/app/"],
         "no_jwt_routes": [
             {
                 "match": match,

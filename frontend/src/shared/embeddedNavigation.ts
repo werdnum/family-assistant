@@ -1,4 +1,4 @@
-export const EMBEDDED_PAGE_BASE = '/api/app/pages';
+export const EMBEDDED_PAGE_BASE = '/app';
 
 export function isEmbeddedPage(): boolean {
   return (
@@ -12,7 +12,10 @@ export function pageHref(href: string): string {
     isEmbeddedPage() &&
     href.startsWith('/') &&
     !href.startsWith('//') &&
-    !href.startsWith('/api/')
+    href !== '/api' &&
+    !href.startsWith('/api/') &&
+    href !== EMBEDDED_PAGE_BASE &&
+    !href.startsWith(`${EMBEDDED_PAGE_BASE}/`)
   ) {
     return `${EMBEDDED_PAGE_BASE}${href}`;
   }

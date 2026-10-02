@@ -405,11 +405,14 @@ private enum SharedAttachmentImportError: LocalizedError {
 }
 
 enum EmbeddedWebRoute {
-    static let prefix = "/api/app/pages"
+    static let prefix = "/app"
 
     static func pageURL(_ url: URL, relativeTo baseURL: URL) -> URL {
         guard url.matchesOrigin(of: baseURL),
-              !url.path.hasPrefix("/api/")
+              url.path != "/api",
+              !url.path.hasPrefix("/api/"),
+              url.path != prefix,
+              !url.path.hasPrefix(prefix + "/")
         else { return url }
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
         components.percentEncodedPath = prefix + components.percentEncodedPath

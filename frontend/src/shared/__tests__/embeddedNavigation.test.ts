@@ -6,13 +6,11 @@ afterEach(() => window.history.replaceState(null, '', originalURL));
 
 describe('embedded navigation', () => {
   it('keeps page links beneath the authenticated prefix', () => {
-    window.history.replaceState(null, '', '/api/app/pages/documents/');
+    window.history.replaceState(null, '', '/app/documents/');
     expect(isEmbeddedPage()).toBe(true);
-    expect(pageHref('/history?conversation_id=123')).toBe(
-      '/api/app/pages/history?conversation_id=123'
-    );
+    expect(pageHref('/history?conversation_id=123')).toBe('/app/history?conversation_id=123');
     expect(pageHref('/api/documents/1')).toBe('/api/documents/1');
-    expect(pageHref('/api/app/pages/tasks')).toBe('/api/app/pages/tasks');
+    expect(pageHref('/app/tasks')).toBe('/app/tasks');
     expect(pageHref('https://example.com/')).toBe('https://example.com/');
     expect(pageHref('//example.com/')).toBe('//example.com/');
   });
@@ -24,7 +22,7 @@ describe('embedded navigation', () => {
   });
 
   it('does not treat similarly named API routes as embedded pages', () => {
-    window.history.replaceState(null, '', '/api/app/pages-other');
+    window.history.replaceState(null, '', '/app-other');
     expect(isEmbeddedPage()).toBe(false);
   });
 });
