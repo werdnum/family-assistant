@@ -16,13 +16,6 @@ if TYPE_CHECKING:
 type ToolOrigin = Literal["local", "mcp"]
 type ToolImplementation = Callable[..., Awaitable[object]]
 
-_OUTPUT_SAFETY_TAGS = {
-    "output_trusted",
-    "output_machine_data",
-    "output_untrusted",
-    "output_unspecified",
-}
-
 
 class ToolTag(StrEnum):
     """Security-relevant tags for tools."""
@@ -68,6 +61,15 @@ class ToolTag(StrEnum):
     SHOPPING = "shopping"
     CONNECTED_ACCOUNT_DATA = "connected_account_data"
     USER_FACING_MEDIA = "user_facing_media"
+
+
+OUTPUT_TRUST_TAGS: frozenset[ToolTag] = frozenset({
+    ToolTag.OUTPUT_TRUSTED,
+    ToolTag.OUTPUT_MACHINE_DATA,
+    ToolTag.OUTPUT_UNTRUSTED,
+    ToolTag.OUTPUT_UNSPECIFIED,
+})
+"""Tags grading a tool's output for taint; every tool must carry at least one."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +400,6 @@ def resolve_mcp_tool_tags(
         return resolved_from_config
 
     resolved_tags = set(annotation_tags)
-    if not {tag.value for tag in resolved_tags}.intersection(_OUTPUT_SAFETY_TAGS):
+    if not resolved_tags & OUTPUT_TRUST_TAGS:
         resolved_tags.add(ToolTag.OUTPUT_UNSPECIFIED)
     return frozenset(resolved_tags)

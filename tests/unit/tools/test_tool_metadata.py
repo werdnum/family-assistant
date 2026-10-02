@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.plugins.registry import plugin_tool_registrations
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_DESCRIPTORS,
@@ -13,6 +14,7 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
+    OUTPUT_TRUST_TAGS,
     ToolTag,
     build_local_tool_registrations,
     derive_mcp_annotation_tags,
@@ -49,6 +51,24 @@ def test_local_tool_catalog_has_complete_metadata_coverage() -> None:
     assert ToolTag.STATE_PERSISTING in descriptor_map["add_or_update_note"].tags
     assert ToolTag.DELEGATION in descriptor_map["delegate_to_service"].tags
     assert ToolTag.CODE_EXECUTION in descriptor_map["execute_script"].tags
+
+
+def test_every_registered_tool_declares_output_trust() -> None:
+    """Every core and plugin tool must say how far its output is trusted.
+
+    A tool without an output trust tag falls back to a runtime default with a
+    warning, so a new tool's taint grade would be decided by accident.
+    """
+    registrations = [*LOCAL_TOOL_REGISTRATIONS, *plugin_tool_registrations()]
+    missing = sorted(
+        registration.name
+        for registration in registrations
+        if not registration.tags & OUTPUT_TRUST_TAGS
+    )
+    assert not missing, (
+        "Tools missing an output trust tag "
+        f"({', '.join(sorted(OUTPUT_TRUST_TAGS))}): {missing}"
+    )
 
 
 def test_build_local_tool_registrations_rejects_missing_metadata() -> None:

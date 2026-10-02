@@ -823,6 +823,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.DOCUMENTS,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "get_user_documentation_content": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
@@ -1286,21 +1287,25 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_MACHINE_DATA,
     ),
     "browser_report_login_outcome": _metadata(
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "browser_request_handoff": _metadata(
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_MACHINE_DATA,
     ),
     "browser_claim_handback": _metadata(
         ToolTag.BROWSER,
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "workspace_read": _metadata(
         ToolTag.SCRIPT_DETERMINISTIC,
