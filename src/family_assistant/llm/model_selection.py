@@ -467,6 +467,26 @@ def stamp_model_selection(
     return reasoning
 
 
+def model_selection_from_reasoning(
+    reasoning: Mapping[str, object] | None,
+) -> ResolvedModelSelection | None:
+    """Read back the selection :func:`stamp_model_selection` recorded, frozen.
+
+    ``None`` when the usage carries no selection -- a row written by a run that
+    had none, or by no model call at all.
+    """
+    if reasoning is None or "model_tier_source" not in reasoning:
+        return None
+    return ResolvedModelSelection.from_json({
+        "tier": reasoning.get("model_tier"),
+        "requested": reasoning.get("model_tier_requested"),
+        "source": reasoning.get("model_tier_source"),
+        "routing_outcome": reasoning.get("model_tier_routing_outcome"),
+        "routing_would_choose": reasoning.get("model_tier_would_choose"),
+        "classifier_model": reasoning.get("model_tier_classifier_model"),
+    })
+
+
 def _eligible_tiers(
     eligibility: ModelTierEligibility,
     source: SelectionSource,

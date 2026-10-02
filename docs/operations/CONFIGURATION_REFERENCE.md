@@ -191,6 +191,19 @@ but everything else in the queue waits behind the pending decision for as long a
 default of two general workers and one reserved worker keeps the rest of the queue moving while a
 run is parked.
 
+### Restarts and in-progress turns
+
+A web or iOS chat turn that is running when the process stops is resumed by the next process. On
+SIGTERM the process suspends running turns at a safe point (letting a tool that has started finish),
+waits up to 15 seconds for them, and hands them off so the replacement resumes them as soon as its
+task workers start. A turn killed without a graceful shutdown (SIGKILL, OOM, node loss) is resumed
+about two minutes later, once its lease expires. Resumption runs on the task worker pool as an
+interactive `resume_interrupted_turn` task.
+
+Give the pod at least 45 seconds to stop (`terminationGracePeriodSeconds`; Kubernetes defaults to
+30\) so the suspension window and the rest of shutdown fit inside it. See
+[docs/design/turn-resumption-across-restarts.md](../design/turn-resumption-across-restarts.md).
+
 ______________________________________________________________________
 
 ## Privacy Policy Page
