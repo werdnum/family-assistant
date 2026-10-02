@@ -2236,6 +2236,12 @@ class PendingToolConfirmation(BaseModel):
     time_remaining_seconds: float = Field(
         ..., description="Seconds from response generation until expiration"
     )
+    origin_interface_type: str | None = Field(
+        None, description="Interface the request originated from, if known"
+    )
+    conversation_id: str | None = Field(
+        None, description="Conversation the request originated from, if known"
+    )
 
 
 class PendingToolConfirmationsResponse(BaseModel):
@@ -3568,6 +3574,8 @@ async def list_pending_tool_confirmations(
             expires_at=row["expires_at"],
             timeout_seconds=(row["expires_at"] - row["created_at"]).total_seconds(),
             time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
+            origin_interface_type=row["origin_interface_type"],
+            conversation_id=row["origin_conversation_id"],
         )
         for row in rows
     ]

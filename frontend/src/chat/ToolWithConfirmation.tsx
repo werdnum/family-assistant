@@ -1,5 +1,5 @@
-import React, { useContext, useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import React, { useContext } from 'react';
+import { ConfirmationCard } from './ConfirmationCard';
 import { ToolConfirmationContext } from './ToolConfirmationContext';
 import {
   rendererStatusForOutcome,
@@ -51,11 +51,6 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   ToolComponent,
 }) => {
   const context = useContext(ToolConfirmationContext);
-  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
-  const [isResolving, setIsResolving] = useState(false);
-  const [decisionError, setDecisionError] = useState<string | null>(null);
-
-  // Get the confirmation by tool_call_id
   const pendingConfirmation = toolCallId
     ? context?.pendingConfirmations?.get(toolCallId)
     : undefined;
@@ -69,65 +64,6 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
     awaitingApproval: Boolean(pendingConfirmation),
   });
   const outcomeNote = OUTCOME_NOTES[outcome];
-
-  useEffect(() => {
-    const durationSeconds =
-      pendingConfirmation?.time_remaining_seconds ?? pendingConfirmation?.timeout_seconds;
-    if (typeof durationSeconds === 'number') {
-      const anchorTimestamp = pendingConfirmation?.received_at ?? pendingConfirmation?.created_at;
-      const parsedStartedAt =
-        typeof anchorTimestamp === 'string' || typeof anchorTimestamp === 'number'
-          ? new Date(anchorTimestamp).getTime()
-          : Number.NaN;
-      const startedAt = Number.isNaN(parsedStartedAt) ? Date.now() : parsedStartedAt;
-      const timeoutMs = durationSeconds * 1000;
-
-      const calculateTimeRemaining = () => {
-        const elapsedMs = Date.now() - startedAt;
-        return Math.max(0, Math.floor((timeoutMs - elapsedMs) / 1000));
-      };
-
-      // Set initial value immediately
-      const initialRemaining = calculateTimeRemaining();
-      setTimeRemaining(initialRemaining);
-
-      if (initialRemaining > 0) {
-        const interval = setInterval(() => {
-          const remaining = calculateTimeRemaining();
-          setTimeRemaining(remaining);
-
-          if (remaining <= 0) {
-            clearInterval(interval);
-          }
-        }, 1000);
-
-        return () => clearInterval(interval);
-      }
-    } else {
-      // No timeout specified, clear any existing timeout display
-      setTimeRemaining(null);
-    }
-  }, [pendingConfirmation]);
-
-  useEffect(() => {
-    setIsResolving(false);
-    setDecisionError(null);
-  }, [pendingConfirmation?.request_id]);
-
-  const handleDecision = async (approved: boolean) => {
-    if (!context?.handleConfirmation || !pendingConfirmation || !toolCallId || isResolving) {
-      return;
-    }
-    setIsResolving(true);
-    setDecisionError(null);
-    try {
-      await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, approved);
-    } catch (error) {
-      console.error('Failed to resolve tool confirmation:', error);
-      setDecisionError('Could not send this decision. Try again.');
-      setIsResolving(false);
-    }
-  };
 
   return (
     <>
@@ -153,44 +89,15 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
         )}
       </div>
 
-      {/* Show confirmation UI if there's a pending confirmation */}
-      {pendingConfirmation && (
-        <div className="tool-confirmation-container mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <div className="prose prose-sm max-w-none mb-4">
-            <strong>Confirmation Required:</strong>
-            <div className="whitespace-pre-wrap">
-              {String(pendingConfirmation.confirmation_prompt ?? '')}
-            </div>
-          </div>
-          <div className="flex gap-2 items-center">
-            <Button
-              onClick={() => void handleDecision(true)}
-              size="sm"
-              className="bg-green-600 hover:bg-green-700 text-white"
-              disabled={isResolving}
-            >
-              Approve
-            </Button>
-            <Button
-              onClick={() => void handleDecision(false)}
-              size="sm"
-              variant="outline"
-              className="text-red-600"
-              disabled={isResolving}
-            >
-              Reject
-            </Button>
-            {timeRemaining !== null && (
-              <span className="text-sm text-gray-500 ml-auto">
-                {timeRemaining > 0 ? `Expires in ${timeRemaining}s` : 'Expired'}
-              </span>
-            )}
-          </div>
-          {decisionError && (
-            <div role="alert" className="mt-2 text-sm font-medium text-red-600">
-              {decisionError}
-            </div>
-          )}
+      {pendingConfirmation && toolCallId && context && (
+        <div className="mt-3">
+          <ConfirmationCard
+            key={pendingConfirmation.request_id}
+            confirmation={pendingConfirmation}
+            onDecision={(approved) =>
+              context.handleConfirmation(toolCallId, pendingConfirmation.request_id, approved)
+            }
+          />
         </div>
       )}
     </>

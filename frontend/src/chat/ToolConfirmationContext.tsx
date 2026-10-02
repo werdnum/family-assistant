@@ -11,6 +11,12 @@ export interface PendingToolConfirmation {
   received_at?: string | number;
   timeout_seconds?: number;
   time_remaining_seconds?: number;
+  conversation_id?: string | null;
+  origin_interface_type?: string | null;
+  /** Client-side: when this tab first learned of the request. */
+  first_seen_at?: number;
+  /** Client-side: delivered by this tab's live stream rather than the poll. */
+  received_via_sse?: boolean;
   [key: string]: unknown;
 }
 

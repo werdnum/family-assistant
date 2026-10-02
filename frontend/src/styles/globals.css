@@ -230,6 +230,54 @@
 }
 
 /*
+ * Confirmation prompts are markdown lists of "- Label:" items, each followed by
+ * a fenced block holding the exact value (see confirmation_format.py). Render
+ * them as label/value pairs: a quiet label over the value, wrapped rather than
+ * scrolled sideways so the approver sees all of it.
+ */
+.confirmation-prompt .markdown-text ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.5em 0;
+}
+
+.confirmation-prompt .markdown-text li {
+  margin: 0.6em 0 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.confirmation-prompt .markdown-text li > * {
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: hsl(var(--foreground));
+}
+
+/* Values are mostly prose (titles, messages, dates); pre-wrap keeps the
+   indentation of a JSON payload readable without a monospace face. */
+.confirmation-prompt .markdown-text .code-block {
+  margin: 0.15em 0 0;
+  padding: 0.35em 0.6em;
+  font-family: inherit;
+  font-size: 0.875rem;
+  border: none;
+}
+
+.confirmation-prompt .markdown-text .code-block code {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.confirmation-prompt .markdown-text blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.75em;
+  border-left: 2px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+
+/*
  * User messages render on a filled primary bubble (see UserMessage in
  * Thread.tsx), where the themed link color has poor contrast. Inherit the
  * bubble's foreground color there and rely on the underline for affordance.
