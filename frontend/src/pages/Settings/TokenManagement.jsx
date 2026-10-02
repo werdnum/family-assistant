@@ -124,6 +124,7 @@ const TokenManagement = () => {
 
   const copyToClipboard = async (text) => {
     setCopied(false);
+    setError(null);
     try {
       await window.navigator.clipboard.writeText(text);
       setCopied(true);

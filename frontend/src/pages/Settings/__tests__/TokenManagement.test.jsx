@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../../test/setup.js';
 import TokenManagement from '../TokenManagement';
 
@@ -17,6 +17,34 @@ const token = {
 };
 
 describe('TokenManagement', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('clears a copy failure when the next clipboard attempt succeeds', async () => {
+    let created = false;
+    server.use(
+      http.get('/api/me/tokens', () => HttpResponse.json(created ? [token] : [])),
+      http.post('/api/me/tokens', () => {
+        created = true;
+        return HttpResponse.json({ ...token, full_token: 'fa_fixture_token' });
+      })
+    );
+    const user = userEvent.setup();
+    vi.spyOn(window.navigator.clipboard, 'writeText')
+      .mockRejectedValueOnce(new Error('Clipboard unavailable'))
+      .mockResolvedValueOnce(undefined);
+    render(<TokenManagement />);
+    await user.click(await screen.findByRole('button', { name: 'Create New Token' }));
+    await user.click(screen.getByLabelText('Token Name'));
+    await user.paste('My integration');
+    await user.click(screen.getByRole('button', { name: 'Create Token', exact: true }));
+    await screen.findByRole('heading', { name: 'Your Tokens (1)' });
+    await user.click(screen.getByRole('button', { name: 'Copy', exact: true }));
+    expect(await screen.findByText(/Could not copy the token/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Copy', exact: true }));
+    expect(await screen.findByRole('button', { name: 'Copied!' })).toBeInTheDocument();
+    expect(screen.queryByText(/Could not copy the token/)).not.toBeInTheDocument();
+  });
+
   it('labels an expired token as expired rather than active', async () => {
     server.use(http.get('/api/me/tokens', () => HttpResponse.json([token])));
     render(<TokenManagement />);
