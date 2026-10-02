@@ -1,6 +1,7 @@
 """Storage repository implementations."""
 
 from .a2a_tasks import A2ATasksRepository
+from .artifact_review import ArtifactReviewRepository
 from .automations import AutomationsRepository
 from .base import BaseRepository
 from .calendar_provenance import CalendarProvenanceRepository
@@ -27,6 +28,7 @@ from .worker_tasks import WorkerTasksRepository
 
 __all__ = [
     "A2ATasksRepository",
+    "ArtifactReviewRepository",
     "AutomationsRepository",
     "BaseRepository",
     "CalendarProvenanceRepository",

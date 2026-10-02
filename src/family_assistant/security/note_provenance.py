@@ -209,6 +209,22 @@ class NoteProvenanceStamp:
         )
 
     @classmethod
+    def user_confirmed(cls, *, content_hash: str) -> NoteProvenanceStamp:
+        """Stored content an authenticated user reviewed in full and approved."""
+        return cls(
+            writer=NoteWriter.ADMITTED,
+            state=TurnTaintState.empty().add_source(
+                TaintSource(
+                    source_type=TaintSourceType.NOTE,
+                    source_id=content_hash,
+                    tier=SourceTrustTier.MACHINE_REVIEWED,
+                    labels=frozenset({"user_confirmed"}),
+                    reason="Authenticated user reviewed and confirmed the complete note.",
+                )
+            ),
+        )
+
+    @classmethod
     def admitted(cls, *, title: str, decided_by: str) -> NoteProvenanceStamp:
         """A candidate admitted for unasked reuse; replaces the stored envelope."""
         return cls(

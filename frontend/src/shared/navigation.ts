@@ -60,6 +60,8 @@ export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
     title: 'Automations',
     icon: Zap,
   },
+  { type: 'link', to: '/scripts', title: 'Scripts', icon: FileText },
+  { type: 'link', to: '/artifacts', title: 'Artifact review', icon: FileText },
   { type: 'external', href: '/events', title: 'Events', icon: Calendar },
   { type: 'section', title: 'Internal' },
   {

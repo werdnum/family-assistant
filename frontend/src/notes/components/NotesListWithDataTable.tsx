@@ -174,6 +174,9 @@ const NotesListWithDataTable = () => {
     <div className="container mx-auto py-6">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-3xl font-bold tracking-tight">Notes</h1>
+        <Button asChild variant="outline">
+          <Link to="/artifacts?kind=note">Review note trust</Link>
+        </Button>
         <Button asChild>
           <Link to="/notes/add">Add New Note</Link>
         </Button>

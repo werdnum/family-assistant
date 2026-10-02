@@ -16,8 +16,10 @@ from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.config_models import KeychuteConfig
     from family_assistant.storage.database import Database
     from family_assistant.storage.types import ActionConfig
+    from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -136,29 +138,27 @@ def _get_tools_provider(exec_context: ToolExecutionContext) -> Any:  # noqa: ANN
     return None
 
 
-async def save_script_tool(
-    exec_context: ToolExecutionContext,
-    name: str,
-    description: str,
+async def validate_stored_script(
     code: str,
     # ast-grep-ignore: no-dict-any - JSON Schema is genuinely arbitrary structure
-    parameters_schema: dict[str, Any] | None = None,
-) -> ToolResult:
-    """Save or update a stored script."""
+    parameters_schema: dict[str, Any] | None,
+    *,
+    tools_provider: ToolsProvider | None,
+    keychute_config: KeychuteConfig | None,
+    include_attachment_api: bool = False,
+) -> str | None:
+    """Validate stored script inputs and code for both tool and UI saves."""
     # Validate parameters_schema shape
     if parameters_schema is not None:
         schema_error = _validate_parameters_schema_shape(parameters_schema)
         if schema_error:
-            return ToolResult(
-                data={"error": f"Invalid parameters_schema: {schema_error}"}
-            )
+            return f"Invalid parameters_schema: {schema_error}"
 
     # Validate script syntax before saving
     from family_assistant.scripting.validator import (  # noqa: PLC0415 - lazy import to break circular: scripting → tools → stored_scripts → scripting
         ScriptValidator,
     )
 
-    tools_provider = _get_tools_provider(exec_context)
     tool_definitions = None
     if tools_provider:
         tool_definitions = await tools_provider.get_tool_definitions()
@@ -180,18 +180,34 @@ async def save_script_tool(
     validation = ScriptValidator(tool_definitions=tool_definitions).validate(
         code,
         input_names=input_names,
-        extra_external_functions=keychute_external_function_names(
-            get_keychute_config(exec_context)
-        ),
+        extra_external_functions=keychute_external_function_names(keychute_config),
         include_tools_api=tools_provider is not None,
-        include_attachment_api=bool(exec_context.attachment_registry),
+        include_attachment_api=include_attachment_api,
     )
     if not validation.is_valid:
-        return ToolResult(
-            data={
-                "error": f"Script validation failed: {validation.error_message}",
-            }
-        )
+        return f"Script validation failed: {validation.error_message}"
+
+    return None
+
+
+async def save_script_tool(
+    exec_context: ToolExecutionContext,
+    name: str,
+    description: str,
+    code: str,
+    # ast-grep-ignore: no-dict-any - JSON Schema is genuinely arbitrary structure
+    parameters_schema: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Save or update a stored script."""
+    validation_error = await validate_stored_script(
+        code,
+        parameters_schema,
+        tools_provider=_get_tools_provider(exec_context),
+        keychute_config=get_keychute_config(exec_context),
+        include_attachment_api=bool(exec_context.attachment_registry),
+    )
+    if validation_error:
+        return ToolResult(data={"error": validation_error})
 
     db = exec_context.db_context
     script = await db.scripts.save(
@@ -284,7 +300,11 @@ STORED_SCRIPTS_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "are useful for repeated tasks like data processing, report generation, or "
                 "automation routines.\n\n"
                 "Scripts are validated before saving. If validation fails, an error is returned.\n"
-                "Scripts saved here can also be referenced by automations using script_name in action_config."
+                "Scripts saved here can also be referenced by automations using script_name in action_config. "
+                "Users can create or edit stored scripts in the web UI at /scripts. To approve tainted "
+                "notes, scripts, or automations without editing them, direct the user to /artifacts, "
+                "where Review and confirm shows the complete content before recording human approval. "
+                "Referenced scripts and note attachments require separate review."
             ),
             "parameters": {
                 "type": "object",

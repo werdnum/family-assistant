@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import Select
 
     from family_assistant.storage.repositories import (
+        ArtifactReviewRepository,
         AutomationsRepository,
         CalendarProvenanceRepository,
         ConfirmationRequestsRepository,
@@ -507,6 +508,15 @@ class DatabaseExecutor(ABC):
         )
 
         return self._repository(CalendarProvenanceRepository)
+
+    @property
+    def artifact_review(self) -> ArtifactReviewRepository:
+        """Get the artifact review and human confirmation repository."""
+        from family_assistant.storage.repositories.artifact_review import (  # noqa: PLC0415 - lazy import to avoid circular dependency
+            ArtifactReviewRepository,
+        )
+
+        return self._repository(ArtifactReviewRepository)
 
     @property
     def notes(self) -> NotesRepository:

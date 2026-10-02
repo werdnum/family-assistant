@@ -6,6 +6,7 @@ from family_assistant.services.google_provider import GOOGLE_PROVIDER
 
 from .a2a_api import a2a_router
 from .app_auth import api_auth_router
+from .artifact_review_api import artifact_review_api_router
 from .attachments_api import attachments_api_router
 from .automations_api import automations_api_router
 from .chat_api import chat_api_router
@@ -18,6 +19,7 @@ from .events_api import events_api_router
 from .me_api import me_router
 from .notes_api import notes_api_router
 from .oauth_integration import create_oauth_integration_router
+from .scripts_api import scripts_api_router
 from .tasks_api import tasks_api_router
 from .tools_api import tools_api_router
 from .vector_search_api import vector_search_api_router
@@ -27,6 +29,10 @@ logger = logging.getLogger(__name__)
 api_router = APIRouter()
 
 # Include the individual routers
+api_router.include_router(scripts_api_router, prefix="/scripts", tags=["Scripts"])
+api_router.include_router(
+    artifact_review_api_router, prefix="/artifacts", tags=["Artifact Review"]
+)
 api_router.include_router(tools_api_router, prefix="/tools", tags=["Tools Execution"])
 api_router.include_router(
     documents_api_router, prefix="/documents", tags=["Document Ingestion"]

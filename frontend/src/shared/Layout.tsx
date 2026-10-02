@@ -293,6 +293,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       </NavLink>
                     </NavigationMenuLink>
                     <NavigationMenuLink asChild>
+                      <NavLink to="/scripts" className="whitespace-nowrap">
+                        Scripts
+                      </NavLink>
+                    </NavigationMenuLink>
+                    <NavigationMenuLink asChild>
+                      <NavLink to="/artifacts" className="whitespace-nowrap">
+                        Artifact review
+                      </NavLink>
+                    </NavigationMenuLink>
+                    <NavigationMenuLink asChild>
                       <ExternalNavLink href="/events" className="whitespace-nowrap">
                         <Calendar className="mr-2 h-4 w-4 flex-shrink-0" />
                         <span>Events</span>
