@@ -30,7 +30,7 @@ from family_assistant.security.taint import (
 )
 
 if TYPE_CHECKING:
-    from family_assistant.security.script_closure import ScriptClosure
+    from family_assistant.security.script_closure import ScriptArtifact, ScriptClosure
     from family_assistant.storage.repositories.scripts import ScriptRow
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -244,7 +244,13 @@ async def _resolve_bound_closure(
     supplied_bindings: list[dict[str, object]] | None,
     bound_child: bool,
 ) -> ScriptClosure:
-    closure = await resolve_script_closure(context.db_context, source, loaded_root=row)
+    def record_artifact_taint(artifact: ScriptArtifact) -> None:
+        if row is None or artifact.script.name != row.name:
+            _record_definition_taint(context, artifact.resolution, artifact.script.name)
+
+    closure = await resolve_script_closure(
+        context.db_context, source, loaded_root=row, on_artifact=record_artifact_taint
+    )
     if supplied_bindings is not None:
         closure.verify_bindings(supplied_bindings)
     if bound_child and context.script_execution is not None:
@@ -388,7 +394,6 @@ async def prepare_script_invocation(
     except ScriptClosureError as exc:
         raise ScriptPreparationError(str(exc), "stale_script_binding") from exc
     if closure.resolution is not None:
-        _record_definition_taint(context, closure.resolution, name)
         definition = (
             closure.resolution
             if definition is None
