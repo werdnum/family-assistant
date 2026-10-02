@@ -36,11 +36,8 @@ async def test_automations_page_basic_functionality(
     await schedule_button.wait_for(timeout=5000)
     assert await schedule_button.is_visible()
 
-    # Check that filters section is present and expanded
-    filters_summary = page.locator("details summary:has-text('Filters')")
-    await filters_summary.wait_for(timeout=5000)
-    details_element = page.locator("details:has(summary:has-text('Filters'))")
-    await details_element.evaluate("details => { details.open = true; }")
+    # Check that the filters section is present
+    await page.locator("section[aria-label='Filters']").wait_for(timeout=5000)
 
     # Check filter dropdowns are present
     await page.wait_for_selector("select[name='type']", state="attached")
@@ -149,10 +146,9 @@ async def test_automations_filters_interaction(
     await page.wait_for_selector("h1:has-text('Automations')", timeout=10000)
 
     # Wait for the type filter dropdown to be ready
-    filters_summary = page.locator("details summary:has-text('Filters')")
-    await filters_summary.wait_for(state="visible", timeout=5000)
-    details_element = page.locator("details:has(summary:has-text('Filters'))")
-    await details_element.evaluate("details => { details.open = true; }")
+    await page.locator("section[aria-label='Filters']").wait_for(
+        state="visible", timeout=5000
+    )
 
     type_select = page.locator("select[name='type']")
     await type_select.wait_for(state="attached", timeout=5000)
@@ -345,7 +341,7 @@ async def test_toggle_schedule_automation_enabled(
     await page.wait_for_url("**/automations/schedule/*", timeout=10000)
 
     # Verify initial status shows enabled
-    status_value = page.locator("dt:has-text('Status:') + dd")
+    status_value = page.locator("dt:text-is('Status') + dd")
     await status_value.wait_for()
     status_element = await status_value.element_handle()
     await page.wait_for_function(
@@ -466,10 +462,9 @@ async def test_filter_schedule_automations(
     await page.wait_for_selector("text=/Event Filter Test/", timeout=5000)
 
     # Filter to show only schedule automations
-    filters_summary = page.locator("details summary:has-text('Filters')")
-    await filters_summary.wait_for(state="visible", timeout=5000)
-    details_element = page.locator("details:has(summary:has-text('Filters'))")
-    await details_element.evaluate("details => { details.open = true; }")
+    await page.locator("section[aria-label='Filters']").wait_for(
+        state="visible", timeout=5000
+    )
 
     type_select = page.locator("select[name='type']")
     await type_select.select_option("schedule")

@@ -1,6 +1,18 @@
+import { ArrowLeft, Loader2, Power, PowerOff, Trash2 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { PageContainer } from '@/components/layout/PageHeader';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  describeRecurrenceRule,
+  formatSourceId,
+  formatTimestamp,
+  getActionMeta,
+  getTypeMeta,
+} from '../automationFormat';
 
 const logDev = (...args) => {
   if (import.meta.env.DEV) {
@@ -8,18 +20,176 @@ const logDev = (...args) => {
   }
 };
 
+const flattenMatchConditions = (conditions) => {
+  if (!conditions || typeof conditions !== 'object') {
+    return [];
+  }
+  const rows = [];
+  for (const [key, value] of Object.entries(conditions)) {
+    if (typeof value === 'object' && value !== null) {
+      for (const [subKey, subValue] of Object.entries(value)) {
+        rows.push([`${key}.${subKey}`, JSON.stringify(subValue)]);
+      }
+    } else {
+      rows.push([key, JSON.stringify(value)]);
+    }
+  }
+  return rows;
+};
+
+const CodeBlock = ({ children }) => (
+  <pre className="max-h-96 overflow-auto rounded-md border bg-muted/50 p-4 font-mono text-sm leading-relaxed">
+    <code>{children}</code>
+  </pre>
+);
+
+const DetailRow = ({ label, children }) => (
+  <div className="grid grid-cols-[minmax(0,9rem)_1fr] gap-3 py-2.5 text-sm">
+    <dt className="text-muted-foreground">{label}</dt>
+    <dd className="min-w-0 break-words font-medium">{children}</dd>
+  </div>
+);
+
+const Section = ({ eyebrow, title, description, children }) => (
+  <Card>
+    <CardHeader className="pb-4">
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {eyebrow}
+      </p>
+      <CardTitle className="text-lg">{title}</CardTitle>
+      {description ? <CardDescription>{description}</CardDescription> : null}
+    </CardHeader>
+    <CardContent className="space-y-4">{children}</CardContent>
+  </Card>
+);
+
+const EventTrigger = ({ automation }) => {
+  const conditions = flattenMatchConditions(automation.match_conditions);
+  const hasConditions = conditions.length > 0;
+  const hasScript = Boolean(automation.condition_script);
+
+  return (
+    <Section
+      eyebrow="When"
+      title={`An event arrives from ${formatSourceId(automation.source_id)}`}
+      description={
+        hasConditions && hasScript
+          ? 'Both the match conditions and the condition script must pass.'
+          : !hasConditions && !hasScript
+            ? 'No conditions: every event from this source triggers the automation.'
+            : null
+      }
+    >
+      <dl className="divide-y">
+        <DetailRow label="Event Source">{formatSourceId(automation.source_id)}</DetailRow>
+      </dl>
+
+      {hasConditions ? (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Match conditions</h3>
+          <div className="overflow-hidden rounded-md border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Field</th>
+                  <th className="px-3 py-2 font-medium">Equals</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {conditions.map(([field, value]) => (
+                  <tr key={field}>
+                    <td className="break-all px-3 py-2 font-mono text-xs">{field}</td>
+                    <td className="break-all px-3 py-2 font-mono text-xs">{value}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {hasScript ? (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Condition script</h3>
+          <CodeBlock>{automation.condition_script}</CodeBlock>
+          <p className="text-xs text-muted-foreground">
+            Receives the <code>event</code> and returns True to trigger the automation.
+          </p>
+        </div>
+      ) : null}
+    </Section>
+  );
+};
+
+const ScheduleTrigger = ({ automation }) => {
+  const summary = describeRecurrenceRule(automation.recurrence_rule);
+  return (
+    <Section eyebrow="When" title={summary ?? 'On a custom schedule'}>
+      <dl className="divide-y">
+        <DetailRow label="Recurrence Rule">
+          <code className="break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+            {automation.recurrence_rule}
+          </code>
+        </DetailRow>
+        <DetailRow label="Next Scheduled">
+          {automation.enabled
+            ? formatTimestamp(automation.next_scheduled_at)
+            : 'Paused while disabled'}
+        </DetailRow>
+      </dl>
+    </Section>
+  );
+};
+
+const ActionSection = ({ automation }) => {
+  if (automation.action_type === 'script') {
+    const scriptCode = automation.action_config?.script_code;
+    return (
+      <Section
+        eyebrow="Then"
+        title="Run a script"
+        description={`Times out after ${automation.action_config?.timeout || 600} seconds.`}
+      >
+        {scriptCode ? (
+          <CodeBlock>{scriptCode}</CodeBlock>
+        ) : (
+          <p className="text-sm text-muted-foreground">No script code defined.</p>
+        )}
+      </Section>
+    );
+  }
+
+  const context = automation.action_config?.context;
+  return (
+    <Section
+      eyebrow="Then"
+      title="Wake the assistant"
+      description="The assistant is woken in this conversation with the prompt below."
+    >
+      {context ? (
+        <blockquote className="whitespace-pre-wrap rounded-md border-l-4 border-primary/40 bg-muted/50 px-4 py-3 text-sm">
+          {context}
+        </blockquote>
+      ) : (
+        <p className="text-sm italic text-muted-foreground">The default prompt will be used.</p>
+      )}
+    </Section>
+  );
+};
+
 const AutomationDetail = () => {
   const { type, id } = useParams();
   const navigate = useNavigate();
   const [automation, setAutomation] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [actionError, setActionError] = useState(null);
   const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-      setError(null);
+      setLoadError(null);
       try {
         const response = await fetch(`/api/automations/${type}/${id}`);
         logDev('[Automations] Fetch automation detail', type, id, response.status);
@@ -29,12 +199,10 @@ const AutomationDetail = () => {
         } else if (!response.ok) {
           throw new Error(`Failed to fetch automation: ${response.statusText}`);
         } else {
-          const data = await response.json();
-          logDev('[Automations] Automation detail loaded', data);
-          setAutomation(data);
+          setAutomation(await response.json());
         }
       } catch (err) {
-        setError(err.message);
+        setLoadError(err.message);
       } finally {
         setLoading(false);
       }
@@ -46,389 +214,194 @@ const AutomationDetail = () => {
   }, [type, id]);
 
   const handleToggleEnabled = async () => {
-    if (!automation) {
-      return;
-    }
-
     setUpdating(true);
+    setActionError(null);
     try {
       const response = await fetch(`/api/automations/${type}/${id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          enabled: !automation.enabled,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !automation.enabled }),
       });
-
       if (!response.ok) {
         throw new Error(`Failed to update automation: ${response.statusText}`);
       }
-
-      const updatedAutomation = await response.json();
-      logDev(
-        '[Automations] Toggle enabled success',
-        updatedAutomation.id,
-        updatedAutomation.enabled
-      );
-      setAutomation(updatedAutomation);
+      setAutomation(await response.json());
     } catch (err) {
-      setError(err.message);
+      setActionError(err.message);
     } finally {
       setUpdating(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!automation) {
-      return;
-    }
-
     // eslint-disable-next-line no-alert
     const confirmed = window.confirm(
       'Are you sure you want to delete this automation? This action cannot be undone.'
     );
-
     if (!confirmed) {
       return;
     }
 
+    setActionError(null);
     try {
-      const response = await fetch(`/api/automations/${type}/${id}`, {
-        method: 'DELETE',
-      });
-
+      const response = await fetch(`/api/automations/${type}/${id}`, { method: 'DELETE' });
       logDev('[Automations] Delete response', response.status);
       if (!response.ok) {
         throw new Error(`Failed to delete automation: ${response.statusText}`);
       }
-
-      logDev('[Automations] Delete success, navigating to list');
       navigate('/automations');
     } catch (err) {
-      setError(err.message);
+      setActionError(err.message);
       console.error('[Automations] Delete failed', err);
     }
   };
 
-  const formatTimestamp = (timestamp) => {
-    if (!timestamp) {
-      return 'Never';
-    }
-    return new Date(timestamp).toLocaleString();
-  };
-
-  const getActionIcon = (actionType) => {
-    return actionType === 'wake_llm' ? '🤖' : '📜';
-  };
-
-  const getActionTitle = (actionType) => {
-    return actionType === 'wake_llm' ? 'LLM Callback' : 'Script Execution';
-  };
-
-  const getTypeIcon = (type) => {
-    return type === 'event' ? '⚡' : '📅';
-  };
-
-  const getTypeTitle = (type) => {
-    return type === 'event' ? 'Event-Based' : 'Schedule-Based';
-  };
-
-  const formatSourceId = (sourceId) => {
-    if (!sourceId) {
-      return '';
-    }
-    return sourceId.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase());
-  };
-
-  const formatMatchConditions = (conditions) => {
-    if (!conditions || typeof conditions !== 'object') {
-      return [];
-    }
-
-    const formatted = [];
-    for (const [key, value] of Object.entries(conditions)) {
-      if (typeof value === 'object' && value !== null) {
-        for (const [subKey, subValue] of Object.entries(value)) {
-          formatted.push(`${key}.${subKey} = ${JSON.stringify(subValue)}`);
-        }
-      } else {
-        formatted.push(`${key} = ${JSON.stringify(value)}`);
-      }
-    }
-    return formatted;
-  };
+  const backLink = (
+    <Link
+      to="/automations"
+      className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+    >
+      <ArrowLeft className="size-4" aria-hidden="true" />
+      Back to Automations
+    </Link>
+  );
 
   if (loading) {
-    return <div>Loading automation...</div>;
-  }
-  if (error) {
-    return <div className="error">Error: {error}</div>;
-  }
-  if (!automation) {
-    return <div>Automation not found</div>;
+    return (
+      <PageContainer className="max-w-5xl">
+        <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+          Loading automation...
+        </div>
+      </PageContainer>
+    );
   }
 
-  const formattedConditions =
-    automation.type === 'event' && automation.match_conditions
-      ? formatMatchConditions(automation.match_conditions)
-      : [];
+  if (loadError || !automation) {
+    return (
+      <PageContainer className="max-w-5xl space-y-6">
+        {backLink}
+        {loadError ? (
+          <Alert variant="destructive">
+            <AlertDescription>Error: {loadError}</AlertDescription>
+          </Alert>
+        ) : (
+          <div className="rounded-lg border border-dashed px-6 py-16 text-center">
+            <h1 className="text-lg font-semibold">Automation not found</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              It may have been deleted, or the link is out of date.
+            </p>
+          </div>
+        )}
+      </PageContainer>
+    );
+  }
+
+  const typeMeta = getTypeMeta(automation.type);
+  const actionMeta = getActionMeta(automation.action_type);
+  const TypeIcon = typeMeta.icon;
+  const ActionIcon = actionMeta.icon;
 
   return (
-    <div className="automation-detail">
-      <h1>
-        {getTypeIcon(automation.type)} {getActionIcon(automation.action_type)} {automation.name}
-      </h1>
-
-      <nav style={{ marginBottom: '2rem' }}>
-        <Link to="/automations">← Back to Automations</Link>
-      </nav>
-
-      {error && (
-        <div className="error" style={{ marginBottom: '1rem' }}>
-          Error: {error}
+    <PageContainer className="max-w-5xl">
+      <div className="mb-6 space-y-4">
+        {backLink}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-4">
+            <div
+              className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${
+                automation.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+              }`}
+              aria-hidden="true"
+            >
+              <TypeIcon className="size-6" />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <h1 className="break-words text-2xl font-bold tracking-tight sm:text-3xl">
+                {automation.name}
+              </h1>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={automation.enabled ? 'default' : 'outline'}>
+                  {automation.enabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+                <Badge variant="secondary" className="gap-1 font-medium">
+                  <TypeIcon className="size-3" aria-hidden="true" />
+                  {typeMeta.label}
+                </Badge>
+                <Badge variant="outline" className="gap-1 font-medium">
+                  <ActionIcon className="size-3" aria-hidden="true" />
+                  {actionMeta.label}
+                </Badge>
+              </div>
+              {automation.description ? (
+                <p className="max-w-2xl text-muted-foreground">{automation.description}</p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleToggleEnabled}
+              disabled={updating}
+            >
+              {automation.enabled ? (
+                <PowerOff className="size-4" aria-hidden="true" />
+              ) : (
+                <Power className="size-4" aria-hidden="true" />
+              )}
+              {updating ? 'Updating...' : automation.enabled ? 'Disable' : 'Enable'} Automation
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleDelete}
+              className="gap-2 text-red-600 hover:bg-red-600 hover:text-white dark:text-red-400 dark:hover:bg-red-700 dark:hover:text-white"
+            >
+              <Trash2 className="size-4" aria-hidden="true" />
+              Delete
+            </Button>
+          </div>
         </div>
-      )}
+      </div>
 
-      {/* Configuration Section */}
-      <section>
-        <h2>Configuration</h2>
-        <dl>
-          <dt>ID:</dt>
-          <dd>{automation.id}</dd>
+      {actionError ? (
+        <Alert variant="destructive" className="mb-6">
+          <AlertDescription>Error: {actionError}</AlertDescription>
+        </Alert>
+      ) : null}
 
-          <dt>Type:</dt>
-          <dd>{getTypeTitle(automation.type)}</dd>
-
-          <dt>Description:</dt>
-          <dd>{automation.description || 'No description provided'}</dd>
-
-          <dt>Action Type:</dt>
-          <dd>{getActionTitle(automation.action_type)}</dd>
-
-          <dt>Status:</dt>
-          <dd>
-            {automation.enabled ? (
-              <span style={{ color: 'var(--accent)' }}>✓ Enabled</span>
-            ) : (
-              <span style={{ color: 'var(--text-light)' }}>✗ Disabled</span>
-            )}
-          </dd>
-
-          <dt>Created:</dt>
-          <dd>{formatTimestamp(automation.created_at)}</dd>
-
-          <dt>Conversation ID:</dt>
-          <dd>
-            <code>{automation.conversation_id}</code>
-          </dd>
-
-          <dt>Interface Type:</dt>
-          <dd>{automation.interface_type}</dd>
-        </dl>
-      </section>
-
-      {/* Trigger Configuration */}
-      <section style={{ marginTop: '2rem' }}>
-        <h2>Trigger Configuration</h2>
-
-        {automation.type === 'event' ? (
-          <>
-            <dl>
-              <dt>Event Source:</dt>
-              <dd>{formatSourceId(automation.source_id)}</dd>
-            </dl>
-
-            <h3>Trigger Conditions</h3>
-            <p style={{ color: 'var(--text-light)' }}>
-              Events must match these conditions to trigger this automation.
-            </p>
-
-            {formattedConditions.length > 0 && (
-              <>
-                <h4>JSON Match Conditions</h4>
-                <ul>
-                  {formattedConditions.map((condition, index) => (
-                    <li key={index}>
-                      <code>{condition}</code>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {automation.condition_script && (
-              <>
-                <h4>Condition Script (Python)</h4>
-                <div
-                  style={{
-                    backgroundColor: 'var(--bg-secondary)',
-                    padding: '1rem',
-                    borderRadius: '8px',
-                    overflowX: 'auto',
-                  }}
-                >
-                  <pre>
-                    <code>{automation.condition_script}</code>
-                  </pre>
-                </div>
-                <p style={{ color: 'var(--text-light)', fontSize: '0.9em', marginTop: '0.5rem' }}>
-                  This script receives an 'event' variable and must return True/False to determine
-                  if the automation triggers.
-                </p>
-              </>
-            )}
-
-            {formattedConditions.length > 0 && automation.condition_script && (
-              <p style={{ color: 'var(--text-light)', fontSize: '0.9em', fontStyle: 'italic' }}>
-                Both conditions must match for this automation to trigger.
-              </p>
-            )}
-
-            {formattedConditions.length === 0 && !automation.condition_script && (
-              <p>
-                <em>No conditions defined (matches all events from source).</em>
-              </p>
-            )}
-          </>
-        ) : automation.type === 'schedule' ? (
-          <>
-            <dl>
-              <dt>Recurrence Rule:</dt>
-              <dd>
-                <code>{automation.recurrence_rule}</code>
-              </dd>
-
-              <dt>Next Scheduled:</dt>
-              <dd>{formatTimestamp(automation.next_scheduled_at)}</dd>
-            </dl>
-          </>
-        ) : (
-          <p>
-            <em>No trigger configuration available.</em>
-          </p>
-        )}
-      </section>
-
-      {/* Action Configuration */}
-      <section style={{ marginTop: '2rem' }}>
-        {automation.action_type === 'script' ? (
-          <>
-            <h2>Script Code</h2>
-            {automation.action_config?.script_code ? (
-              <>
-                <div
-                  style={{
-                    backgroundColor: 'var(--bg-secondary)',
-                    padding: '1rem',
-                    borderRadius: '8px',
-                    overflowX: 'auto',
-                  }}
-                >
-                  <pre>
-                    <code>{automation.action_config.script_code}</code>
-                  </pre>
-                </div>
-                <p style={{ marginTop: '1rem' }}>
-                  <strong>Timeout:</strong> {automation.action_config.timeout || 600} seconds
-                </p>
-              </>
-            ) : (
-              <p>
-                <em>No script code defined.</em>
-              </p>
-            )}
-          </>
-        ) : (
-          <>
-            <h2>LLM Callback Configuration</h2>
-            <dl>
-              <dt>Callback Prompt:</dt>
-              <dd>
-                {automation.action_config?.context ? (
-                  <pre
-                    style={{
-                      backgroundColor: 'var(--bg-secondary)',
-                      padding: '1rem',
-                      borderRadius: '8px',
-                    }}
-                  >
-                    {automation.action_config.context}
-                  </pre>
-                ) : (
-                  <em>Default prompt will be used</em>
-                )}
-              </dd>
-            </dl>
-          </>
-        )}
-      </section>
-
-      {/* Execution Statistics */}
-      <section style={{ marginTop: '2rem' }}>
-        <h2>Execution Statistics</h2>
-        <dl>
-          <dt>Total Executions:</dt>
-          <dd>{automation.execution_count || 0}</dd>
-
-          <dt>Last Execution:</dt>
-          <dd>{formatTimestamp(automation.last_execution_at)}</dd>
-        </dl>
-      </section>
-
-      {/* Actions */}
-      <section style={{ marginTop: '2rem' }}>
-        <h2>Actions</h2>
-        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          {/* Toggle Enable/Disable */}
-          <Button onClick={handleToggleEnabled} disabled={updating}>
-            {updating ? 'Updating...' : automation.enabled ? 'Disable' : 'Enable'} Automation
-          </Button>
-
-          {/* Delete */}
-          <Button onClick={handleDelete} variant="destructive">
-            Delete Automation
-          </Button>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0 space-y-6">
+          {automation.type === 'event' ? (
+            <EventTrigger automation={automation} />
+          ) : (
+            <ScheduleTrigger automation={automation} />
+          )}
+          <ActionSection automation={automation} />
         </div>
-      </section>
 
-      <style jsx>{`
-        dl {
-          display: grid;
-          grid-template-columns: auto 1fr;
-          gap: 0.5rem 1rem;
-        }
-
-        dt {
-          font-weight: bold;
-          text-align: right;
-        }
-
-        dd {
-          margin: 0;
-        }
-
-        code {
-          background-color: var(--bg-secondary);
-          padding: 0.2rem 0.4rem;
-          border-radius: 3px;
-        }
-
-        pre code {
-          background: none;
-          padding: 0;
-        }
-
-        .error {
-          color: red;
-          background-color: var(--bg-error);
-          padding: 1rem;
-          border-radius: 4px;
-          border: 1px solid red;
-        }
-      `}</style>
-    </div>
+        <Card className="h-fit">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Details</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="divide-y">
+              <DetailRow label="Status">{automation.enabled ? 'Enabled' : 'Disabled'}</DetailRow>
+              <DetailRow label="Runs">{automation.execution_count || 0}</DetailRow>
+              <DetailRow label="Last run">
+                {formatTimestamp(automation.last_execution_at)}
+              </DetailRow>
+              <DetailRow label="Created">{formatTimestamp(automation.created_at)}</DetailRow>
+              <DetailRow label="Conversation">
+                <code className="break-all font-mono text-xs">{automation.conversation_id}</code>
+              </DetailRow>
+              <DetailRow label="Interface">{automation.interface_type}</DetailRow>
+              <DetailRow label="ID">{automation.id}</DetailRow>
+            </dl>
+          </CardContent>
+        </Card>
+      </div>
+    </PageContainer>
   );
 };
 
