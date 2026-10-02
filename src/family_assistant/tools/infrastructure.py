@@ -97,6 +97,7 @@ from family_assistant.tools.metadata import (
     build_local_tool_descriptors,
 )
 from family_assistant.tools.outcomes import (
+    ACTION_BLOCKED_PREFIX,
     ACTION_CANCELLED_PREFIX,
     ACTION_DECLINED_PREFIX,
 )
@@ -3568,7 +3569,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         name: str,
         result: ToolCallReviewResult,
     ) -> ToolResult:
-        text = f"Action blocked by automatic review for tool '{name}': {result.reason}"
+        text = f"{ACTION_BLOCKED_PREFIX} for tool '{name}': {result.reason}"
         if result.safer_alternative:
             text += f" Safer alternative: {result.safer_alternative}"
         return ToolResult(text=text, attachments=None)
@@ -3588,7 +3589,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             return _ConfirmationGateResult(
                 result=ToolResult(
                     text=(
-                        f"Action blocked by automatic review for tool '{name}': "
+                        f"{ACTION_BLOCKED_PREFIX} for tool '{name}': "
                         f"human confirmation is required but unavailable. {reason}"
                     ),
                     attachments=None,
@@ -3606,7 +3607,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             return _ConfirmationGateResult(
                 result=ToolResult(
                     text=(
-                        f"Action blocked by automatic review for tool '{name}': "
+                        f"{ACTION_BLOCKED_PREFIX} for tool '{name}': "
                         "human confirmation is required, but deferred execution is "
                         "unsafe because this call's result is not independent and "
                         f"terminal. {reason}"

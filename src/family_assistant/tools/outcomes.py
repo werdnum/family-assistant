@@ -18,13 +18,15 @@ import json
 from typing import Literal
 
 # "rejected" means the tool did not run: a confirmation was declined, cancelled
-# or timed out, or the call was deferred to an approval outside the turn.
+# or timed out, automatic review blocked it, or the call was deferred to an
+# approval outside the turn.
 ToolOutcome = Literal["succeeded", "failed", "rejected"]
 
 # Results written when a confirmation gate stops a tool before it runs. They
 # are built from these prefixes so the classifier below recognises every one.
 ACTION_CANCELLED_PREFIX = "Action cancelled:"
 ACTION_DECLINED_PREFIX = "OK. Action cancelled by user"
+ACTION_BLOCKED_PREFIX = "Action blocked by automatic review"
 # Said by a result that handed the call to a durable confirmation instead of
 # running it: the turn ends with the call not run, waiting outside the turn.
 NOT_RUN_YET_NOTE = "It hasn't run yet"
@@ -43,7 +45,11 @@ def classify_tool_outcome(content: object, error_traceback: str | None) -> ToolO
     first.
     """
     text = content.strip() if isinstance(content, str) else ""
-    if text.startswith((ACTION_CANCELLED_PREFIX, ACTION_DECLINED_PREFIX)):
+    if text.startswith((
+        ACTION_CANCELLED_PREFIX,
+        ACTION_DECLINED_PREFIX,
+        ACTION_BLOCKED_PREFIX,
+    )):
         return "rejected"
     if NOT_RUN_YET_NOTE in text and error_traceback is None:
         return "rejected"

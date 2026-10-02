@@ -37,6 +37,7 @@ from family_assistant.services.tool_call_review import (
 )
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.storage.tasks import TaskPriority
+from family_assistant.tools.outcomes import ACTION_DECLINED_PREFIX
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolArguments,
@@ -105,7 +106,7 @@ def _delegation_confirmation_outcome_result(
             attachments=None,
         )
     return ToolResult(
-        text=f"OK. Delegation to service '{target_service_id}' cancelled by user.",
+        text=f"{ACTION_DECLINED_PREFIX}: delegation to service '{target_service_id}'.",
         attachments=None,
     )
 

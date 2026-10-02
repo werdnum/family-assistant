@@ -36,6 +36,12 @@ from family_assistant.tools.types import ConfirmationOutcome
             None,
             "rejected",
         ),
+        (
+            "Action blocked by automatic review for tool 'delete_note': unsafe",
+            None,
+            "rejected",
+        ),
+        ("OK. Action cancelled by user: delegation to service 'x'.", None, "rejected"),
         ('{"error": null, "rows": 2}', None, "succeeded"),
         ("[1, 2]", None, "succeeded"),
         (None, None, "succeeded"),
