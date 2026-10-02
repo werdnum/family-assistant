@@ -50,6 +50,12 @@ messages** to bring in older ones, as many times as you need to reach the start.
 Reopening an existing conversation resumes it under the profile it started in, so follow-ups keep
 their context. Starting a new chat uses whichever profile you last picked.
 
+Each conversation keeps its own unsent draft. If you switch away part-way through a message, the
+text and any files you attached stay with that conversation and are waiting in the message box when
+you come back; the conversation you switch to shows only its own draft. Drafts last while the page
+or app stays open. In the browser, if a conversation can't be loaded, Chat says so and offers
+**Retry**, and it won't send anything into that conversation until its messages have loaded.
+
 Switching profile part-way through a conversation starts a fresh chat in the new profile, so each
 profile's context stays separate — but anything you have already typed comes with you, so you can
 draft a message and then decide who should handle it. If the chat is still empty, switching just

@@ -714,6 +714,83 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testSwitchingConversationsKeepsEachDraftWithItsConversation() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+        let model = makeViewModel(conversationID: nil)
+        await model.selectConversation("web_conv_draft_a")
+        let attachment = makeAttachment(uploadState: .uploaded)
+        model.draftText = "half-written for A"
+        model.draftAttachments = [attachment]
+
+        await model.selectConversation("web_conv_draft_b")
+
+        XCTAssertEqual(model.draftText, "", "A's text must not follow the user into B.")
+        XCTAssertEqual(model.draftAttachments, [], "A's attachment must not follow the user into B.")
+
+        await model.selectConversation("web_conv_draft_a")
+
+        XCTAssertEqual(model.draftText, "half-written for A")
+        XCTAssertEqual(model.draftAttachments, [attachment])
+    }
+
+    func testUploadFinishingAfterSwitchLandsInItsOwnConversationsDraft() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("vm-switch-upload.txt")
+        try Data("file".utf8).write(to: fileURL)
+        let releaseUpload = DispatchSemaphore(value: 0)
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/attachments/upload"):
+                _ = releaseUpload.wait(timeout: .now() + 5)
+                return .json(
+                    """
+                    {
+                      "attachment_id": "33333333-3333-3333-3333-333333333333",
+                      "filename": "vm-switch-upload.txt",
+                      "content_type": "text/plain",
+                      "size": 4,
+                      "url": "/api/attachments/33333333-3333-3333-3333-333333333333"
+                    }
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", _) where path.hasSuffix("/messages"):
+                return .json(
+                    #"{"messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+        await model.selectConversation("web_conv_upload_a")
+        let upload = Task { await model.addAttachment(fileURL: fileURL) }
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploading }
+
+        await model.selectConversation("web_conv_upload_b")
+        XCTAssertEqual(model.draftAttachments, [])
+        releaseUpload.signal()
+        await upload.value
+
+        XCTAssertEqual(model.draftAttachments, [], "The finished upload stays with A.")
+        await model.selectConversation("web_conv_upload_a")
+        let restored = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertEqual(restored.uploadState, .uploaded)
+        XCTAssertEqual(restored.attachmentID, "33333333-3333-3333-3333-333333333333")
+    }
+
     func testOpeningConversationAdoptsItsProfile() async throws {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""

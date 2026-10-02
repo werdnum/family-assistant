@@ -29,9 +29,18 @@ export interface ChatControls {
   loadOlderMessages: () => void;
   /** Background delegations the open conversation is waiting on. */
   pendingDelegations: PendingDelegation[];
+  /**
+   * Set while the open conversation's history has not loaded: the thread shows
+   * this instead of a transcript, and sending is refused until it clears.
+   */
+  conversationLoadStatus: ConversationLoadStatus | null;
+  /** Ask again for the open conversation's history after a failed load. */
+  retryConversationLoad: () => void;
 }
 
 export type OlderMessagesStatus = 'idle' | 'loading' | 'failed';
+
+export type ConversationLoadStatus = 'loading' | 'failed';
 
 export const ChatControlsContext = createContext<ChatControls | null>(null);
 

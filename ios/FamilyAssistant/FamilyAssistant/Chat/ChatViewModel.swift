@@ -70,6 +70,11 @@ final class ChatViewModel {
     private(set) var persistedMessagesConversationID: String?
     var draftText = ""
     var draftAttachments: [ChatAttachment] = []
+    /// Composer contents of the conversations the user has switched away from,
+    /// keyed by conversation id. Text and attachments travel together, so
+    /// leaving a conversation neither loses its draft nor carries part of it
+    /// into the next one; returning puts it back in the composer.
+    private var savedDrafts: [String: ConversationDraft] = [:]
     var pendingConfirmations: [ChatPendingConfirmation] = []
     /// Background delegations the open conversation is waiting on.
     private(set) var pendingDelegations: [ChatPendingDelegation] = []
@@ -908,10 +913,11 @@ final class ChatViewModel {
 
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
         // The main composer doubles as the steer input and is shared across
-        // conversations, so on an actual switch clear it: steer text typed for
-        // the previous turn must not leak into — and be sent in — the newly
-        // selected thread. Restoring the current conversation (id unchanged) keeps
-        // any draft the user is typing.
+        // conversations, so on an actual switch its contents are set aside with
+        // the conversation they were written in: steer text typed for the
+        // previous turn must not leak into — and be sent in — the newly selected
+        // thread. Restoring the current conversation (id unchanged) keeps any
+        // draft the user is typing.
         let isSwitchingConversation = id != conversationID
         let queuedStopTurnID = activeTurnSession.flatMap { session in
             stopAfterRegistrationByTurnID[session.turnID] == nil ? nil : session.turnID
@@ -933,7 +939,7 @@ final class ChatViewModel {
         resetTurnControlState()
         displayedMessageNewerOffset = 0
         if isSwitchingConversation {
-            draftText = ""
+            swapDraft(leaving: conversationID, entering: id)
             persistedMessagesConversationID = nil
             setPendingDelegations([])
         }
@@ -1006,16 +1012,14 @@ final class ChatViewModel {
         endedTurnStatusByTurnID.removeAll()
         resetTurnControlState()
         displayedMessageNewerOffset = 0
+        if !preservingDraft {
+            swapDraft(leaving: conversationID, entering: nil)
+        }
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         setPendingDelegations([])
         messages = []
         persistedMessagesConversationID = nil
-        if !preservingDraft {
-            draftText = ""
-            cleanupTemporaryImports(for: draftAttachments)
-            draftAttachments = []
-        }
         composerFocusRequestID = UUID()
         mobileShowsConversationList = false
         // A brand-new conversation has no history to load, so it is never in a
@@ -3550,7 +3554,35 @@ final class ChatViewModel {
         }
         if let index = draftAttachments.firstIndex(where: { $0.id == attachment.id }) {
             draftAttachments[index] = attachment
+        } else {
+            // The user switched conversations while the upload ran, so its draft
+            // was set aside; finish the upload there.
+            for (conversation, var draft) in savedDrafts {
+                guard let index = draft.attachments.firstIndex(where: { $0.id == attachment.id }) else {
+                    continue
+                }
+                draft.attachments[index] = attachment
+                savedDrafts[conversation] = draft
+                break
+            }
         }
+    }
+
+    /// Set the composer's contents aside under the conversation being left and
+    /// put back whatever was set aside for the one being entered.
+    private func swapDraft(leaving outgoingID: String?, entering incomingID: String?) {
+        if let outgoingID {
+            if draftText.isEmpty, draftAttachments.isEmpty {
+                savedDrafts[outgoingID] = nil
+            } else {
+                savedDrafts[outgoingID] = ConversationDraft(text: draftText, attachments: draftAttachments)
+            }
+        } else {
+            cleanupTemporaryImports(for: draftAttachments)
+        }
+        let incoming = incomingID.flatMap { savedDrafts.removeValue(forKey: $0) }
+        draftText = incoming?.text ?? ""
+        draftAttachments = incoming?.attachments ?? []
     }
 
     private func cleanupTemporaryImports(for attachments: [ChatAttachment]) {
@@ -5619,6 +5651,12 @@ extension ChatViewModel: ResyncHost {
     func resyncPhaseDidFinish() {
         syncCoordinator.apply(.syncFinished)
     }
+}
+
+/// What the composer held when the user left a conversation.
+private struct ConversationDraft {
+    var text: String
+    var attachments: [ChatAttachment]
 }
 
 /// Per-subscription stream telemetry, accumulated while consuming a turn's SSE
