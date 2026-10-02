@@ -12,6 +12,8 @@ const ContextPage = lazy(() => import('./ContextPage.tsx'));
 const NotesApp = lazy(() => import('../notes/NotesApp'));
 const TasksApp = lazy(() => import('../tasks/TasksApp'));
 
+const ArtifactReviewPage = lazy(() => import('../pages/Artifacts/ArtifactReviewPage'));
+const ScriptsPage = lazy(() => import('../pages/Scripts/ScriptsPage'));
 const AutomationsApp = lazy(() => import('../pages/Automations/AutomationsApp'));
 const EventsApp = lazy(() => import('../pages/Events/EventsApp'));
 const HistoryApp = lazy(() => import('../pages/History/HistoryApp'));
@@ -95,6 +97,8 @@ const AppRouter = () => {
         {/* Event Listeners routes */}
 
         {/* Automations routes */}
+        <Route path="/artifacts" element={withLayout(<ArtifactReviewPage />)} />
+        <Route path="/scripts" element={withLayout(<ScriptsPage />)} />
         <Route path="/automations/*" element={withLayout(<AutomationsApp />)} />
 
         {/* Events routes */}

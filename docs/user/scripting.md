@@ -3,9 +3,23 @@
 This guide provides a reference for assistants to write Python scripts when responding to user
 requests for automation and complex operations.
 
-**Important**: Scripts are primarily a tool for assistants to fulfill user requests, not for direct
-user interaction. Before writing scripts, understand the available APIs and sandbox constraints to
-write effective scripts.
+Scripts can be written by the assistant or edited directly in the web interface. Before writing
+scripts, understand the available APIs and sandbox constraints to write effective scripts.
+
+## Editing stored scripts
+
+Open **Automations → Scripts** in the web interface. Choose **New script** to create one, or **Edit
+script** to change a stored script's description, Python code, or parameter schema. The parameter
+schema is an optional JSON object describing the script's inputs. Existing script names stay fixed
+so automations can keep referring to them.
+
+**Save script** checks the parameter schema and validates the code before saving. Validation errors
+leave your edits in the form. Saving stamps the complete definition as your own edit; changes apply
+to every automation that references the script. Saving does not run the script.
+
+To approve an existing script without changing its content, choose **Review and confirm** on the
+Scripts page. See
+[Reviewing saved artifacts](confirmations-and-safety.md#reviewing-saved-artifacts).
 
 ## Python Scripting Overview
 

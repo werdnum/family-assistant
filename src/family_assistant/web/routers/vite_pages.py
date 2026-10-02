@@ -145,6 +145,8 @@ async def context_ui(request: Request) -> Response:
     return _serve_vite_html_file(request, "router.html")
 
 
+@vite_pages_router.get("/artifacts", name="artifact_review_ui")
+@vite_pages_router.get("/scripts", name="scripts_ui")
 @vite_pages_router.get("/tools", name="tools_ui")
 async def tools_ui(request: Request) -> Response:
     """Serve the React tools interface via router."""

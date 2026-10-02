@@ -19,6 +19,23 @@ Once a turn has taken in untrusted content, even reading can be gated. Searching
 your Gmail widens what the assistant knows while it is holding text someone else wrote, so those
 lookups can pause for approval too. It's why a search that normally just runs sometimes asks first.
 
+## Reviewing saved artifacts
+
+Open **Automations → Artifact review** in the web interface to review saved notes, scripts, and
+automations. You can also reach it from **Review note trust** on Notes or **Review automation
+trust** on an automation's detail page. Filter by type or select **Needs review only** to find
+content that has not been approved for reuse.
+
+Choose **Review and confirm**, read the complete content, and press **Confirm as user reviewed**.
+The artifact receives a **User confirmed** status and the assistant can reuse it as reviewed
+content. The confirmation is recorded, and the content itself stays the same. Confirming an
+automation preserves its schedule, enabled state, and execution profile.
+
+Approval applies only to the displayed artifact. A stored script referenced by an automation must be
+reviewed separately, and confirming a note does not approve its attachments. If the content changes
+while you are reviewing it, confirmation is refused: close the dialog, reload the list, and review
+the updated content.
+
 ## Approving
 
 - **Telegram:** inline **✅ Confirm** and **❌ Cancel** buttons.

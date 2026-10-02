@@ -339,6 +339,9 @@ const AutomationDetail = () => {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
+            <Button variant="outline" asChild>
+              <Link to={`/artifacts?kind=${automation.type}`}>Review automation trust</Link>
+            </Button>
             <Button
               variant="outline"
               className="gap-2"
