@@ -536,6 +536,69 @@ describe('ChatApp', () => {
     expect(await screen.findByTestId('tool-group-content')).toHaveAttribute('data-state', 'closed');
   });
 
+  it('shows a historical failed call as failed and a call with no result as unrecorded', async () => {
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_tool_outcomes') {
+          return HttpResponse.json({ messages: [] });
+        }
+
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: 401,
+              role: 'user',
+              content: 'Save a note',
+              timestamp: '2026-06-24T12:00:00Z',
+            },
+            {
+              internal_id: 402,
+              role: 'assistant',
+              content: 'Saving.',
+              timestamp: '2026-06-24T12:00:01Z',
+              tool_calls: [
+                {
+                  id: 'call_failed_note',
+                  type: 'function',
+                  function: { name: 'add_or_update_note', arguments: '{"title":"Groceries"}' },
+                },
+                {
+                  id: 'call_never_answered',
+                  type: 'function',
+                  function: { name: 'get_weather', arguments: '{}' },
+                },
+              ],
+            },
+            {
+              internal_id: 403,
+              role: 'tool',
+              tool_call_id: 'call_failed_note',
+              content: 'Error: Database temporarily unavailable',
+              tool_outcome: 'failed',
+              timestamp: '2026-06-24T12:00:02Z',
+            },
+          ],
+        });
+      })
+    );
+    mockLocalStorage.getItem.mockImplementation((key: string) =>
+      key === 'lastConversationId' ? 'web_conv_tool_outcomes' : null
+    );
+
+    await renderChatApp({ waitForReady: true });
+
+    expect(await screen.findByText('Saving.')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId('tool-group-trigger'));
+    const calls = await screen.findAllByTestId('tool-call');
+    expect(calls.map((call) => call.getAttribute('data-tool-outcome'))).toEqual([
+      'failed',
+      'unknown',
+    ]);
+    expect(document.querySelector('.tool-success')).toBeNull();
+    expect(screen.getByText('Error: Database temporarily unavailable')).toBeInTheDocument();
+  });
+
   it('shows image attachments from history inline in the assistant reply', async () => {
     const { server } = await import('../../test/setup.js');
     const { http, HttpResponse } = await import('msw');

@@ -731,6 +731,7 @@ export const useStreamingResponse = ({
                   const updatedToolCall = {
                     ...toolCalls[toolCallIndex],
                     result: payload.result,
+                    outcome: payload.outcome,
                     attachments: payload.attachments || toolCalls[toolCallIndex].attachments,
                   };
 

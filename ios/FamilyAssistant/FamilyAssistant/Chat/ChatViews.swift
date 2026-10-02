@@ -2070,7 +2070,7 @@ private struct ToolGroupView: View {
     @State private var collapsedCompleted = true
 
     private var shouldCollapse: Bool {
-        collapsedCompleted && toolCalls.allSatisfy { $0.status == .complete }
+        collapsedCompleted && !toolCalls.contains { $0.status.isPending }
     }
 
     var body: some View {
@@ -2104,9 +2104,10 @@ private struct ToolCallCard: View {
                 Label(toolCall.name, systemImage: icon)
                     .font(.subheadline.bold())
                 Spacer()
-                Text(toolCall.status.rawValue)
+                Text(toolCall.status.label)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(toolCall.status == .failed ? .red : .secondary)
+                    .accessibilityIdentifier("tool-call-status-\(toolCall.id)")
             }
             Text(toolCall.argumentsText)
                 .font(.caption.monospaced())
@@ -2134,12 +2135,14 @@ private struct ToolCallCard: View {
             "hourglass"
         case .awaitingApproval:
             "hand.raised"
-        case .approved:
+        case .succeeded:
             "checkmark.circle"
-        case .rejected, .failed:
+        case .failed:
             "xmark.octagon"
-        case .complete:
-            "checkmark.circle"
+        case .rejected:
+            "nosign"
+        case .unknown:
+            "questionmark.circle"
         }
     }
 }

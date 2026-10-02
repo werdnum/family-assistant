@@ -207,6 +207,78 @@ describe('Streaming with Tool Calls', () => {
   );
 
   it(
+    'shows a streamed failed tool result as failed, not done',
+    async () => {
+      let ourTurnId = '';
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+          };
+          ourTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_failed_tool',
+            first_seq: 0,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const encoder = new TextEncoder();
+          const send = (controller: ReadableStreamDefaultController, event: string, data: object) =>
+            controller.enqueue(
+              encoder.encode(
+                `event: ${event}\ndata: ${JSON.stringify({ turn_id: ourTurnId, ...data })}\n\n`
+              )
+            );
+          const stream = new ReadableStream({
+            start(controller) {
+              send(controller, 'tool_call', {
+                tool_call: {
+                  id: 'note_call_1',
+                  type: 'function',
+                  function: {
+                    name: 'add_or_update_note',
+                    arguments: JSON.stringify({ title: 'Groceries', content: 'Milk' }),
+                  },
+                },
+              });
+              send(controller, 'tool_result', {
+                tool_call_id: 'note_call_1',
+                result: 'Error: Database temporarily unavailable',
+                outcome: 'failed',
+              });
+              send(controller, 'text', { content: 'I could not save that note.' });
+              send(controller, 'turn_ended', { status: 'complete' });
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Save a grocery note');
+      await user.keyboard('{Enter}');
+
+      expect(
+        await screen.findByText('I could not save that note.', undefined, { timeout: 5000 })
+      ).toBeInTheDocument();
+      await user.click(screen.getByTestId('tool-group-trigger'));
+      const call = await screen.findByTestId('tool-call');
+      expect(call).toHaveAttribute('data-tool-outcome', 'failed');
+      expect(call.querySelector('.tool-success')).toBeNull();
+      expect(screen.getByTestId('tool-outcome-note')).toHaveTextContent('Failed');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'shows an inline image for an enriched attach_to_response tool result',
     async () => {
       let ourTurnId = '';

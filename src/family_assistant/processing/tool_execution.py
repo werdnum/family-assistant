@@ -34,6 +34,7 @@ from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     confirmation_outcome_to_tool_result,
 )
+from family_assistant.tools.outcomes import ACTION_CANCELLED_PREFIX
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolCallBatch,
@@ -375,7 +376,7 @@ class ToolExecutor:
                 "Safety confirmation for tool '%s' timed out.",
                 function_name,
             )
-            error_msg = f"Action cancelled: Safety confirmation for tool '{function_name}' timed out."
+            error_msg = f"{ACTION_CANCELLED_PREFIX} Safety confirmation for tool '{function_name}' timed out."
             return self._build_error_result(
                 call_id=call_id,
                 function_name=function_name,

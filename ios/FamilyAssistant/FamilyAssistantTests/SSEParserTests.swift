@@ -44,6 +44,31 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(decoded[3].status, "complete")
     }
 
+    func testDecodesToolResultOutcome() {
+        let parser = SSEParser()
+
+        let failed = parser.decode(
+            ServerSentEvent(
+                event: "tool_result",
+                data: #"{"tool_call_id":"call_1","result":"Error: Database temporarily unavailable","outcome":"failed"}"#
+            )
+        )
+        let declined = parser.decode(
+            ServerSentEvent(
+                event: "tool_result",
+                data: #"{"tool_call_id":"call_2","result":"OK. Action cancelled by user for tool 'x'.","outcome":"rejected"}"#
+            )
+        )
+        let unlabelled = parser.decode(
+            ServerSentEvent(event: "tool_result", data: #"{"tool_call_id":"call_3","result":"ok"}"#)
+        )
+
+        XCTAssertEqual(failed.toolOutcome, .failed)
+        XCTAssertEqual(failed.toolResult, "Error: Database temporarily unavailable")
+        XCTAssertEqual(declined.toolOutcome, .rejected)
+        XCTAssertNil(unlabelled.toolOutcome)
+    }
+
     func testDecodesUserInputEcho() {
         let parser = SSEParser()
 

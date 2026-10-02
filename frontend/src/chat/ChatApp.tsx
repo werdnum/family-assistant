@@ -27,6 +27,7 @@ import { ChatControlsContext, type OlderMessagesStatus, type SteerResult } from 
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
+import { isTerminalToolOutcome, type TerminalToolOutcome } from './toolOutcome';
 import {
   BackendAttachment,
   BackendConversationMessage,
@@ -1277,6 +1278,9 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
               if (tc.result !== undefined) {
                 result.result = tc.result as string;
               }
+              if (isTerminalToolOutcome(tc.outcome)) {
+                result.outcome = tc.outcome;
+              }
               // Add attachments if present
               if (tc.attachments !== undefined && Array.isArray(tc.attachments)) {
                 result.attachments = [...tc.attachments];
@@ -1564,6 +1568,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
         const processedMessages: Message[] = [];
         const toolResponses = new Map<string, string>();
+        const toolOutcomes = new Map<string, TerminalToolOutcome>();
         const toolAttachments = new Map<string, BackendAttachment[]>();
 
         // First pass: collect tool responses and attachments
@@ -1576,6 +1581,9 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                   ? JSON.stringify(msg.content)
                   : 'Tool executed successfully';
             toolResponses.set(msg.tool_call_id, responseContent);
+            if (isTerminalToolOutcome(msg.tool_outcome)) {
+              toolOutcomes.set(msg.tool_call_id, msg.tool_outcome);
+            }
 
             // Collect attachments from tool messages for synthesis
             const toolMessageAttachments = msg.attachments;
@@ -1653,6 +1661,10 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                   args: args as Record<string, unknown>,
                   argsText: argsText,
                   result: toolResponse ?? undefined,
+                  outcome: toolOutcomes.get(toolCall.id),
+                  awaitingResult:
+                    toolResponse === undefined &&
+                    Boolean(msg.turn_id && runningTurnIds.has(msg.turn_id)),
                 });
               });
             }

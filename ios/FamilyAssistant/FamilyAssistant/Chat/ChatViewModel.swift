@@ -3989,6 +3989,7 @@ final class ChatViewModel {
         if messages[index].status != .failed {
             messages[index].status = .complete
         }
+        settleUnansweredToolCalls(at: index)
         // A turn stopped on another device finalizes here with no streamed text
         // if the persisted stopped row hasn't merged yet; show the same stopped
         // marker the send-stream path uses rather than an empty bubble.
@@ -4503,7 +4504,7 @@ final class ChatViewModel {
                 toolCallID: event.toolCallID,
                 resultText: event.toolResult,
                 attachments: event.attachments,
-                status: .complete
+                status: event.toolOutcome ?? .succeeded
             )
         case .attachment:
             // Only assistant-response attachments belong on this bubble. A
@@ -4537,6 +4538,7 @@ final class ChatViewModel {
         case .turnEnded:
             messages[index].isLoading = false
             messages[index].status = .complete
+            settleUnansweredToolCalls(at: index)
             if event.status == "cancelled" && messages[index].text.isEmpty {
                 messages[index].text = "Response stopped."
             }
@@ -5012,8 +5014,19 @@ final class ChatViewModel {
     }
 
     private func updateToolConfirmation(toolCallID: String?, approved: Bool) {
-        let status: ChatToolStatus = approved ? .approved : .rejected
+        // Approval only lets the call run; its result decides how it ended.
+        let status: ChatToolStatus = approved ? .running : .rejected
         updateToolCall(toolCallID: toolCallID, resultText: nil, attachments: [], status: status)
+    }
+
+    /// A turn that has ended answers no more of its calls, so one still pending
+    /// was interrupted or its result never arrived.
+    private func settleUnansweredToolCalls(at messageIndex: Int) {
+        for toolIndex in messages[messageIndex].toolCalls.indices
+            where messages[messageIndex].toolCalls[toolIndex].status.isPending
+        {
+            messages[messageIndex].toolCalls[toolIndex].status = .unknown
+        }
     }
 
     private func upsertPendingConfirmation(_ confirmation: ChatPendingConfirmation) {
@@ -5063,10 +5076,14 @@ final class ChatViewModel {
     }
 
     nonisolated static func renderMessages(from backendMessages: [ChatBackendMessage]) -> [ChatMessage] {
-        var toolResults: [String: (String, [ChatAttachment])] = [:]
+        var toolResults: [String: (text: String, attachments: [ChatAttachment], status: ChatToolStatus)] = [:]
         for message in backendMessages where message.role == .tool {
             if let toolCallID = message.toolCallID {
-                toolResults[toolCallID] = (message.text, message.attachments.map(\.chatAttachment))
+                toolResults[toolCallID] = (
+                    message.text,
+                    message.attachments.map(\.chatAttachment),
+                    message.toolOutcome ?? (message.errorTraceback == nil ? .succeeded : .failed)
+                )
             }
         }
 
@@ -5081,9 +5098,11 @@ final class ChatViewModel {
                     id: toolCall.id,
                     name: toolCall.displayName,
                     argumentsText: toolCall.argumentsText,
-                    resultText: result?.0,
-                    attachments: result?.1 ?? [],
-                    status: result == nil ? .running : .complete
+                    resultText: result?.text,
+                    attachments: result?.attachments ?? [],
+                    // History is a record: a call with no result here is not
+                    // running. A turn still in flight is shown by its live bubble.
+                    status: result?.status ?? .unknown
                 )
             }
 

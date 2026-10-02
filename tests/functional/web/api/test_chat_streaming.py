@@ -444,6 +444,7 @@ async def test_api_chat_send_message_stream_with_tools(
     assert len(tool_result_events) == 1
     assert tool_result_events[0]["data"]["tool_call_id"] == tool_call_id
     assert "successfully" in tool_result_events[0]["data"]["result"]
+    assert tool_result_events[0]["data"]["outcome"] == "succeeded"
 
     # Check final text
     text_events = [e for e in events if e["type"] == "text"]
@@ -551,6 +552,7 @@ async def test_streaming_continues_after_tool_error(
     assert "Error" in tool_result_text or "Invalid" in tool_result_text, (
         f"Expected error in tool result, got: {tool_result_text}"
     )
+    assert tool_result_events[0]["data"]["outcome"] == "failed"
 
     # CRITICAL: Stream should continue after tool error - LLM should generate final response
     assert "text" in event_types, (
@@ -696,6 +698,7 @@ async def test_streaming_continues_after_tool_execution_exception(
         f"Expected error in tool result, got: {tool_result_text}"
     )
     assert "database connection lost" in tool_result_text
+    assert tool_result_events[0]["data"]["outcome"] == "failed"
 
     # CRITICAL: Stream should continue after tool execution error
     assert "text" in event_types, (

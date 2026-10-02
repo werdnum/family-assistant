@@ -316,7 +316,7 @@ final class ChatViewModelTests: XCTestCase {
                         argumentsText: "{}",
                         resultText: "{}",
                         attachments: [],
-                        status: .complete
+                        status: .succeeded
                     ),
                 ],
                 attachments: [],
@@ -9873,7 +9873,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.confirm(confirmation, approved: true)
 
         XCTAssertTrue(model.pendingConfirmations.isEmpty)
-        XCTAssertEqual(model.messages.first?.toolCalls.first?.status, .approved)
+        XCTAssertEqual(model.messages.first?.toolCalls.first?.status, .running)
     }
 
     func testConfirmFailureSurfacesInlineOnCardNotModal() async throws {
@@ -12475,7 +12475,7 @@ final class ChatViewModelTests: XCTestCase {
                     argumentsText: "{}",
                     resultText: "ok",
                     attachments: [],
-                    status: .complete
+                    status: .succeeded
                 ),
             ],
             attachments: [],

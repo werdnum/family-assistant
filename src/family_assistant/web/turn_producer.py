@@ -47,6 +47,7 @@ from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMet
 from family_assistant.storage.database import Database
 from family_assistant.telegram.protocols import ConfirmationUIManager
 from family_assistant.tools.confirmation import append_review_reason_to_confirmation
+from family_assistant.tools.outcomes import classify_tool_outcome
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolArguments,
@@ -564,6 +565,7 @@ async def _publish_llm_event(
         payload: dict[str, Any] = {
             "tool_call_id": event.tool_call_id,
             "result": event.tool_result,
+            "outcome": classify_tool_outcome(event.tool_result, event.error),
         }
         if event.metadata and "attachments" in event.metadata:
             payload["attachments"] = event.metadata["attachments"]

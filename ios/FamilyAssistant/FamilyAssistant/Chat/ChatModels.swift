@@ -410,13 +410,54 @@ struct ChatToolCall: Identifiable, Equatable {
     var status: ChatToolStatus
 }
 
+/// What a tool call shows the user, the same states for a live stream and for
+/// history. Only `succeeded` reads as done: a finished call's outcome comes
+/// from the backend (`outcome` on a `tool_result` event, `tool_outcome` on a
+/// history row), and a call with no result once its turn is over is `unknown`,
+/// never `running`.
 enum ChatToolStatus: String, Codable, Equatable {
     case running
     case awaitingApproval
-    case approved
-    case rejected
-    case complete
+    case succeeded
     case failed
+    case rejected
+    case unknown
+
+    /// A finished call's outcome as the backend names it.
+    init?(backendOutcome: String?) {
+        switch backendOutcome {
+        case "succeeded":
+            self = .succeeded
+        case "failed":
+            self = .failed
+        case "rejected":
+            self = .rejected
+        default:
+            return nil
+        }
+    }
+
+    /// Still in progress: running, or waiting for the user to approve it.
+    var isPending: Bool {
+        self == .running || self == .awaitingApproval
+    }
+
+    var label: String {
+        switch self {
+        case .running:
+            "Running"
+        case .awaitingApproval:
+            "Waiting for approval"
+        case .succeeded:
+            "Succeeded"
+        case .failed:
+            "Failed"
+        case .rejected:
+            "Not run"
+        case .unknown:
+            "No result recorded"
+        }
+    }
 }
 
 struct ChatPendingConfirmation: Codable, Equatable, Identifiable {
@@ -696,6 +737,8 @@ struct ChatBackendMessage: Decodable, Equatable {
     let toolCalls: [ChatBackendToolCall]
     let toolCallID: String?
     let errorTraceback: String?
+    /// For a tool row: how the call ended, as the backend classified it.
+    let toolOutcome: ChatToolStatus?
     let attachments: [ChatBackendAttachment]
     let processingProfileID: String?
     let reasoningInfo: ChatMessageReasoningInfo?
@@ -710,6 +753,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         case toolCalls = "tool_calls"
         case toolCallID = "tool_call_id"
         case errorTraceback = "error_traceback"
+        case toolOutcome = "tool_outcome"
         case attachments
         case processingProfileID = "processing_profile_id"
         case reasoningInfo = "reasoning_info"
@@ -729,6 +773,9 @@ struct ChatBackendMessage: Decodable, Equatable {
         toolCalls = try container.decodeIfPresent([ChatBackendToolCall].self, forKey: .toolCalls) ?? []
         toolCallID = try container.decodeIfPresent(String.self, forKey: .toolCallID)
         errorTraceback = try container.decodeIfPresent(String.self, forKey: .errorTraceback)
+        toolOutcome = ChatToolStatus(
+            backendOutcome: try container.decodeIfPresent(String.self, forKey: .toolOutcome)
+        )
         attachments = try container.decodeIfPresent([ChatBackendAttachment].self, forKey: .attachments) ?? []
         processingProfileID = try container.decodeIfPresent(String.self, forKey: .processingProfileID)
         reasoningInfo = try container.decodeIfPresent(ChatMessageReasoningInfo.self, forKey: .reasoningInfo)

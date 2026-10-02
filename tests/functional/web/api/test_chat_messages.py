@@ -553,3 +553,78 @@ async def test_conversation_share_is_authenticated_read_only_and_revocable(
     )
     assert revoked_read.status_code == 404
     app_fixture.dependency_overrides.pop(get_current_user)
+
+
+@pytest.mark.asyncio
+async def test_history_reports_each_tool_calls_outcome(
+    test_client: AsyncClient,
+    app_fixture: FastAPI,
+    db_context: Database,
+    tmp_path: Path,
+) -> None:
+    """A tool row carries its outcome, so no client has to guess it from text."""
+    app_fixture.state.attachment_registry = AttachmentRegistry(
+        str(tmp_path), db_context.engine
+    )
+    conversation_id = str(uuid.uuid4())
+    results = {
+        "call_ok": ("Note 'Groceries' saved.", None),
+        "call_failed": ("Error: Database temporarily unavailable", None),
+        "call_raised": ("Error executing add_or_update_note: boom", "Traceback ..."),
+        "call_declined": ("OK. Action cancelled by user for tool 'delete_note'.", None),
+    }
+    await db_context.message_history.add_message(
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id=call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name="add_or_update_note", arguments="{}"
+                    ),
+                )
+                for call_id in results
+            ],
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    for call_id, (content, error_traceback) in results.items():
+        await db_context.message_history.add_message(
+            ToolMessage(
+                tool_call_id=call_id,
+                content=content,
+                name="add_or_update_note",
+                error_traceback=error_traceback,
+            ),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+        )
+
+    response = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+
+    assert response.status_code == 200, response.text
+    messages = response.json()["messages"]
+    outcomes = {
+        message["tool_call_id"]: message["tool_outcome"]
+        for message in messages
+        if message["role"] == "tool"
+    }
+    assert outcomes == {
+        "call_ok": "succeeded",
+        "call_failed": "failed",
+        "call_raised": "failed",
+        "call_declined": "rejected",
+    }
+    assert all(
+        message["tool_outcome"] is None
+        for message in messages
+        if message["role"] != "tool"
+    )

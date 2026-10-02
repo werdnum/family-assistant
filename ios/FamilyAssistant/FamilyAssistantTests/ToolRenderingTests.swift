@@ -51,8 +51,69 @@ final class ToolRenderingTests: XCTestCase {
         let toolCall = try XCTUnwrap(messages.first?.toolCalls.first)
         XCTAssertEqual(toolCall.name, "search_notes")
         XCTAssertEqual(toolCall.resultText, #"{"status":"ok"}"#)
-        XCTAssertEqual(toolCall.status, .complete)
+        XCTAssertEqual(toolCall.status, .succeeded)
         XCTAssertEqual(toolCall.attachments.first?.name, "notes.md")
+    }
+
+    func testRenderMessagesUsesBackendOutcomeAndNeverMarksMissingResultsRunning() throws {
+        let json = """
+        [
+          {
+            "internal_id": 20,
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-06-08T12:00:00Z",
+            "tool_calls": [
+              {"id": "call-failed", "type": "function", "function": {"name": "add_or_update_note", "arguments": "{}"}},
+              {"id": "call-declined", "type": "function", "function": {"name": "delete_note", "arguments": "{}"}},
+              {"id": "call-raised", "type": "function", "function": {"name": "get_note", "arguments": "{}"}},
+              {"id": "call-missing", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+            ]
+          },
+          {
+            "internal_id": 21,
+            "role": "tool",
+            "content": "Error: Database temporarily unavailable",
+            "timestamp": "2026-06-08T12:00:01Z",
+            "tool_call_id": "call-failed",
+            "tool_outcome": "failed"
+          },
+          {
+            "internal_id": 22,
+            "role": "tool",
+            "content": "OK. Action cancelled by user for tool 'delete_note'.",
+            "timestamp": "2026-06-08T12:00:02Z",
+            "tool_call_id": "call-declined",
+            "tool_outcome": "rejected"
+          },
+          {
+            "internal_id": 23,
+            "role": "tool",
+            "content": "Error executing get_note: boom",
+            "timestamp": "2026-06-08T12:00:03Z",
+            "tool_call_id": "call-raised",
+            "error_traceback": "Traceback ..."
+          }
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let toolCalls = try XCTUnwrap(ChatViewModel.renderMessages(from: backendMessages).first?.toolCalls)
+
+        XCTAssertEqual(toolCalls.map(\.status), [.failed, .rejected, .failed, .unknown])
+        XCTAssertEqual(toolCalls.first?.resultText, "Error: Database temporarily unavailable")
+        XCTAssertFalse(toolCalls.contains { $0.status.isPending })
+    }
+
+    func testToolStatusLabelsDistinguishEveryOutcome() {
+        let statuses: [ChatToolStatus] = [.running, .awaitingApproval, .succeeded, .failed, .rejected, .unknown]
+
+        XCTAssertEqual(Set(statuses.map(\.label)).count, statuses.count)
+        XCTAssertEqual(ChatToolStatus(backendOutcome: "succeeded"), .succeeded)
+        XCTAssertEqual(ChatToolStatus(backendOutcome: "failed"), .failed)
+        XCTAssertEqual(ChatToolStatus(backendOutcome: "rejected"), .rejected)
+        XCTAssertNil(ChatToolStatus(backendOutcome: "running"))
+        XCTAssertNil(ChatToolStatus(backendOutcome: nil))
     }
 
     func testRenderMessagesKeepsGenericUnknownToolFallback() throws {
@@ -218,7 +279,7 @@ final class ToolRenderingTests: XCTestCase {
                     argumentsText: "{}",
                     resultText: "ok",
                     attachments: [image],
-                    status: .complete
+                    status: .succeeded
                 ),
             ],
             attachments: [image],
@@ -280,7 +341,7 @@ final class ToolRenderingTests: XCTestCase {
                         errorMessage: nil
                     ),
                 ],
-                status: .complete
+                status: .succeeded
             )
         }
         let message = ChatMessage(
