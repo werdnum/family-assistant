@@ -1,12 +1,16 @@
 """Test Google Deep Research Agent integration."""
 
 import importlib
+import json
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from google import genai
+from google.genai import types
 from google.genai.interactions import Interaction
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from family_assistant.llm.base import (
     LLMProviderError,
@@ -662,6 +666,75 @@ async def test_get_agent_interaction_validates_mapping_response(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "env",
+    [
+        [{"FA_GITHUB_GIT_AUTH": {"credential": "stored-git-credential"}}],
+        {"FA_GITHUB_GIT_AUTH": {"credential": "stored-git-credential"}},
+    ],
+)
+async def test_agent_response_ignores_unused_environment(
+    mock_genai_client: MagicMock,
+    env: object,
+) -> None:
+    client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
+    response = {
+        "id": "inter_env",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": "The remote report."}],
+            }
+        ],
+        "usage": {"total_tokens": 12},
+        "environment": {"type": "remote", "env": env},
+    }
+    mock_genai_client.aio.interactions.get = AsyncMock(return_value=response)
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=response)
+
+    for result in (
+        await client.get_agent_interaction("inter_env"),
+        await client.start_agent_interaction([UserMessage(content="Print 1.")]),
+    ):
+        assert result.id == "inter_env"
+        assert result.status == "completed"
+        assert result.output_text == "The remote report."
+        assert result.usage is not None and result.usage.total_tokens == 12
+        assert result.environment is None
+    assert response["environment"] == {"type": "remote", "env": env}
+
+
+@pytest.mark.asyncio
+async def test_poll_validation_failure_is_transient(
+    mock_genai_client: MagicMock,
+) -> None:
+    client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
+    mock_genai_client.aio.interactions.get = AsyncMock(
+        return_value={
+            "id": "inter_bad",
+            "status": "completed",
+            "usage": {"total_tokens": []},
+        }
+    )
+    with pytest.raises(DelegationTransientError, match="inter_bad") as exc_info:
+        await client.get_agent_interaction("inter_bad")
+    assert isinstance(exc_info.value.__cause__, ValidationError)
+
+
+@pytest.mark.asyncio
+async def test_sdk_poll_parse_failure_is_transient(
+    mock_genai_client: MagicMock,
+) -> None:
+    client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
+    original = json.JSONDecodeError("Invalid response", "", 0)
+    mock_genai_client.aio.interactions.get = AsyncMock(side_effect=original)
+    with pytest.raises(DelegationTransientError, match="inter_bad") as exc_info:
+        await client.get_agent_interaction("inter_bad")
+    assert exc_info.value.__cause__ is original
+
+
+@pytest.mark.asyncio
 async def test_cancel_agent_interaction_calls_cancel(
     mock_genai_client: MagicMock,
 ) -> None:
@@ -738,3 +811,51 @@ async def test_get_agent_interaction_unrecognized_error_propagates_unwrapped(
 
     with pytest.raises(ValueError, match="some unrelated bug"):
         await client.get_agent_interaction("inter_bug")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed_json", [False, True])
+async def test_poll_through_real_sdk_response_parser(malformed_json: bool) -> None:
+    response = {
+        "id": "inter_sdk",
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": "Recovered report."}],
+            }
+        ],
+        "environment": {
+            "type": "remote",
+            "env": [
+                {"FA_GITHUB_GIT_AUTH": {"credential": "stored-git-credential"}},
+            ],
+        },
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if malformed_json:
+            return httpx.Response(
+                200,
+                content=b"{",
+                headers={"content-type": "application/json"},
+                request=request,
+            )
+        return httpx.Response(200, json=response, request=request)
+
+    client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
+    await client.close()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as transport:
+        client.client = genai.Client(
+            api_key="test", http_options=types.HttpOptions(httpx_async_client=transport)
+        )
+        try:
+            if malformed_json:
+                with pytest.raises(DelegationTransientError, match="inter_sdk"):
+                    await client.get_agent_interaction("inter_sdk")
+            else:
+                result = await client.get_agent_interaction("inter_sdk")
+                assert result.status == "completed"
+                assert result.output_text == "Recovered report."
+        finally:
+            await client.close()

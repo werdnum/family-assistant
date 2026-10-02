@@ -364,7 +364,9 @@ assistant may hand off to another profile. Quick handoffs come back inline. Long
 `delegation_...` reference and leave the conversation free; when the specialist finishes it wakes
 the original assistant, which posts the follow-up in the same conversation. For voice calls, longer
 handoffs post their result directly in Chat. You can ask for the status of a delegation reference at
-any time.
+any time. If a remote specialist's status cannot be read temporarily, the assistant checks the same
+task again within its waiting limit. You do not need to submit the request again while it is still
+awaiting a result.
 
 While a longer handoff is running, the web and iOS chat show a small line above the message box for
 each one — which specialist is working, how it is going (queued, working, how many of a council's

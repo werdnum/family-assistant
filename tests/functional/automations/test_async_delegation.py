@@ -3529,6 +3529,109 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
 
 
 @pytest.mark.asyncio
+async def test_coder_bad_poll_then_list_environment_delivers_result(
+    db_engine: AsyncEngine,
+) -> None:
+    """A bad poll preserves the run; a list-form environment cannot hide its report."""
+    llm_client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
+    interaction_id = "inter_coder_env"
+    sdk = MagicMock()
+    sdk.aio.interactions.create = AsyncMock(
+        return_value={
+            "id": interaction_id,
+            "status": "in_progress",
+        }
+    )
+    completed_response = {
+        "id": interaction_id,
+        "status": "completed",
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": "Here is the research report."}],
+            }
+        ],
+        "created": "2026-01-01T00:00:00+00:00",
+        "updated": "2026-01-01T00:04:30+00:00",
+        "environment": {
+            "type": "remote",
+            "env": [
+                {"FA_GITHUB_GIT_AUTH": {"credential": "stored-git-credential"}},
+            ],
+        },
+    }
+    sdk.aio.interactions.get = AsyncMock(
+        side_effect=[
+            {
+                "id": interaction_id,
+                "status": "completed",
+                "usage": {"total_tokens": []},
+            },
+            completed_response,
+            completed_response,
+        ]
+    )
+    llm_client.client = sdk
+
+    target = _deep_research_target_service(llm_client)
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] == interaction_id
+    sdk.aio.interactions.create.assert_awaited_once()
+    chat_interface.send_message.assert_not_awaited()
+
+    poll_payload = _delegation_payload(delegation_id)
+    # The invalid reading reschedules without notifying or submitting again.
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    chat_interface.send_message.assert_not_awaited()
+
+    # Second poll: completed -> finalize and notify with the research output.
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "Here is the research report."
+    chat_interface.send_message.assert_awaited_once()
+    assert (
+        "Here is the research report."
+        in chat_interface.send_message.await_args.kwargs["text"]
+    )
+
+    assert run["remote_task_id"] == interaction_id
+    sdk.aio.interactions.create.assert_awaited_once()
+    assert sdk.aio.interactions.get.await_count == 3
+
+
+@pytest.mark.asyncio
 async def test_pollable_delegation_synchronous_remote_completes_on_submit(
     db_engine: AsyncEngine,
 ) -> None:

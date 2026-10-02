@@ -1,4 +1,4 @@
-"""Replayed integration tests for the Antigravity managed agent's submit path.
+"""Replayed integration tests for the Antigravity managed agent's submit and poll paths.
 
 These record what ``interactions.create`` actually does with the request
 ``GoogleGenAIClient`` builds, which is the gap that let a broken request shape
@@ -16,7 +16,9 @@ Two shapes are covered because they are the two that exist in practice: a
 profile that configures no ``antigravity_config.environment`` at all (the
 shipped ``defaults.yaml`` ``coder``), and one that configures an egress
 allowlist with an injected credential (this deployment's ``coder``). The first
-is the one that regressed; the second is the one that masked it.
+is the one that regressed; the second is the one that masked it. A credential-bound environment is also polled to
+completion: the API returns its env map as a list, which the SDK response
+model cannot validate even though the run succeeds.
 """
 
 import os
@@ -28,8 +30,16 @@ from family_assistant.config_models import (
     AntigravityEgressRuleConfig,
     AntigravityEnvironmentConfig,
 )
+from family_assistant.llm.antigravity_egress import (
+    AntigravityCredentialStore,
+    EgressResolution,
+)
 from family_assistant.llm.messages import SystemMessage, UserMessage
-from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.google_genai_client import (
+    GoogleGenAIClient,
+    is_interaction_terminal_error_status,
+)
+from tests.helpers import wait_for_condition
 
 from .vcr_helpers import sanitize_response
 
@@ -126,3 +136,69 @@ async def test_submit_accepted_with_an_egress_allowlist_and_credential() -> None
 
     assert interaction.id
     assert interaction.status != "failed"
+
+
+class _CredentialEnvironment:
+    async def resolve(self) -> EgressResolution:
+        return EgressResolution(
+            network=None,
+            env={
+                "FA_TEST_ENV": {"credential": "fa-issue-1301-test-env"},
+            },
+        )
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_poll_delivers_report_with_a_credential_bound_environment(
+    llm_record_mode: str,
+) -> None:
+    """A credential-bound sandbox round-trips without losing its final report."""
+    api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
+    store = AntigravityCredentialStore(api_key=api_key)
+    client = GoogleGenAIClient(
+        api_key=api_key,
+        model="antigravity-preview-09-2026",
+        antigravity_model="gemini-3.8-flash",
+        antigravity_egress_resolver=_CredentialEnvironment(),
+    )
+    interaction_id: str | None = None
+    try:
+        await store.ensure_substituted(
+            "fa-issue-1301-test-env", "harmless-test-value", ["example.com"]
+        )
+        interaction = await client.start_agent_interaction([
+            SystemMessage(
+                content="Run the requested code and report its output. Do not access the network."
+            ),
+            UserMessage(
+                content="Run Python to print 1301 and report that number, then stop."
+            ),
+        ])
+        assert interaction.id
+        interaction_id = interaction.id
+
+        async def finished() -> bool:
+            nonlocal interaction
+            interaction = await client.get_agent_interaction(interaction_id)
+            return (
+                interaction.status == "completed"
+                or is_interaction_terminal_error_status(interaction.status)
+            )
+
+        await wait_for_condition(
+            finished,
+            timeout=600.0,
+            interval=0.01 if llm_record_mode == "replay" else 15.0,
+        )
+        assert interaction.status == "completed"
+        assert "1301" in (interaction.output_text or "")
+    finally:
+        if interaction_id is not None and interaction.status == "in_progress":
+            await client.cancel_agent_interaction(interaction_id)
+        await client.close()
+        await store.delete("fa-issue-1301-test-env")
+        await store.aclose()
