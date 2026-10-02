@@ -41,6 +41,14 @@ const ScriptsPage = () => {
     document.title = 'Scripts - Family Assistant';
   }, []);
 
+  useEffect(() => {
+    const root = document.getElementById('app-root');
+    if (!loading) {
+      root?.setAttribute('data-app-ready', 'true');
+    }
+    return () => root?.removeAttribute('data-app-ready');
+  }, [loading]);
+
   const edit = (script) => {
     setSelected(script);
     setForm(

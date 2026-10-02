@@ -37,6 +37,14 @@ const ArtifactReviewPage = () => {
     document.title = 'Artifact review - Family Assistant';
   }, []);
 
+  useEffect(() => {
+    const root = document.getElementById('app-root');
+    if (!loading) {
+      root?.setAttribute('data-app-ready', 'true');
+    }
+    return () => root?.removeAttribute('data-app-ready');
+  }, [loading]);
+
   const visible = artifacts.filter(
     (artifact) =>
       (kind === 'all' || kind === artifact.kind) &&
