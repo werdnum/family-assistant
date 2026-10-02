@@ -37,7 +37,11 @@ every section*
 ### Chat
 
 Replies stream in as they're generated, completed tool calls collapse into a compact summary, and
-conversations are easy to switch between.
+conversations are easy to switch between. Common tools such as notes, calendar and documents have
+their own views. Any other tool call (and every tool call in the iOS app) shows a readable name, a
+one-line summary of what it was asked and a short preview of what came back; tap **Details** to see
+the raw arguments and result in full, with buttons to copy them. You can open or close a group of
+tool calls at any time, and it stays the way you left it.
 
 ![Chat Interface](../../screenshots/desktop/chat-empty.png) *The web chat interface*
 

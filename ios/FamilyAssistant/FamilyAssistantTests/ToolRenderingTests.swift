@@ -140,7 +140,12 @@ final class ToolRenderingTests: XCTestCase {
     func testToolStatusLabelsDistinguishEveryOutcome() {
         let statuses: [ChatToolStatus] = [.running, .awaitingApproval, .succeeded, .failed, .rejected, .unknown]
 
-        XCTAssertEqual(Set(statuses.map(\.label)).count, statuses.count)
+        let labels = statuses.compactMap(\.displayLabel)
+
+        // Success is the quiet state; every other outcome is named, and named differently.
+        XCTAssertNil(ChatToolStatus.succeeded.displayLabel)
+        XCTAssertEqual(labels.count, statuses.count - 1)
+        XCTAssertEqual(Set(labels).count, labels.count)
         XCTAssertEqual(ChatToolStatus(backendOutcome: "succeeded"), .succeeded)
         XCTAssertEqual(ChatToolStatus(backendOutcome: "failed"), .failed)
         XCTAssertEqual(ChatToolStatus(backendOutcome: "rejected"), .rejected)
@@ -791,5 +796,78 @@ final class ToolRenderingTests: XCTestCase {
 
         XCTAssertEqual(messages.map(\.id), ["msg_1", "msg_2"])
         XCTAssertEqual(messages.map { $0.toolCalls.map(\.id) }, [["a"], ["b"]])
+    }
+
+    private func toolCall(
+        name: String = "query_trino",
+        arguments: String,
+        result: String? = nil,
+        status: ChatToolStatus = .succeeded
+    ) -> ChatToolCall {
+        ChatToolCall(id: "call", name: name, argumentsText: arguments, resultText: result, attachments: [], status: status)
+    }
+
+    func testToolCallCardLeadsWithReadableSummaries() {
+        let call = toolCall(
+            arguments: #"{"limit": 5, "sql": "SELECT id\n  FROM t"}"#,
+            result: #"{"columns": ["id"], "rows": [[1], [2], [3]]}"#
+        )
+
+        XCTAssertEqual(call.displayName, "Query trino")
+        XCTAssertEqual(call.argumentsSummary, "SELECT id FROM t")
+        XCTAssertEqual(call.resultPreview, "3 rows")
+    }
+
+    func testToolCallSummariesFallBackSensibly() {
+        XCTAssertEqual(toolCall(arguments: #"{"days": 3, "start_date": "2026-10-01"}"#).argumentsSummary, "days: 3 · start date: 2026-10-01")
+        XCTAssertNil(toolCall(arguments: "{}").argumentsSummary)
+        XCTAssertNil(toolCall(arguments: "not json").argumentsSummary)
+        XCTAssertEqual(toolCall(arguments: "{}", result: #"{"error": "Table not found"}"#).resultPreview, "Table not found")
+        XCTAssertEqual(toolCall(arguments: "{}", result: #"{"notes": ["Test note"]}"#).resultPreview, "Test note")
+        XCTAssertEqual(toolCall(arguments: "{}", result: "Found 5 events").resultPreview, "Found 5 events")
+        XCTAssertNil(toolCall(arguments: "{}").resultPreview)
+    }
+
+    /// An integral number too large for `Int` must not trap while a card renders.
+    func testHugeIntegralArgumentsSummariseWithoutTrapping() throws {
+        let summary = try XCTUnwrap(toolCall(arguments: #"{"limit": 1e100}"#).argumentsSummary)
+        XCTAssertTrue(summary.hasPrefix("limit: 1e+100"))
+        XCTAssertEqual(JSONValue.number(3).displayString, "3")
+    }
+
+    func testLongArgumentsAreClippedInTheSummaryButKeptWholeInDetails() throws {
+        let longQuery = String(repeating: "x", count: 500)
+        let call = toolCall(arguments: #"{"query": "\#(longQuery)"}"#)
+
+        let summary = try XCTUnwrap(call.argumentsSummary)
+        XCTAssertEqual(summary.count, 80)
+        XCTAssertTrue(summary.hasSuffix("…"))
+        XCTAssertTrue(call.prettyArgumentsText.contains(longQuery))
+    }
+
+    func testRawDetailsArePrettyPrinted() throws {
+        let call = toolCall(arguments: #"{"b":1,"a":"x/y"}"#, result: "plain text")
+
+        let pretty = call.prettyArgumentsText
+        XCTAssertEqual(pretty.split(separator: "\n").count, 4)
+        XCTAssertTrue(pretty.contains("x/y"))
+        XCTAssertLessThan(
+            try XCTUnwrap(pretty.range(of: "\"a\"")).lowerBound,
+            try XCTUnwrap(pretty.range(of: "\"b\"")).lowerBound
+        )
+        XCTAssertEqual(call.prettyResultText, "plain text")
+    }
+
+    /// Only calls still in flight or awaiting the user open their group on
+    /// their own; finished, failed and rejected calls leave it closed.
+    func testOnlyInFlightToolCallsWantAttention() {
+        XCTAssertTrue(ChatToolStatus.running.wantsAttention)
+        XCTAssertTrue(ChatToolStatus.awaitingApproval.wantsAttention)
+        XCTAssertFalse(ChatToolStatus.succeeded.wantsAttention)
+        XCTAssertFalse(ChatToolStatus.failed.wantsAttention)
+        XCTAssertFalse(ChatToolStatus.rejected.wantsAttention)
+        XCTAssertFalse(ChatToolStatus.unknown.wantsAttention)
+        XCTAssertNil(ChatToolStatus.succeeded.displayLabel)
+        XCTAssertEqual(ChatToolStatus.failed.displayLabel, "Failed")
     }
 }
