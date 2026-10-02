@@ -56,6 +56,7 @@ from family_assistant.web.routers.app_auth import (
 from family_assistant.web.routers.asterisk_live_api import asterisk_live_router
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
+from family_assistant.web.routers.embedded_pages import embedded_pages_router
 from family_assistant.web.routers.errors_api import (
     ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
     ErrorIntakeRateLimiter,
@@ -292,7 +293,7 @@ def create_app() -> FastAPI:
         )
 
     new_app.mount(
-        "/api/app/assets",
+        "/app/assets",
         StaticFiles(
             directory=static_dir / "dist" / "embedded" / "assets", check_dir=False
         ),
@@ -352,6 +353,9 @@ def create_app() -> FastAPI:
     new_app.include_router(ios_push_router, tags=["iOS Push Notifications"])
 
     # General API endpoints (like /api/tools/execute, /api/documents/upload)
+    new_app.include_router(
+        embedded_pages_router, prefix="/app", tags=["Embedded Pages"]
+    )
     new_app.include_router(api_router, prefix="/api", tags=["General API"])
 
     # Gemini Live API endpoints for voice mode

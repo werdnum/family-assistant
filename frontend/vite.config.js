@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ mode }) => ({
   // Set base URL - root for dev, /static/dist/ for production
-  base: mode === 'embedded' ? '/api/app/' : mode === 'development' ? '/' : '/static/dist/',
+  base: mode === 'embedded' ? '/app/' : mode === 'development' ? '/' : '/static/dist/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

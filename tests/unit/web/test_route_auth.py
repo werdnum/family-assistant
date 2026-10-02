@@ -7,6 +7,7 @@ from family_assistant.web.route_auth import (
     api_route_classification,
     api_route_requires_default_auth,
     is_api_path,
+    is_token_authenticated_path,
 )
 
 
@@ -81,9 +82,27 @@ def test_is_api_path() -> None:
     assert not is_api_path("/notes")
 
 
+@pytest.mark.parametrize(
+    ("path", "protected"),
+    [
+        ("/app", True),
+        ("/app/", True),
+        ("/app/documents/", True),
+        ("/app/assets/app.js", True),
+        ("/app/auth/refresh", True),
+        ("/api/auth/refresh", True),
+        ("/application", False),
+        ("/app-other", False),
+        ("/documents/", False),
+    ],
+)
+def test_token_namespace_boundaries(path: str, protected: bool) -> None:
+    assert is_token_authenticated_path(path) is protected
+
+
 def test_published_document_matches_declaration() -> None:
     document = api_route_classification()
-    assert document["jwt_required_prefix"] == "/api/"
+    assert document["jwt_required_prefixes"] == ["/api/", "/app/"]
     published = {
         (entry["match"], entry["path"], tuple(entry["methods"]), entry["class"])
         for entry in document["no_jwt_routes"]

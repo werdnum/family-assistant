@@ -4093,16 +4093,18 @@ example, `tuit_` exposes `create_task` as `tuit_create_task`, while MCP calls an
 
 ### Embedded iOS web pages
 
-The iOS app opens Documents and More under `/api/app/pages`; their frontend assets are served under
-`/api/app/assets`. Both use the existing default API authentication policy. Where `/api` is
-protected by an edge JWT verifier, keep the same verifier on these paths and extract the HttpOnly
-`fa_access_token` cookie as well as the Authorization bearer header. Do not add embedded paths to
-bootstrap exemptions. A deployment with the Cloudflare `/api/*` Access bypass needs no additional
-Access bypass for embedded pages; normal website paths retain their Access policy.
+The iOS app opens Documents and More under `/app`; their frontend assets are served under
+`/app/assets`. The backend authenticates this namespace even when OIDC page authentication is
+disabled. Give `/app` and `/app/*` an explicit gateway JWT policy that extracts the HttpOnly
+`fa_access_token` cookie or Authorization bearer header. Only after that policy is active, bypass
+Cloudflare Access for these two paths. Keep normal website paths behind Access and leave the API
+bootstrap exemptions confined to `/api`.
 
 `npm run build --prefix frontend` builds both the normal site and embedded assets beneath
 `static/dist/embedded`. Deploy the complete `static/dist` tree before distributing an iOS build that
-uses the embedded paths. The `/api/auth/token-session` bridge installs the native access JWT
-unchanged with its remaining lifetime; the native refresh flow renews it. Embedded sessions cannot
-renew through the OIDC-only browser bridge. No additional credentials or configuration variables are
-required.
+uses the embedded paths. Roll out the backend before the gateway and Cloudflare changes, and verify
+unauthenticated `/app` requests receive 401 before distributing the iOS build. The
+`/api/auth/token-session` bridge installs the native access JWT unchanged into separate `/app` and
+`/api` cookies with its remaining lifetime; the native refresh flow renews it. Embedded sessions
+cannot renew through the OIDC-only browser bridge. No additional credentials or configuration
+variables are required.

@@ -1,4 +1,4 @@
-"""Embedded pages use the API authentication boundary, including on the LAN."""
+"""Embedded pages use the JWT authentication boundary, including on the LAN."""
 
 import os
 import time
@@ -48,7 +48,7 @@ async def embedded_app(
     assets.mkdir(parents=True)
     (assets / "app.js").write_text("window.embeddedLoaded = true;")
     (assets.parent / "embedded.html").write_text(
-        '<html><script src="/api/app/assets/app.js"></script></html>'
+        '<html><script src="/app/assets/app.js"></script></html>'
     )
     if request.node.get_closest_marker("playwright") is None:
         monkeypatch.setattr(app_creator, "static_dir", tmp_path)
@@ -94,9 +94,7 @@ async def access_token(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "path", ["/api/app/pages/documents/", "/api/app/assets/app.js"]
-)
+@pytest.mark.parametrize("path", ["/app/documents/", "/app/assets/app.js"])
 async def test_embedded_pages_and_assets_require_auth(
     embedded_client: AsyncClient, path: str
 ) -> None:
@@ -124,6 +122,10 @@ async def test_token_session_sets_bounded_native_jwt_cookie(
     assert "Secure" in jwt_cookie
     assert "SameSite=lax" in jwt_cookie
     assert "Path=/api" in jwt_cookie
+    assert any(
+        cookie.startswith(f"fa_access_token={access_token}") and "Path=/app" in cookie
+        for cookie in cookies
+    )
     claims = jwt_service.verify_access_token(access_token)
     assert claims is not None
     remaining = int(claims["exp"]) - int(time.time())
@@ -136,7 +138,7 @@ async def test_token_session_sets_bounded_native_jwt_cookie(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "path", ["/api/app/pages/documents/", "/api/app/assets/app.js", "/api/auth/me"]
+    "path", ["/app/documents/", "/app/assets/app.js", "/api/auth/me"]
 )
 async def test_jwt_cookie_alone_authenticates_pages_assets_and_api(
     embedded_client: AsyncClient, access_token: str, path: str
@@ -148,7 +150,7 @@ async def test_jwt_cookie_alone_authenticates_pages_assets_and_api(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "path", ["/api/app/pages/documents/", "/api/app/assets/app.js", "/api/auth/me"]
+    "path", ["/app/documents/", "/app/assets/app.js", "/api/auth/me"]
 )
 async def test_revoked_jwt_cookie_fails_on_pages_assets_and_api(
     embedded_client: AsyncClient,
@@ -184,7 +186,7 @@ async def test_expired_jwt_cookie_cannot_load_embedded_page(
         headers=jwt.get_unverified_header(access_token),
     )
     embedded_client.cookies.set("fa_access_token", expired)
-    response = await embedded_client.get("/api/app/pages/documents/")
+    response = await embedded_client.get("/app/documents/")
     assert response.status_code == 401
 
 
@@ -194,7 +196,7 @@ async def test_invalid_header_does_not_fall_back_to_valid_cookie(
 ) -> None:
     embedded_client.cookies.set("fa_access_token", access_token)
     response = await embedded_client.get(
-        "/api/app/pages/documents/", headers={"Authorization": "Bearer invalid"}
+        "/app/documents/", headers={"Authorization": "Bearer invalid"}
     )
     assert response.status_code == 401
 
@@ -224,11 +226,12 @@ async def test_embedded_browser_loads_chunks_and_api_without_access_session(
             "name": "fa_access_token",
             "value": access_token,
             "domain": "testserver",
-            "path": "/api",
+            "path": path,
             "secure": True,
             "httpOnly": True,
             "sameSite": "Lax",
         }
+        for path in ("/api", "/app")
     ])
     # Leave no HTTPX cookies: each request must authenticate with the browser's
     # actual Cookie header rather than credentials retained by the ASGI client.
@@ -254,15 +257,26 @@ async def test_embedded_browser_loads_chunks_and_api_without_access_session(
         )
 
     await page.route("https://testserver/**", serve)
-    await page.goto("https://testserver/api/app/pages/about")
+    await page.goto("https://testserver/app/about")
     await expect(page.get_by_text("Application Version", exact=True)).to_be_visible(
         timeout=30_000
     )
     assert not failures
     assert "/api/version" in requested_paths
     assert any(
-        path.startswith("/api/app/assets/") and path.endswith(".js")
+        path.startswith("/app/assets/") and path.endswith(".js")
         for path in requested_paths
     )
-    assert all(path.startswith("/api/") for path in requested_paths)
+    assert all(path.startswith(("/api/", "/app/")) for path in requested_paths)
     assert "/api/auth/browser-token" not in requested_paths
+
+
+@pytest.mark.asyncio
+async def test_embedded_pages_require_auth_without_oidc(
+    embedded_app: FastAPI, embedded_client: AsyncClient, access_token: str
+) -> None:
+    embedded_app.state.auth_service.auth_enabled = False
+    assert (await embedded_client.get("/app/documents/")).status_code == 401
+    embedded_client.cookies.set("fa_access_token", access_token, path="/app")
+    assert (await embedded_client.get("/app/documents/")).status_code == 200
+    assert (await embedded_client.get("/api/auth/me")).status_code == 401

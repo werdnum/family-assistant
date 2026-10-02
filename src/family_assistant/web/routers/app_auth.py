@@ -784,15 +784,16 @@ async def token_session(
         credential = extract_api_credential(request)
         if credential is None:
             raise HTTPException(status_code=401, detail="Access credential required.")
-        response.set_cookie(
-            key=BROWSER_TOKEN_COOKIE_NAME,
-            value=credential,
-            max_age=max(0, int(jwt_exp) - int(time.time())),
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            path="/api",
-        )
+        for path in ("/api", "/app"):
+            response.set_cookie(
+                key=BROWSER_TOKEN_COOKIE_NAME,
+                value=credential,
+                max_age=max(0, int(jwt_exp) - int(time.time())),
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path=path,
+            )
 
     return TokenSessionResponse(ok=True)
 

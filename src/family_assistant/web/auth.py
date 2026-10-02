@@ -81,7 +81,7 @@ JWT_ACCESS_COOKIE_NAME = "fa_access_token"
 
 
 def extract_api_credential(request: Request) -> str | None:
-    """Return an explicit header credential, or a JWT cookie for API paths.
+    """Return an explicit header credential, or a JWT cookie for API or embedded paths.
 
     Shared by AuthMiddleware and request dependencies so cookie credentials
     receive the same signature, expiry and revocation checks as bearer tokens.
@@ -91,7 +91,7 @@ def extract_api_credential(request: Request) -> str | None:
         return auth_header.split(" ", 1)[1]
     if "X-API-Token" in request.headers:
         return request.headers["X-API-Token"]
-    if route_auth.is_api_path(request.scope["path"]):
+    if route_auth.is_token_authenticated_path(request.scope["path"]):
         cookie = request.cookies.get(JWT_ACCESS_COOKIE_NAME)
         if cookie and jwt_tokens.looks_like_jwt(cookie):
             return cookie
@@ -584,13 +584,14 @@ class AuthService:
         _clear_token_session_binding(request)
         logger.info("User logged out.")
         response = RedirectResponse(url="/")
-        response.delete_cookie(
-            JWT_ACCESS_COOKIE_NAME,
-            path="/api",
-            secure=True,
-            httponly=True,
-            samesite="lax",
-        )
+        for path in ("/api", "/app"):
+            response.delete_cookie(
+                JWT_ACCESS_COOKIE_NAME,
+                path=path,
+                secure=True,
+                httponly=True,
+                samesite="lax",
+            )
         return response
 
 
@@ -751,9 +752,9 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        is_api_request = route_auth.is_api_path(request_path)
-        if not is_api_request and not auth_service.auth_enabled:
-            # Signed JWTs protect the API surface only. Page authentication and
+        is_token_request = route_auth.is_token_authenticated_path(request_path)
+        if not is_token_request and not auth_service.auth_enabled:
+            # Signed JWTs protect the API and embedded app surfaces. Page authentication and
             # its /login redirect exist only when OIDC is configured.
             await self.app(scope, receive, send)
             return
@@ -767,7 +768,7 @@ class AuthMiddleware:
             # Session middleware not available. API requests stay fail-closed
             # (bearer auth below, then 401); page requests keep the legacy
             # pass-through since the login redirect needs a session too.
-            if is_api_request:
+            if is_token_request:
                 user = None
             else:
                 await self.app(scope, receive, send)
@@ -824,7 +825,9 @@ class AuthMiddleware:
         # Exempt API routes carry their own route-specific authentication. A
         # token-bound session is still revalidated above before the request can
         # reach that mechanism.
-        if is_api_request and not route_auth.api_route_requires_default_auth(
+        if route_auth.is_api_path(
+            request_path
+        ) and not route_auth.api_route_requires_default_auth(
             request.method, request_path
         ):
             await self.app(scope, receive, send)
@@ -850,7 +853,7 @@ class AuthMiddleware:
                     )
 
         if not user:
-            if is_api_request:
+            if is_token_request:
                 logger.debug(
                     "No session or valid API token for API path %s; rejecting with 401.",
                     request_path,

@@ -78,12 +78,13 @@ final class AuthManagerTests: XCTestCase {
         let auth = makeAuthManager()
         AuthBackendURLProtocol.respond { _ in
             .json("{}", headers: ["Set-Cookie":
-                "fa_access_token=signed-jwt; Path=/api; HttpOnly; Secure; SameSite=Lax, session=embedded-session; Path=/; HttpOnly; Secure; SameSite=Lax"])
+                "fa_access_token=signed-jwt; Path=/api; HttpOnly; Secure; SameSite=Lax, fa_access_token=signed-jwt; Path=/app; HttpOnly; Secure; SameSite=Lax, session=embedded-session; Path=/; HttpOnly; Secure; SameSite=Lax"])
         }
         try await auth.establishSession(apiToken: "signed-jwt")
         let store = WKWebsiteDataStore.default().httpCookieStore
         let cookies = await store.allCookies().filter { $0.domain == "assistant.example.test" }
         XCTAssertTrue(cookies.contains { $0.name == "fa_access_token" && $0.value == "signed-jwt" && $0.path == "/api" && $0.isSecure && $0.isHTTPOnly })
+        XCTAssertTrue(cookies.contains { $0.name == "fa_access_token" && $0.value == "signed-jwt" && $0.path == "/app" && $0.isSecure && $0.isHTTPOnly })
         XCTAssertTrue(cookies.contains { $0.name == "session" && $0.value == "embedded-session" && $0.path == "/" })
         for cookie in cookies { await store.deleteCookie(cookie) }
     }

@@ -9,7 +9,7 @@ final class RouteTests: XCTestCase {
         let original = URL(string: "https://assistant.example.test/docs/a%20b?x=1#section")!
         let embedded = EmbeddedWebRoute.pageURL(original, relativeTo: base)
         XCTAssertEqual(embedded.absoluteString,
-                       "https://assistant.example.test/api/app/pages/docs/a%20b?x=1#section")
+                       "https://assistant.example.test/app/docs/a%20b?x=1#section")
         XCTAssertEqual(EmbeddedWebRoute.appURL(embedded, relativeTo: base), original)
         XCTAssertEqual(EmbeddedWebRoute.pageURL(embedded, relativeTo: base), embedded)
     }
@@ -26,7 +26,7 @@ final class RouteTests: XCTestCase {
 
     func testEmbeddedChatLinkCanRouteToNativeChat() {
         let base = URL(string: "https://assistant.example.test")!
-        let embedded = URL(string: "https://assistant.example.test/api/app/pages/chat?conversation_id=abc")!
+        let embedded = URL(string: "https://assistant.example.test/app/chat?conversation_id=abc")!
         let router = AppRouter()
         XCTAssertTrue(router.followWebLink(
             EmbeddedWebRoute.appURL(embedded, relativeTo: base), from: .documents, relativeTo: base))
