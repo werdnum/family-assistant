@@ -242,4 +242,169 @@ describe('Switching conversations', () => {
     releaseUpload.open();
     await waitFor(() => expect(turnConversations).toEqual(['conv-a']));
   });
+
+  it('does not change profile while its message is still uploading an attachment', async () => {
+    // Radix Select needs pointer-capture and scrolling APIs jsdom lacks.
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    const stubbed = ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView'].filter(
+      (method) => !(method in proto)
+    );
+    for (const method of stubbed) {
+      proto[method] = vi.fn();
+    }
+    try {
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      serveConversations();
+      const releaseUpload = gate();
+      const turns: { conversation_id?: string; profile_id?: string }[] = [];
+      server.use(
+        http.post('/api/attachments/upload', async () => {
+          await releaseUpload.promise;
+          return HttpResponse.json({
+            attachment_id: 'uploaded-1',
+            filename: 'first-conversation.txt',
+            content_type: 'text/plain',
+            size: 1,
+            url: '/api/attachments/uploaded-1',
+          });
+        }),
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turns.push((await request.clone().json()) as (typeof turns)[number]);
+          return undefined;
+        })
+      );
+      await renderChatApp({ waitForReady: true });
+
+      await openConversation(user, 'conv-a');
+      await screen.findByText('Hello from conv-a');
+      await user.type(screen.getByTestId('chat-input'), 'message for A');
+      await user.upload(
+        screen.getByTestId('file-input'),
+        new File(['a'], 'first-conversation.txt', { type: 'text/plain' })
+      );
+      await waitFor(() => expect(composerAttachmentNames()).toEqual(['first-conversation.txt']));
+      await user.click(screen.getByTestId('send-button'));
+      await waitFor(() => expect(screen.getByTestId('chat-input')).toHaveValue(''));
+
+      await user.click(screen.getByRole('combobox', { name: 'Processing profile' }));
+      await user.click(await screen.findByRole('option', { name: /research/i }));
+
+      releaseUpload.open();
+      await waitFor(() => expect(turns).toHaveLength(1));
+      expect(turns[0]).toMatchObject({
+        conversation_id: 'conv-a',
+        profile_id: 'default_assistant',
+      });
+      expect(window.location.search).toBe('?conversation_id=conv-a');
+    } finally {
+      for (const method of stubbed) {
+        delete proto[method];
+      }
+    }
+  });
+});
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  readonly url: string;
+  private listeners = new Map<string, Array<(event: { data: string }) => void>>();
+  onerror: ((event: unknown) => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: { data: string }) => void) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener() {}
+
+  close() {}
+
+  emit(type: string, payload: Record<string, unknown>) {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener({ data: JSON.stringify(payload) });
+    }
+  }
+}
+
+describe('A live update while a conversation is opening', () => {
+  let originalEventSource: typeof EventSource;
+
+  beforeEach(() => {
+    resetLocalStorageMock();
+    window.history.replaceState({}, '', '/');
+    document.documentElement.removeAttribute('data-app-ready');
+    originalEventSource = globalThis.EventSource;
+    globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
+    MockEventSource.instances = [];
+  });
+
+  afterEach(() => {
+    globalThis.EventSource = originalEventSource;
+  });
+
+  const followStreamFor = async (conversationId: string): Promise<MockEventSource> => {
+    let stream: MockEventSource | undefined;
+    await waitFor(
+      () => {
+        // The follow stream connects a moment after the page goes idle.
+        const streams = MockEventSource.instances.filter((es) =>
+          es.url.includes(`/conversations/${conversationId}/`)
+        );
+        stream = streams[streams.length - 1];
+        expect(stream).toBeDefined();
+      },
+      { timeout: 3000 }
+    );
+    return stream as MockEventSource;
+  };
+
+  it('still ends the open in an error with Retry when the reload that took it over fails', async () => {
+    const user = userEvent.setup();
+    let requestsForB = 0;
+    serveConversations({
+      'conv-b': () => {
+        requestsForB += 1;
+        // The open itself never answers; the live update's reload aborts it.
+        return requestsForB === 1
+          ? new Promise<Response>(() => {})
+          : HttpResponse.json({ detail: 'unavailable' }, { status: 503 });
+      },
+    });
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    await screen.findByTestId('conversation-loading');
+    (await followStreamFor('conv-b')).emit('turn_ended', { seq: 1, status: 'complete' });
+
+    expect(await screen.findByTestId('conversation-load-error')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+  });
+
+  it('still ends the open with the history when the reload that took it over succeeds', async () => {
+    const user = userEvent.setup();
+    let requestsForB = 0;
+    serveConversations({
+      'conv-b': () => {
+        requestsForB += 1;
+        return requestsForB === 1 ? new Promise<Response>(() => {}) : historyFor('conv-b');
+      },
+    });
+    await renderChatApp({ waitForReady: true });
+
+    await openConversation(user, 'conv-b');
+    await screen.findByTestId('conversation-loading');
+    (await followStreamFor('conv-b')).emit('turn_ended', { seq: 1, status: 'complete' });
+
+    expect(await screen.findByText('Hello from conv-b')).toBeInTheDocument();
+    expect(screen.queryByTestId('conversation-loading')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Processing profile' })).toBeEnabled()
+    );
+  });
 });

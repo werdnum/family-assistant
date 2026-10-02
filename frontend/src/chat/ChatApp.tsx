@@ -569,6 +569,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  // The conversation whose open (foreground load) is in flight, if any.
+  const openInFlightConvIdRef = useRef<string | null>(null);
   // Optimistic conversation rows inserted on send, keyed by the owning turn id,
   // kept until that turn settles (handleStreamingComplete). Merged into every
   // fetch result so a list request already in flight when the user sent can't
@@ -1473,7 +1475,13 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     };
 
   // Load messages for a conversation
-  const loadConversationMessages = useCallback(async (convId: string, background = false) => {
+  const loadConversationMessages = useCallback(async (convId: string, reload = false) => {
+    // Every load aborts the one before it (they share an abort controller), so
+    // a reload that lands while this conversation is still opening ends that
+    // open. It takes the open over, so the open still settles — with history,
+    // the adopted profile, or an error and Retry — instead of being left
+    // loading forever.
+    const background = reload && openInFlightConvIdRef.current !== convId;
     const clearConversationLoad = (id: string) =>
       setConversationLoad((prev) => (prev?.convId === id ? null : prev));
     const failConversationLoad = (id: string) =>
@@ -1504,6 +1512,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       messagesAbortControllerRef.current = messagesAbortController;
 
       if (!background) {
+        openInFlightConvIdRef.current = convId;
         setIsLoading(true);
         setConversationLoad({ convId, status: 'loading' });
       }
@@ -1970,6 +1979,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     } finally {
       // A superseded open leaves the flag to the load that replaced it.
       if (!background && messagesAbortControllerRef.current === messagesAbortController) {
+        openInFlightConvIdRef.current = null;
         setIsLoading(false);
       }
     }
@@ -2189,15 +2199,15 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
   // Handle new chat creation
   const handleNewChat = useCallback(() => {
-    // A profile change carries the composer into the new conversation, so a
-    // send in flight goes where the user is now composing anyway.
-    if (composerSendingRef.current && !preserveComposerOnConversationSwitchRef.current) {
+    if (composerSendingRef.current) {
       return;
     }
     // Cancel any active streaming before creating a new chat
     cancelStream();
     // A history load still in flight belongs to the conversation being left.
     messagesAbortControllerRef.current?.abort();
+    openInFlightConvIdRef.current = null;
+    setIsLoading(false);
     setConversationLoad(null);
 
     // A new chat starts from the user's preferred profile, not whatever profile
@@ -2247,6 +2257,12 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
+      // The message being sent was written for this profile and conversation;
+      // changing either before the runtime hands it over would send it under
+      // the new one.
+      if (composerSendingRef.current) {
+        return;
+      }
       setCurrentProfileId(newProfileId);
       // Persist selection to localStorage
       localStorage.setItem('selectedProfileId', newProfileId);
