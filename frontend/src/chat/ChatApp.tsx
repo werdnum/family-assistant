@@ -235,6 +235,66 @@ function preserveRunningLoadingMessages(
   return next;
 }
 
+/** Carry the ids this tab already shows over onto a reload's server-derived
+ * messages, so a reload doesn't remount them. A message this tab sent gets a
+ * client id; history names the same message `msg_<internal_id>`, and adopting
+ * that id would remount the bubble, replay its entrance animation and drop UI
+ * state such as tool-group expansion. Within each turn, the previous messages
+ * whose id the reload doesn't contain are paired in order, per role, with the
+ * reloaded messages whose id wasn't already on screen. Ids the two lists share
+ * are left alone, which keeps a turn the history window cuts in half from
+ * shifting its ids when an older page widens the window.
+ *
+ * Pairing from the front is only one-to-one when the reload holds the whole
+ * turn. The history window drops a turn's oldest rows first, and a turn opens
+ * with its user message, so a turn the reload holds fewer user rows for than
+ * the screen does has been clipped; its ids are left as the reload names them. */
+export function adoptPreviousMessageIds(
+  reloadedMessages: Message[],
+  previousMessages: Message[]
+): Message[] {
+  const countUserRowsByTurn = (messages: Message[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const msg of messages) {
+      if (msg.turnId && msg.role === 'user') {
+        counts.set(msg.turnId, (counts.get(msg.turnId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  };
+  const reloadedUserRows = countUserRowsByTurn(reloadedMessages);
+  const previousUserRows = countUserRowsByTurn(previousMessages);
+  const reloadedIds = new Set(reloadedMessages.map((msg) => msg.id));
+  const previousIds = new Set(previousMessages.map((msg) => msg.id));
+  const unmatchedPrevious = new Map<string, string[]>();
+  for (const msg of previousMessages) {
+    if (!msg.turnId || reloadedIds.has(msg.id)) {
+      continue;
+    }
+    const shownUserRows = previousUserRows.get(msg.turnId) ?? 0;
+    if (shownUserRows === 0 || (reloadedUserRows.get(msg.turnId) ?? 0) < shownUserRows) {
+      continue;
+    }
+    const key = `${msg.role}\u0000${msg.turnId}`;
+    const ids = unmatchedPrevious.get(key);
+    if (ids) {
+      ids.push(msg.id);
+    } else {
+      unmatchedPrevious.set(key, [msg.id]);
+    }
+  }
+  if (unmatchedPrevious.size === 0) {
+    return reloadedMessages;
+  }
+  return reloadedMessages.map((msg) => {
+    if (!msg.turnId || previousIds.has(msg.id)) {
+      return msg;
+    }
+    const previousId = unmatchedPrevious.get(`${msg.role}\u0000${msg.turnId}`)?.shift();
+    return previousId ? { ...msg, id: previousId } : msg;
+  });
+}
+
 /** Extract plain text from a backend message's content for a notification
  * preview. Content is either a string or an array of parts; only `text` parts
  * contribute (image/tool parts have no preview text). */
@@ -1957,17 +2017,12 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
           hasRunningUnconfirmed ? convId : prev === convId ? null : prev
         );
 
-        if (runningUnconfirmedTurnIds.size > 0) {
-          setMessages((prev) =>
-            preserveRunningLoadingMessages(
-              messagesWithArrayContent,
-              prev,
-              runningUnconfirmedTurnIds
-            )
-          );
-        } else {
-          setMessages(messagesWithArrayContent);
-        }
+        setMessages((prev) => {
+          const reloaded = adoptPreviousMessageIds(messagesWithArrayContent, prev);
+          return runningUnconfirmedTurnIds.size > 0
+            ? preserveRunningLoadingMessages(reloaded, prev, runningUnconfirmedTurnIds)
+            : reloaded;
+        });
         return 'applied' as const;
       }
       // A non-OK response is a genuine reconcile failure, not a supersession.
