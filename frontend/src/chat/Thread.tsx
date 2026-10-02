@@ -375,6 +375,7 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
           {/* @ts-expect-error - TooltipIconButton JSX component */}
           <TooltipIconButton
             tooltip={isSending ? 'Sending...' : 'Send message'}
+            aria-label="Send message"
             variant="default"
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"

@@ -2685,19 +2685,47 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         {/* Mobile: chat detail view (shown when not on list) */}
         {isMobile && !mobileShowList && (
           <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-            {/* Header with back button */}
-            <div className="flex-shrink-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleBackToList}
-                aria-label="Back to conversations"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <h2 className="text-xl font-semibold">Chat</h2>
+            {/* Header with back button. Actions sit on the first row and the
+                profile/intelligence selectors on a second, and both rows wrap,
+                so nothing is pushed past the viewport at narrow widths or zoom. */}
+            <div
+              className="flex-shrink-0 z-50 flex flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+              data-testid="mobile-chat-header"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBackToList}
+                  aria-label="Back to conversations"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <h2 className="min-w-0 flex-1 truncate text-xl font-semibold">Chat</h2>
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  <ShareConversationButton
+                    conversationId={conversationId}
+                    hasPersistedMessages={
+                      messages.length > 0 && persistedConversationId === conversationId
+                    }
+                  />
+                  <NotificationSettings
+                    enabled={notificationsEnabled}
+                    onEnabledChange={handleNotificationEnabledChange}
+                    permission={notificationPermission}
+                    onRequestPermission={requestNotificationPermission}
+                    isSupported={notificationsSupported}
+                  />
+                  <PushNotificationButton />
+                  <NavigationSheet currentPage="chat">
+                    <Button variant="ghost" size="sm" aria-label="Open navigation">
+                      <Menu className="h-4 w-4" />
+                    </Button>
+                  </NavigationSheet>
+                </div>
+              </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <ProfileSelector
                   selectedProfileId={currentProfileId}
                   onProfileChange={handleProfileChange}
@@ -2712,28 +2740,6 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                   onChange={handleModelTierChange}
                   disabled={isLoading}
                 />
-              </div>
-
-              <div className="flex items-center gap-2 ml-auto">
-                <ShareConversationButton
-                  conversationId={conversationId}
-                  hasPersistedMessages={
-                    messages.length > 0 && persistedConversationId === conversationId
-                  }
-                />
-                <NotificationSettings
-                  enabled={notificationsEnabled}
-                  onEnabledChange={handleNotificationEnabledChange}
-                  permission={notificationPermission}
-                  onRequestPermission={requestNotificationPermission}
-                  isSupported={notificationsSupported}
-                />
-                <PushNotificationButton />
-                <NavigationSheet currentPage="chat">
-                  <Button variant="ghost" size="sm" aria-label="Open navigation">
-                    <Menu className="h-4 w-4" />
-                  </Button>
-                </NavigationSheet>
               </div>
             </div>
 

@@ -152,4 +152,30 @@ describe('TooltipIconButton', () => {
       expect(tooltipTop).toBeLessThan(buttonTop);
     });
   });
+
+  it('uses a string tooltip as the accessible name of an icon-only button', () => {
+    render(
+      <TooltipIconButton tooltip="Send message">
+        <svg aria-hidden="true" />
+      </TooltipIconButton>
+    );
+
+    const button = screen.getByRole('button', { name: 'Send message' });
+    expect(button).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('keeps an explicit aria-label and describes it with a differing tooltip', async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipIconButton tooltip="Sending..." aria-label="Send message">
+        <svg aria-hidden="true" />
+      </TooltipIconButton>
+    );
+
+    const button = screen.getByRole('button', { name: 'Send message' });
+    await user.hover(button);
+    await waitFor(() => {
+      expect(button).toHaveAccessibleDescription('Sending...');
+    });
+  });
 });
