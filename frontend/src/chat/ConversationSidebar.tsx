@@ -75,10 +75,14 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   const isAwaitingSearch =
     trimmedQuery !== '' && searchResults?.query !== trimmedQuery && !searchFailed;
   // While a refined query is in flight, the previous query's matches stay on
-  // screen (dimmed) rather than blanking the list on every keystroke.
+  // screen (dimmed) rather than blanking the list on every keystroke. Once the
+  // query has its own answer — results or a failure — only that is shown.
   let displayedConversations: Conversation[] = conversations;
   if (trimmedQuery) {
-    displayedConversations = searchResults?.conversations ?? [];
+    displayedConversations =
+      searchResults?.query === trimmedQuery || isAwaitingSearch
+        ? (searchResults?.conversations ?? [])
+        : [];
   }
   const showSearchingPlaceholder = isAwaitingSearch && displayedConversations.length === 0;
 

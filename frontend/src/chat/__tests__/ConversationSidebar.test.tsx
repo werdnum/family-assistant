@@ -201,6 +201,42 @@ describe('ConversationSidebar', () => {
     releaseRefinedSearch?.();
   });
 
+  it('drops the previous matches when a refined search fails', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    server.use(
+      http.get('/api/v1/chat/conversations', ({ request }) => {
+        const query = new URL(request.url).searchParams.get('q');
+        if (query === null) {
+          return HttpResponse.json({ conversations: [], count: 0 });
+        }
+        if (query !== 'pass') {
+          return new HttpResponse(null, { status: 500 });
+        }
+        return HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'conv-passport',
+              last_message: 'You are welcome',
+              last_timestamp: '2025-01-01T09:00:00Z',
+              message_count: 6,
+            },
+          ],
+          count: 1,
+        });
+      })
+    );
+
+    await renderChatApp({ waitForReady: true });
+    const searchBox = screen.getByPlaceholderText('Search...');
+    await user.type(searchBox, 'pass');
+    expect(await screen.findByTestId('conversation-item-conv-passport')).toBeInTheDocument();
+
+    await user.type(searchBox, 'port');
+    expect(await screen.findByTestId('conversation-search-failed')).toBeInTheDocument();
+    expect(screen.queryByTestId('conversation-item-conv-passport')).not.toBeInTheDocument();
+  });
+
   it('toggles sidebar open/closed on desktop', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
