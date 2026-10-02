@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { getNavigationItems } from './navigation';
+import { pageHref } from './embeddedNavigation';
 import { ThemeToggle } from './ThemeToggle';
 
 interface NavigationSheetProps {
@@ -70,7 +71,7 @@ const NavigationSheet: React.FC<NavigationSheetProps> = ({
             return (
               <a
                 key={index}
-                href={item.href!}
+                href={pageHref(item.href!)}
                 className="flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <Icon className="h-4 w-4" />

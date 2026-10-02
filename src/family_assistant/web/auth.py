@@ -77,16 +77,25 @@ PUBLIC_PATHS = [
 User = dict[str, Any]
 
 
-def extract_api_credential(request: Request) -> str | None:
-    """Return the bearer/API token from the request headers, if present.
+JWT_ACCESS_COOKIE_NAME = "fa_access_token"
 
-    Shared by AuthMiddleware and the request dependencies so both accept
-    exactly the same credential headers.
+
+def extract_api_credential(request: Request) -> str | None:
+    """Return an explicit header credential, or a JWT cookie for API paths.
+
+    Shared by AuthMiddleware and request dependencies so cookie credentials
+    receive the same signature, expiry and revocation checks as bearer tokens.
     """
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.lower().startswith("bearer "):
         return auth_header.split(" ", 1)[1]
-    return request.headers.get("X-API-Token")
+    if "X-API-Token" in request.headers:
+        return request.headers["X-API-Token"]
+    if route_auth.is_api_path(request.scope["path"]):
+        cookie = request.cookies.get(JWT_ACCESS_COOKIE_NAME)
+        if cookie and jwt_tokens.looks_like_jwt(cookie):
+            return cookie
+    return None
 
 
 _AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"

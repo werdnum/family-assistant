@@ -1,6 +1,9 @@
 @testable import FamilyAssistant
 import Foundation
 import XCTest
+#if os(iOS)
+import WebKit
+#endif
 
 @MainActor
 final class AuthManagerTests: XCTestCase {
@@ -19,6 +22,67 @@ final class AuthManagerTests: XCTestCase {
         resetStoredAuth()
         super.tearDown()
     }
+
+    func testWebSessionBridgesOnlyWhenTheNativeTokenChanges() async throws {
+        seedStoredAuth(apiToken: "native-token", refreshToken: "refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        var bridges = 0
+        AuthBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/token-session")
+            bridges += 1
+            return .json("{}")
+        }
+        try await auth.prepareWebSession()
+        try await auth.prepareWebSession()
+        XCTAssertEqual(bridges, 1)
+        KeychainHelper.save(key: "fa_api_token", string: "rotated-token")
+        try await auth.prepareWebSession()
+        XCTAssertEqual(bridges, 2)
+    }
+
+    func testWebSessionRefreshesBeforeBridgingAnExpiredToken() async throws {
+        seedStoredAuth(apiToken: "expired", refreshToken: "refresh", expiresIn: -60)
+        let auth = makeAuthManager()
+        var bridgedToken: String?
+        AuthBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"api_token":"fresh","refresh_token":"new-refresh","expires_in":3600}"#)
+            }
+            XCTAssertEqual(request.url?.path, "/api/auth/token-session")
+            bridgedToken = request.value(forHTTPHeaderField: "Authorization")
+            return .json("{}")
+        }
+        try await auth.prepareWebSession()
+        XCTAssertEqual(bridgedToken, "Bearer fresh")
+    }
+
+    func testRejectedWebBridgeRequiresNativeSignIn() async {
+        seedStoredAuth(apiToken: "revoked", refreshToken: "refresh", expiresIn: 7200)
+        let auth = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+        do {
+            try await auth.prepareWebSession()
+            XCTFail("Rejected bridge must fail")
+        } catch {
+            XCTAssertTrue(auth.authRequired)
+        }
+    }
+
+    #if os(iOS)
+    func testSessionBridgeInstallsBothJWTAndApplicationCookies() async throws {
+        let auth = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("{}", headers: ["Set-Cookie":
+                "fa_access_token=signed-jwt; Path=/api; HttpOnly; Secure; SameSite=Lax, session=embedded-session; Path=/; HttpOnly; Secure; SameSite=Lax"])
+        }
+        try await auth.establishSession(apiToken: "signed-jwt")
+        let store = WKWebsiteDataStore.default().httpCookieStore
+        let cookies = await store.allCookies().filter { $0.domain == "assistant.example.test" }
+        XCTAssertTrue(cookies.contains { $0.name == "fa_access_token" && $0.value == "signed-jwt" && $0.path == "/api" && $0.isSecure && $0.isHTTPOnly })
+        XCTAssertTrue(cookies.contains { $0.name == "session" && $0.value == "embedded-session" && $0.path == "/" })
+        for cookie in cookies { await store.deleteCookie(cookie) }
+    }
+    #endif
 
     func testValidatedServerURLAddsSchemeAndTrimsTrailingSlash() {
         let authManager = AuthManager()

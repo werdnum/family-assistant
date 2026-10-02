@@ -291,6 +291,14 @@ def create_app() -> FastAPI:
             f"Static directory '{static_dir}' not found or not a directory. Static files will not be served."
         )
 
+    new_app.mount(
+        "/api/app/assets",
+        StaticFiles(
+            directory=static_dir / "dist" / "embedded" / "assets", check_dir=False
+        ),
+        name="embedded_assets",
+    )
+
     # --- Include Routers ---
     # Note: Auth router will be added after AuthService is initialized
 

@@ -347,6 +347,9 @@ the connection actually dropped; watching the stream live doesn't produce an ext
 reply, or quietly reloads the finished reply from history. Opening a conversation whose reply is
 still running — one you started on another device, say — streams it live from that point.
 
+Documents and the pages in More use your iOS sign-in, including away from your home network. If a
+page cannot connect, use Retry; if your credentials have expired or been revoked, use Sign in.
+
 ## Email
 
 If your operator has configured it, you can email the assistant or forward mail to it. See
