@@ -14,7 +14,6 @@ import {
   Upload,
   Zap,
 } from 'lucide-react';
-import { pageHref } from './embeddedNavigation';
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -126,14 +125,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       className?: string;
     }
   >(({ className, ...props }, ref) => {
-    return (
-      <a
-        ref={ref}
-        className={cn(navigationMenuTriggerStyle(), className)}
-        {...props}
-        href={pageHref(props.href ?? '')}
-      />
-    );
+    return <a ref={ref} className={cn(navigationMenuTriggerStyle(), className)} {...props} />;
   });
   ExternalNavLink.displayName = 'ExternalNavLink';
 

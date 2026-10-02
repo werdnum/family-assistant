@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
-import { isEmbeddedPage } from './embeddedNavigation';
 import SessionBridgeGate from './SessionBridgeGate';
 import { ThemeProvider } from './ThemeProvider';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
@@ -20,13 +19,9 @@ function mountApp() {
     root.render(
       <React.StrictMode>
         <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
-          {isEmbeddedPage() ? (
+          <SessionBridgeGate>
             <AppRouter />
-          ) : (
-            <SessionBridgeGate>
-              <AppRouter />
-            </SessionBridgeGate>
-          )}
+          </SessionBridgeGate>
         </ThemeProvider>
       </React.StrictMode>
     );
@@ -44,7 +39,7 @@ if (document.readyState === 'loading') {
 }
 
 // Register service worker for PWA functionality
-if (typeof window !== 'undefined' && !isEmbeddedPage() && 'serviceWorker' in window.navigator) {
+if (typeof window !== 'undefined' && 'serviceWorker' in window.navigator) {
   window.navigator.serviceWorker
     .register('/sw.js', { scope: '/' })
     .then((registration) => {

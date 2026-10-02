@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ mode }) => ({
   // Set base URL - root for dev, /static/dist/ for production
-  base: mode === 'embedded' ? '/api/app/' : mode === 'development' ? '/' : '/static/dist/',
+  base: mode === 'development' ? '/' : '/static/dist/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -20,7 +20,6 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     VitePWA({
-      disable: mode === 'embedded',
       registerType: 'autoUpdate',
       injectRegister: null, // Manual SW registration (see router-entry.jsx)
       strategies: 'injectManifest', // Use custom service worker
@@ -123,26 +122,19 @@ export default defineConfig(({ mode }) => ({
     // Generate a manifest file to connect assets to Jinja2
     manifest: true,
     // Output assets to the existing static directory structure
-    outDir: path.resolve(
-      __dirname,
-      '../src/family_assistant/static/dist',
-      mode === 'embedded' ? 'embedded' : ''
-    ),
+    outDir: path.resolve(__dirname, '../src/family_assistant/static/dist'),
     // The npm prebuild script cleans this directory with retries for macOS shared volumes.
     emptyOutDir: false,
     // Increase chunk size warning limit since we're code splitting
     chunkSizeWarningLimit: 600,
     rollupOptions: {
       // Define entry points including HTML files
-      input:
-        mode === 'embedded'
-          ? { embedded: path.resolve(__dirname, 'embedded.html') }
-          : {
-              main: path.resolve(__dirname, 'index.html'),
-              chat: path.resolve(__dirname, 'chat.html'),
-              router: path.resolve(__dirname, 'router.html'),
-              'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
-            },
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        chat: path.resolve(__dirname, 'chat.html'),
+        router: path.resolve(__dirname, 'router.html'),
+        'tool-test-bench': path.resolve(__dirname, 'tool-test-bench.html'),
+      },
       output: {
         // Manual chunks configuration to optimize loading of page-specific deps
         manualChunks: (id) => {

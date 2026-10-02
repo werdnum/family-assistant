@@ -4090,19 +4090,3 @@ to `tools_config.on_demand_mcp_server_ids`. This does not enable notifications.
 `tool_name_prefix` optionally prefixes exposed tool names (for shared or per-user servers). For
 example, `tuit_` exposes `create_task` as `tuit_create_task`, while MCP calls and `tool_metadata` /
 `parameter_overrides` configuration use the original server tool name.
-
-### Embedded iOS web pages
-
-The iOS app opens Documents and More under `/api/app/pages`; their frontend assets are served under
-`/api/app/assets`. Both use the existing default API authentication policy. Where `/api` is
-protected by an edge JWT verifier, keep the same verifier on these paths and extract the HttpOnly
-`fa_access_token` cookie as well as the Authorization bearer header. Do not add embedded paths to
-bootstrap exemptions. A deployment with the Cloudflare `/api/*` Access bypass needs no additional
-Access bypass for embedded pages; normal website paths retain their Access policy.
-
-`npm run build --prefix frontend` builds both the normal site and embedded assets beneath
-`static/dist/embedded`. Deploy the complete `static/dist` tree before distributing an iOS build that
-uses the embedded paths. The `/api/auth/token-session` bridge installs the native access JWT
-unchanged with its remaining lifetime; the native refresh flow renews it. Embedded sessions cannot
-renew through the OIDC-only browser bridge. No additional credentials or configuration variables are
-required.

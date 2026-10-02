@@ -77,25 +77,16 @@ PUBLIC_PATHS = [
 User = dict[str, Any]
 
 
-JWT_ACCESS_COOKIE_NAME = "fa_access_token"
-
-
 def extract_api_credential(request: Request) -> str | None:
-    """Return an explicit header credential, or a JWT cookie for API paths.
+    """Return the bearer/API token from the request headers, if present.
 
-    Shared by AuthMiddleware and request dependencies so cookie credentials
-    receive the same signature, expiry and revocation checks as bearer tokens.
+    Shared by AuthMiddleware and the request dependencies so both accept
+    exactly the same credential headers.
     """
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.lower().startswith("bearer "):
         return auth_header.split(" ", 1)[1]
-    if "X-API-Token" in request.headers:
-        return request.headers["X-API-Token"]
-    if route_auth.is_api_path(request.scope["path"]):
-        cookie = request.cookies.get(JWT_ACCESS_COOKIE_NAME)
-        if cookie and jwt_tokens.looks_like_jwt(cookie):
-            return cookie
-    return None
+    return request.headers.get("X-API-Token")
 
 
 _AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"
@@ -583,15 +574,7 @@ class AuthService:
         request.session.pop("user", None)
         _clear_token_session_binding(request)
         logger.info("User logged out.")
-        response = RedirectResponse(url="/")
-        response.delete_cookie(
-            JWT_ACCESS_COOKIE_NAME,
-            path="/api",
-            secure=True,
-            httponly=True,
-            samesite="lax",
-        )
-        return response
+        return RedirectResponse(url="/")
 
 
 # ast-grep-ignore: no-dict-any - ASGI receive() messages are untyped dicts by protocol definition

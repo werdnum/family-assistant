@@ -53,13 +53,7 @@ The app uses a PKCE-based auth flow to securely obtain API credentials:
 4. Server redirects back with an authorization code
 5. App exchanges the code + PKCE verifier for API and refresh tokens
 6. Tokens are stored securely in the iOS Keychain
-7. App establishes application and short-lived JWT cookies for embedded pages and opens native Chat
-
-Documents and More load React pages under `/api/app/pages`, with bundled assets under
-`/api/app/assets`. These paths share the API gateway's JWT policy; the normal website's Cloudflare
-Access session is not needed in WebKit. Native token refresh updates the cookie while a web page is
-visible and when the app resumes. An unavailable bridge offers Retry, and rejected credentials
-require native sign-in. See [the design](../../docs/design/ios-embedded-web-auth.md).
+7. App establishes a session cookie for fallback web pages and opens native Chat
 
 ### Token Lifecycle
 
