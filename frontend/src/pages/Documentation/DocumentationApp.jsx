@@ -9,6 +9,7 @@ const DocumentationApp = () => {
   // Signal that app is ready (for tests)
   // DocumentationApp itself has no loading state - child routes handle their own loading
   useEffect(() => {
+    document.title = 'Documentation - Family Assistant';
     document.documentElement.setAttribute('data-app-ready', 'true');
     return () => {
       document.documentElement.removeAttribute('data-app-ready');

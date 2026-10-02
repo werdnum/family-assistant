@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ThemeToggle } from '../shared/ThemeToggle';
 import { ToolFallback, toolUIsByName } from '../chat/ToolUI';
 
 // Sample data for testing different tool states
@@ -2270,15 +2273,35 @@ def process_event(event_data):
 ];
 
 export const ToolTestBench = () => {
+  const [search, setSearch] = useState('');
+  const matchingCalls = sampleToolCalls.filter((call) =>
+    `${call.name} ${call.title}`.toLowerCase().includes(search.toLowerCase())
+  );
   return (
     <div className="test-bench-container">
+      <div className="test-bench-controls">
+        <a href="/chat" className="text-sm text-link underline">
+          Back to Chat
+        </a>
+        <ThemeToggle />
+      </div>
       <div className="test-bench-header">
         <h1>Tool UI Test Bench</h1>
         <p>Preview and test tool UI components in different states</p>
+        <div className="test-bench-search">
+          <Label htmlFor="sample-search">Search samples</Label>
+          <Input
+            id="sample-search"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Tool name or state..."
+          />
+        </div>
       </div>
 
       <div className="tool-grid">
-        {sampleToolCalls.map((toolCall, index) => {
+        {matchingCalls.map((toolCall, index) => {
           const ToolUI = toolUIsByName[toolCall.name] || ToolFallback;
 
           return (
@@ -2295,6 +2318,9 @@ export const ToolTestBench = () => {
         })}
       </div>
 
+      {matchingCalls.length === 0 && (
+        <p className="test-bench-empty">No samples match your search.</p>
+      )}
       <div className="test-bench-footer">
         <h2>Available Tools</h2>
         <p>Total tools: {Object.keys(toolUIsByName).length}</p>

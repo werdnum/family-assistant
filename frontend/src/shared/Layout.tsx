@@ -6,6 +6,8 @@ import {
   FolderOpen,
   HelpCircle,
   History,
+  Home,
+  Mic,
   Info,
   Menu,
   MessageCircle,
@@ -14,7 +16,6 @@ import {
   Upload,
   Zap,
 } from 'lucide-react';
-import { pageHref } from './embeddedNavigation';
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -76,7 +77,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       // Wait a bit for the viewport to fully render and get its dimensions
       requestAnimationFrame(() => {
-        const { offsetLeft, offsetWidth } = trigger;
+        const triggerRect = trigger.getBoundingClientRect();
+        const navigationRect = viewport.closest('nav')!.getBoundingClientRect();
+        const offsetLeft = triggerRect.left - navigationRect.left;
+        const offsetWidth = triggerRect.width;
         const menuWidth = viewport.offsetWidth || 200;
 
         // Calculate position to center under trigger
@@ -108,6 +112,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   >(({ className, isActive, ...props }, ref) => {
     return (
       <Link
+        aria-current={isActive ? 'page' : undefined}
         ref={ref}
         className={cn(
           navigationMenuTriggerStyle(),
@@ -122,28 +127,46 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const ExternalNavLink = React.forwardRef<
     HTMLAnchorElement,
-    React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+    Omit<React.ComponentPropsWithoutRef<typeof Link>, 'to'> & { href: string } & {
       className?: string;
     }
-  >(({ className, ...props }, ref) => {
+  >(({ className, href, ...props }, ref) => {
     return (
-      <a
+      <Link
         ref={ref}
+        to={href}
         className={cn(navigationMenuTriggerStyle(), className)}
         {...props}
-        href={pageHref(props.href ?? '')}
       />
     );
   });
   ExternalNavLink.displayName = 'ExternalNavLink';
 
   return (
-    <>
+    <div className="flex min-h-dvh flex-col">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded-md focus:bg-background focus:p-3 focus:ring-2 focus:ring-ring"
+      >
+        Skip to content
+      </a>
       <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         {/* Desktop Navigation */}
-        <div className="hidden md:block">
+        <div className="hidden xl:block">
           <NavigationMenu className="max-w-full" onValueChange={onNavChange}>
             <NavigationMenuList className="flex-nowrap justify-start gap-1 px-4 py-3 overflow-x-auto">
+              <NavigationMenuItem>
+                <NavigationMenuLink asChild>
+                  <NavLink
+                    to="/"
+                    isActive={currentPage === 'home'}
+                    aria-label="Home"
+                    className="px-3"
+                  >
+                    <Home className="h-4 w-4" />
+                  </NavLink>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
               {/* Assistant Data */}
               <NavigationMenuItem value="data">
                 <NavigationMenuTrigger className="submenu-trigger text-sm whitespace-nowrap">
@@ -220,6 +243,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </NavigationMenuLink>
               </NavigationMenuItem>
 
+              <NavigationMenuItem>
+                <NavigationMenuLink asChild>
+                  <NavLink to="/voice" className="px-3" aria-label="Voice">
+                    <Mic className="h-4 w-4" />
+                  </NavLink>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
               <NavigationMenuItem>
                 <NavigationMenuLink asChild>
                   <ExternalNavLink href="/history" className="inline-flex items-center">
@@ -357,8 +387,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
 
         {/* Mobile Navigation */}
-        <div className="md:hidden flex items-center justify-between px-4 py-3">
-          <div className="text-lg font-semibold">Family Assistant</div>
+        <div className="xl:hidden flex items-center justify-between px-4 py-3">
+          <Link to="/" className="text-lg font-semibold">
+            Family Assistant
+          </Link>
           <NavigationSheet
             currentPage={currentPage}
             title="Navigation"
@@ -373,7 +405,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main id="main-content" tabIndex={-1} className="min-w-0 flex-1">
+        {children}
+      </main>
 
       <footer className="border-t bg-muted/50 py-6 md:py-0">
         <div className="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
@@ -385,7 +419,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </p>
         </div>
       </footer>
-    </>
+    </div>
   );
 };
 

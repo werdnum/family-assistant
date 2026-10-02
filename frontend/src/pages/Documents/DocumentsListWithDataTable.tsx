@@ -1,6 +1,7 @@
 import { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable, SortableHeader } from '@/components/ui/data-table';
@@ -102,7 +103,10 @@ const DocumentsListWithDataTable = () => {
         const doc = row.original;
         return (
           <div className="space-y-1">
-            <Link to={`/documents/${doc.id}`} className="font-medium text-primary hover:underline">
+            <Link
+              to={`/documents/${doc.id}`}
+              className="font-medium text-primary hover:underline break-words"
+            >
               {doc.title || 'Untitled'}
             </Link>
             {doc.source_uri && (
@@ -127,7 +131,9 @@ const DocumentsListWithDataTable = () => {
       accessorKey: 'source_id',
       header: 'Source ID',
       cell: ({ row }) => (
-        <code className="text-xs bg-muted px-1 py-0.5 rounded">{row.getValue('source_id')}</code>
+        <code className="text-xs bg-muted px-1 py-0.5 rounded break-all">
+          {row.getValue('source_id')}
+        </code>
       ),
     },
     {
@@ -165,46 +171,51 @@ const DocumentsListWithDataTable = () => {
     },
   ];
 
-  if (loading) {
-    return <div className="flex items-center justify-center p-8">Loading documents...</div>;
-  }
-
-  if (error && documents.length === 0) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-destructive">Error loading documents: {error}</div>
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto py-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-3xl font-bold tracking-tight">Documents</h1>
-        <Link to="/documents/upload">
-          <Button>Upload Document</Button>
-        </Link>
+        <Button asChild>
+          <Link to="/documents/upload">Upload Document</Link>
+        </Button>
       </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-          Error: {error}
-        </div>
+        <Alert variant="destructive" className="mb-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {success && (
         <div className="mb-4 p-3 rounded-md bg-primary/10 text-primary text-sm">{success}</div>
       )}
 
-      <DataTable
-        columns={columns}
-        data={documents}
-        searchable={true}
-        searchColumnId="title"
-        searchPlaceholder="Search documents by title..."
-        pageSize={20}
-        emptyStateMessage="No documents found"
-      />
+      {loading ? (
+        <div role="status" className="p-8 text-center text-muted-foreground">
+          Loading documents...
+        </div>
+      ) : error && documents.length === 0 ? (
+        <Button
+          variant="outline"
+          onClick={() => {
+            const controller = new AbortController();
+            abortControllerRef.current = controller;
+            fetchDocuments(controller.signal);
+          }}
+        >
+          Try again
+        </Button>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={documents}
+          searchable={true}
+          searchColumnId="title"
+          searchPlaceholder="Search documents by title..."
+          pageSize={20}
+          emptyStateMessage="No documents found"
+        />
+      )}
     </div>
   );
 };

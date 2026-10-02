@@ -29,8 +29,8 @@
 }
 
 .backButton:hover {
-  background-color: var(--bg-secondary);
-  border-color: var(--accent);
+  background-color: var(--accent-bg);
+  border-color: hsl(var(--link));
 }
 
 .title {
@@ -46,7 +46,7 @@
   gap: 2rem;
   margin-bottom: 2rem;
   padding: 1rem;
-  background-color: var(--bg-secondary);
+  background-color: var(--accent-bg);
   border-radius: 6px;
   border: 1px solid hsl(var(--border));
 }
@@ -90,7 +90,7 @@
   top: 0;
   width: 2.5rem;
   height: 2.5rem;
-  background-color: var(--accent);
+  background-color: hsl(var(--link));
   color: white;
   border-radius: 50%;
   display: flex;
@@ -136,7 +136,7 @@
   border: 1px solid currentColor;
   border-radius: 4px;
   margin: 1rem 0;
-  background-color: var(--bg-secondary);
+  background-color: var(--accent-bg);
 }
 
 /* Empty state */

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 
 const ErrorDetail = () => {
   const { errorId } = useParams();
@@ -71,9 +72,9 @@ const ErrorDetail = () => {
       <div className="error-detail">
         <div className="error-detail-header">
           <h1>Error Details</h1>
-          <Link to="/errors" className="btn-secondary">
-            Back to List
-          </Link>
+          <Button asChild variant="outline">
+            <Link to="/errors">Back to Error Logs</Link>
+          </Button>
         </div>
         <div className="error-message">
           <strong>Error loading data:</strong> {fetchError}
@@ -87,9 +88,9 @@ const ErrorDetail = () => {
       <div className="error-detail">
         <div className="error-detail-header">
           <h1>Error Details</h1>
-          <Link to="/errors" className="btn-secondary">
-            Back to List
-          </Link>
+          <Button asChild variant="outline">
+            <Link to="/errors">Back to Error Logs</Link>
+          </Button>
         </div>
         <div className="alert alert-info">Error not found.</div>
       </div>
@@ -100,9 +101,9 @@ const ErrorDetail = () => {
     <div className="error-detail">
       <div className="error-detail-header">
         <h1>Error Details</h1>
-        <Link to="/errors" className="btn-secondary">
-          Back to List
-        </Link>
+        <Button asChild variant="outline">
+          <Link to="/errors">Back to Error Logs</Link>
+        </Button>
       </div>
 
       <div className="card">

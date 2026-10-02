@@ -59,7 +59,7 @@ function SessionTimer({ duration, isActive }: { duration: number; isActive: bool
 
   return (
     <div
-      className={`text-sm font-mono ${
+      className={`w-full sm:w-auto text-center text-sm font-mono ${
         isLowTime ? 'text-red-500 animate-pulse' : 'text-gray-500 dark:text-gray-400'
       }`}
     >
@@ -135,10 +135,10 @@ export function VoicePage() {
   const isSessionActive = sessionState.connection === 'connected';
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+    <div className="min-h-dvh bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
       {/* Header */}
       <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 py-3">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <Link
             to="/chat"
             className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
@@ -196,7 +196,7 @@ export function VoicePage() {
         {/* Info section */}
         <div className="text-center text-sm text-gray-500 dark:text-gray-400 space-y-1">
           <p>Voice sessions are limited to {SESSION_CONFIG.MAX_DURATION_MINUTES} minutes.</p>
-          <p>Transcripts are not saved after ending the call.</p>
+          <p>Your transcript is saved to Chat when the call ends.</p>
           <p className="flex items-center justify-center gap-1.5">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

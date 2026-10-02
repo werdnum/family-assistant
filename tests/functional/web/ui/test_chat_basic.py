@@ -492,6 +492,14 @@ async def test_mobile_chat_input_visibility(
         f"Overlap of {(last_message_box_auto['y'] + last_message_box_auto['height']) - container_box['y']}px."
     )
 
+    jump_button_box = await page.get_by_role(
+        "button", name="Scroll to bottom"
+    ).bounding_box()
+    assert jump_button_box is not None
+    assert jump_button_box["y"] + jump_button_box["height"] <= container_box["y"], (
+        "Scroll-to-bottom control overlaps the composer"
+    )
+
     # Reset viewport
     await page.set_viewport_size({"width": 1280, "height": 720})
 

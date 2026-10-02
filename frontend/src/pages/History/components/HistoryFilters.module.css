@@ -13,7 +13,7 @@
 .filtersSummary {
   padding: 1rem;
   cursor: pointer;
-  background-color: var(--bg-secondary);
+  background-color: var(--accent-bg);
   border-radius: 4px 4px 0 0;
   display: flex;
   justify-content: space-between;
@@ -27,7 +27,7 @@
 }
 
 .activeFiltersIndicator {
-  background-color: var(--accent);
+  background-color: hsl(var(--link));
   color: white;
   padding: 0.2rem 0.5rem;
   border-radius: 12px;
@@ -67,7 +67,7 @@
 .filterGroup select:focus,
 .filterGroup input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: hsl(var(--link));
   box-shadow: 0 0 0 2px var(--accent-bg);
 }
 
@@ -101,8 +101,8 @@
 }
 
 .clearButton:hover:not(:disabled) {
-  background-color: var(--bg-secondary);
-  border-color: var(--accent);
+  background-color: var(--accent-bg);
+  border-color: hsl(var(--link));
 }
 
 .clearButton:disabled {

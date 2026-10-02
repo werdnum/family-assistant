@@ -11,6 +11,7 @@ const EventsList = () => {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
@@ -29,7 +30,7 @@ const EventsList = () => {
   );
 
   const fetchEvents = useCallback(
-    async (page, currentFilters) => {
+    async (page, currentFilters, signal) => {
       setLoading(true);
       setError(null);
 
@@ -48,20 +49,28 @@ const EventsList = () => {
           params.append('only_triggered', 'true');
         }
 
-        const response = await fetch(`/api/events?${params}`);
+        const response = await fetch(`/api/events?${params}`, { signal });
 
         if (!response.ok) {
           throw new Error(`Failed to fetch events: ${response.statusText}`);
         }
 
         const data = await response.json();
+        if (signal.aborted) {
+          return;
+        }
         setEvents(data.events || []);
         setTotalCount(data.total || 0);
         setTotalPages(Math.ceil((data.total || 0) / pageSize));
       } catch (err) {
+        if (signal.aborted) {
+          return;
+        }
         setError(err.message);
       } finally {
-        setLoading(false);
+        if (!signal.aborted) {
+          setLoading(false);
+        }
       }
     },
     [pageSize]
@@ -69,8 +78,17 @@ const EventsList = () => {
 
   // Fetch data when page or filters change
   useEffect(() => {
-    fetchEvents(currentPage, filters);
-  }, [fetchEvents, currentPage, filters.source_id, filters.hours, filters.only_triggered]);
+    const controller = new AbortController();
+    fetchEvents(currentPage, filters, controller.signal);
+    return () => controller.abort();
+  }, [
+    fetchEvents,
+    reloadVersion,
+    currentPage,
+    filters.source_id,
+    filters.hours,
+    filters.only_triggered,
+  ]);
 
   // Update filters and URL params
   const handleFiltersChange = (newFilters) => {
@@ -109,15 +127,6 @@ const EventsList = () => {
     return filters.source_id || filters.hours !== 24 || filters.only_triggered;
   };
 
-  if (loading && events.length === 0) {
-    return (
-      <div className={styles.eventsList}>
-        <h1>Events</h1>
-        <div className={styles.loading}>Loading events...</div>
-      </div>
-    );
-  }
-
   return (
     <div className={styles.eventsList}>
       <h1>Events</h1>
@@ -130,15 +139,30 @@ const EventsList = () => {
         loading={loading}
       />
 
-      {/* Results Summary */}
-      <div className={styles.resultsInfo}>
-        <p>
-          Found {totalCount} event{totalCount !== 1 ? 's' : ''}
-          {hasActiveFilters() && ' matching your criteria'}
-        </p>
-      </div>
+      {loading && (
+        <div className={styles.loading} role="status">
+          Loading events...
+        </div>
+      )}
 
-      {error && <div className={styles.error}>Error: {error}</div>}
+      {/* Results Summary */}
+      {!loading && !error && (
+        <div className={styles.resultsInfo}>
+          <p>
+            Found {totalCount} event{totalCount !== 1 ? 's' : ''}
+            {hasActiveFilters() && ' matching your criteria'}
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className={styles.error} role="alert">
+          <p>Error: {error}</p>
+          <Button variant="outline" onClick={() => setReloadVersion((version) => version + 1)}>
+            Try again
+          </Button>
+        </div>
+      )}
 
       {/* Events List */}
       {events.length > 0 ? (
@@ -159,7 +183,7 @@ const EventsList = () => {
             loading={loading}
           />
         </>
-      ) : !loading ? (
+      ) : !loading && !error ? (
         <div className={styles.emptyState}>
           <p>No events found matching your criteria.</p>
           {hasActiveFilters() && (

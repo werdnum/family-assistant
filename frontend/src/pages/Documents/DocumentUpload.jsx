@@ -152,9 +152,9 @@ const DocumentUpload = () => {
     <div className={styles.container}>
       <div className={styles.header}>
         <h1>Upload Document</h1>
-        <Link to="/documents" className={styles.backButton}>
-          Back to Documents
-        </Link>
+        <Button asChild variant="outline">
+          <Link to="/documents">Back to Documents</Link>
+        </Button>
       </div>
 
       {error && (
@@ -179,200 +179,201 @@ const DocumentUpload = () => {
       )}
 
       <form onSubmit={handleSubmit} className={styles.uploadForm}>
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Upload Type</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={styles.uploadTypeButtons}>
-              <Button
-                type="button"
-                variant={uploadType === 'file' ? 'default' : 'outline'}
-                onClick={() => handleUploadTypeChange('file')}
-              >
-                Upload File
-              </Button>
-              <Button
-                type="button"
-                variant={uploadType === 'url' ? 'default' : 'outline'}
-                onClick={() => handleUploadTypeChange('url')}
-              >
-                Scrape URL
-              </Button>
-              <Button
-                type="button"
-                variant={uploadType === 'content' ? 'default' : 'outline'}
-                onClick={() => handleUploadTypeChange('content')}
-              >
-                Manual Content
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Document Content</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {uploadType === 'file' && (
-              <div className="space-y-2">
-                <Label htmlFor="file">Select File *</Label>
-                <Input
-                  type="file"
-                  id="file"
-                  onChange={handleFileChange}
-                  required={uploadType === 'file'}
-                  accept=".pdf,.txt,.docx,.doc,.html,.md"
-                />
-                <p className="text-sm text-muted-foreground">
-                  Supported formats: PDF, TXT, DOCX, DOC, HTML, MD
-                </p>
+        <fieldset disabled={loading} className="min-w-0">
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Upload Type</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className={styles.uploadTypeButtons}>
+                <Button
+                  type="button"
+                  variant={uploadType === 'file' ? 'default' : 'outline'}
+                  onClick={() => handleUploadTypeChange('file')}
+                >
+                  Upload File
+                </Button>
+                <Button
+                  type="button"
+                  variant={uploadType === 'url' ? 'default' : 'outline'}
+                  onClick={() => handleUploadTypeChange('url')}
+                >
+                  Scrape URL
+                </Button>
+                <Button
+                  type="button"
+                  variant={uploadType === 'content' ? 'default' : 'outline'}
+                  onClick={() => handleUploadTypeChange('content')}
+                >
+                  Manual Content
+                </Button>
               </div>
-            )}
+            </CardContent>
+          </Card>
 
-            {uploadType === 'url' && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Document Content</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {uploadType === 'file' && (
+                <div className="space-y-2">
+                  <Label htmlFor="file">Select File *</Label>
+                  <Input
+                    type="file"
+                    id="file"
+                    onChange={handleFileChange}
+                    required={uploadType === 'file'}
+                    accept=".pdf,.txt,.docx,.doc,.html,.md"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Supported formats: PDF, TXT, DOCX, DOC, HTML, MD
+                  </p>
+                </div>
+              )}
+
+              {uploadType === 'url' && (
+                <div className="space-y-2">
+                  <Label htmlFor="url">URL to Scrape *</Label>
+                  <Input
+                    type="url"
+                    id="url"
+                    name="url"
+                    value={formData.url}
+                    onChange={handleInputChange}
+                    placeholder="https://example.com/document"
+                    required={uploadType === 'url'}
+                  />
+                </div>
+              )}
+
+              {uploadType === 'content' && (
+                <div className="space-y-2">
+                  <Label htmlFor="content_parts">Content Parts (JSON) *</Label>
+                  <Textarea
+                    id="content_parts"
+                    name="content_parts"
+                    value={formData.content_parts}
+                    onChange={handleInputChange}
+                    rows={10}
+                    placeholder={
+                      '{\n  "title": "Document Title",\n  "content": "Main document content...",\n  "summary": "Brief summary..."\n}'
+                    }
+                    required={uploadType === 'content'}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Enter content as JSON object with keys like "title", "content", "summary", etc.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Document Metadata</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="url">URL to Scrape *</Label>
+                <Label htmlFor="title">Title *</Label>
                 <Input
-                  type="url"
-                  id="url"
-                  name="url"
-                  value={formData.url}
+                  type="text"
+                  id="title"
+                  name="title"
+                  value={formData.title}
                   onChange={handleInputChange}
-                  placeholder="https://example.com/document"
-                  required={uploadType === 'url'}
+                  placeholder="Document Title"
+                  required
                 />
               </div>
-            )}
 
-            {uploadType === 'content' && (
               <div className="space-y-2">
-                <Label htmlFor="content_parts">Content Parts (JSON) *</Label>
-                <Textarea
-                  id="content_parts"
-                  name="content_parts"
-                  value={formData.content_parts}
-                  onChange={handleInputChange}
-                  rows={10}
-                  placeholder={
-                    '{\n  "title": "Document Title",\n  "content": "Main document content...",\n  "summary": "Brief summary..."\n}'
+                <Label htmlFor="source_type">Source Type *</Label>
+                <Select
+                  value={formData.source_type}
+                  onValueChange={(value) =>
+                    handleInputChange({ target: { name: 'source_type', value } })
                   }
-                  required={uploadType === 'content'}
+                  required
+                >
+                  <SelectTrigger id="source_type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual_upload">Manual Upload</SelectItem>
+                    <SelectItem value="scanned_receipt">Scanned Receipt</SelectItem>
+                    <SelectItem value="email_attachment">Email Attachment</SelectItem>
+                    <SelectItem value="web_scrape">Web Scrape</SelectItem>
+                    <SelectItem value="note">Note</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="source_id">Source ID (optional)</Label>
+                <Input
+                  type="text"
+                  id="source_id"
+                  name="source_id"
+                  value={formData.source_id}
+                  onChange={handleInputChange}
+                  placeholder="Auto-generated if empty"
                 />
                 <p className="text-sm text-muted-foreground">
-                  Enter content as JSON object with keys like "title", "content", "summary", etc.
+                  Unique identifier within the source type
                 </p>
               </div>
-            )}
-          </CardContent>
-        </Card>
 
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Document Metadata</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="title">Title *</Label>
-              <Input
-                type="text"
-                id="title"
-                name="title"
-                value={formData.title}
-                onChange={handleInputChange}
-                placeholder="Document Title"
-                required
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="source_uri">Source URI (optional)</Label>
+                <Input
+                  type="text"
+                  id="source_uri"
+                  name="source_uri"
+                  value={formData.source_uri}
+                  onChange={handleInputChange}
+                  placeholder="Auto-generated if empty"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Canonical URI/URL of the original document
+                </p>
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="source_type">Source Type *</Label>
-              <Select
-                value={formData.source_type}
-                onValueChange={(value) =>
-                  handleInputChange({ target: { name: 'source_type', value } })
-                }
-                required
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manual_upload">Manual Upload</SelectItem>
-                  <SelectItem value="scanned_receipt">Scanned Receipt</SelectItem>
-                  <SelectItem value="email_attachment">Email Attachment</SelectItem>
-                  <SelectItem value="web_scrape">Web Scrape</SelectItem>
-                  <SelectItem value="note">Note</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="created_at">Created At (optional)</Label>
+                <Input
+                  type="datetime-local"
+                  id="created_at"
+                  name="created_at"
+                  value={formData.created_at}
+                  onChange={handleInputChange}
+                />
+                <p className="text-sm text-muted-foreground">Original creation timestamp</p>
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="source_id">Source ID (optional)</Label>
-              <Input
-                type="text"
-                id="source_id"
-                name="source_id"
-                value={formData.source_id}
-                onChange={handleInputChange}
-                placeholder="Auto-generated if empty"
-              />
-              <p className="text-sm text-muted-foreground">
-                Unique identifier within the source type
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="source_uri">Source URI (optional)</Label>
-              <Input
-                type="text"
-                id="source_uri"
-                name="source_uri"
-                value={formData.source_uri}
-                onChange={handleInputChange}
-                placeholder="Auto-generated if empty"
-              />
-              <p className="text-sm text-muted-foreground">
-                Canonical URI/URL of the original document
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="created_at">Created At (optional)</Label>
-              <Input
-                type="datetime-local"
-                id="created_at"
-                name="created_at"
-                value={formData.created_at}
-                onChange={handleInputChange}
-              />
-              <p className="text-sm text-muted-foreground">Original creation timestamp</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="metadata">Additional Metadata (JSON, optional)</Label>
-              <Textarea
-                id="metadata"
-                name="metadata"
-                value={formData.metadata}
-                onChange={handleInputChange}
-                rows={5}
-                placeholder={'{\n  "author": "John Doe",\n  "category": "Research"\n}'}
-              />
-              <p className="text-sm text-muted-foreground">Additional metadata as JSON object</p>
-            </div>
-          </CardContent>
-        </Card>
-
+              <div className="space-y-2">
+                <Label htmlFor="metadata">Additional Metadata (JSON, optional)</Label>
+                <Textarea
+                  id="metadata"
+                  name="metadata"
+                  value={formData.metadata}
+                  onChange={handleInputChange}
+                  rows={5}
+                  placeholder={'{\n  "author": "John Doe",\n  "category": "Research"\n}'}
+                />
+                <p className="text-sm text-muted-foreground">Additional metadata as JSON object</p>
+              </div>
+            </CardContent>
+          </Card>
+        </fieldset>
         <div className={styles.formActions}>
           <Button type="submit" disabled={loading}>
             {loading ? 'Uploading...' : 'Upload Document'}
           </Button>
-          <Link to="/documents" className={styles.cancelButton}>
-            Cancel
-          </Link>
+          <Button asChild variant="secondary">
+            <Link to="/documents">Cancel</Link>
+          </Button>
         </div>
       </form>
     </div>

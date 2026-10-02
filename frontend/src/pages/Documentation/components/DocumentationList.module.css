@@ -1,72 +1,80 @@
 /* Documentation list container */
 .container {
-  padding: 1rem;
+  padding: 1.5rem 2rem;
   max-width: 1200px;
   margin: 0 auto;
 }
 
 .container h1 {
   margin-bottom: 1.5rem;
-  color: var(--text);
+  color: hsl(var(--foreground));
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
 }
 
 /* Loading and error states */
 .loading {
   padding: 2rem;
   text-align: center;
-  color: var(--text-light);
+  color: hsl(var(--muted-foreground));
   font-style: italic;
 }
 
 .error {
   padding: 1rem;
-  background-color: var(--accent-bg);
+  background-color: hsl(var(--muted));
   border-left: 4px solid #e74c3c;
-  color: var(--text);
+  color: hsl(var(--foreground));
   border-radius: 4px;
 }
 
 .empty {
   padding: 2rem;
   text-align: center;
-  color: var(--text-light);
+  color: hsl(var(--muted-foreground));
   font-style: italic;
 }
 
 /* Documentation list */
 .docsList {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 0.75rem;
 }
 
 .docItem {
   display: block;
   padding: 1rem;
-  background-color: var(--accent-bg);
-  border: 1px solid var(--border);
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
   text-decoration: none;
-  color: var(--text);
-  transition: all 0.2s ease;
+  color: hsl(var(--foreground));
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .docItem:hover {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  transform: translateX(4px);
+  background-color: hsl(var(--accent));
+  border-color: hsl(var(--accent));
+
 }
 
 .docTitle {
   font-size: 1.1em;
   font-weight: 600;
   margin-bottom: 0.25rem;
-  color: var(--text);
+  color: hsl(var(--foreground));
   text-transform: capitalize;
 }
 
 .docFilename {
   font-size: 0.85em;
-  color: var(--text-light);
+  color: hsl(var(--muted-foreground));
   font-family: monospace;
+  overflow-wrap: anywhere;
 }
+
+.docItem:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+
+@media (max-width: 768px) { .container { padding: 1rem; } }

@@ -145,7 +145,8 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
             className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50"
           />
           <input
-            type="text"
+            type="search"
+            aria-label="Search conversations"
             placeholder="Search..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -194,12 +195,12 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                     data-testid={`conversation-item-${conv.conversation_id}`}
                     data-conversation-id={conv.conversation_id}
                   >
-                    <div className="text-sm leading-snug line-clamp-2 mb-1">
+                    <div className="text-sm leading-snug line-clamp-2 break-words mb-1">
                       {conv.last_message}
                     </div>
                     {conv.match_excerpt && (
                       <div
-                        className="text-xs leading-snug text-muted-foreground line-clamp-2 mb-1"
+                        className="text-xs leading-snug text-muted-foreground line-clamp-2 break-words mb-1"
                         data-testid="conversation-match-excerpt"
                       >
                         {conv.match_excerpt}

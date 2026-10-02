@@ -65,7 +65,9 @@ function TranscriptItem({ entry }: { entry: TranscriptEntry }) {
         <span className="text-xs text-gray-400">{formatTimestamp(entry.timestamp)}</span>
         {!entry.isFinal && <span className="text-xs text-gray-400 italic">(transcribing...)</span>}
       </div>
-      <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap">{entry.text}</p>
+      <p className="text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words">
+        {entry.text}
+      </p>
     </div>
   );
 }
@@ -100,12 +102,12 @@ function EmptyState() {
  */
 export function TranscriptPanel({ transcripts, className = '' }: TranscriptPanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new transcripts are added
   useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [transcripts]);
 
@@ -126,7 +128,6 @@ export function TranscriptPanel({ transcripts, className = '' }: TranscriptPanel
             {transcripts.map((entry) => (
               <TranscriptItem key={entry.id} entry={entry} />
             ))}
-            <div ref={bottomRef} />
           </>
         )}
       </div>

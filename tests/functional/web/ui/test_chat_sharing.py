@@ -1,6 +1,8 @@
 """Browser regression coverage for sharing, focus, and responsive layout."""
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -151,6 +153,7 @@ async def test_share_feedback_does_not_shift_header(
 
 async def test_share_destination_is_read_only(
     created_share: ShareConversationDialog,
+    take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     sharing = created_share
 
@@ -162,6 +165,8 @@ async def test_share_destination_is_read_only(
         recipient.get_by_text("Sharing regression transcript", exact=True)
     ).to_be_visible()
     await expect(recipient.locator(ChatPage.CHAT_INPUT)).to_have_count(0)
+    for viewport in ["desktop", "mobile"]:
+        await take_screenshot(recipient, "shared-conversation", viewport)
     await recipient.close()
 
 

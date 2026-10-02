@@ -15,6 +15,7 @@ const TasksList = ({ onLoadingChange }) => {
   const [taskTypes, setTaskTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [actionError, setActionError] = useState(null);
 
   // Parse URL parameters for filters
@@ -34,7 +35,7 @@ const TasksList = ({ onLoadingChange }) => {
     filters.sort !== 'desc';
 
   // Fetch tasks from API
-  const fetchTasks = async () => {
+  const fetchTasks = async (signal) => {
     try {
       setLoading(true);
       setError(null);
@@ -58,20 +59,27 @@ const TasksList = ({ onLoadingChange }) => {
       }
       params.set('limit', '500'); // Match the Jinja2 implementation
 
-      const response = await fetch(`/api/tasks/?${params.toString()}`);
+      const response = await fetch(`/api/tasks/?${params.toString()}`, { signal });
       if (!response.ok) {
         throw new Error(`Failed to fetch tasks: ${response.status} ${response.statusText}`);
       }
 
       const data = await response.json();
+      if (signal.aborted) {
+        return;
+      }
       setTasks(data.tasks || []);
     } catch (err) {
+      if (signal.aborted) {
+        return;
+      }
       console.error('Error fetching tasks:', err);
       setError(err.message);
     } finally {
-      setLoading(false);
-      // Notify parent that loading is complete
-      onLoadingChange?.(false);
+      if (!signal.aborted) {
+        setLoading(false);
+        onLoadingChange?.(false);
+      }
     }
   };
 
@@ -119,7 +127,7 @@ const TasksList = ({ onLoadingChange }) => {
       }
 
       // Refresh tasks list after successful retry
-      await fetchTasks();
+      setReloadVersion((version) => version + 1);
     } catch (err) {
       console.error('Error retrying task:', err);
       setActionError(`Failed to retry task: ${err.message}`);
@@ -139,7 +147,7 @@ const TasksList = ({ onLoadingChange }) => {
       }
 
       // Refresh tasks list after successful cancellation
-      await fetchTasks();
+      setReloadVersion((version) => version + 1);
     } catch (err) {
       console.error('Error cancelling task:', err);
       setActionError(`Failed to cancel task: ${err.message}`);
@@ -153,27 +161,14 @@ const TasksList = ({ onLoadingChange }) => {
 
   // Fetch data on component mount and when filters change
   useEffect(() => {
-    fetchTasks();
-  }, [searchParams]);
+    const controller = new AbortController();
+    fetchTasks(controller.signal);
+    return () => controller.abort();
+  }, [searchParams, reloadVersion]);
 
   useEffect(() => {
     fetchTaskTypes();
   }, []);
-
-  if (loading) {
-    return <div className={styles.loading}>Loading tasks...</div>;
-  }
-
-  if (error) {
-    return (
-      <div className={styles.errorContainer}>
-        <div className={styles.errorMessage}>Error loading tasks: {error}</div>
-        <Button onClick={fetchTasks} variant="secondary">
-          Retry
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <PageContainer className={styles.tasksList}>
@@ -211,32 +206,47 @@ const TasksList = ({ onLoadingChange }) => {
         </Alert>
       )}
 
-      {tasks.length === 0 ? (
-        <div className={styles.emptyState}>
-          {hasActiveFilters ? 'No tasks match the current filters.' : 'No tasks found.'}
-        </div>
-      ) : (
-        <div className={styles.resultsContainer}>
-          <div className={styles.resultsSummary}>
-            Showing {tasks.length} task{tasks.length !== 1 ? 's' : ''}
-            {hasActiveFilters && (
-              <span>
-                {' '}
-                (filtered)
-                <Button onClick={clearFilters} variant="ghost" size="sm">
-                  Clear filters
-                </Button>
-              </span>
-            )}
-          </div>
-
-          <div className={styles.tasksGrid}>
-            {tasks.map((task) => (
-              <TaskCard key={task.id} task={task} onRetry={handleRetry} onCancel={handleCancel} />
-            ))}
-          </div>
+      {loading && (
+        <div className={styles.loading} role="status">
+          Loading tasks...
         </div>
       )}
+      {error && (
+        <div className={styles.errorContainer} role="alert">
+          <div className={styles.errorMessage}>Error loading tasks: {error}</div>
+          <Button onClick={() => setReloadVersion((version) => version + 1)} variant="secondary">
+            Retry
+          </Button>
+        </div>
+      )}
+      {!loading &&
+        !error &&
+        (tasks.length === 0 ? (
+          <div className={styles.emptyState}>
+            {hasActiveFilters ? 'No tasks match the current filters.' : 'No tasks found.'}
+          </div>
+        ) : (
+          <div className={styles.resultsContainer}>
+            <div className={styles.resultsSummary}>
+              Showing {tasks.length} task{tasks.length !== 1 ? 's' : ''}
+              {hasActiveFilters && (
+                <span>
+                  {' '}
+                  (filtered)
+                  <Button onClick={clearFilters} variant="ghost" size="sm">
+                    Clear filters
+                  </Button>
+                </span>
+              )}
+            </div>
+
+            <div className={styles.tasksGrid}>
+              {tasks.map((task) => (
+                <TaskCard key={task.id} task={task} onRetry={handleRetry} onCancel={handleCancel} />
+              ))}
+            </div>
+          </div>
+        ))}
     </PageContainer>
   );
 };

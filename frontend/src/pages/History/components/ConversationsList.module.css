@@ -62,7 +62,7 @@
 
 .conversationLink {
   text-decoration: none;
-  color: var(--accent);
+  color: hsl(var(--link));
   font-family: 'Courier New', monospace;
   word-break: break-all;
 }
@@ -80,7 +80,7 @@
 .conversationPreview {
   margin-bottom: 1rem;
   padding: 0.75rem;
-  background-color: var(--bg-secondary);
+  background-color: var(--accent-bg);
   border-radius: 4px;
   border-left: 3px solid var(--accent-bg);
 }
@@ -128,14 +128,14 @@
 
 .viewLink {
   text-decoration: none;
-  color: var(--accent);
+  color: hsl(var(--link));
   font-size: 0.9em;
   font-weight: 500;
   transition: color 0.2s ease;
 }
 
 .viewLink:hover {
-  color: var(--accent);
+  color: hsl(var(--link));
   text-decoration: underline;
 }
 
@@ -155,7 +155,7 @@
   border: 1px solid currentColor;
   border-radius: 4px;
   margin: 1rem 0;
-  background-color: var(--bg-secondary);
+  background-color: var(--accent-bg);
 }
 
 /* Empty state */
@@ -182,8 +182,8 @@
 }
 
 .clearFiltersButton:hover {
-  background-color: var(--bg-secondary);
-  border-color: var(--accent);
+  background-color: var(--accent-bg);
+  border-color: hsl(var(--link));
 }
 
 /* Tablet layout */

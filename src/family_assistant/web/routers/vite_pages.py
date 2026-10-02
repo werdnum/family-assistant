@@ -118,6 +118,12 @@ def _serve_vite_html_file(request: Request, html_filename: str) -> Response:
             )
 
 
+@vite_pages_router.get("/about", name="about_ui")
+async def about_ui(request: Request) -> Response:
+    """Serve the React About page for direct links and reloads."""
+    return _serve_vite_html_file(request, "router.html")
+
+
 @vite_pages_router.get("/chat", name="chat_ui")
 async def chat_ui(request: Request) -> Response:
     """Serve the React chat interface via router."""

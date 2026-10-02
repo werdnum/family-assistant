@@ -42,11 +42,11 @@ const AboutPage: React.FC = () => {
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
       <div className="flex items-center gap-3 mb-8">
-        <div className="bg-primary/10 p-2 rounded-lg">
+        <div className="bg-primary/10 shrink-0 p-2 rounded-lg">
           <Info className="w-8 h-8 text-primary" />
         </div>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">About Family Assistant</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">About Family Assistant</h1>
           <p className="text-muted-foreground">Version and build information</p>
         </div>
       </div>
@@ -68,7 +68,7 @@ const AboutPage: React.FC = () => {
               </div>
             ) : versionInfo ? (
               <div className="space-y-6">
-                <div className="flex items-center justify-between border-b pb-4">
+                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between border-b pb-4">
                   <div className="flex items-center gap-3">
                     <Package className="w-5 h-5 text-muted-foreground" />
                     <span className="font-medium">Application Version</span>
@@ -78,7 +78,7 @@ const AboutPage: React.FC = () => {
                   </Badge>
                 </div>
 
-                <div className="flex items-center justify-between border-b pb-4">
+                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between border-b pb-4">
                   <div className="flex items-center gap-3">
                     <GitBranch className="w-5 h-5 text-muted-foreground" />
                     <span className="font-medium">Git Commit</span>
@@ -88,12 +88,14 @@ const AboutPage: React.FC = () => {
                   </code>
                 </div>
 
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-3">
                     <Calendar className="w-5 h-5 text-muted-foreground" />
                     <span className="font-medium">Build Date / Tag</span>
                   </div>
-                  <span className="text-muted-foreground">{versionInfo.build_date}</span>
+                  <span className="min-w-0 break-all text-muted-foreground sm:text-right">
+                    {versionInfo.build_date}
+                  </span>
                 </div>
               </div>
             ) : null}
@@ -104,7 +106,7 @@ const AboutPage: React.FC = () => {
           <CardHeader>
             <CardTitle>About the Project</CardTitle>
           </CardHeader>
-          <CardContent className="prose dark:prose-invert max-w-none">
+          <CardContent className="space-y-4 leading-relaxed">
             <p>
               Family Assistant is a comprehensive personal assistant platform designed to help
               manage daily tasks, documents, and notes using advanced AI technologies.

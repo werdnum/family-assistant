@@ -10,6 +10,7 @@ const ConversationsList = ({ onLoaded }) => {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
@@ -40,7 +41,7 @@ const ConversationsList = ({ onLoaded }) => {
   );
 
   const fetchConversations = useCallback(
-    async (page, currentFilters) => {
+    async (page, currentFilters, signal) => {
       setLoading(true);
       setError(null);
 
@@ -64,22 +65,29 @@ const ConversationsList = ({ onLoaded }) => {
           params.append('date_to', currentFilters.date_to.toISOString().split('T')[0]);
         }
 
-        const response = await fetch(`/api/v1/chat/conversations?${params}`);
+        const response = await fetch(`/api/v1/chat/conversations?${params}`, { signal });
 
         if (!response.ok) {
           throw new Error(`Failed to fetch conversations: ${response.statusText}`);
         }
 
         const data = await response.json();
+        if (signal.aborted) {
+          return;
+        }
         setConversations(data.conversations || []);
         setTotalCount(data.count);
         setTotalPages(Math.ceil(data.count / pageSize));
       } catch (err) {
+        if (signal.aborted) {
+          return;
+        }
         setError(err.message);
       } finally {
-        setLoading(false);
-        // Notify parent that loading is complete
-        onLoaded?.();
+        if (!signal.aborted) {
+          setLoading(false);
+          onLoaded?.();
+        }
       }
     },
     [pageSize]
@@ -87,9 +95,12 @@ const ConversationsList = ({ onLoaded }) => {
 
   // Fetch data when page or filters change
   useEffect(() => {
-    fetchConversations(currentPage, filters);
+    const controller = new AbortController();
+    fetchConversations(currentPage, filters, controller.signal);
+    return () => controller.abort();
   }, [
     fetchConversations,
+    reloadVersion,
     currentPage,
     filters.interface_type,
     filters.conversation_id,
@@ -173,15 +184,6 @@ const ConversationsList = ({ onLoaded }) => {
     return `${message.substring(0, maxLength)}...`;
   };
 
-  if (loading && conversations.length === 0) {
-    return (
-      <div className={styles.conversationsList}>
-        <h1>Conversation History</h1>
-        <div className={styles.loading}>Loading conversations...</div>
-      </div>
-    );
-  }
-
   return (
     <div className={styles.conversationsList}>
       <h1>Conversation History</h1>
@@ -194,15 +196,30 @@ const ConversationsList = ({ onLoaded }) => {
         loading={loading}
       />
 
-      {/* Results Summary */}
-      <div className={styles.resultsInfo}>
-        <p>
-          Found {totalCount} conversation{totalCount !== 1 ? 's' : ''}
-          {Object.values(filters).some((v) => v) && ' matching your criteria'}
-        </p>
-      </div>
+      {loading && (
+        <div className={styles.loading} role="status">
+          Loading conversations...
+        </div>
+      )}
 
-      {error && <div className={styles.error}>Error: {error}</div>}
+      {/* Results Summary */}
+      {!loading && !error && (
+        <div className={styles.resultsInfo}>
+          <p>
+            Found {totalCount} conversation{totalCount !== 1 ? 's' : ''}
+            {Object.values(filters).some((v) => v) && ' matching your criteria'}
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <div className={styles.error} role="alert">
+          <p>Error: {error}</p>
+          <Button variant="outline" onClick={() => setReloadVersion((version) => version + 1)}>
+            Try again
+          </Button>
+        </div>
+      )}
 
       {/* Conversations List */}
       {conversations.length > 0 ? (
@@ -268,7 +285,7 @@ const ConversationsList = ({ onLoaded }) => {
             loading={loading}
           />
         </>
-      ) : !loading ? (
+      ) : !loading && !error ? (
         <div className={styles.emptyState}>
           <p>No conversations found matching your criteria.</p>
           {Object.values(filters).some((v) => v) && (

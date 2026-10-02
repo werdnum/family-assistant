@@ -1,9 +1,10 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Separator } from '@/components/ui/separator';
 import {
   Sheet,
   SheetContent,
+  SheetClose,
   SheetDescription,
   SheetHeader,
   SheetTitle,
@@ -11,7 +12,6 @@ import {
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { getNavigationItems } from './navigation';
-import { pageHref } from './embeddedNavigation';
 import { ThemeToggle } from './ThemeToggle';
 
 interface NavigationSheetProps {
@@ -30,11 +30,15 @@ const NavigationSheet: React.FC<NavigationSheetProps> = ({
   side = 'right',
 }) => {
   const navigationItems = getNavigationItems(currentPage);
+  const { pathname } = useLocation();
 
   return (
     <Sheet>
       <SheetTrigger asChild>{children}</SheetTrigger>
-      <SheetContent side={side} className="w-[300px] sm:w-[400px] flex flex-col">
+      <SheetContent
+        side={side}
+        className="w-[300px] max-w-[calc(100vw-2rem)] sm:w-[400px] flex flex-col"
+      >
         <SheetHeader className="flex-shrink-0">
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription>{description}</SheetDescription>
@@ -50,33 +54,26 @@ const NavigationSheet: React.FC<NavigationSheetProps> = ({
             }
 
             const Icon = item.icon!;
-            const isActive = item.type === 'current';
+            const target = item.to || item.href;
+            const isActive =
+              target === '/'
+                ? pathname === '/'
+                : pathname.replace(/\/$/, '') === target?.replace(/\/$/, '');
 
-            if (item.type === 'link' || item.type === 'current') {
-              return (
+            return (
+              <SheetClose asChild key={index}>
                 <Link
-                  key={index}
-                  to={item.to!}
+                  to={target!}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground',
+                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     isActive && 'bg-accent/50 text-accent-foreground'
                   )}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-4 w-4 shrink-0" />
                   {item.title}
                 </Link>
-              );
-            }
-
-            return (
-              <a
-                key={index}
-                href={pageHref(item.href!)}
-                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-              >
-                <Icon className="h-4 w-4" />
-                {item.title}
-              </a>
+              </SheetClose>
             );
           })}
 

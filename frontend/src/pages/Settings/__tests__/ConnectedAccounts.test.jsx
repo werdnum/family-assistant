@@ -186,6 +186,22 @@ describe('ConnectedAccounts', () => {
     expect(screen.getByText(/reconnect and approve all/i)).toBeInTheDocument();
   });
 
+  it('focuses the safe choice and lets Escape close the disconnect confirmation', async () => {
+    server.use(
+      http.get('/api/integrations/google', () => HttpResponse.json(googleConnectedResponse))
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    expect(
+      screen.getByRole('alertdialog', { name: 'Disconnect Google account?' })
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disconnect' })).toHaveFocus();
+  });
+
   it('disconnect flow: shows confirmation modal, calls DELETE, and refetches status', async () => {
     const user = userEvent.setup();
     let deleteCallCount = 0;

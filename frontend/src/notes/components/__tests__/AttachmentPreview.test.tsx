@@ -1,5 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
+import { server } from '../../../test/setup.js';
 import type React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { AttachmentPreview } from '../AttachmentPreview';
@@ -53,5 +55,24 @@ describe('AttachmentPreview', () => {
     });
 
     expect(screen.queryByTitle('Remove attachment')).not.toBeInTheDocument();
+  });
+  it('allows an unavailable attachment to be removed', async () => {
+    const user = userEvent.setup();
+    const handleRemove = vi.fn();
+    server.use(http.get('/api/attachments/missing', () => HttpResponse.json({}, { status: 404 })));
+    render(<AttachmentPreview attachmentId="missing" onRemove={handleRemove} />);
+    await user.click(await screen.findByRole('button', { name: 'Remove attachment' }));
+    expect(handleRemove).toHaveBeenCalledWith('missing');
+    expect(screen.getByText('Error loading')).toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+  });
+
+  it('opens image previews from the keyboard', async () => {
+    const user = userEvent.setup();
+    render(<AttachmentPreview attachmentId="test-attachment" />);
+    const trigger = await screen.findByRole('button', { name: /Preview test-attachment/ });
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 });

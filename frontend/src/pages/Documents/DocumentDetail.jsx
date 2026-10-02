@@ -128,9 +128,9 @@ const DocumentDetail = () => {
       <div className={styles.container}>
         <div className={styles.header}>
           <h1>Document Detail</h1>
-          <Link to="/documents" className={styles.backButton}>
-            Back to Documents
-          </Link>
+          <Button asChild variant="outline">
+            <Link to="/documents">Back to Documents</Link>
+          </Button>
         </div>
         <div className={styles.loading}>Loading document...</div>
       </div>
@@ -142,9 +142,9 @@ const DocumentDetail = () => {
       <div className={styles.container}>
         <div className={styles.header}>
           <h1>Document Detail</h1>
-          <Link to="/documents" className={styles.backButton}>
-            Back to Documents
-          </Link>
+          <Button asChild variant="outline">
+            <Link to="/documents">Back to Documents</Link>
+          </Button>
         </div>
         <div className={styles.error}>Error: {error}</div>
       </div>
@@ -156,9 +156,9 @@ const DocumentDetail = () => {
       <div className={styles.container}>
         <div className={styles.header}>
           <h1>Document Detail</h1>
-          <Link to="/documents" className={styles.backButton}>
-            Back to Documents
-          </Link>
+          <Button asChild variant="outline">
+            <Link to="/documents">Back to Documents</Link>
+          </Button>
         </div>
         <div className={styles.empty}>Document not found.</div>
       </div>
@@ -169,9 +169,9 @@ const DocumentDetail = () => {
     <div className={styles.container}>
       <div className={styles.header}>
         <h1>Document Detail</h1>
-        <Link to="/documents" className={styles.backButton}>
-          Back to Documents
-        </Link>
+        <Button asChild variant="outline">
+          <Link to="/documents">Back to Documents</Link>
+        </Button>
       </div>
 
       {error && <div className={styles.error}>Error: {error}</div>}

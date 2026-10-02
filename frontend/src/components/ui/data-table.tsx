@@ -68,10 +68,11 @@ export function DataTable<TData, TValue>({
   });
 
   return (
-    <div className="w-full">
+    <div className="min-w-0 w-full">
       {searchable && (
         <div className="flex items-center py-4">
           <Input
+            aria-label={searchPlaceholder}
             placeholder={searchPlaceholder}
             value={(table.getColumn(searchColumnId)?.getFilterValue() as string) ?? ''}
             onChange={(event) =>
@@ -119,12 +120,12 @@ export function DataTable<TData, TValue>({
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-between space-x-2 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 py-4">
         <div className="text-sm text-muted-foreground">
           Showing {table.getRowModel().rows.length} of {table.getFilteredRowModel().rows.length}{' '}
           result(s)
         </div>
-        <div className="space-x-2">
+        <div className="flex shrink-0 gap-2">
           <Button
             variant="outline"
             size="sm"

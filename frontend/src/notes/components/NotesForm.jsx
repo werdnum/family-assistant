@@ -32,6 +32,7 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
   const fetchNote = async (title) => {
     try {
       setInitialLoading(true);
+      setError(null);
       const response = await fetch(`/api/notes/${encodeURIComponent(title)}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch note: ${response.status}`);
@@ -127,9 +128,28 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
     );
   }
 
+  if (isEdit && error && !originalTitle) {
+    return (
+      <div className="container mx-auto space-y-6 py-6">
+        <h1 className="text-3xl font-bold tracking-tight">Edit Note</h1>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={() => fetchNote(urlTitle)}>
+            Try again
+          </Button>
+          <Button variant="secondary" onClick={onCancel}>
+            Back to Notes
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">{isEdit ? 'Edit Note' : 'Add New Note'}</h1>
+    <div className="container mx-auto space-y-6 py-6">
+      <h1 className="text-3xl font-bold tracking-tight">{isEdit ? 'Edit Note' : 'Add New Note'}</h1>
 
       {error && (
         <Alert variant="destructive">
@@ -166,8 +186,8 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
                 onChange={handleChange}
                 required
                 disabled={loading}
-                rows={20}
-                className="font-mono"
+                rows={12}
+                className="min-h-[240px] font-mono"
                 placeholder="Enter note content..."
               />
             </div>
@@ -181,11 +201,12 @@ const NotesForm = ({ isEdit, onSuccess, onCancel }) => {
                   disabled={loading}
                 />
                 <Label htmlFor="include_in_prompt" className="font-normal">
-                  Include in system prompt
+                  Always include in conversations
                 </Label>
               </div>
               <p className="text-sm text-muted-foreground pl-6">
-                When enabled, this note will be included in the system prompt for LLM conversations.
+                Keep this note in the assistant’s context for every conversation. Other notes can
+                still be found through search.
               </p>
             </div>
 

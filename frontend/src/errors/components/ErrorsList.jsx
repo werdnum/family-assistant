@@ -64,6 +64,10 @@ const ErrorsList = () => {
     fetchErrors(currentPage, currentLevel, currentLogger, currentDays);
   }, [currentPage, currentLevel, currentLogger, currentDays]);
 
+  useEffect(() => {
+    setFilters({ level: currentLevel, logger: currentLogger, days: currentDays });
+  }, [currentLevel, currentLogger, currentDays]);
+
   const handleFilterSubmit = (e) => {
     e.preventDefault();
 
@@ -178,6 +182,7 @@ const ErrorsList = () => {
           <Button
             variant={i === currentPage ? 'default' : 'outline'}
             size="sm"
+            aria-current={i === currentPage ? 'page' : undefined}
             onClick={() => handlePageChange(i)}
           >
             {i}
@@ -283,9 +288,9 @@ const ErrorsList = () => {
       </div>
 
       {/* Results Summary */}
-      {!loading && (
+      {!loading && !error && (
         <div className={styles.resultsSummary}>
-          <strong>{totalCount}</strong> error(s) found
+          <strong>{totalCount}</strong> error{totalCount !== 1 ? 's' : ''} found
         </div>
       )}
 
@@ -300,7 +305,7 @@ const ErrorsList = () => {
       )}
 
       {/* Error List */}
-      {!loading && !error && (
+      {!loading && !error && errors.length > 0 && (
         <div className={styles.tableResponsive}>
           <table className={styles.table}>
             <thead>

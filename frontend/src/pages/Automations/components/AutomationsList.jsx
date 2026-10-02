@@ -55,7 +55,7 @@ const AutomationCard = ({ automation, onToggle, toggling }) => {
         <div className="min-w-0 flex-1 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
-              <h3 className="text-base font-semibold leading-tight">
+              <h3 className="break-words text-base font-semibold leading-tight">
                 <Link
                   to={automationPath(automation)}
                   className="hover:underline focus-visible:underline"

@@ -1,6 +1,7 @@
 .container {
-  padding: 2rem;
+  padding: 1.5rem 2rem;
   max-width: 1200px;
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -13,13 +14,15 @@
 
 .header h1 {
   margin: 0;
-  font-size: 2rem;
-  color: var(--nc-tx-1);
+  font-size: 1.875rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: hsl(var(--foreground));
 }
 
 .uploadButton, .backButton {
   padding: 0.5rem 1rem;
-  background-color: var(--nc-lk-1);
+  background-color: hsl(var(--primary));
   color: white;
   text-decoration: none;
   border-radius: 4px;
@@ -27,27 +30,27 @@
 }
 
 .uploadButton:hover, .backButton:hover {
-  background-color: var(--nc-lk-2);
+  background-color: hsl(var(--primary));
 }
 
 .loading {
   text-align: center;
   padding: 2rem;
   font-size: 1.1rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
 }
 
 .error {
-  background-color: #fee;
-  color: #c00;
+  background-color: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
   padding: 1rem;
   border-radius: 4px;
   margin-bottom: 1rem;
 }
 
 .success {
-  background-color: #efe;
-  color: #060;
+  background-color: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
   padding: 1rem;
   border-radius: 4px;
   margin-bottom: 1rem;
@@ -56,21 +59,21 @@
 .stats {
   margin-bottom: 1rem;
   font-size: 1.1rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
 }
 
 .empty {
   text-align: center;
   padding: 3rem;
   font-size: 1.1rem;
-  color: var(--nc-tx-2);
-  background-color: var(--nc-bg-2);
+  color: hsl(var(--muted-foreground));
+  background-color: hsl(var(--muted));
   border-radius: 4px;
 }
 
 /* Documents Table */
 .documentsTable {
-  background-color: var(--nc-bg-1);
+  background-color: hsl(var(--card));
   border-radius: 4px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -80,9 +83,9 @@
   display: grid;
   grid-template-columns: 2fr 1fr 1.5fr 1.5fr 1.5fr 1fr;
   padding: 1rem;
-  background-color: var(--nc-bg-2);
+  background-color: hsl(var(--muted));
   font-weight: bold;
-  border-bottom: 2px solid var(--nc-bg-3);
+  border-bottom: 2px solid hsl(var(--border));
 }
 
 .headerCell {
@@ -93,12 +96,12 @@
   display: grid;
   grid-template-columns: 2fr 1fr 1.5fr 1.5fr 1.5fr 1fr;
   padding: 1rem;
-  border-bottom: 1px solid var(--nc-bg-3);
+  border-bottom: 1px solid hsl(var(--border));
   transition: background-color 0.2s;
 }
 
 .tableRow:hover {
-  background-color: var(--nc-bg-2);
+  background-color: hsl(var(--muted));
 }
 
 .cell {
@@ -109,7 +112,7 @@
 }
 
 .documentLink {
-  color: var(--nc-lk-1);
+  color: hsl(var(--primary));
   text-decoration: none;
   font-weight: 500;
 }
@@ -120,14 +123,14 @@
 
 .sourceUri {
   margin-top: 0.25rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
   word-break: break-all;
 }
 
 .sourceId {
   font-family: monospace;
   font-size: 0.9rem;
-  background-color: var(--nc-bg-2);
+  background-color: hsl(var(--muted));
   padding: 0.25rem 0.5rem;
   border-radius: 3px;
   display: inline-block;
@@ -135,7 +138,7 @@
 
 .reindexButton {
   padding: 0.25rem 0.75rem;
-  background-color: var(--nc-lk-1);
+  background-color: hsl(var(--primary));
   color: white;
   border: none;
   border-radius: 3px;
@@ -145,7 +148,7 @@
 }
 
 .reindexButton:hover:not(:disabled) {
-  background-color: var(--nc-lk-2);
+  background-color: hsl(var(--primary));
 }
 
 .reindexButton:disabled {
@@ -165,7 +168,7 @@
 
 .pageButton {
   padding: 0.5rem 1rem;
-  background-color: var(--nc-lk-1);
+  background-color: hsl(var(--primary));
   color: white;
   border: none;
   border-radius: 4px;
@@ -174,18 +177,18 @@
 }
 
 .pageButton:hover:not(:disabled) {
-  background-color: var(--nc-lk-2);
+  background-color: hsl(var(--primary));
 }
 
 .pageButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background-color: var(--nc-bg-3);
+  background-color: hsl(var(--border));
 }
 
 .pageInfo {
   font-size: 1rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
 }
 
 /* Upload Form */
@@ -195,7 +198,7 @@
 }
 
 .formSection {
-  background-color: var(--nc-bg-1);
+  background-color: hsl(var(--card));
   border-radius: 4px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
@@ -206,7 +209,7 @@
   margin-top: 0;
   margin-bottom: 1rem;
   font-size: 1.3rem;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
 }
 
 .uploadTypeButtons {
@@ -218,8 +221,8 @@
 .typeButton {
   flex: 1;
   padding: 0.75rem;
-  background-color: var(--nc-bg-2);
-  border: 2px solid var(--nc-bg-3);
+  background-color: hsl(var(--muted));
+  border: 2px solid hsl(var(--border));
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.2s;
@@ -227,13 +230,13 @@
 }
 
 .typeButton:hover {
-  background-color: var(--nc-bg-3);
+  background-color: hsl(var(--border));
 }
 
 .typeButton.active {
-  background-color: var(--nc-lk-1);
+  background-color: hsl(var(--primary));
   color: white;
-  border-color: var(--nc-lk-1);
+  border-color: hsl(var(--primary));
 }
 
 .formGroup {
@@ -244,7 +247,7 @@
   display: block;
   margin-bottom: 0.5rem;
   font-weight: 500;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
 }
 
 .formGroup input[type="text"],
@@ -254,19 +257,19 @@
 .formGroup textarea {
   width: 100%;
   padding: 0.5rem;
-  border: 1px solid var(--nc-bg-3);
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   font-size: 1rem;
-  background-color: var(--nc-bg-1);
-  color: var(--nc-tx-1);
+  background-color: hsl(var(--card));
+  color: hsl(var(--foreground));
 }
 
 .formGroup input[type="file"] {
   width: 100%;
   padding: 0.5rem;
-  border: 1px solid var(--nc-bg-3);
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
-  background-color: var(--nc-bg-1);
+  background-color: hsl(var(--card));
 }
 
 .formGroup textarea {
@@ -277,7 +280,7 @@
 .formGroup small {
   display: block;
   margin-top: 0.25rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
   font-size: 0.9rem;
 }
 
@@ -290,7 +293,7 @@
 
 .submitButton {
   padding: 0.75rem 2rem;
-  background-color: var(--nc-lk-1);
+  background-color: hsl(var(--primary));
   color: white;
   border: none;
   border-radius: 4px;
@@ -300,7 +303,7 @@
 }
 
 .submitButton:hover:not(:disabled) {
-  background-color: var(--nc-lk-2);
+  background-color: hsl(var(--primary));
 }
 
 .submitButton:disabled {
@@ -310,8 +313,8 @@
 
 .cancelButton {
   padding: 0.75rem 2rem;
-  background-color: var(--nc-bg-3);
-  color: var(--nc-tx-1);
+  background-color: hsl(var(--border));
+  color: hsl(var(--foreground));
   text-decoration: none;
   border-radius: 4px;
   font-size: 1.1rem;
@@ -320,15 +323,16 @@
 }
 
 .cancelButton:hover {
-  background-color: var(--nc-bg-2);
+  background-color: hsl(var(--muted));
 }
 
 /* Document Detail View */
 .detailSection {
-  background-color: var(--nc-bg-1);
-  border-radius: 4px;
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
   padding: 1.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
@@ -336,8 +340,8 @@
   margin-top: 0;
   margin-bottom: 1.5rem;
   font-size: 1.4rem;
-  color: var(--nc-tx-1);
-  border-bottom: 2px solid var(--nc-bg-3);
+  color: hsl(var(--foreground));
+  border-bottom: 2px solid hsl(var(--border));
   padding-bottom: 0.5rem;
 }
 
@@ -356,17 +360,17 @@
 
 .metadataLabel {
   font-weight: 600;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
   min-width: 120px;
 }
 
 .metadataValue {
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
   word-break: break-word;
 }
 
 .sourceLink {
-  color: var(--nc-lk-1);
+  color: hsl(var(--primary));
   text-decoration: none;
 }
 
@@ -377,17 +381,17 @@
 .actionButtons {
   margin-top: 1.5rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--nc-bg-3);
+  border-top: 1px solid hsl(var(--border));
 }
 
 .metadataJson {
-  background-color: var(--nc-bg-2);
-  border: 1px solid var(--nc-bg-3);
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   padding: 1rem;
   font-family: monospace;
   font-size: 0.9rem;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -406,23 +410,23 @@
 .contentTypeLabel {
   margin-bottom: 1rem;
   font-size: 0.9rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
 }
 
 .fullTextContainer {
   max-height: 500px;
   overflow-y: auto;
-  border: 1px solid var(--nc-bg-3);
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
 }
 
 .fullText {
-  background-color: var(--nc-bg-2);
+  background-color: hsl(var(--muted));
   padding: 1rem;
   margin: 0;
   font-family: monospace;
   font-size: 0.9rem;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.4;
@@ -431,9 +435,9 @@
 .embeddingsStats {
   margin-bottom: 1.5rem;
   font-size: 1rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
   padding: 0.5rem;
-  background-color: var(--nc-bg-2);
+  background-color: hsl(var(--muted));
   border-radius: 4px;
 }
 
@@ -444,8 +448,8 @@
 }
 
 .embeddingItem {
-  background-color: var(--nc-bg-2);
-  border: 1px solid var(--nc-bg-3);
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 4px;
   padding: 1rem;
 }
@@ -461,7 +465,7 @@
 .embeddingType,
 .embeddingModel,
 .embeddingChunk {
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
 }
 
 .embeddingType strong,
@@ -476,19 +480,19 @@
 
 .embeddingMetadata strong {
   font-weight: 600;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
   display: block;
   margin-bottom: 0.5rem;
 }
 
 .embeddingMetadataJson {
-  background-color: var(--nc-bg-1);
-  border: 1px solid var(--nc-bg-3);
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 3px;
   padding: 0.5rem;
   font-family: monospace;
   font-size: 0.8rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
   margin: 0;
 }
 
@@ -497,13 +501,13 @@
 }
 
 .contentPreview {
-  background-color: var(--nc-bg-1);
-  border: 1px solid var(--nc-bg-3);
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 3px;
   padding: 0.75rem;
   font-family: monospace;
   font-size: 0.85rem;
-  color: var(--nc-tx-1);
+  color: hsl(var(--foreground));
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.3;
@@ -515,19 +519,19 @@
 .contentTruncated {
   margin-top: 0.5rem;
   font-size: 0.8rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
   font-style: italic;
 }
 
 .embeddingFooter {
   padding-top: 0.5rem;
-  border-top: 1px solid var(--nc-bg-3);
+  border-top: 1px solid hsl(var(--border));
   margin-top: 0.75rem;
 }
 
 .embeddingDate {
   font-size: 0.8rem;
-  color: var(--nc-tx-2);
+  color: hsl(var(--muted-foreground));
 }
 
 /* Responsive Design */
@@ -535,6 +539,8 @@
   .container {
     padding: 1rem;
   }
+
+  .detailSection { padding: 1rem; }
 
   .header {
     flex-direction: column;
@@ -601,3 +607,6 @@
     max-height: 150px;
   }
 }
+
+.embeddingMetadataJson { white-space: pre-wrap; overflow-wrap: anywhere; }
+.embeddingHeader { overflow-wrap: anywhere; }

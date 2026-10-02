@@ -59,34 +59,35 @@ const ThreadContent: React.FC = () => {
   const conversationLoadStatus = useChatControls()?.conversationLoadStatus ?? null;
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
-      <ThreadPrimitive.Viewport
-        ref={viewportRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0"
-      >
-        <div className="pb-6">
-          {conversationLoadStatus ? (
-            <ThreadConversationLoad status={conversationLoadStatus} />
-          ) : (
-            <ThreadWelcome />
-          )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <ThreadPrimitive.Viewport
+          ref={viewportRef}
+          className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0"
+        >
+          <div className="pb-6">
+            {conversationLoadStatus ? (
+              <ThreadConversationLoad status={conversationLoadStatus} />
+            ) : (
+              <ThreadWelcome />
+            )}
 
-          <ThreadLoadOlderMessages viewportRef={viewportRef} />
+            <ThreadLoadOlderMessages viewportRef={viewportRef} />
 
-          <ThreadPrimitive.Messages
-            components={{
-              UserMessage: UserMessage,
-              EditComposer: EditComposer,
-              AssistantMessage: AssistantMessage,
-            }}
-          />
+            <ThreadPrimitive.Messages
+              components={{
+                UserMessage: UserMessage,
+                EditComposer: EditComposer,
+                AssistantMessage: AssistantMessage,
+              }}
+            />
 
-          <ThreadPrimitive.If empty={false}>
-            <div className="h-4" />
-          </ThreadPrimitive.If>
-        </div>
-
+            <ThreadPrimitive.If empty={false}>
+              <div className="h-4" />
+            </ThreadPrimitive.If>
+          </div>
+        </ThreadPrimitive.Viewport>
         <ThreadScrollToBottom />
-      </ThreadPrimitive.Viewport>
+      </div>
 
       <div
         className="flex-shrink-0 border-t border-border/50 bg-background/80 backdrop-blur-sm px-4 py-3 md:px-6 md:py-4"
@@ -200,7 +201,7 @@ const ThreadScrollToBottom: React.FC = () => {
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
-        className="absolute bottom-2 right-4 md:right-8 z-10 rounded-full shadow-md bg-background/90 backdrop-blur-sm border-border/50 opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100 h-8 w-8"
+        className="absolute bottom-2 right-4 md:right-8 z-10 rounded-full shadow-md bg-background/90 backdrop-blur-sm border-border/50 opacity-0 [&:disabled]:opacity-0 scale-75 transition-all duration-200 data-[enabled]:opacity-100 data-[enabled]:scale-100 h-8 w-8"
       >
         <ArrowDownIcon size={16} />
       </TooltipIconButton>
