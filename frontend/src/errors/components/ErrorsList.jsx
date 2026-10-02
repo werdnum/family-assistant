@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 import styles from './ErrorsList.module.css';
 
 const ErrorsList = () => {
@@ -232,7 +234,7 @@ const ErrorsList = () => {
         <form onSubmit={handleFilterSubmit} className={styles.filterRow}>
           <div className={styles.filterCol}>
             <label htmlFor="level">Level</label>
-            <select
+            <NativeSelect
               id="level"
               value={filters.level}
               onChange={(e) => setFilters({ ...filters, level: e.target.value })}
@@ -241,12 +243,12 @@ const ErrorsList = () => {
               <option value="ERROR">ERROR</option>
               <option value="CRITICAL">CRITICAL</option>
               <option value="WARNING">WARNING</option>
-            </select>
+            </NativeSelect>
           </div>
 
           <div className={styles.filterCol}>
             <label htmlFor="logger">Logger Name</label>
-            <input
+            <Input
               type="text"
               id="logger"
               value={filters.logger}
@@ -257,7 +259,7 @@ const ErrorsList = () => {
 
           <div className={styles.filterCol}>
             <label htmlFor="days">Time Range</label>
-            <select
+            <NativeSelect
               id="days"
               value={filters.days}
               onChange={(e) => setFilters({ ...filters, days: parseInt(e.target.value) })}
@@ -266,7 +268,7 @@ const ErrorsList = () => {
               <option value={7}>Last 7 days</option>
               <option value={30}>Last 30 days</option>
               <option value={90}>Last 90 days</option>
-            </select>
+            </NativeSelect>
           </div>
 
           <div className={styles.filterColAuto}>

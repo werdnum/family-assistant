@@ -13,7 +13,7 @@
 
 /* Filter form */
 .filterForm {
-  background-color: var(--accent-bg);
+  background-color: hsl(var(--card));
   border: 1px solid var(--border);
   border-radius: 0.375rem;
   padding: 1.5rem;
@@ -38,20 +38,9 @@
 
 .filterForm label {
   display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.filterForm input,
-.filterForm select {
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  font-size: 1rem;
-  line-height: 1.5;
-  background-color: var(--bg);
+  margin-bottom: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--text);
 }
 
@@ -145,6 +134,8 @@
 
 /* View details link */
 .viewDetailsLink {
+  white-space: nowrap;
+  display: inline-block;
   color: hsl(var(--primary));
   text-decoration: none;
   padding: 0.25rem 0.5rem;

@@ -19,7 +19,7 @@
   font-weight: 500;
   color: var(--text);
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   user-select: none;
   transition: all 0.2s ease;
