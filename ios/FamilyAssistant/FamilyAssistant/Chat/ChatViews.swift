@@ -2074,14 +2074,32 @@ private struct ToolGroupView: View {
     /// render a second time.
     let hoistedAttachmentKeys: Set<String>
     let attachmentLoader: any ChatAttachmentLoading
-    @State private var collapsedCompleted = true
+    /// nil until the user opens or closes the group; after that their choice
+    /// holds whatever state the calls move through.
+    @State private var userExpanded: Bool?
 
-    private var shouldCollapse: Bool {
-        collapsedCompleted && toolCalls.allSatisfy { $0.status == .complete }
+    private var autoExpanded: Bool {
+        toolCalls.contains { $0.status.wantsAttention }
+    }
+
+    private var summary: String {
+        var names: [String] = []
+        for call in toolCalls where !names.contains(call.displayName) {
+            names.append(call.displayName)
+        }
+        let unsuccessful = toolCalls.filter { $0.status == .failed || $0.status == .rejected }.count
+        var text = names.prefix(3).joined(separator: ", ")
+        if names.count > 3 {
+            text += " +\(names.count - 3)"
+        }
+        if unsuccessful > 0 {
+            text += " · \(unsuccessful) didn't finish"
+        }
+        return text
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: Binding(get: { !shouldCollapse }, set: { collapsedCompleted = !$0 })) {
+        DisclosureGroup(isExpanded: Binding(get: { userExpanded ?? autoExpanded }, set: { userExpanded = $0 })) {
             VStack(spacing: 8) {
                 ForEach(toolCalls) { toolCall in
                     ToolCallCard(
@@ -2093,8 +2111,10 @@ private struct ToolGroupView: View {
             }
             .padding(.top, 6)
         } label: {
-            Label("\(toolCalls.count) tool \(toolCalls.count == 1 ? "call" : "calls")", systemImage: "wrench.and.screwdriver")
-                .font(.subheadline.bold())
+            Label(summary, systemImage: "wrench.and.screwdriver")
+                .font(.subheadline)
+                .lineLimit(1)
+                .accessibilityLabel("\(toolCalls.count) tool \(toolCalls.count == 1 ? "call" : "calls"): \(summary)")
         }
         .accessibilityIdentifier("tool-group")
     }
@@ -2104,24 +2124,34 @@ private struct ToolCallCard: View {
     let toolCall: ChatToolCall
     let hoistedAttachmentKeys: Set<String>
     let attachmentLoader: any ChatAttachmentLoading
+    @State private var showsDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label(toolCall.name, systemImage: icon)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .foregroundStyle(.secondary)
+                Text(toolCall.displayName)
                     .font(.subheadline.bold())
-                Spacer()
-                Text(toolCall.status.rawValue)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let label = toolCall.status.displayLabel {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let summary = toolCall.argumentsSummary {
+                Text(summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Text(toolCall.argumentsText)
-                .font(.caption.monospaced())
-                .lineLimit(6)
-                .foregroundStyle(.secondary)
-            if let result = toolCall.resultText {
-                NativeMarkdownView(markdown: result)
+            if let preview = toolCall.resultPreview {
+                Text(preview)
                     .font(.caption)
+                    .foregroundStyle(toolCall.status == .failed ? Color.red : Color.primary)
+                    .lineLimit(3)
             }
             let remainingAttachments = toolCall.attachments.filter {
                 !hoistedAttachmentKeys.contains($0.dedupeKey)
@@ -2129,6 +2159,20 @@ private struct ToolCallCard: View {
             if !remainingAttachments.isEmpty {
                 AttachmentStrip(attachments: remainingAttachments, attachmentLoader: attachmentLoader)
             }
+            DisclosureGroup("Details", isExpanded: $showsDetails) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(toolCall.name)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    ToolRawTextSection(title: "Arguments", text: toolCall.prettyArgumentsText)
+                    if let result = toolCall.prettyResultText {
+                        ToolRawTextSection(title: "Result", text: result)
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .font(.caption)
+            .accessibilityIdentifier("tool-call-details-\(toolCall.id)")
         }
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -2147,6 +2191,46 @@ private struct ToolCallCard: View {
             "xmark.octagon"
         case .complete:
             "checkmark.circle"
+        }
+    }
+}
+
+/// Raw arguments or result, selectable and copyable in full. What is drawn is
+/// capped, because one unbounded `Text` is a layout-watchdog hazard; Copy always
+/// takes the whole value.
+private struct ToolRawTextSection: View {
+    private static let displayLimit = 20_000
+
+    let title: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = text
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Copy \(title.lowercased())")
+            }
+            Text(text.count > Self.displayLimit ? String(text.prefix(Self.displayLimit)) + "\n…" : text)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            if text.count > Self.displayLimit {
+                Text("Showing the first \(Self.displayLimit) characters. Copy takes the whole \(title.lowercased()).")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

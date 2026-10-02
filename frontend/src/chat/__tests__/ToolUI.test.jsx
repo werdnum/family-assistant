@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { toolTestCases } from '../../test/toolTestData';
 import { getAttachmentKey } from '../../types/attachments';
 import { ToolFallback, toolUIsByName } from '../ToolUI';
@@ -39,8 +39,8 @@ describe('ToolUI Component', () => {
 
       render(<ToolUI toolCall={unknownTool} />);
 
-      expect(screen.getByText(/unknown_tool/)).toBeInTheDocument();
-      expect(screen.getByText(/Executing tool.../)).toBeInTheDocument();
+      expect(screen.getByText('Unknown tool')).toBeInTheDocument();
+      expect(screen.getByText('Running')).toBeInTheDocument();
     });
 
     it('renders specific tool UI components', () => {
@@ -78,6 +78,77 @@ describe('ToolUI Component', () => {
       render(<ToolUI toolCall={toolCall} toolResponse={toolResponse} />);
 
       expect(screen.getByText(/Found 5 events/)).toBeInTheDocument();
+    });
+  });
+
+  describe('Fallback presentation', () => {
+    const longResult = JSON.stringify({ columns: ['id'], rows: [[1], [2]] });
+
+    it('leads with a readable summary and keeps raw details behind Details', () => {
+      render(
+        <ToolFallback
+          toolName="query_trino"
+          args={{ sql: 'SELECT id FROM t' }}
+          result={longResult}
+          status={{ type: 'complete' }}
+        />
+      );
+
+      expect(screen.getByText('Query trino')).toBeInTheDocument();
+      expect(screen.getByTestId('tool-args-summary')).toHaveTextContent('SELECT id FROM t');
+      expect(screen.getByTestId('tool-result')).toHaveTextContent('2 rows');
+
+      const details = screen.getByTestId('tool-details');
+      expect(details.tagName).toBe('DETAILS');
+      expect(details).not.toHaveAttribute('open');
+      expect(screen.getByText('query_trino')).toBeInTheDocument();
+      expect(screen.getByTestId('tool-raw-args')).toHaveTextContent('"sql": "SELECT id FROM t"');
+      expect(screen.getByTestId('tool-raw-result')).toHaveTextContent('"rows"');
+    });
+
+    it('copies the full raw result', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(window.navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+      });
+
+      render(
+        <ToolFallback
+          toolName="query_trino"
+          args={{ sql: 'SELECT 1' }}
+          result={longResult}
+          status={{ type: 'complete' }}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Copy result' }));
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith(JSON.stringify(JSON.parse(longResult), null, 2))
+      );
+    });
+
+    it.each([
+      [{ type: 'running' }, 'Running'],
+      [{ type: 'requires-action' }, 'Waiting'],
+      [{ type: 'incomplete', reason: 'error' }, 'Failed'],
+      [{ type: 'incomplete', reason: 'cancelled' }, 'Stopped'],
+    ])('labels %o as %s', (status, label) => {
+      render(<ToolFallback toolName="query_trino" args={{ sql: 'SELECT 1' }} status={status} />);
+      expect(screen.getByText(label)).toBeInTheDocument();
+    });
+
+    it('renders a historical call with no recorded result without a result preview', () => {
+      render(
+        <ToolFallback
+          toolName="query_trino"
+          args={{ sql: 'SELECT 1' }}
+          status={{ type: 'complete' }}
+        />
+      );
+      expect(screen.queryByTestId('tool-result')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('tool-raw-result')).not.toBeInTheDocument();
+      expect(screen.getByTestId('tool-raw-args')).toBeInTheDocument();
     });
   });
 
@@ -260,8 +331,18 @@ describe('ToolUI Component', () => {
         tool_call_id: 'test-list-cameras',
         content: JSON.stringify({
           cameras: [
-            { id: 'cam1', name: 'Front Door', status: 'online', backend: 'reolink' },
-            { id: 'cam2', name: 'Backyard', status: 'offline', backend: 'reolink' },
+            {
+              id: 'cam1',
+              name: 'Front Door',
+              status: 'online',
+              backend: 'reolink',
+            },
+            {
+              id: 'cam2',
+              name: 'Backyard',
+              status: 'offline',
+              backend: 'reolink',
+            },
           ],
           count: 2,
         }),
