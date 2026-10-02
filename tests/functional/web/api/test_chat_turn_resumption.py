@@ -128,6 +128,51 @@ async def _seed_turn_interrupted_after_tool(
         )
 
 
+async def _add_turn_row(
+    db: Database,
+    message: UserMessage | AssistantMessage | ToolMessage,
+    conversation_id: str,
+    turn_id: str,
+) -> None:
+    await db.message_history.add_message(
+        message,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id=USER,
+        processing_profile_id=PROFILE,
+    )
+
+
+async def _add_tool_rounds(
+    db: Database, conversation_id: str, turn_id: str, *, rounds: int
+) -> None:
+    for _ in range(rounds):
+        call_id = f"call_{uuid.uuid4().hex[:8]}"
+        await _add_turn_row(
+            db,
+            AssistantMessage(
+                content="",
+                tool_calls=[
+                    ToolCallItem(
+                        id=call_id,
+                        type="function",
+                        function=ToolCallFunction(name="list_notes", arguments="{}"),
+                    )
+                ],
+            ),
+            conversation_id,
+            turn_id,
+        )
+        await _add_turn_row(
+            db,
+            ToolMessage(tool_call_id=call_id, name="list_notes", content="No notes."),
+            conversation_id,
+            turn_id,
+        )
+
+
 def _exec_context(db: Database) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="unknown",
@@ -397,30 +442,7 @@ async def test_resumed_turn_longer_than_the_history_window_keeps_its_prompt(
     conversation_id, turn_id = _ids()
     # Three tool rounds after the prompt: seven rows, against a window of five.
     await _seed_turn_interrupted_after_tool(db, conversation_id, turn_id)
-    for round_number in (2, 3):
-        call_id = f"call_{round_number}"
-        for message in (
-            AssistantMessage(
-                content="",
-                tool_calls=[
-                    ToolCallItem(
-                        id=call_id,
-                        type="function",
-                        function=ToolCallFunction(name="list_notes", arguments="{}"),
-                    )
-                ],
-            ),
-            ToolMessage(tool_call_id=call_id, name="list_notes", content="No notes."),
-        ):
-            await db.message_history.add_message(
-                message,
-                interface_type="web",
-                conversation_id=conversation_id,
-                turn_id=turn_id,
-                timestamp=datetime.now(UTC),
-                user_id=USER,
-                processing_profile_id=PROFILE,
-            )
+    await _add_tool_rounds(db, conversation_id, turn_id, rounds=2)
 
     await _resume(lease_registry, db, conversation_id, turn_id)
 
@@ -482,3 +504,79 @@ async def test_resumed_turn_stays_on_the_tier_its_rows_ran_on(
     )
 
     assert selection == routed.freeze()
+
+
+async def test_resumed_turn_puts_turn_context_after_the_opening_prompt_not_a_steer(
+    app_fixture: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    lease_registry: TurnLeaseRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """A steering message accepted later in the turn is not where the turn
+    began; the context block goes back after the opening prompt."""
+    shapes: list[list[str]] = []
+
+    def record_shape(args: dict) -> bool:
+        shapes.append([
+            "context" if is_turn_scaffolding(message) else message.role
+            for message in args["messages"]
+            if message.role != "system"
+        ])
+        return True
+
+    api_mock_llm_client.rules.append((
+        record_shape,
+        LLMOutput(content=RESUMED_REPLY, tool_calls=None, reasoning_info=_usage()),
+    ))
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    await _seed_turn_interrupted_after_tool(db, conversation_id, turn_id)
+    await _add_turn_row(
+        db,
+        UserMessage.from_trusted_user(content="also check tomorrow"),
+        conversation_id,
+        turn_id,
+    )
+
+    await _resume(lease_registry, db, conversation_id, turn_id)
+
+    await wait_for_condition(
+        _turn_status(hub, conversation_id, turn_id, "complete"),
+        description="resumed turn complete",
+    )
+    assert shapes == [["user", "context", "assistant", "tool", "user"]]
+
+
+async def test_resumed_turn_continues_on_its_remaining_iteration_budget(
+    app_fixture: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    lease_registry: TurnLeaseRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn that had used its whole budget before the restart gets only the
+    final, tool-less iteration -- not a fresh allowance."""
+    offered_tools: list[object] = []
+
+    def record_tools(args: dict) -> bool:
+        offered_tools.append(args.get("tools"))
+        return True
+
+    api_mock_llm_client.rules.append((
+        record_tools,
+        LLMOutput(content=RESUMED_REPLY, tool_calls=None, reasoning_info=_usage()),
+    ))
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    # The test profile allows five iterations; all five ran tools.
+    await _seed_turn_interrupted_after_tool(db, conversation_id, turn_id)
+    await _add_tool_rounds(db, conversation_id, turn_id, rounds=4)
+
+    await _resume(lease_registry, db, conversation_id, turn_id)
+
+    await wait_for_condition(
+        _turn_status(hub, conversation_id, turn_id, "complete"),
+        description="resumed turn complete",
+    )
+    assert offered_tools == [None]
