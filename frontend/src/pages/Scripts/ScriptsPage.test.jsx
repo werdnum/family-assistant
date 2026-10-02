@@ -21,7 +21,12 @@ const script = {
 };
 
 const setup = (scripts = []) => {
-  server.use(http.get('/api/artifacts/', () => HttpResponse.json(scripts)));
+  server.use(
+    http.get('/api/artifacts/', ({ request }) => {
+      expect(new globalThis.URL(request.url).searchParams.get('kind')).toBe('script');
+      return HttpResponse.json(scripts);
+    })
+  );
   render(
     <MemoryRouter>
       <ScriptsPage />

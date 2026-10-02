@@ -26,9 +26,10 @@ class ConfirmArtifactRequest(BaseModel):
 @artifact_review_api_router.get("/")
 async def list_artifacts(
     db: Annotated[Database, Depends(get_db)],
+    kind: ArtifactKind | None = None,
 ) -> list[ArtifactReview]:
     """List notes, stored scripts, and event and schedule definitions for review."""
-    return await db.artifact_review.list_all()
+    return await db.artifact_review.list_all(kind=kind)
 
 
 @artifact_review_api_router.post("/{kind}/{artifact_id}/confirm")

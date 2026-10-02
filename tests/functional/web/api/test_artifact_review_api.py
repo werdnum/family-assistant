@@ -302,3 +302,53 @@ async def test_uncured_human_decision_can_be_confirmed_in_full(
     assert updated is not None
     record = definition_record_from_row(updated.definition_record)
     assert record is not None and record.cures
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provenance", [NoteProvenanceStamp.user_edit(), NoteProvenanceStamp.internal()]
+)
+async def test_confirm_preserves_trusted_note_tier(
+    api_test_client: AsyncClient,
+    api_db_context: Database,
+    provenance: NoteProvenanceStamp,
+) -> None:
+    await api_db_context.notes.add_or_update(
+        "Trusted note",
+        "Original content",
+        False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+        provenance=provenance,
+    )
+    artifact = next(
+        item
+        for item in await api_db_context.artifact_review.list_all()
+        if item.kind == "note"
+    )
+
+    response = await api_test_client.post(
+        f"/api/artifacts/note/{artifact.id}/confirm",
+        json={"content_hash": artifact.content_hash},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["trust_tier"] == artifact.trust_tier
+    assert response.json()["disposition"] == "human_confirmed"
+    assert response.json()["content"] == artifact.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["note", "script", "event", "schedule"])
+async def test_list_artifacts_filters_kind(
+    api_test_client: AsyncClient,
+    api_db_context: Database,
+    kind: ArtifactKind,
+) -> None:
+    for artifact_kind in ("note", "script", "event", "schedule"):
+        await seed_artifact(api_db_context, artifact_kind)
+
+    response = await api_test_client.get("/api/artifacts/", params={"kind": kind})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["kind"] == kind

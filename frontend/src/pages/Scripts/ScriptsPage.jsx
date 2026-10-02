@@ -28,8 +28,7 @@ const ScriptsPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const artifacts = await loadArtifacts();
-      setScripts(artifacts.filter((artifact) => artifact.kind === 'script'));
+      setScripts(await loadArtifacts('script'));
     } catch (err) {
       setError(err.message);
     } finally {

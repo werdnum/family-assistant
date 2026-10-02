@@ -33,8 +33,9 @@ export const artifactStatus = (artifact) => {
   return 'Needs review';
 };
 
-export const loadArtifacts = async () => {
-  const response = await fetch('/api/artifacts/');
+export const loadArtifacts = async (kind) => {
+  const url = kind ? `/api/artifacts/?kind=${encodeURIComponent(kind)}` : '/api/artifacts/';
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error('Failed to load artifacts');
   }

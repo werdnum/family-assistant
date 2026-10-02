@@ -155,11 +155,13 @@ def _review(kind: ArtifactKind, row: dict[str, object]) -> ArtifactReview:
 class ArtifactReviewRepository(BaseRepository):
     """Review and confirm individual artifacts without changing their definitions."""
 
-    async def list_all(self) -> list[ArtifactReview]:
+    async def list_all(self, kind: ArtifactKind | None = None) -> list[ArtifactReview]:
         artifacts = []
-        for kind, table in _TABLES.items():
+        for artifact_kind, table in _TABLES.items():
+            if kind is not None and artifact_kind != kind:
+                continue
             rows = await self._db.fetch_all(select(table).order_by(table.c.id))
-            artifacts.extend(_review(kind, row) for row in rows)
+            artifacts.extend(_review(artifact_kind, row) for row in rows)
         return artifacts
 
     async def confirm(
@@ -191,7 +193,7 @@ class ArtifactReviewRepository(BaseRepository):
                     # ast-grep-ignore: no-unconstrained-note-write-policy - authenticated artifact review is a web admin surface, preserving existing labels
                     write_policy=NoteWritePolicy.UNCONSTRAINED,
                     provenance=NoteProvenanceStamp.user_confirmed(
-                        content_hash=content_hash
+                        content_hash=content_hash, current_tier=state.max_tier
                     ),
                 )
             else:
