@@ -30,7 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { AssistantResponseImages } from './AssistantResponseImages';
-import { useChatControls } from './chatControls';
+import { type ConversationLoadStatus, useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { MarkdownText } from './MarkdownText';
@@ -56,6 +56,7 @@ export const Thread: React.FC = () => {
 
 const ThreadContent: React.FC = () => {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const conversationLoadStatus = useChatControls()?.conversationLoadStatus ?? null;
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
       <ThreadPrimitive.Viewport
@@ -63,7 +64,11 @@ const ThreadContent: React.FC = () => {
         className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0"
       >
         <div className="pb-6">
-          <ThreadWelcome />
+          {conversationLoadStatus ? (
+            <ThreadConversationLoad status={conversationLoadStatus} />
+          ) : (
+            <ThreadWelcome />
+          )}
 
           <ThreadLoadOlderMessages viewportRef={viewportRef} />
 
@@ -152,6 +157,37 @@ const ThreadLoadOlderMessages: React.FC<{
         {status === 'failed'
           ? "Couldn't load earlier messages. Try again"
           : 'Load earlier messages'}
+      </Button>
+    </div>
+  );
+};
+
+// Stands in for the transcript while the open conversation's history is not
+// there to show, so the reader is never left looking at nothing — or at the
+// welcome screen of a conversation that has history.
+const ThreadConversationLoad: React.FC<{ status: ConversationLoadStatus }> = ({ status }) => {
+  const controls = useChatControls();
+  if (status === 'loading') {
+    return (
+      <div
+        className="flex min-h-[50vh] items-center justify-center gap-2 text-sm text-muted-foreground"
+        role="status"
+        data-testid="conversation-loading"
+      >
+        <Loader2Icon size={16} className="animate-spin" />
+        Loading conversation…
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center"
+      role="alert"
+      data-testid="conversation-load-error"
+    >
+      <p className="text-sm text-muted-foreground">Couldn't load this conversation.</p>
+      <Button variant="outline" size="sm" onClick={() => controls?.retryConversationLoad()}>
+        Retry
       </Button>
     </div>
   );
@@ -363,7 +399,11 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
   // The composer refuses to send while it is already sending, which is the
   // window in which attachments upload. Reading that rather than attachment
   // status keeps the button honest whatever an attachment adapter reports.
-  const isSending = useAuiState((s) => !s.composer.canSend && !s.composer.isEmpty);
+  // Sending is also refused while the open conversation's history loads, which
+  // is not a send in progress.
+  const conversationLoading = (useChatControls()?.conversationLoadStatus ?? null) !== null;
+  const isSending =
+    useAuiState((s) => !s.composer.canSend && !s.composer.isEmpty) && !conversationLoading;
   // While running, the single action button steers when there's text to send
   // and stops the turn when the composer is empty.
   const hasText = useAuiState((s) => s.composer.text.trim().length > 0);
@@ -380,7 +420,7 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"
             data-testid="send-button"
-            disabled={isSending}
+            disabled={isSending || conversationLoading}
           >
             {isSending ? (
               <Loader2Icon size={16} className="animate-spin" />
