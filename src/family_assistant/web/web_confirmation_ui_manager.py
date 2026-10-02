@@ -96,6 +96,8 @@ class WebConfirmationUIManager:
             expires_at=expires_at,
             decision_only=not wait_for_durable_execution,
             processing_profile_id=processing_profile_id,
+            origin_interface_type=interface_type,
+            origin_conversation_id=conversation_id,
             taint_state_json=taint_state_json,
             tool_call_review_authorization=tool_call_review_authorization,
         )

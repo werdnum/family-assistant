@@ -46,7 +46,7 @@ from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.database import Database
 from family_assistant.telegram.protocols import ConfirmationUIManager
-from family_assistant.tools.confirmation import append_review_reason_to_confirmation
+from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.outcomes import classify_tool_outcome
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -177,11 +177,8 @@ async def run_turn_producer(
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:
         """Resolve the prompt/source message and delegate to the web manager."""
-        confirmation_prompt = (
-            f"Do you want to execute '{tool_name}' with these parameters?"
-        )
-        confirmation_prompt = append_review_reason_to_confirmation(
-            confirmation_prompt, context
+        confirmation_prompt = await render_tool_confirmation(
+            tool_name, tool_args, context
         )
         source_message_internal_id: int | None = None
         if turn_id is not None:

@@ -66,7 +66,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.conversation_shares import ConversationShare
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
-from family_assistant.tools.confirmation import append_review_reason_to_confirmation
+from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.outcomes import (
     NOT_RUN_YET_NOTE,
@@ -2236,6 +2236,12 @@ class PendingToolConfirmation(BaseModel):
     time_remaining_seconds: float = Field(
         ..., description="Seconds from response generation until expiration"
     )
+    origin_interface_type: str | None = Field(
+        None, description="Interface the request originated from, if known"
+    )
+    conversation_id: str | None = Field(
+        None, description="Conversation the request originated from, if known"
+    )
 
 
 class PendingToolConfirmationsResponse(BaseModel):
@@ -2587,9 +2593,8 @@ async def run_non_streaming_turn(
                 tool_name=tool_name,
                 tool_call_id=call_id,
                 tool_args=tool_args,
-                confirmation_prompt=append_review_reason_to_confirmation(
-                    f"Do you want to execute '{tool_name}' with these parameters?",
-                    context,
+                confirmation_prompt=await render_tool_confirmation(
+                    tool_name, tool_args, context
                 ),
                 timeout_seconds=timeout_seconds,
                 turn_id=turn_id,
@@ -3568,6 +3573,8 @@ async def list_pending_tool_confirmations(
             expires_at=row["expires_at"],
             timeout_seconds=(row["expires_at"] - row["created_at"]).total_seconds(),
             time_remaining_seconds=max(0.0, (row["expires_at"] - now).total_seconds()),
+            origin_interface_type=row["origin_interface_type"],
+            conversation_id=row["origin_conversation_id"],
         )
         for row in rows
     ]

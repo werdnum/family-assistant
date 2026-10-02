@@ -19,11 +19,7 @@ from family_assistant.services.confirmation_service import (
     create_durable_confirmation,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.tools.confirmation import (
-    TOOL_CONFIRMATION_RENDERERS,
-    append_review_reason_to_confirmation,
-    render_generic_tool_confirmation,
-)
+from family_assistant.tools.confirmation import render_tool_confirmation
 from family_assistant.tools.outcomes import NOT_RUN_YET_NOTE
 from family_assistant.tools.types import ConfirmationOutcome
 
@@ -48,14 +44,8 @@ async def render_tool_confirmation_prompt(
     source_prefix: str,
 ) -> str:
     """Render a human-facing confirmation prompt for a deferred tool call."""
-    renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
-    if renderer is not None:
-        rendered = await renderer(tool_args, context)
-    else:
-        rendered = render_generic_tool_confirmation(tool_name, tool_args)
-    return append_review_reason_to_confirmation(
-        f"{source_prefix}\n\n{rendered}", context
-    )
+    rendered = await render_tool_confirmation(tool_name, tool_args, context)
+    return f"{source_prefix}\n\n{rendered}"
 
 
 async def deliver_confirmation_to_primary_channel(

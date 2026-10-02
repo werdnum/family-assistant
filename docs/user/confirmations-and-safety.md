@@ -22,10 +22,13 @@ lookups can pause for approval too. It's why a search that normally just runs so
 ## Approving
 
 - **Telegram:** inline **✅ Confirm** and **❌ Cancel** buttons.
-- **Web interface:** a dialog showing what the assistant wants to do, with approve and reject
-  options. If your decision can't be sent (for example, the assistant is briefly unavailable), the
-  request stays on screen with a "Could not send this decision" message, and you can press Approve
-  or Reject again.
+- **Web interface:** an approval card under the action in the conversation, showing what the
+  assistant wants to do, how long you have to decide, and **Approve** and **Reject** buttons.
+  Approvals that aren't part of the conversation on screen — from another conversation, an email, an
+  automation, or Telegram — appear in a "waiting for your approval" list at the top of the chat,
+  each saying where it came from; one from another web conversation has an **Open it** link. If your
+  decision can't be sent (for example, the assistant is briefly unavailable), the card stays on
+  screen with a "Could not send this decision" message, and you can press Approve or Reject again.
 - **iOS:** confirmation notifications are actionable — long-press (or pull down) the notification to
   approve or reject from the lock screen, or tap it to open an in-app dialog showing the full
   request.

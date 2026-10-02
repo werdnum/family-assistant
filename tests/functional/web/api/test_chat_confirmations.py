@@ -25,6 +25,7 @@ async def _create_confirmation(
     *,
     request_user_id: str = "test_user",
     expires_at: datetime | None = None,
+    origin_conversation_id: str | None = None,
 ) -> str:
     service = ConfirmationService(
         db=Database(db_engine),
@@ -37,6 +38,8 @@ async def _create_confirmation(
         source_message_internal_id=None,
         confirmation_prompt="Create a note for this itinerary?",
         expires_at=expires_at or datetime.now(UTC) + timedelta(minutes=30),
+        origin_interface_type="web" if origin_conversation_id else None,
+        origin_conversation_id=origin_conversation_id,
     )
     return request["id"]
 
@@ -82,7 +85,9 @@ async def test_pending_confirmations_lists_only_current_user_unexpired_requests(
     api_test_client: AsyncClient,
     db_engine: AsyncEngine,
 ) -> None:
-    request_id = await _create_confirmation(db_engine)
+    request_id = await _create_confirmation(
+        db_engine, origin_conversation_id="web_conv_trip"
+    )
     await _create_confirmation(db_engine, request_user_id="other_user")
     await _create_confirmation(
         db_engine,
@@ -101,6 +106,8 @@ async def test_pending_confirmations_lists_only_current_user_unexpired_requests(
         "title": "Trip",
         "content": "Flight lands at 6pm",
     }
+    assert confirmation["conversation_id"] == "web_conv_trip"
+    assert confirmation["origin_interface_type"] == "web"
 
 
 @pytest.mark.asyncio

@@ -665,3 +665,23 @@ TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
         for name in COMPUTER_USE_FUNCTION_NAMES
     },
 }
+
+
+async def render_tool_confirmation(
+    tool_name: str,
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render the human-facing confirmation prompt for a tool call.
+
+    Every interface that asks for approval renders through here: the tool's
+    dedicated renderer when it has one, otherwise the generic prompt that lists
+    the arguments verbatim, with the automatic review's reason appended. Either
+    way the prompt shows the whole payload being approved.
+    """
+    renderer = TOOL_CONFIRMATION_RENDERERS.get(tool_name)
+    if renderer is not None:
+        rendered = await renderer(args, context)
+    else:
+        rendered = render_generic_tool_confirmation(tool_name, args)
+    return append_review_reason_to_confirmation(rendered, context)

@@ -97,6 +97,13 @@ class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadError
 }
 
 const LIVE_CONFIRMATION_POLL_RACE_GRACE_MS = 30000;
+const PENDING_CONFIRMATIONS_POLL_MS = 15000;
+// One failed poll is retried after this delay; only a second consecutive
+// failure is shown, so a blip doesn't push the thread down until the next poll.
+const PENDING_CONFIRMATIONS_RETRY_MS = 3000;
+// How long a confirmation for this conversation may wait for its tool call to
+// render (and so show inline) before it falls back to the tray.
+const INLINE_CONFIRMATION_GRACE_MS = 5000;
 
 // Fallback reconcile for a turn that gave up while still running server-side. The
 // always-on follow stream is the primary completion signal, but it tails
@@ -755,11 +762,13 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       resolvedConfirmationIdsRef.current.delete(request.request_id);
       setPendingConfirmations((prev) => {
         const receivedAt = Date.now();
+        const key = confirmationKey(request);
         const newMap = new Map(prev);
-        newMap.set(confirmationKey(request), {
+        newMap.set(key, {
           ...request,
           created_at: request.created_at ?? receivedAt,
           received_at: receivedAt,
+          first_seen_at: prev.get(key)?.first_seen_at ?? receivedAt,
           received_via_sse: true,
         });
         return newMap;
@@ -824,7 +833,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     [conversationId, handleConfirmationResult]
   );
 
-  const fetchPendingConfirmations = useCallback(async () => {
+  // Resolves true when the pending list was loaded, false when it could not be.
+  const fetchPendingConfirmations = useCallback(async (): Promise<boolean> => {
     try {
       const response = await fetch('/api/v1/chat/confirmations/pending');
       if (!response.ok) {
@@ -843,14 +853,15 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       const confirmations = fetchedConfirmations.filter(
         (confirmation) => !resolvedConfirmationIdsRef.current.has(confirmation.request_id)
       );
-      setPendingConfirmationsError(null);
       setPendingConfirmations((prev) => {
         const receivedAt = Date.now();
         const newMap = new Map<string, PendingToolConfirmation>();
         for (const confirmation of confirmations) {
-          newMap.set(confirmationKey(confirmation), {
+          const key = confirmationKey(confirmation);
+          newMap.set(key, {
             ...confirmation,
             received_at: receivedAt,
+            first_seen_at: prev.get(key)?.first_seen_at ?? receivedAt,
           });
         }
         for (const [key, confirmation] of prev.entries()) {
@@ -868,18 +879,42 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         }
         return newMap;
       });
+      return true;
     } catch (error) {
       console.error('Error fetching pending confirmations:', error);
-      setPendingConfirmationsError('Could not load pending approvals. Refresh or try again.');
+      return false;
     }
   }, [confirmationKey]);
 
   useEffect(() => {
-    void fetchPendingConfirmations();
-    const interval = window.setInterval(() => {
-      void fetchPendingConfirmations();
-    }, 15000);
-    return () => window.clearInterval(interval);
+    let cancelled = false;
+    let consecutiveFailures = 0;
+    let retryTimer: number | undefined;
+    const poll = async () => {
+      window.clearTimeout(retryTimer);
+      const loaded = await fetchPendingConfirmations();
+      if (cancelled) {
+        return;
+      }
+      if (loaded) {
+        consecutiveFailures = 0;
+        setPendingConfirmationsError(null);
+        return;
+      }
+      consecutiveFailures += 1;
+      if (consecutiveFailures === 1) {
+        retryTimer = window.setTimeout(() => void poll(), PENDING_CONFIRMATIONS_RETRY_MS);
+      } else {
+        setPendingConfirmationsError("Couldn't check for pending approvals. Retrying…");
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), PENDING_CONFIRMATIONS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.clearTimeout(retryTimer);
+    };
   }, [fetchPendingConfirmations]);
 
   // Streaming callbacks
@@ -2897,7 +2932,11 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     };
   }, [runtime, conversationsLoading, profilesLoading]);
 
-  const trayConfirmations = useMemo(() => {
+  // Bumped when a held-back confirmation's inline grace runs out, so the tray
+  // re-evaluates it.
+  const [trayClock, setTrayClock] = useState(0);
+  const { trayConfirmations, nextTrayRelease } = useMemo(() => {
+    void trayClock;
     const visibleToolCallIds = new Set(
       messages.flatMap((message) =>
         message.content
@@ -2905,11 +2944,47 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
           .map((part) => part.toolCallId as string)
       )
     );
-    return Array.from(pendingConfirmations.values()).filter(
-      (confirmation) =>
-        !confirmation.tool_call_id || !visibleToolCallIds.has(confirmation.tool_call_id)
+    const now = Date.now();
+    let nextRelease: number | null = null;
+    const inTray = Array.from(pendingConfirmations.values()).filter((confirmation) => {
+      if (!confirmation.tool_call_id) {
+        return true;
+      }
+      if (visibleToolCallIds.has(confirmation.tool_call_id)) {
+        return false;
+      }
+      // A confirmation for the turn in flight here can land just before its
+      // tool call renders; give it a moment to show inline rather than flashing
+      // through the tray first.
+      const belongsToLiveTurn =
+        isStreaming &&
+        (confirmation.received_via_sse === true ||
+          (typeof confirmation.conversation_id === 'string' &&
+            confirmation.conversation_id === conversationId));
+      const firstSeenAt = confirmation.first_seen_at;
+      if (belongsToLiveTurn && typeof firstSeenAt === 'number') {
+        const releaseAt = firstSeenAt + INLINE_CONFIRMATION_GRACE_MS;
+        if (releaseAt > now) {
+          nextRelease = nextRelease === null ? releaseAt : Math.min(nextRelease, releaseAt);
+          return false;
+        }
+      }
+      return true;
+    });
+    return { trayConfirmations: inTray, nextTrayRelease: nextRelease };
+  }, [messages, pendingConfirmations, conversationId, isStreaming, trayClock]);
+
+  useEffect(() => {
+    if (nextTrayRelease === null) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setTrayClock((value) => value + 1),
+      Math.max(0, nextTrayRelease - Date.now())
     );
-  }, [messages, pendingConfirmations]);
+    return () => window.clearTimeout(timer);
+  }, [nextTrayRelease]);
+
   const handleTrayConfirmation = (requestId: string, approved: boolean) =>
     handleConfirmation(requestId, requestId, approved);
 
@@ -2999,6 +3074,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                 confirmations={trayConfirmations}
                 loadError={pendingConfirmationsError}
                 onConfirm={handleTrayConfirmation}
+                currentConversationId={conversationId}
+                onOpenConversation={handleConversationSelect}
               />
               <main className="flex flex-1 flex-col min-h-0">
                 <AssistantRuntimeProvider runtime={runtime}>
@@ -3095,6 +3172,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                   confirmations={trayConfirmations}
                   loadError={pendingConfirmationsError}
                   onConfirm={handleTrayConfirmation}
+                  currentConversationId={conversationId}
+                  onOpenConversation={handleConversationSelect}
                 />
                 <main className="flex flex-1 flex-col min-h-0">
                   <AssistantRuntimeProvider runtime={runtime}>

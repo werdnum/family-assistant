@@ -133,7 +133,7 @@ describe('ToolWithConfirmation', () => {
       controller.enqueue(toolCallEvent(turnIdRef.current, 'call-1'));
       controller.enqueue(confirmationRequestEvent(turnIdRef.current, 'call-1'));
 
-      expect(await screen.findByText('Confirmation Required:', undefined, WAIT)).toBeVisible();
+      expect(await screen.findByText('Approval needed', undefined, WAIT)).toBeVisible();
       const toolCall = screen.getByTestId('tool-call');
       expect(within(toolCall).getByText('Groceries')).toBeInTheDocument();
       expect(screen.getByText(CONFIRMATION_PROMPT)).toBeInTheDocument();
@@ -151,7 +151,7 @@ describe('ToolWithConfirmation', () => {
       }, WAIT);
       expect(conversationIdRef.current).not.toBe('');
       await waitFor(() => {
-        expect(screen.queryByText('Confirmation Required:')).not.toBeInTheDocument();
+        expect(screen.queryByText('Approval needed')).not.toBeInTheDocument();
       }, WAIT);
       expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
@@ -185,19 +185,19 @@ describe('ToolWithConfirmation', () => {
     controller.enqueue(toolCallEvent(turnIdRef.current, 'call-1'));
     controller.enqueue(confirmationRequestEvent(turnIdRef.current, 'call-1'));
 
-    await screen.findByText('Confirmation Required:', undefined, WAIT);
+    await screen.findByText('Approval needed', undefined, WAIT);
     await user.click(screen.getByRole('button', { name: 'Approve' }));
 
     const alert = await screen.findByRole('alert', undefined, WAIT);
     expect(alert).toHaveTextContent('Could not send this decision. Try again.');
-    expect(screen.getByText('Confirmation Required:')).toBeInTheDocument();
+    expect(screen.getByText('Approval needed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: 'Approve' }));
 
     await waitFor(() => {
-      expect(screen.queryByText('Confirmation Required:')).not.toBeInTheDocument();
+      expect(screen.queryByText('Approval needed')).not.toBeInTheDocument();
     }, WAIT);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(confirmBodies).toHaveLength(2);
@@ -228,8 +228,52 @@ describe('ToolWithConfirmation', () => {
     vi.advanceTimersByTime(20_000);
     expect(await screen.findByText('Expired', undefined, WAIT)).toBeInTheDocument();
     expect(screen.queryByText(/Expires in/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled();
 
     vi.useRealTimers();
+    controller.enqueue(sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete' }));
+    controller.close();
+  }, 30000);
+
+  it('shows a confirmation that arrives before its tool call inline, not in the tray', async () => {
+    const { ready, turnIdRef } = installOpenStream();
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+    await sendMessage(user, 'Add a note about groceries');
+
+    const controller = await ready;
+    controller.enqueue(confirmationRequestEvent(turnIdRef.current, 'call-1'));
+    // Let the confirmation land on its own before the tool call follows.
+    await waitFor(() => {
+      expect(screen.queryByTestId('pending-confirmations-tray')).not.toBeInTheDocument();
+    });
+    controller.enqueue(toolCallEvent(turnIdRef.current, 'call-1'));
+
+    const card = await screen.findByTestId('confirmation-card', undefined, WAIT);
+    expect(card.closest('[data-testid="pending-confirmations-tray"]')).toBeNull();
+    expect(screen.getByTestId('tool-call')).toBeInTheDocument();
+    expect(screen.queryByTestId('pending-confirmations-tray')).not.toBeInTheDocument();
+
+    controller.enqueue(sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete' }));
+    controller.close();
+  }, 30000);
+
+  it('falls back to the tray when the tool call for a confirmation never renders', async () => {
+    const { ready, turnIdRef } = installOpenStream();
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+    await sendMessage(user, 'Add a note about groceries');
+
+    const controller = await ready;
+    controller.enqueue(confirmationRequestEvent(turnIdRef.current, 'call-never-streamed'));
+
+    const tray = await screen.findByTestId('pending-confirmations-tray', undefined, WAIT);
+    expect(within(tray).getByText(CONFIRMATION_PROMPT)).toBeInTheDocument();
+    expect(within(tray).getByRole('button', { name: 'Approve' })).toBeEnabled();
+
     controller.enqueue(sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete' }));
     controller.close();
   }, 30000);

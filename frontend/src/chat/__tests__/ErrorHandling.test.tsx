@@ -248,13 +248,13 @@ describe.sequential('ErrorHandling', () => {
     await renderChatApp({ waitForReady: true });
 
     expect(await screen.findByText('Create a note for this itinerary?')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /approve add_or_update_note/i }));
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
 
     expect(await screen.findByText('Could not send this decision. Try again.')).toBeInTheDocument();
     expect(confirmPosts).toBe(1);
     expect(screen.getByText('Create a note for this itinerary?')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /approve add_or_update_note/i })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
     });
   }, 30000);
 
