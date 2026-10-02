@@ -2699,17 +2699,17 @@ plugins:
         "*.information_schema.*": "recognized_machine"   # SHOW and DESCRIBE
 ```
 
-| Key                       | Default              | Notes                                                            |
-| ------------------------- | -------------------- | ---------------------------------------------------------------- |
-| `url`                     | —                    | Coordinator base URL, e.g. `http://trino:8080`. Required.        |
-| `user`                    | —                    | Trino user to query as. Required.                                |
-| `password`                | None                 | **Sensitive.** HTTP Basic password, if the coordinator uses one. |
-| `catalog`                 | None                 | Default catalog for unqualified names.                           |
-| `schema`                  | None                 | Default schema for unqualified names.                            |
-| `source`                  | `"family-assistant"` | Sent as `X-Trino-Source`.                                        |
-| `request_timeout_seconds` | `60`                 | Per HTTP request to the coordinator.                             |
-| `max_rows`                | `200`                | Rows returned to the model; the query is cancelled beyond it.    |
-| `table_tiers`             | `{}`                 | Glob over lower-case `catalog.schema.table` to a trust tier.     |
+| Key                       | Default              | Notes                                                                 |
+| ------------------------- | -------------------- | --------------------------------------------------------------------- |
+| `url`                     | —                    | Coordinator base URL, e.g. `https://trino.example.com`. Required.     |
+| `user`                    | —                    | Trino user to query as. Required.                                     |
+| `password`                | None                 | **Sensitive.** HTTP Basic password; Trino accepts it over HTTPS only. |
+| `catalog`                 | None                 | Default catalog for unqualified names.                                |
+| `schema`                  | None                 | Default schema for unqualified names.                                 |
+| `source`                  | `"family-assistant"` | Sent as `X-Trino-Source`.                                             |
+| `request_timeout_seconds` | `60`                 | Per HTTP request to the coordinator.                                  |
+| `max_rows`                | `200`                | Rows returned to the model; the query is cancelled beyond it.         |
+| `table_tiers`             | `{}`                 | Glob over lower-case `catalog.schema.table` to a trust tier.          |
 
 A table matching several patterns takes the least trusted of them, and a table matching none is
 `unknown_external`, so an empty `table_tiers` grades every result as untrusted. List trusted schemas
@@ -2720,12 +2720,12 @@ written by name. An instance without a URL or user is not started, with a warnin
 
 The `default` instance's `url`, `user` and `password` (`plugins.trino.default.*`).
 
-| Property  | Value                                       |
-| --------- | ------------------------------------------- |
-| Required  | No                                          |
-| Default   | None                                        |
-| Sensitive | **Yes** (`TRINO_PASSWORD`)                  |
-| Example   | `http://trino.trino.svc.cluster.local:8080` |
+| Property  | Value                       |
+| --------- | --------------------------- |
+| Required  | No                          |
+| Default   | None                        |
+| Sensitive | **Yes** (`TRINO_PASSWORD`)  |
+| Example   | `https://trino.example.com` |
 
 ______________________________________________________________________
 
