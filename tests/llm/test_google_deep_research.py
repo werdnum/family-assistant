@@ -706,7 +706,7 @@ async def test_agent_response_ignores_unused_environment(
 
 
 @pytest.mark.asyncio
-async def test_poll_validation_failure_is_transient(
+async def test_poll_validation_failure_propagates(
     mock_genai_client: MagicMock,
 ) -> None:
     client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
@@ -717,21 +717,20 @@ async def test_poll_validation_failure_is_transient(
             "usage": {"total_tokens": []},
         }
     )
-    with pytest.raises(DelegationTransientError, match="inter_bad") as exc_info:
+    with pytest.raises(ValidationError, match="usage.total_tokens"):
         await client.get_agent_interaction("inter_bad")
-    assert isinstance(exc_info.value.__cause__, ValidationError)
 
 
 @pytest.mark.asyncio
-async def test_sdk_poll_parse_failure_is_transient(
+async def test_sdk_poll_parse_failure_propagates(
     mock_genai_client: MagicMock,
 ) -> None:
     client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
     original = json.JSONDecodeError("Invalid response", "", 0)
     mock_genai_client.aio.interactions.get = AsyncMock(side_effect=original)
-    with pytest.raises(DelegationTransientError, match="inter_bad") as exc_info:
+    with pytest.raises(json.JSONDecodeError) as exc_info:
         await client.get_agent_interaction("inter_bad")
-    assert exc_info.value.__cause__ is original
+    assert exc_info.value is original
 
 
 @pytest.mark.asyncio
@@ -814,8 +813,7 @@ async def test_get_agent_interaction_unrecognized_error_propagates_unwrapped(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("malformed_json", [False, True])
-async def test_poll_through_real_sdk_response_parser(malformed_json: bool) -> None:
+async def test_poll_through_real_sdk_response_parser() -> None:
     response = {
         "id": "inter_sdk",
         "status": "completed",
@@ -834,13 +832,6 @@ async def test_poll_through_real_sdk_response_parser(malformed_json: bool) -> No
     }
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if malformed_json:
-            return httpx.Response(
-                200,
-                content=b"{",
-                headers={"content-type": "application/json"},
-                request=request,
-            )
         return httpx.Response(200, json=response, request=request)
 
     client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
@@ -850,12 +841,8 @@ async def test_poll_through_real_sdk_response_parser(malformed_json: bool) -> No
             api_key="test", http_options=types.HttpOptions(httpx_async_client=transport)
         )
         try:
-            if malformed_json:
-                with pytest.raises(DelegationTransientError, match="inter_sdk"):
-                    await client.get_agent_interaction("inter_sdk")
-            else:
-                result = await client.get_agent_interaction("inter_sdk")
-                assert result.status == "completed"
-                assert result.output_text == "Recovered report."
+            result = await client.get_agent_interaction("inter_sdk")
+            assert result.status == "completed"
+            assert result.output_text == "Recovered report."
         finally:
             await client.close()

@@ -3529,10 +3529,10 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
 
 
 @pytest.mark.asyncio
-async def test_coder_bad_poll_then_list_environment_delivers_result(
+async def test_coder_list_environment_delivers_result(
     db_engine: AsyncEngine,
 ) -> None:
-    """A bad poll preserves the run; a list-form environment cannot hide its report."""
+    """A list-form environment cannot hide the remote coder report."""
     llm_client = GoogleGenAIClient(api_key="test", model="antigravity-preview-09-2026")
     interaction_id = "inter_coder_env"
     sdk = MagicMock()
@@ -3564,8 +3564,8 @@ async def test_coder_bad_poll_then_list_environment_delivers_result(
         side_effect=[
             {
                 "id": interaction_id,
-                "status": "completed",
-                "usage": {"total_tokens": []},
+                "status": "in_progress",
+                "environment": completed_response["environment"],
             },
             completed_response,
             completed_response,
@@ -3599,7 +3599,7 @@ async def test_coder_bad_poll_then_list_environment_delivers_result(
     chat_interface.send_message.assert_not_awaited()
 
     poll_payload = _delegation_payload(delegation_id)
-    # The invalid reading reschedules without notifying or submitting again.
+    # An in-progress reading reschedules without notifying or submitting again.
     db_context = Database(engine=db_engine)
     await worker.handle_delegation_poll(
         _tool_context(db_context, processing_service, chat_interface),

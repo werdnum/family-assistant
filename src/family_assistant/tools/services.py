@@ -1488,9 +1488,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "get_delegation_status",
             "description": (
                 "Returns the status and available result for an asynchronous profile delegation reference. "
-                "Use this for references returned by delegate_to_service, not for spawn_worker task IDs. "
-                "An awaiting_remote delegation retries temporary status-read failures within its "
-                "waiting limit; do not submit a duplicate request while it is awaiting a result."
+                "Use this for references returned by delegate_to_service, not for spawn_worker task IDs."
             ),
             "parameters": {
                 "type": "object",

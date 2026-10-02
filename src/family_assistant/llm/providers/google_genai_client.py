@@ -21,9 +21,6 @@ if TYPE_CHECKING:
 import aiofiles
 from google import genai
 from google.genai import types
-
-# The SDK exposes its Interactions response error only through this internal bridge.
-from google.genai._gaos.lib.compat_errors import APIResponseValidationError  # noqa: PLC2701
 from google.genai.client import DebugConfig
 from google.genai.interactions import Interaction, Usage
 from opentelemetry import trace
@@ -2088,12 +2085,6 @@ class GoogleGenAIClient(BaseLLMClient):
             return _agent_interaction_response(
                 await self.client.aio.interactions.get(interaction_id, stream=False)
             )
-        except (ValidationError, json.JSONDecodeError, APIResponseValidationError) as e:
-            # A bad reading says nothing about the remote run's outcome.
-            # The worker retries this same id with backoff until its deadline.
-            raise DelegationTransientError(
-                f"Could not parse Interactions API poll for {interaction_id}"
-            ) from e
         except Exception as e:
             raise self._classify_agent_delegation_error(e) from e
 
