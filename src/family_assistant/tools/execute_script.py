@@ -114,6 +114,17 @@ async def _load_returned_attachments(
                 aid,
             )
             continue
+        if metadata.size > registry.max_multimodal_size:
+            # Too large for any provider to accept inline; the user still gets
+            # the file by reference.
+            attachments.append(
+                ToolAttachment(
+                    mime_type=metadata.mime_type,
+                    attachment_id=aid,
+                    description=metadata.description,
+                )
+            )
+            continue
         content = await registry.get_attachment_content(
             exec_context.db_context, aid, acting_user_id=exec_context.user_id
         )

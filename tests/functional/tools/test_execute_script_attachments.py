@@ -726,3 +726,31 @@ async def test_execute_script_skips_ids_that_are_not_attachments(
 
     assert isinstance(result, ToolResult)
     assert not result.attachments
+
+
+@pytest.mark.asyncio
+async def test_execute_script_keeps_oversized_attachments_as_references(
+    db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
+) -> None:
+    """Media above the multimodal limit is returned by id, without its bytes."""
+    db = Database(engine=db_engine)
+    stored = await attachment_registry.store_and_register_tool_attachment(
+        file_content=b"\xff\xd8\xff\xe0 too big",
+        filename="big.jpg",
+        content_type="image/jpeg",
+        tool_name="test",
+        db_context=db,
+        taint_state=TurnTaintState.empty(),
+    )
+    attachment_registry.max_multimodal_size = 4
+
+    result = await execute_script_tool(
+        _image_context(db, attachment_registry),
+        f'["{stored.attachment_id}"]',
+    )
+
+    assert isinstance(result, ToolResult)
+    assert result.attachments is not None
+    [attachment] = result.attachments
+    assert attachment.attachment_id == stored.attachment_id
+    assert attachment.content is None
