@@ -5,6 +5,11 @@ string the model reads, and most tools report failure in that string rather
 than by raising, so the outcome is read from the result here, once, and handed
 to every client on both the live stream and the history API. Clients must not
 re-derive it from the text.
+
+Recognising failure is best effort: a tool that reports failure in prose this
+module does not know, with no structured error and no exception, still reads
+as succeeded. Tools should signal failure with an "Error:" text, a structured
+``error``, or by raising.
 """
 
 from __future__ import annotations
@@ -12,12 +17,17 @@ from __future__ import annotations
 import json
 from typing import Literal
 
+# "rejected" means the tool did not run: a confirmation was declined, cancelled
+# or timed out, or the call was deferred to an approval outside the turn.
 ToolOutcome = Literal["succeeded", "failed", "rejected"]
 
 # Results written when a confirmation gate stops a tool before it runs. They
 # are built from these prefixes so the classifier below recognises every one.
 ACTION_CANCELLED_PREFIX = "Action cancelled:"
 ACTION_DECLINED_PREFIX = "OK. Action cancelled by user"
+# Said by a result that handed the call to a durable confirmation instead of
+# running it: the turn ends with the call not run, waiting outside the turn.
+NOT_RUN_YET_NOTE = "It hasn't run yet"
 
 # The tools' own convention for a failure returned as text: "Error: ...",
 # "Error executing ...", "Error during ...".
@@ -34,6 +44,8 @@ def classify_tool_outcome(content: object, error_traceback: str | None) -> ToolO
     """
     text = content.strip() if isinstance(content, str) else ""
     if text.startswith((ACTION_CANCELLED_PREFIX, ACTION_DECLINED_PREFIX)):
+        return "rejected"
+    if NOT_RUN_YET_NOTE in text and error_traceback is None:
         return "rejected"
     if error_traceback is not None:
         return "failed"
@@ -67,8 +79,9 @@ def is_error_data(data: object) -> bool:
     """
     if not isinstance(data, dict):
         return False
+    status = data.get("status")
     return (
         bool(data.get("error"))
         or data.get("success") is False
-        or data.get("status") == "error"
+        or (isinstance(status, str) and status in {"error", "failed"})
     )

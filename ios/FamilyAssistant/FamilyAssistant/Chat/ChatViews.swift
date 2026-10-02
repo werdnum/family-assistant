@@ -2070,7 +2070,9 @@ private struct ToolGroupView: View {
     @State private var collapsedCompleted = true
 
     private var shouldCollapse: Bool {
-        collapsedCompleted && !toolCalls.contains { $0.status.isPending }
+        // Anything that did not succeed stays open, so a failure is never
+        // hidden behind a bare call count.
+        collapsedCompleted && toolCalls.allSatisfy { $0.status == .succeeded }
     }
 
     var body: some View {

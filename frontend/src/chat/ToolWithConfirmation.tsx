@@ -34,7 +34,7 @@ interface ToolWithConfirmationProps {
 // call that did not succeed never reads as done.
 const OUTCOME_NOTES: Partial<Record<ToolOutcome, string>> = {
   failed: TOOL_OUTCOME_LABELS.failed,
-  rejected: `${TOOL_OUTCOME_LABELS.rejected}: approval was declined or expired`,
+  rejected: TOOL_OUTCOME_LABELS.rejected,
   unknown: `${TOOL_OUTCOME_LABELS.unknown}: the turn ended before this call finished`,
 };
 

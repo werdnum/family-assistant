@@ -24,6 +24,7 @@ from family_assistant.tools.confirmation import (
     append_review_reason_to_confirmation,
     render_generic_tool_confirmation,
 )
+from family_assistant.tools.outcomes import NOT_RUN_YET_NOTE
 from family_assistant.tools.types import ConfirmationOutcome
 
 if TYPE_CHECKING:
@@ -177,7 +178,7 @@ async def create_deferred_tool_confirmation(
     )
     result = (
         f"Waiting on the user to approve this in Telegram or the web UI "
-        f"(request {request_id}). It hasn't run yet."
+        f"(request {request_id}). {NOT_RUN_YET_NOTE}."
     )
     if notification_warning is not None:
         result = f"{result}\n\nWarning: {notification_warning}"

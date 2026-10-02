@@ -1216,7 +1216,10 @@ final class ChatViewModel {
             guard self.conversationID == id else {
                 return
             }
-            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
+            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(
+                from: response.messages,
+                runningTurnIDs: Self.runningTurnIDs(in: response.activeTurns)
+            )))
             persistedMessagesConversationID = response.messages.isEmpty ? nil : id
             await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
@@ -1604,7 +1607,7 @@ final class ChatViewModel {
             guard !isSendActivelyStreaming else {
                 return
             }
-            let rendered = Self.renderMessages(from: delta)
+            let rendered = Self.renderMessages(from: delta, runningTurnIDs: Self.runningTurnIDs(in: activeTurns))
             // Drop optimistic local placeholders now that persisted copies exist,
             // then append the fetched delta. Still-running live-follow bubbles are
             // preserved and ordered by creation time (see withLiveFollowBubbles):
@@ -5075,7 +5078,16 @@ final class ChatViewModel {
         return prompt != lastProcessedInitialPrompt
     }
 
-    nonisolated static func renderMessages(from backendMessages: [ChatBackendMessage]) -> [ChatMessage] {
+    nonisolated static func runningTurnIDs(in activeTurns: [ChatActiveTurnInfo]) -> Set<String> {
+        Set(activeTurns.filter { $0.status == "running" }.map(\.turnID))
+    }
+
+    /// `runningTurnIDs` are the turns the server still reports as running: a
+    /// call of theirs with no result yet is running, not unrecorded.
+    nonisolated static func renderMessages(
+        from backendMessages: [ChatBackendMessage],
+        runningTurnIDs: Set<String> = []
+    ) -> [ChatMessage] {
         var toolResults: [String: (text: String, attachments: [ChatAttachment], status: ChatToolStatus)] = [:]
         for message in backendMessages where message.role == .tool {
             if let toolCallID = message.toolCallID {
@@ -5100,9 +5112,9 @@ final class ChatViewModel {
                     argumentsText: toolCall.argumentsText,
                     resultText: result?.text,
                     attachments: result?.attachments ?? [],
-                    // History is a record: a call with no result here is not
-                    // running. A turn still in flight is shown by its live bubble.
-                    status: result?.status ?? .unknown
+                    // A call with no result is running only while its turn is.
+                    status: result?.status
+                        ?? (backend.turnID.map { runningTurnIDs.contains($0) } ?? false ? .running : .unknown)
                 )
             }
 

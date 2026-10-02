@@ -105,6 +105,38 @@ final class ToolRenderingTests: XCTestCase {
         XCTAssertFalse(toolCalls.contains { $0.status.isPending })
     }
 
+    func testRenderMessagesKeepsUnansweredCallsOfARunningTurnRunning() throws {
+        let json = """
+        [
+          {
+            "internal_id": 30,
+            "turn_id": "turn-live",
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-06-08T12:00:00Z",
+            "tool_calls": [
+              {"id": "call-live", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+            ]
+          },
+          {
+            "internal_id": 31,
+            "turn_id": "turn-old",
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-06-08T11:00:00Z",
+            "tool_calls": [
+              {"id": "call-old", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
+            ]
+          }
+        ]
+        """
+        let backendMessages = try JSONDecoder.chatDecoder.decode([ChatBackendMessage].self, from: Data(json.utf8))
+
+        let messages = ChatViewModel.renderMessages(from: backendMessages, runningTurnIDs: ["turn-live"])
+
+        XCTAssertEqual(messages.flatMap(\.toolCalls).map(\.status), [.running, .unknown])
+    }
+
     func testToolStatusLabelsDistinguishEveryOutcome() {
         let statuses: [ChatToolStatus] = [.running, .awaitingApproval, .succeeded, .failed, .rejected, .unknown]
 

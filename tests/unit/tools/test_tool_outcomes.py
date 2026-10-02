@@ -28,6 +28,13 @@ from family_assistant.tools.types import ConfirmationOutcome
         ('{"error": "Document 7 not found"}', None, "failed"),
         ('{"success": false, "message": "no such callback"}', None, "failed"),
         ('{"status": "error", "message": "bad"}', None, "failed"),
+        ('{"status": "failed", "site": "bank"}', None, "failed"),
+        (
+            "Waiting on the user to approve this in Telegram or the web UI "
+            "(request 7). It hasn't run yet.",
+            None,
+            "rejected",
+        ),
         ('{"error": null, "rows": 2}', None, "succeeded"),
         ("[1, 2]", None, "succeeded"),
         (None, None, "succeeded"),
