@@ -282,6 +282,20 @@ class AttachmentAPI:
         self.db_context = db_context
         self._acting_user_id = user_id
 
+    def _merge_provenance(self, attachment: AttachmentMetadata) -> None:
+        """Merge an attachment's stored provenance into the turn that sees it.
+
+        Metadata is attachment data too: a description or filename can carry
+        the same untrusted text as the content, so listing or inspecting an
+        attachment costs what reading it does.
+        """
+        if self._taint_tracker is None:
+            return
+        for source in artifact_taint_sources(
+            attachment.metadata, source_id=attachment.attachment_id
+        ):
+            self._taint_tracker.add_source(source)
+
     async def _merge_read_provenance(
         self, db_ctx: Database, attachment_id: str
     ) -> None:
@@ -293,10 +307,7 @@ class AttachmentAPI:
         )
         if metadata is None:
             return
-        for source in artifact_taint_sources(
-            metadata.metadata, source_id=attachment_id
-        ):
-            self._taint_tracker.add_source(source)
+        self._merge_provenance(metadata)
 
     def _require_db_engine(self) -> AsyncEngine:
         """Return the configured engine or raise if this API cannot create DB contexts."""
@@ -363,6 +374,7 @@ class AttachmentAPI:
             if not attachment:
                 return None
 
+            self._merge_provenance(attachment)
             return AttachmentInfoDict(
                 attachment_id=attachment.attachment_id,
                 source_type=attachment.source_type,
@@ -402,6 +414,8 @@ class AttachmentAPI:
                 limit=limit,
             )
 
+            for att in attachments:
+                self._merge_provenance(att)
             return [
                 AttachmentInfoDict(
                     attachment_id=att.attachment_id,

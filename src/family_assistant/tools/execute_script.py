@@ -114,6 +114,13 @@ async def _load_returned_attachments(
                 aid,
             )
             continue
+        merge_artifact_taint_into_context(
+            exec_context,
+            provenance_metadata=metadata.metadata,
+            fallback_source_type=TaintSourceType.ATTACHMENT,
+            fallback_source_id=aid,
+            fallback_reason="Attachment returned by a script carries stored provenance.",
+        )
         if metadata.size > registry.max_multimodal_size:
             # Too large for any provider to accept inline; the user still gets
             # the file by reference.
@@ -130,13 +137,6 @@ async def _load_returned_attachments(
         )
         if content is None:
             raise RuntimeError(f"Attachment '{aid}' content could not be retrieved")
-        merge_artifact_taint_into_context(
-            exec_context,
-            provenance_metadata=metadata.metadata,
-            fallback_source_type=TaintSourceType.ATTACHMENT,
-            fallback_source_id=aid,
-            fallback_reason="Attachment returned by a script carries stored provenance.",
-        )
         attachments.append(
             ToolAttachment(
                 mime_type=metadata.mime_type,
