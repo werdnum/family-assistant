@@ -23,7 +23,10 @@ from family_assistant.llm.messages import (
     MessageReasoningInfo,
     ToolMessage,
     UserMessage,
+    attachment_content,
+    image_url_content,
     is_turn_scaffolding,
+    text_content,
 )
 from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
@@ -38,6 +41,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskAttempt
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.turn_producer import trigger_content_parts_for
 from family_assistant.web.turn_resumption import (
     WEB_STREAM_RESUMER,
     WebTurnResumer,
@@ -632,3 +636,32 @@ async def test_resume_that_fails_before_launch_can_be_retried(
         _turn_status(hub, conversation_id, turn_id, "complete"),
         description="retried resume complete",
     )
+
+
+def test_resumed_trigger_carries_its_attachments_as_the_endpoint_built_them() -> None:
+    """A resumed turn's trigger rebuilds the content parts the endpoint sent:
+    images inline, documents as attachment references (which the processor
+    injects), so a document isn't reduced to a name in history."""
+    parts = trigger_content_parts_for(
+        PROMPT,
+        [
+            {
+                "type": "image",
+                "attachment_id": "img-1",
+                "content_url": "/api/attachments/img-1",
+                "mime_type": "image/png",
+            },
+            {
+                "type": "document",
+                "attachment_id": "doc-1",
+                "content_url": "/api/attachments/doc-1",
+                "mime_type": "application/pdf",
+            },
+        ],
+    )
+
+    assert parts == [
+        text_content(PROMPT),
+        image_url_content("/api/attachments/img-1"),
+        attachment_content("doc-1"),
+    ]

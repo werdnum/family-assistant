@@ -25,8 +25,6 @@ from family_assistant.llm.messages import (
     MessageReasoningInfo,
     ToolMessage,
     UserMessage,
-    attachment_content,
-    image_url_content,
     text_content,
 )
 from family_assistant.llm.model_selection import (
@@ -107,6 +105,7 @@ from family_assistant.web.models import (
 from family_assistant.web.turn_producer import (
     confirmation_result_waiters_for_state,
     confirmation_service_for_state,
+    content_part_for_attachment,
     format_sse_event,
     initial_turn_taint,
     launch_turn_producer,
@@ -127,14 +126,6 @@ logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
 
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
-
-
-def _content_part_for_attachment(
-    attachment_id: str, content_url: str, mime_type: str
-) -> ContentPartDict:
-    if mime_type.startswith("image/"):
-        return image_url_content(content_url)
-    return attachment_content(attachment_id)
 
 
 def _attachment_type_label(mime_type: str) -> str:
@@ -342,7 +333,7 @@ async def _process_user_attachments(
                         )
 
                     trigger_content_parts.append(
-                        _content_part_for_attachment(
+                        content_part_for_attachment(
                             attachment_record.attachment_id,
                             attachment_record.content_url,
                             attachment_record.mime_type,
@@ -437,7 +428,7 @@ async def _process_user_attachments(
                         )
 
                     trigger_content_parts.append(
-                        _content_part_for_attachment(
+                        content_part_for_attachment(
                             attachment_record.attachment_id,
                             attachment_record.content_url,
                             attachment_record.mime_type,

@@ -31,6 +31,9 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
     MessageAttachmentMetadata,
+    attachment_content,
+    image_url_content,
+    text_content,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -172,6 +175,35 @@ def confirmation_result_waiters_for_state(
     waiters = ConfirmationResultWaiterRegistry()
     app_state.confirmation_result_waiters = waiters
     return waiters
+
+
+def content_part_for_attachment(
+    attachment_id: str, content_url: str, mime_type: str
+) -> ContentPartDict:
+    """How a turn's trigger carries one of the user's attachments to the model."""
+    if mime_type.startswith("image/"):
+        return image_url_content(content_url)
+    return attachment_content(attachment_id)
+
+
+def trigger_content_parts_for(
+    prompt: str, attachments: list[MessageAttachmentMetadata] | None
+) -> list[ContentPartDict]:
+    """Rebuild a turn's trigger content from its persisted prompt and attachments.
+
+    The same parts the endpoint built when the turn arrived, so a resumed turn
+    gets its documents injected again rather than only named in history.
+    """
+    parts: list[ContentPartDict] = [text_content(prompt)]
+    for attachment in attachments or []:
+        attachment_id = attachment.get("attachment_id")
+        content_url = attachment.get("content_url")
+        mime_type = attachment.get("mime_type")
+        if attachment_id and content_url and mime_type:
+            parts.append(
+                content_part_for_attachment(attachment_id, content_url, mime_type)
+            )
+    return parts
 
 
 def format_sse_event(event: StreamEvent) -> str:

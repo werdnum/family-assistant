@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 from starlette.datastructures import State
 
-from family_assistant.llm.content_parts import text_content
 from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     model_selection_from_reasoning,
@@ -35,6 +34,7 @@ from family_assistant.web.turn_producer import (
     initial_turn_taint,
     launch_turn_producer,
     persist_stopped_reply,
+    trigger_content_parts_for,
 )
 from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 
@@ -174,7 +174,9 @@ class WebTurnResumer:
             user_id=payload.user_id,
             user_name=payload.user_name,
             interface_type=payload.interface_type,
-            trigger_content_parts=[text_content(user_row["content"] or "")],
+            trigger_content_parts=trigger_content_parts_for(
+                user_row["content"] or "", user_row["attachments"]
+            ),
             trigger_attachments=user_row["attachments"],
             initial_history_taint_metadata=taint.history,
             initial_context_taint_metadata=taint.context,
