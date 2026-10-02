@@ -28,6 +28,8 @@ from family_assistant.scripting.invocation import (
     prepare_script_invocation,
 )
 from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
+from family_assistant.security.taint import TaintSourceType
+from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -82,6 +84,57 @@ def _prepend_captured_output(error_text: str, output_buffer: ScriptOutputBuffer)
     if captured.strip():
         return f"--- Script Output ---\n{captured.rstrip()}\n\n{error_text}"
     return error_text
+
+
+async def _load_returned_attachments(
+    exec_context: ToolExecutionContext, attachment_ids: list[str]
+) -> list[ToolAttachment]:
+    """Load the attachments a script returned, content included.
+
+    A reference without content reaches the user's chat, but providers can only
+    show the model bytes, so a returned image would otherwise be visible to
+    everyone except the model. Each attachment brings its own stored provenance
+    into the turn, as it does when a note returns one.
+    """
+    registry = exec_context.attachment_registry
+    if registry is None or exec_context.db_context is None:
+        return [
+            ToolAttachment(mime_type="application/octet-stream", attachment_id=aid)
+            for aid in attachment_ids
+        ]
+
+    attachments: list[ToolAttachment] = []
+    for aid in attachment_ids:
+        metadata = await registry.get_attachment(
+            exec_context.db_context, aid, acting_user_id=exec_context.user_id
+        )
+        if metadata is None:
+            logger.warning(
+                "Script returned id %s, which is not an attachment the user can read",
+                aid,
+            )
+            continue
+        content = await registry.get_attachment_content(
+            exec_context.db_context, aid, acting_user_id=exec_context.user_id
+        )
+        if content is None:
+            raise RuntimeError(f"Attachment '{aid}' content could not be retrieved")
+        merge_artifact_taint_into_context(
+            exec_context,
+            provenance_metadata=metadata.metadata,
+            fallback_source_type=TaintSourceType.ATTACHMENT,
+            fallback_source_id=aid,
+            fallback_reason="Attachment returned by a script carries stored provenance.",
+        )
+        attachments.append(
+            ToolAttachment(
+                mime_type=metadata.mime_type,
+                content=content,
+                attachment_id=aid,
+                description=metadata.description,
+            )
+        )
+    return attachments
 
 
 def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN401
@@ -314,37 +367,11 @@ async def execute_script_tool(
 
         response_text = "\n".join(response_parts)
 
-        # Build ToolResult with attachments
-        attachments = None
-        if attachment_ids:
-            # Fetch actual metadata for each attachment to get correct mime_type
-            attachments = []
-            for aid in attachment_ids:
-                mime_type = "application/octet-stream"  # Default fallback
-
-                # Try to fetch actual metadata if we have attachment_registry
-                if exec_context.attachment_registry and exec_context.db_context:
-                    try:
-                        metadata = (
-                            await exec_context.attachment_registry.get_attachment(
-                                exec_context.db_context,
-                                aid,
-                                acting_user_id=exec_context.user_id,
-                            )
-                        )
-                        if metadata:
-                            mime_type = metadata.mime_type
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to fetch metadata for attachment {aid}: {e}"
-                        )
-
-                attachments.append(
-                    ToolAttachment(
-                        mime_type=mime_type,
-                        attachment_id=aid,
-                    )
-                )
+        attachments = (
+            await _load_returned_attachments(exec_context, attachment_ids)
+            if attachment_ids
+            else None
+        )
 
         # Prepare data field - preserve structured data for programmatic access
         # ast-grep-ignore: no-dict-any - Script results can be arbitrary structures

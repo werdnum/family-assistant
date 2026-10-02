@@ -11,7 +11,13 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
@@ -618,3 +624,105 @@ names
     data = result.get_data()
     assert isinstance(data, list)
     assert data == ["Alice", "Bob", "Charlie"]
+
+
+def _image_context(
+    db: Database,
+    attachment_registry: AttachmentRegistry,
+    tracker: InMemoryTurnTaintTracker | None = None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        clock=None,
+        plugins=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        processing_service=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+        taint_tracker=tracker,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_script_returned_attachment_carries_content(
+    db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
+) -> None:
+    """A returned attachment carries its bytes, so providers can show the model."""
+    db = Database(engine=db_engine)
+    image_bytes = b"\xff\xd8\xff\xe0 fake jpeg"
+    stored = await attachment_registry.store_and_register_tool_attachment(
+        file_content=image_bytes,
+        filename="photo.jpg",
+        content_type="image/jpeg",
+        tool_name="test",
+        description="A photo",
+        db_context=db,
+        taint_state=TurnTaintState.empty(),
+    )
+
+    result = await execute_script_tool(
+        _image_context(db, attachment_registry),
+        f'{{"id": "{stored.attachment_id}"}}',
+    )
+
+    assert isinstance(result, ToolResult)
+    assert result.attachments is not None
+    [attachment] = result.attachments
+    assert attachment.attachment_id == stored.attachment_id
+    assert attachment.mime_type == "image/jpeg"
+    assert attachment.content == image_bytes
+
+
+@pytest.mark.asyncio
+async def test_execute_script_returned_attachment_brings_its_taint(
+    db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
+) -> None:
+    """Showing the model a stored attachment raises the turn to its provenance."""
+    db = Database(engine=db_engine)
+    external = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="web",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="read the web",
+        )
+    )
+    stored = await attachment_registry.store_and_register_tool_attachment(
+        file_content=b"\x89PNG fake",
+        filename="web.png",
+        content_type="image/png",
+        tool_name="test",
+        db_context=db,
+        taint_state=external,
+    )
+    tracker = InMemoryTurnTaintTracker()
+
+    await execute_script_tool(
+        _image_context(db, attachment_registry, tracker),
+        f'["{stored.attachment_id}"]',
+    )
+
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_execute_script_skips_ids_that_are_not_attachments(
+    db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
+) -> None:
+    """A dict whose id is some other record's UUID yields no attachment."""
+    db = Database(engine=db_engine)
+
+    result = await execute_script_tool(
+        _image_context(db, attachment_registry),
+        '{"id": "123e4567-e89b-12d3-a456-426614174000", "title": "a task"}',
+    )
+
+    assert isinstance(result, ToolResult)
+    assert not result.attachments
