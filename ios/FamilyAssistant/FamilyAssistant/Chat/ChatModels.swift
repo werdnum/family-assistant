@@ -419,6 +419,184 @@ enum ChatToolStatus: String, Codable, Equatable {
     case failed
 }
 
+extension ChatToolStatus {
+    /// Short label for a call's state, or nil when a finished call needs none.
+    var displayLabel: String? {
+        switch self {
+        case .running:
+            "Running"
+        case .awaitingApproval:
+            "Needs approval"
+        case .approved:
+            "Approved"
+        case .rejected:
+            "Rejected"
+        case .failed:
+            "Failed"
+        case .complete:
+            nil
+        }
+    }
+
+    /// Whether a call still needs the user's eyes, so its group opens by itself.
+    /// Only the auto state depends on this: a group the user opened or closed
+    /// stays that way whatever its calls do next.
+    var wantsAttention: Bool {
+        switch self {
+        case .running, .awaitingApproval, .approved:
+            true
+        case .rejected, .failed, .complete:
+            false
+        }
+    }
+}
+
+/// Compact, human-readable text for a tool call card. Raw arguments and results
+/// stay available, pretty-printed, behind the card's details.
+extension ChatToolCall {
+    private static let argumentSummaryLimit = 80
+    private static let resultPreviewLimit = 240
+    private static let primaryArgumentKeys = [
+        "query", "sql", "title", "name", "url", "path", "prompt", "message",
+        "text", "description", "target_service", "entity_id",
+    ]
+    private static let listResultKeys = ["rows", "results", "items", "data", "events", "notes", "matches"]
+
+    /// "query_trino" -> "Query trino".
+    var displayName: String {
+        let words = name
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        guard let first = words.first else {
+            return "Tool"
+        }
+        return first.uppercased() + words.dropFirst()
+    }
+
+    /// One line describing what the call was asked to do, or nil when the
+    /// arguments hold nothing a person would read.
+    var argumentsSummary: String? {
+        guard case .object(let arguments) = Self.parseJSON(argumentsText) else {
+            return nil
+        }
+        for key in Self.primaryArgumentKeys {
+            if let text = arguments[key].flatMap(Self.scalarText) {
+                return Self.clip(text, to: Self.argumentSummaryLimit)
+            }
+        }
+        let parts = arguments.keys.sorted().compactMap { key -> String? in
+            guard let text = arguments[key].flatMap(Self.scalarText) else {
+                return nil
+            }
+            return "\(key.replacingOccurrences(of: "_", with: " ")): \(text)"
+        }
+        guard !parts.isEmpty else {
+            return nil
+        }
+        return Self.clip(parts.prefix(2).joined(separator: " · "), to: Self.argumentSummaryLimit)
+    }
+
+    /// A short preview of the result: plain text clipped, JSON described by its
+    /// shape instead of dumped.
+    var resultPreview: String? {
+        guard let resultText else {
+            return nil
+        }
+        let trimmed = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let value = Self.parseJSON(trimmed), Self.looksLikeJSON(trimmed) {
+            return Self.describe(value)
+        }
+        return Self.clip(trimmed, to: Self.resultPreviewLimit)
+    }
+
+    var prettyArgumentsText: String {
+        Self.prettyPrinted(argumentsText)
+    }
+
+    var prettyResultText: String? {
+        resultText.map(Self.prettyPrinted)
+    }
+
+    private static func looksLikeJSON(_ text: String) -> Bool {
+        text.hasPrefix("{") || text.hasPrefix("[")
+    }
+
+    private static func parseJSON(_ text: String) -> JSONValue? {
+        try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+    }
+
+    private static func prettyPrinted(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard looksLikeJSON(trimmed),
+              let object = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8)),
+              let data = try? JSONSerialization.data(
+                  withJSONObject: object,
+                  options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+              ),
+              let pretty = String(data: data, encoding: .utf8)
+        else {
+            return text
+        }
+        return pretty
+    }
+
+    private static func scalarText(_ value: JSONValue) -> String? {
+        switch value {
+        case .string(let text):
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+        case .number, .bool:
+            value.displayString
+        case .object, .array, .null:
+            nil
+        }
+    }
+
+    private static func clip(_ text: String, to limit: Int) -> String {
+        let singleLine = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard singleLine.count > limit else {
+            return singleLine
+        }
+        return String(singleLine.prefix(limit - 1)) + "…"
+    }
+
+    private static func describeList(_ items: [JSONValue], noun: String) -> String {
+        let scalars = items.compactMap(scalarText)
+        if !items.isEmpty, scalars.count == items.count {
+            return clip(scalars.joined(separator: ", "), to: resultPreviewLimit)
+        }
+        let singular = noun.hasSuffix("s") ? String(noun.dropLast()) : noun
+        return items.count == 1 ? "1 \(singular)" : "\(items.count) \(noun)"
+    }
+
+    private static func describe(_ value: JSONValue) -> String {
+        switch value {
+        case .array(let items):
+            return describeList(items, noun: "items")
+        case .object(let object):
+            if let message = (object["error"] ?? object["message"]).flatMap(scalarText) {
+                return clip(message, to: resultPreviewLimit)
+            }
+            let lists = object.keys.sorted().compactMap { key -> (String, [JSONValue])? in
+                guard case .array(let items) = object[key] else {
+                    return nil
+                }
+                return (key, items)
+            }
+            if let list = lists.first(where: { listResultKeys.contains($0.0) }) ?? (lists.count == 1 ? lists[0] : nil) {
+                return describeList(list.1, noun: list.0.replacingOccurrences(of: "_", with: " "))
+            }
+            return object.count == 1 ? "1 field" : "\(object.count) fields"
+        case .string, .number, .bool, .null:
+            return clip(value.displayString, to: resultPreviewLimit)
+        }
+    }
+}
+
 struct ChatPendingConfirmation: Codable, Equatable, Identifiable {
     let requestID: String
     let toolName: String
