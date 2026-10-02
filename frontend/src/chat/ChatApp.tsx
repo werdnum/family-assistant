@@ -456,7 +456,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     convId: string;
     status: ConversationLoadStatus;
   } | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const shareLink = useConversationShareLink(conversationId);
   const { delegations: pendingDelegations, refresh: refreshPendingDelegations } =
@@ -477,6 +477,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const [pendingReconcileConvId, setPendingReconcileConvId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
+  const conversationsLoadedRef = useRef(false);
   const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const [mobileShowList, setMobileShowList] = useState<boolean>(false);
@@ -616,17 +617,17 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
+    // Cancel previous request if it exists
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     try {
-      // Cancel previous request if it exists
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      // Only the first load shows the sidebar's placeholder. Later refreshes
+      // (on every send, stream completion and activity ping) keep the current
+      // list on screen until the new one arrives, rather than blanking it.
+      if (!conversationsLoadedRef.current) {
+        setConversationsLoading(true);
       }
-
-      // Create new abort controller
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
-
-      setConversationsLoading(true);
       const response = await fetch('/api/v1/chat/conversations?interface_type=web', {
         signal: abortController.signal,
       });
@@ -660,6 +661,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
           ...serverList.filter((c) => !pendingIds.has(c.conversation_id)),
         ].sort((a, b) => Date.parse(b.last_timestamp) - Date.parse(a.last_timestamp));
         setConversations(merged);
+        conversationsLoadedRef.current = true;
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)
@@ -667,7 +669,11 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         console.error('Error fetching conversations:', error);
       }
     } finally {
-      setConversationsLoading(false);
+      // A request superseded by a newer one leaves the loading state to it, so
+      // an aborted first load can't flash "No conversations yet".
+      if (abortControllerRef.current === abortController) {
+        setConversationsLoading(false);
+      }
     }
   }, []);
 
@@ -2124,14 +2130,10 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
   // Handle window resize
   useEffect(() => {
+    // The mobile layout doesn't render the desktop sidebar, so its open state
+    // is left as the user set it for when the window widens again.
     const handleResize = () => {
-      const newIsMobile = window.innerWidth <= 768;
-      setIsMobile(newIsMobile);
-
-      // Close sidebar when switching to mobile to prevent layout issues
-      if (newIsMobile) {
-        setSidebarOpen(false);
-      }
+      setIsMobile(window.innerWidth <= 768);
     };
 
     window.addEventListener('resize', handleResize);
