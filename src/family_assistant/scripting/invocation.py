@@ -22,6 +22,12 @@ from family_assistant.security.script_closure import (
     ScriptClosureError,
     resolve_script_closure,
 )
+from family_assistant.security.taint import (
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+    merge_taint_state_into_tracker,
+)
 
 if TYPE_CHECKING:
     from family_assistant.security.script_closure import ScriptClosure
@@ -254,6 +260,35 @@ async def _resolve_bound_closure(
     return closure
 
 
+def _record_definition_taint(
+    context: ToolExecutionContext,
+    definition: DefinitionResolution | None,
+    stored_name: str | None,
+) -> None:
+    """Import loaded definition provenance before its content can reach a result."""
+    if definition is not None and context.taint_tracker is not None:
+        if definition.taint_metadata is not None:
+            # Stored authorship is provenance, not a live profile authorization.
+            definition_state = replace(
+                TurnTaintState.from_metadata(definition.taint_metadata),
+                approved_sinks=frozenset(),
+            )
+            merge_taint_state_into_tracker(
+                context.taint_tracker,
+                definition_state,
+            )
+        context.taint_tracker.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"script:{stored_name}",
+                tier=definition.tier,
+                labels=frozenset({"script_definition"}),
+                reason="Provenance of the exact loaded script definition.",
+            )
+        )
+        context.taint_policy_snapshot = None
+
+
 async def prepare_script_invocation(
     context: ToolExecutionContext,
     script: str | None = None,
@@ -277,6 +312,16 @@ async def prepare_script_invocation(
         row = await context.db_context.scripts.get_by_name(name)
         if row is None:
             raise ScriptPreparationError(f"Script '{name}' not found", "not_found")
+        definition = resolve_definition_record(
+            row.definition_record,
+            script_definition_content(
+                name=row.name,
+                description=row.description,
+                script_code=row.script_code,
+                parameters_schema=row.parameters_schema,
+            ),
+        )
+        _record_definition_taint(context, definition, name)
         parent = context.script_execution
         if parent is not None:
             expected = next(
@@ -304,15 +349,6 @@ async def prepare_script_invocation(
                             f"Missing required parameter: {key}"
                         )
         inputs.update(_copy_globals(parameters or {}))
-        definition = resolve_definition_record(
-            row.definition_record,
-            script_definition_content(
-                name=row.name,
-                description=row.description,
-                script_code=row.script_code,
-                parameters_schema=row.parameters_schema,
-            ),
-        )
     if not script:
         raise ScriptPreparationError(
             "Either 'script' (inline code) or 'name' (stored script) must be provided"
@@ -352,6 +388,7 @@ async def prepare_script_invocation(
     except ScriptClosureError as exc:
         raise ScriptPreparationError(str(exc), "stale_script_binding") from exc
     if closure.resolution is not None:
+        _record_definition_taint(context, closure.resolution, name)
         definition = (
             closure.resolution
             if definition is None

@@ -2978,8 +2978,92 @@ async def test_script_preparation_error_records_result_taint(
     if initial_taint == "no_tracker":
         assert context.tool_result_taint_metadata == {}
     else:
-        assert context.tool_result_taint_metadata["preparation-error-call"] == (
-            state.to_metadata()
-        )
         assert context.taint_tracker is not None
-        assert context.taint_tracker.snapshot() == state
+        snapshot = context.taint_tracker.snapshot()
+        assert context.tool_result_taint_metadata["preparation-error-call"] == (
+            snapshot.to_metadata()
+        )
+        assert snapshot.max_tier == state.max_tier
+        assert set(state.sources) <= set(snapshot.sources)
+
+
+@pytest.mark.parametrize("with_static_policy", [False, True])
+@pytest.mark.parametrize("external_definition", [False, True])
+@pytest.mark.parametrize(
+    ("script_code", "parameters_schema", "error_text"),
+    [
+        (
+            "value",
+            {"required": ["external_schema_text"]},
+            "Missing required parameter: external_schema_text",
+        ),
+        ("def broken(", None, "Syntax error"),
+        ("import nonexistent_module", None, "Script validation failed"),
+    ],
+    ids=["missing_parameter", "syntax", "import"],
+)
+async def test_stored_script_preparation_error_inherits_definition_taint(
+    db_engine: AsyncEngine,
+    with_static_policy: bool,
+    external_definition: bool,
+    script_code: str,
+    parameters_schema: dict[str, object] | None,
+    error_text: str,
+) -> None:
+    """Errors quoting stored fields retain the loaded definition's provenance."""
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        pytest.fail("Script preparation errors must not execute the tool")
+
+    local = LocalToolsProvider(
+        registrations=[
+            _registration(
+                cast("ToolImplementation", execute), tool_name="execute_script"
+            )
+        ]
+    )
+    wrapped = (
+        PolicyEnforcingToolsProvider(
+            local,
+            PolicyEngine.from_policy_config(
+                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+            ),
+        )
+        if with_static_policy
+        else local
+    )
+    provider = TaintTrackingToolsProvider(
+        wrapped, taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
+    )
+    context = _context(db_engine, TurnTaintState.empty())
+    await context.db_context.scripts.save(
+        name="stored_error",
+        description="A stored definition whose preparation fails",
+        script_code=script_code,
+        parameters_schema=parameters_schema,
+        definition_taint_state=(
+            _unknown_external_state() if external_definition else TurnTaintState.empty()
+        ),
+        definition_human_direct=not external_definition,
+    )
+
+    result = await provider.execute_tool(
+        "execute_script", {"name": "stored_error"}, context, "stored-error-call"
+    )
+
+    assert isinstance(result, ToolResult)
+    assert error_text in result.get_text()
+    metadata = context.tool_result_taint_metadata["stored-error-call"]
+    expected_tier = (
+        SourceTrustTier.UNKNOWN_EXTERNAL
+        if external_definition
+        else SourceTrustTier.TRUSTED_USER
+    )
+    assert metadata.get("max_tier") == expected_tier.config_value
+    restored = TurnTaintState.from_metadata(metadata)
+    assert any(
+        source.source_id == "script:stored_error"
+        and source.tier == expected_tier
+        and "script_definition" in source.labels
+        for source in restored.sources
+    )
