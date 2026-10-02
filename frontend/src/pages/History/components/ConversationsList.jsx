@@ -10,6 +10,7 @@ const ConversationsList = ({ onLoaded }) => {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
@@ -71,19 +72,19 @@ const ConversationsList = ({ onLoaded }) => {
         }
 
         const data = await response.json();
-        if (signal?.aborted) {
+        if (signal.aborted) {
           return;
         }
         setConversations(data.conversations || []);
         setTotalCount(data.count);
         setTotalPages(Math.ceil(data.count / pageSize));
       } catch (err) {
-        if (signal?.aborted) {
+        if (signal.aborted) {
           return;
         }
         setError(err.message);
       } finally {
-        if (!signal?.aborted) {
+        if (!signal.aborted) {
           setLoading(false);
           onLoaded?.();
         }
@@ -99,6 +100,7 @@ const ConversationsList = ({ onLoaded }) => {
     return () => controller.abort();
   }, [
     fetchConversations,
+    reloadVersion,
     currentPage,
     filters.interface_type,
     filters.conversation_id,
@@ -213,7 +215,7 @@ const ConversationsList = ({ onLoaded }) => {
       {error && (
         <div className={styles.error} role="alert">
           <p>Error: {error}</p>
-          <Button variant="outline" onClick={() => fetchConversations(currentPage, filters)}>
+          <Button variant="outline" onClick={() => setReloadVersion((version) => version + 1)}>
             Try again
           </Button>
         </div>

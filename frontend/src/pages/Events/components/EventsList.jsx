@@ -11,6 +11,7 @@ const EventsList = () => {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
@@ -55,19 +56,19 @@ const EventsList = () => {
         }
 
         const data = await response.json();
-        if (signal?.aborted) {
+        if (signal.aborted) {
           return;
         }
         setEvents(data.events || []);
         setTotalCount(data.total || 0);
         setTotalPages(Math.ceil((data.total || 0) / pageSize));
       } catch (err) {
-        if (signal?.aborted) {
+        if (signal.aborted) {
           return;
         }
         setError(err.message);
       } finally {
-        if (!signal?.aborted) {
+        if (!signal.aborted) {
           setLoading(false);
         }
       }
@@ -80,7 +81,14 @@ const EventsList = () => {
     const controller = new AbortController();
     fetchEvents(currentPage, filters, controller.signal);
     return () => controller.abort();
-  }, [fetchEvents, currentPage, filters.source_id, filters.hours, filters.only_triggered]);
+  }, [
+    fetchEvents,
+    reloadVersion,
+    currentPage,
+    filters.source_id,
+    filters.hours,
+    filters.only_triggered,
+  ]);
 
   // Update filters and URL params
   const handleFiltersChange = (newFilters) => {
@@ -150,7 +158,7 @@ const EventsList = () => {
       {error && (
         <div className={styles.error} role="alert">
           <p>Error: {error}</p>
-          <Button variant="outline" onClick={() => fetchEvents(currentPage, filters)}>
+          <Button variant="outline" onClick={() => setReloadVersion((version) => version + 1)}>
             Try again
           </Button>
         </div>

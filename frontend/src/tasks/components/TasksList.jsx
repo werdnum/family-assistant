@@ -15,6 +15,7 @@ const TasksList = ({ onLoadingChange }) => {
   const [taskTypes, setTaskTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [actionError, setActionError] = useState(null);
 
   // Parse URL parameters for filters
@@ -64,18 +65,18 @@ const TasksList = ({ onLoadingChange }) => {
       }
 
       const data = await response.json();
-      if (signal?.aborted) {
+      if (signal.aborted) {
         return;
       }
       setTasks(data.tasks || []);
     } catch (err) {
-      if (signal?.aborted) {
+      if (signal.aborted) {
         return;
       }
       console.error('Error fetching tasks:', err);
       setError(err.message);
     } finally {
-      if (!signal?.aborted) {
+      if (!signal.aborted) {
         setLoading(false);
         onLoadingChange?.(false);
       }
@@ -126,7 +127,7 @@ const TasksList = ({ onLoadingChange }) => {
       }
 
       // Refresh tasks list after successful retry
-      await fetchTasks();
+      setReloadVersion((version) => version + 1);
     } catch (err) {
       console.error('Error retrying task:', err);
       setActionError(`Failed to retry task: ${err.message}`);
@@ -146,7 +147,7 @@ const TasksList = ({ onLoadingChange }) => {
       }
 
       // Refresh tasks list after successful cancellation
-      await fetchTasks();
+      setReloadVersion((version) => version + 1);
     } catch (err) {
       console.error('Error cancelling task:', err);
       setActionError(`Failed to cancel task: ${err.message}`);
@@ -163,7 +164,7 @@ const TasksList = ({ onLoadingChange }) => {
     const controller = new AbortController();
     fetchTasks(controller.signal);
     return () => controller.abort();
-  }, [searchParams]);
+  }, [searchParams, reloadVersion]);
 
   useEffect(() => {
     fetchTaskTypes();
@@ -213,7 +214,7 @@ const TasksList = ({ onLoadingChange }) => {
       {error && (
         <div className={styles.errorContainer} role="alert">
           <div className={styles.errorMessage}>Error loading tasks: {error}</div>
-          <Button onClick={() => fetchTasks()} variant="secondary">
+          <Button onClick={() => setReloadVersion((version) => version + 1)} variant="secondary">
             Retry
           </Button>
         </div>
