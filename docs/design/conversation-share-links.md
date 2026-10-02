@@ -9,8 +9,12 @@ request still requires an authenticated, allowlisted user.
 ## User experience
 
 - A persisted conversation has a **Share** action in the chat header.
-- Sharing rotates the conversation's one active link. The web app copies the replacement URL; the
-  native iOS app opens the system share sheet with it.
+- Creating or explicitly replacing a link rotates the conversation's one active link, even if
+  copying fails. The web header opens a dialog with separate creation/replacement, copy, and revoke
+  actions. The dialog keeps the returned URL in component memory for selectable text and copy retry,
+  never in persistent storage; after leaving the conversation, the URL cannot be retrieved. Copies
+  reuse that URL without rotation, and other windows or devices can invalidate it. The native iOS
+  app opens the system share sheet with each replacement URL.
 - The owner can stop sharing, immediately invalidating the link.
 - A recipient opens `/shared/conversations/{token}` and sees a dedicated read-only transcript.
 - On `assistant.andrewgarrett.dev`, the iOS Associated Domains entitlement and AASA file route that

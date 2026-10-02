@@ -66,15 +66,20 @@ draft a message and then decide who should handle it. If the chat is still empty
 changes the profile and keeps you where you are.
 
 **Share a conversation.** Open a conversation that already has messages and select the share icon in
-the chat header. The web app copies a link to a read-only transcript; the iOS app opens its share
-sheet so you can choose where to send it. The recipient must sign in as an authorized Family
-Assistant user, and the conversation does not appear in their history list. On iPhone or iPad with
-the Family Assistant app installed, links from `assistant.andrewgarrett.dev` open the transcript in
-a native read-only view; pull down to refresh it. Selecting share again replaces the old link;
-select the stop-sharing icon to make the current link unavailable. The transcript reflects messages
-added after the link was created when the recipient refreshes it. Tool calls appear as collapsed
-groups, the same way they do in your own chat; the recipient can expand a group to see what the
-assistant ran and what came back.
+the chat header. In the web app, choose **Create and copy link**. The dialog shows a selectable URL
+and **Copy link**; if clipboard access fails, select the URL or use **Retry copy**. Copying again
+does not change the link. **Replace and copy link** immediately invalidates the previous link, even
+if copying fails. **Stop sharing** makes the current link unavailable. Closing and reopening the
+dialog keeps the URL while you stay in that conversation; after leaving or reloading, the existing
+URL cannot be retrieved, so replace it if you need a new copy. Another window or device can also
+replace or revoke the link. The iOS app opens its share sheet so you can choose where to send it.
+The recipient must sign in as an authorized Family Assistant user, and the conversation does not
+appear in their history list. On iPhone or iPad with the Family Assistant app installed, links from
+`assistant.andrewgarrett.dev` open the transcript in a native read-only view; pull down to refresh
+it. In iOS, selecting share again replaces the old link; select the stop-sharing icon to make the
+current link unavailable. The transcript reflects messages added after the link was created when the
+recipient refreshes it. Tool calls appear as collapsed groups, the same way they do in your own
+chat; the recipient can expand a group to see what the assistant ran and what came back.
 
 Treat the link as private within your household. It is meant to stop another authorized user from
 casually browsing your history, not to protect a conversation from someone who obtains the link and
