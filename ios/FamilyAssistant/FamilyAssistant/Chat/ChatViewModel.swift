@@ -3440,17 +3440,40 @@ final class ChatViewModel {
             }
         }
         cleanupTemporaryImport(for: attachment)
-        draftAttachments.removeAll { $0.id == attachment.id }
+        withDraftAttachments(containing: attachment.id) { attachments in
+            attachments.removeAll { $0.id == attachment.id }
+        }
     }
 
     /// Set a draft attachment chip's inline error (the chip is the point-of-action
     /// anchor for a failed remove / not-yet-uploaded state), leaving the chip in
     /// place so the user can see and act on the failure without a modal.
     private func setDraftAttachmentError(_ attachment: ChatAttachment, _ message: String) {
-        guard let index = draftAttachments.firstIndex(where: { $0.id == attachment.id }) else {
+        withDraftAttachments(containing: attachment.id) { attachments in
+            guard let index = attachments.firstIndex(where: { $0.id == attachment.id }) else {
+                return
+            }
+            attachments[index].errorMessage = message
+        }
+    }
+
+    /// Change whichever draft holds the attachment: the composer's, or one set
+    /// aside because the user switched conversations while an upload or removal
+    /// of it was in flight.
+    private func withDraftAttachments(
+        containing attachmentID: String,
+        _ change: (inout [ChatAttachment]) -> Void
+    ) {
+        if draftAttachments.contains(where: { $0.id == attachmentID }) {
+            change(&draftAttachments)
             return
         }
-        draftAttachments[index].errorMessage = message
+        for (conversation, var draft) in savedDrafts
+        where draft.attachments.contains(where: { $0.id == attachmentID }) {
+            change(&draft.attachments)
+            savedDrafts[conversation] = draft
+            return
+        }
     }
 
     func confirm(_ confirmation: ChatPendingConfirmation, approved: Bool) async {
@@ -3552,18 +3575,9 @@ final class ChatViewModel {
             attachment.uploadState = .failed
             attachment.errorMessage = error.localizedDescription
         }
-        if let index = draftAttachments.firstIndex(where: { $0.id == attachment.id }) {
-            draftAttachments[index] = attachment
-        } else {
-            // The user switched conversations while the upload ran, so its draft
-            // was set aside; finish the upload there.
-            for (conversation, var draft) in savedDrafts {
-                guard let index = draft.attachments.firstIndex(where: { $0.id == attachment.id }) else {
-                    continue
-                }
-                draft.attachments[index] = attachment
-                savedDrafts[conversation] = draft
-                break
+        withDraftAttachments(containing: attachment.id) { attachments in
+            if let index = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                attachments[index] = attachment
             }
         }
     }

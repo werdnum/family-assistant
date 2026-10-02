@@ -791,6 +791,43 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(restored.attachmentID, "33333333-3333-3333-3333-333333333333")
     }
 
+    func testRemovalFinishingAfterSwitchRemovesTheAttachmentFromItsOwnConversationsDraft() async throws {
+        let deleteRequests = AtomicCounter()
+        let releaseDelete = DispatchSemaphore(value: 0)
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("DELETE", "/api/attachments/uploaded-id"):
+                deleteRequests.increment()
+                _ = releaseDelete.wait(timeout: .now() + 5)
+                return .json(#"{"message":"deleted"}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", _) where path.hasSuffix("/messages"):
+                return .json(
+                    #"{"messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+        await model.selectConversation("web_conv_remove_a")
+        let attachment = makeAttachment(uploadState: .uploaded)
+        model.draftText = "keep this text"
+        model.draftAttachments = [attachment]
+
+        let removal = Task { await model.removeDraftAttachment(attachment) }
+        try await waitUntil { deleteRequests.value == 1 }
+        await model.selectConversation("web_conv_remove_b")
+        releaseDelete.signal()
+        await removal.value
+
+        await model.selectConversation("web_conv_remove_a")
+        XCTAssertEqual(model.draftText, "keep this text")
+        XCTAssertEqual(model.draftAttachments, [], "The removed attachment must not come back with A's draft.")
+    }
+
     func testOpeningConversationAdoptsItsProfile() async throws {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
