@@ -155,6 +155,32 @@ def test_resolve_mcp_tool_tags_adds_output_unspecified_when_annotations_lack_out
     ) == {ToolTag.READ_ONLY, ToolTag.OPEN_WORLD, ToolTag.OUTPUT_UNSPECIFIED}
 
 
+def test_resolve_mcp_tool_tags_adds_output_unspecified_when_config_lacks_output() -> (
+    None
+):
+    """Operator-configured tags without an output tag are marked unspecified."""
+    tool_metadata = normalize_mcp_tool_metadata({
+        "search_web": ["read_only"],
+        "*": ["state_changing"],
+    })
+    annotation_tags = derive_mcp_annotation_tags(
+        read_only_hint=True,
+        destructive_hint=None,
+        open_world_hint=True,
+    )
+
+    assert resolve_mcp_tool_tags(
+        tool_name="search_web",
+        configured_tool_metadata=tool_metadata,
+        annotation_tags=annotation_tags,
+    ) == {ToolTag.READ_ONLY, ToolTag.OUTPUT_UNSPECIFIED}
+    assert resolve_mcp_tool_tags(
+        tool_name="other",
+        configured_tool_metadata=tool_metadata,
+        annotation_tags=annotation_tags,
+    ) == {ToolTag.STATE_CHANGING, ToolTag.OUTPUT_UNSPECIFIED}
+
+
 def test_uncovered_configured_tools_reports_tools_an_exact_map_omits() -> None:
     """A map with no wildcard must cover every tool or say which it does not."""
     configured = normalize_mcp_tool_metadata({

@@ -388,7 +388,11 @@ def resolve_mcp_tool_tags(
     configured_tool_metadata: dict[str, frozenset[ToolTag]] | None,
     annotation_tags: frozenset[ToolTag],
 ) -> frozenset[ToolTag]:
-    """Resolve MCP tool tags from config, wildcard metadata, and annotations."""
+    """Resolve MCP tool tags from config, wildcard metadata, and annotations.
+
+    Whichever source wins, a set without an output trust tag gains
+    ``output_unspecified``, so policies matching it see every such tool.
+    """
     resolved_from_config = None
     if configured_tool_metadata:
         if tool_name in configured_tool_metadata:
@@ -396,10 +400,9 @@ def resolve_mcp_tool_tags(
         elif "*" in configured_tool_metadata:
             resolved_from_config = configured_tool_metadata["*"]
 
-    if resolved_from_config is not None:
-        return resolved_from_config
-
-    resolved_tags = set(annotation_tags)
+    resolved_tags = set(
+        annotation_tags if resolved_from_config is None else resolved_from_config
+    )
     if not resolved_tags & OUTPUT_TRUST_TAGS:
         resolved_tags.add(ToolTag.OUTPUT_UNSPECIFIED)
     return frozenset(resolved_tags)
