@@ -53,6 +53,7 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
   const context = useContext(ToolConfirmationContext);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isResolving, setIsResolving] = useState(false);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
 
   // Get the confirmation by tool_call_id
   const pendingConfirmation = toolCallId
@@ -110,29 +111,21 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
 
   useEffect(() => {
     setIsResolving(false);
+    setDecisionError(null);
   }, [pendingConfirmation?.request_id]);
 
-  const handleApprove = async () => {
-    if (context?.handleConfirmation && pendingConfirmation && toolCallId && !isResolving) {
-      setIsResolving(true);
-      try {
-        await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, true);
-      } catch (error) {
-        console.error('Failed to approve tool confirmation:', error);
-        setIsResolving(false);
-      }
+  const handleDecision = async (approved: boolean) => {
+    if (!context?.handleConfirmation || !pendingConfirmation || !toolCallId || isResolving) {
+      return;
     }
-  };
-
-  const handleReject = async () => {
-    if (context?.handleConfirmation && pendingConfirmation && toolCallId && !isResolving) {
-      setIsResolving(true);
-      try {
-        await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, false);
-      } catch (error) {
-        console.error('Failed to reject tool confirmation:', error);
-        setIsResolving(false);
-      }
+    setIsResolving(true);
+    setDecisionError(null);
+    try {
+      await context.handleConfirmation(toolCallId, pendingConfirmation.request_id, approved);
+    } catch (error) {
+      console.error('Failed to resolve tool confirmation:', error);
+      setDecisionError('Could not send this decision. Try again.');
+      setIsResolving(false);
     }
   };
 
@@ -171,7 +164,7 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
           </div>
           <div className="flex gap-2 items-center">
             <Button
-              onClick={handleApprove}
+              onClick={() => void handleDecision(true)}
               size="sm"
               className="bg-green-600 hover:bg-green-700 text-white"
               disabled={isResolving}
@@ -179,7 +172,7 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
               Approve
             </Button>
             <Button
-              onClick={handleReject}
+              onClick={() => void handleDecision(false)}
               size="sm"
               variant="outline"
               className="text-red-600"
@@ -193,6 +186,11 @@ export const ToolWithConfirmation: React.FC<ToolWithConfirmationProps> = ({
               </span>
             )}
           </div>
+          {decisionError && (
+            <div role="alert" className="mt-2 text-sm font-medium text-red-600">
+              {decisionError}
+            </div>
+          )}
         </div>
       )}
     </>

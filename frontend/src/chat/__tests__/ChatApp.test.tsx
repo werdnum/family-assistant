@@ -407,6 +407,49 @@ describe('ChatApp', () => {
     expect(screen.queryByText('Telegram message that should not appear')).not.toBeInTheDocument();
   });
 
+  it('keeps the conversation list on screen while it refreshes after a send', async () => {
+    const user = userEvent.setup();
+    let listRequests = 0;
+    let releaseRefresh: (() => void) | undefined;
+    server.use(
+      http.get('/api/v1/chat/conversations', async ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.has('q')) {
+          return HttpResponse.json({ conversations: [], count: 0 });
+        }
+        listRequests += 1;
+        if (listRequests > 1 && !releaseRefresh) {
+          await new Promise<void>((resolve) => {
+            releaseRefresh = resolve;
+          });
+        }
+        return HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'web_conv_existing',
+              last_message: 'An earlier conversation',
+              last_timestamp: '2025-01-01T10:00:00Z',
+              message_count: 2,
+            },
+          ],
+          count: 1,
+        });
+      })
+    );
+
+    await renderChatApp({ waitForReady: true });
+    expect(await screen.findByText('An earlier conversation')).toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hello there!');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(releaseRefresh).toBeDefined(), { timeout: 10000 });
+    expect(screen.getByText('An earlier conversation')).toBeInTheDocument();
+    expect(document.querySelector('[data-loading-indicator="true"]')).toBeNull();
+
+    releaseRefresh?.();
+  }, 30000);
+
   it('shows the after-running-tools error banner when tool call + error + turn_ended arrive in one chunk', async () => {
     const { server } = await import('../../test/setup.js');
     const { testHandlers } = await import('../../test/mocks/handlers');

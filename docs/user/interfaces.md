@@ -55,11 +55,21 @@ and a failed call keeps its error message. A call that never reported back befor
 finished, such as one cut off when you stopped a turn, says that no result was recorded rather than
 looking finished or still running.
 
+**Copy a reply.** Hover over an assistant reply or Tab to its **Copy response** button, then
+activate it to copy the response text. A checkmark confirms success. If the browser cannot write to
+the clipboard, an error appears below the reply; select the text and copy it manually instead.
+
 A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
 messages** to bring in older ones, as many times as you need to reach the start.
 
 Reopening an existing conversation resumes it under the profile it started in, so follow-ups keep
 their context. Starting a new chat uses whichever profile you last picked.
+
+Each conversation keeps its own unsent draft. If you switch away part-way through a message, the
+text and any files you attached stay with that conversation and are waiting in the message box when
+you come back; the conversation you switch to shows only its own draft. Drafts last while the page
+or app stays open. In the browser, if a conversation can't be loaded, Chat says so and offers
+**Retry**, and it won't send anything into that conversation until its messages have loaded.
 
 Switching profile part-way through a conversation starts a fresh chat in the new profile, so each
 profile's context stays separate — but anything you have already typed comes with you, so you can
@@ -67,15 +77,20 @@ draft a message and then decide who should handle it. If the chat is still empty
 changes the profile and keeps you where you are.
 
 **Share a conversation.** Open a conversation that already has messages and select the share icon in
-the chat header. The web app copies a link to a read-only transcript; the iOS app opens its share
-sheet so you can choose where to send it. The recipient must sign in as an authorized Family
-Assistant user, and the conversation does not appear in their history list. On iPhone or iPad with
-the Family Assistant app installed, links from `assistant.andrewgarrett.dev` open the transcript in
-a native read-only view; pull down to refresh it. Selecting share again replaces the old link;
-select the stop-sharing icon to make the current link unavailable. The transcript reflects messages
-added after the link was created when the recipient refreshes it. Tool calls appear as collapsed
-groups, the same way they do in your own chat; the recipient can expand a group to see what the
-assistant ran and what came back.
+the chat header. In the web app, choose **Create and copy link**. The dialog shows a selectable URL
+and **Copy link**; if clipboard access fails, select the URL or use **Retry copy**. Copying again
+does not change the link. **Replace and copy link** immediately invalidates the previous link, even
+if copying fails. **Stop sharing** makes the current link unavailable. Closing and reopening the
+dialog keeps the URL while you stay in that conversation; after leaving or reloading, the existing
+URL cannot be retrieved, so replace it if you need a new copy. Another window or device can also
+replace or revoke the link. The iOS app opens its share sheet so you can choose where to send it.
+The recipient must sign in as an authorized Family Assistant user, and the conversation does not
+appear in their history list. On iPhone or iPad with the Family Assistant app installed, links from
+`assistant.andrewgarrett.dev` open the transcript in a native read-only view; pull down to refresh
+it. In iOS, selecting share again replaces the old link; select the stop-sharing icon to make the
+current link unavailable. The transcript reflects messages added after the link was created when the
+recipient refreshes it. Tool calls appear as collapsed groups, the same way they do in your own
+chat; the recipient can expand a group to see what the assistant ran and what came back.
 
 Treat the link as private within your household. It is meant to stop another authorized user from
 casually browsing your history, not to protect a conversation from someone who obtains the link and

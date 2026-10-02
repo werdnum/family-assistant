@@ -134,7 +134,9 @@ export const PendingConfirmationsTray: React.FC<PendingConfirmationsTrayProps> =
                       </div>
                     )}
                     {decisionError && (
-                      <div className="mt-2 text-xs font-medium text-red-600">{decisionError}</div>
+                      <div role="alert" className="mt-2 text-xs font-medium text-red-600">
+                        {decisionError}
+                      </div>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-2">

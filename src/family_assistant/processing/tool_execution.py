@@ -688,7 +688,14 @@ class ToolExecutor:
                 "description": attachment.description,
             }
 
-            if attachment.content and self.attachment_registry:
+            if attachment.attachment_id:
+                attachment_data["attachment_id"] = attachment.attachment_id
+                auto_attachment_ids.append(attachment.attachment_id)
+                logger.info(
+                    "Queuing existing attachment reference: %s",
+                    attachment.attachment_id,
+                )
+            elif attachment.content and self.attachment_registry:
                 file_extension = get_file_extension_from_mime_type(attachment.mime_type)
                 metadata: dict[str, object] = {
                     "tool_call_id": call_id,
@@ -717,13 +724,6 @@ class ToolExecutor:
                 logger.info(
                     "Stored and registered tool attachment: %s",
                     registered_metadata.attachment_id,
-                )
-            elif attachment.attachment_id:
-                attachment_data["attachment_id"] = attachment.attachment_id
-                auto_attachment_ids.append(attachment.attachment_id)
-                logger.info(
-                    "Queuing existing attachment reference: %s",
-                    attachment.attachment_id,
                 )
 
             attachments_data.append(attachment_data)

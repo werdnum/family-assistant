@@ -1,5 +1,7 @@
 import {
   AssistantRuntimeProvider,
+  type Attachment,
+  type CreateAttachment,
   MessageNotSentError,
   useExternalStoreRuntime,
 } from '@assistant-ui/react';
@@ -23,7 +25,13 @@ import ProfileSelector from './ProfileSelector';
 import { type ModelTier, ProfilesProvider, useProfiles } from './profilesContext';
 import { PushNotificationButton } from './PushNotificationButton';
 import { ShareConversationButton } from './ShareConversationButton';
-import { ChatControlsContext, type OlderMessagesStatus, type SteerResult } from './chatControls';
+import { useConversationShareLink } from './useConversationShareLink';
+import {
+  ChatControlsContext,
+  type ConversationLoadStatus,
+  type OlderMessagesStatus,
+  type SteerResult,
+} from './chatControls';
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
@@ -135,7 +143,7 @@ function hasTerminalReplyForTurn(
 function buildUnconfirmedReplyError(conversationId: string, turnId: string): Message {
   const diagnosticsUrl = getDiagnosticsUrl({ conversationId });
   return {
-    id: `msg_unconfirmed_${generateUUID()}`,
+    id: `msg_unconfirmed_${turnId}`,
     role: 'assistant',
     turnId,
     content: [
@@ -398,6 +406,28 @@ export function confirmationMapsEqual(
 // Rows of history fetched when a conversation opens, and added per "load earlier".
 const HISTORY_PAGE_SIZE = 50;
 
+/** What the composer held when the user left a conversation. */
+interface ConversationDraft {
+  text: string;
+  attachments: readonly Attachment[];
+}
+
+// A file the user picked goes back through the attachment adapter, so it is
+// validated and uploaded at send exactly as when it was first added; anything
+// already carrying its content is put back as it is.
+function restorableAttachment(attachment: Attachment): File | CreateAttachment {
+  if (attachment.file) {
+    return attachment.file;
+  }
+  return {
+    id: attachment.id,
+    type: attachment.type,
+    name: attachment.name,
+    contentType: attachment.contentType,
+    content: attachment.content ?? [],
+  };
+}
+
 const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -419,8 +449,19 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     null
   );
   const [olderMessagesStatus, setOlderMessagesStatus] = useState<OlderMessagesStatus>('idle');
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
+  // The open of a conversation that has not yet produced its history. Keyed by
+  // conversation so a result can only ever describe the conversation it was
+  // fetched for; while it is set for the selected conversation the thread shows
+  // its status instead of a transcript, and sending is refused.
+  const [conversationLoad, setConversationLoad] = useState<{
+    convId: string;
+    status: ConversationLoadStatus;
+  } | null>(null);
+  const conversationLoadRef = useRef(conversationLoad);
+  conversationLoadRef.current = conversationLoad;
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const shareLink = useConversationShareLink(conversationId);
   const { delegations: pendingDelegations, refresh: refreshPendingDelegations } =
     usePendingDelegations(conversationId);
   const [persistedConversationId, setPersistedConversationId] = useState<string | null>(null);
@@ -439,6 +480,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const [pendingReconcileConvId, setPendingReconcileConvId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState<boolean>(true);
+  const conversationsLoadedRef = useRef(false);
   const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const [mobileShowList, setMobileShowList] = useState<boolean>(false);
@@ -533,6 +575,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  // The conversation whose open (foreground load) is in flight, if any.
+  const openInFlightConvIdRef = useRef<string | null>(null);
   // Optimistic conversation rows inserted on send, keyed by the owning turn id,
   // kept until that turn settles (handleStreamingComplete). Merged into every
   // fetch result so a list request already in flight when the user sent can't
@@ -576,17 +620,17 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
+    // Cancel previous request if it exists
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
     try {
-      // Cancel previous request if it exists
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      // Only the first load shows the sidebar's placeholder. Later refreshes
+      // (on every send, stream completion and activity ping) keep the current
+      // list on screen until the new one arrives, rather than blanking it.
+      if (!conversationsLoadedRef.current) {
+        setConversationsLoading(true);
       }
-
-      // Create new abort controller
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
-
-      setConversationsLoading(true);
       const response = await fetch('/api/v1/chat/conversations?interface_type=web', {
         signal: abortController.signal,
       });
@@ -620,6 +664,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
           ...serverList.filter((c) => !pendingIds.has(c.conversation_id)),
         ].sort((a, b) => Date.parse(b.last_timestamp) - Date.parse(a.last_timestamp));
         setConversations(merged);
+        conversationsLoadedRef.current = true;
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)
@@ -627,7 +672,11 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         console.error('Error fetching conversations:', error);
       }
     } finally {
-      setConversationsLoading(false);
+      // A request superseded by a newer one leaves the loading state to it, so
+      // an aborted first load can't flash "No conversations yet".
+      if (abortControllerRef.current === abortController) {
+        setConversationsLoading(false);
+      }
     }
   }, []);
 
@@ -1440,7 +1489,20 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     };
 
   // Load messages for a conversation
-  const loadConversationMessages = useCallback(async (convId: string, background = false) => {
+  const loadConversationMessages = useCallback(async (convId: string, reload = false) => {
+    // Every load aborts the one before it (they share an abort controller), so
+    // a reload that lands while this conversation is still opening ends that
+    // open. It takes the open over, so the open still settles — with history,
+    // the adopted profile, or an error and Retry — instead of being left
+    // loading forever.
+    const background = reload && openInFlightConvIdRef.current !== convId;
+    const clearConversationLoad = (id: string) =>
+      setConversationLoad((prev) => (prev?.convId === id ? null : prev));
+    const failConversationLoad = (id: string) =>
+      setConversationLoad((prev) =>
+        prev?.convId === id ? { convId: id, status: 'failed' } : prev
+      );
+    let messagesAbortController: AbortController | null = null;
     try {
       // A background reload is deferred, so the user can have moved on before it
       // runs — an aborted stream still reconciles the conversation it was for.
@@ -1460,11 +1522,13 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       }
 
       // Create new abort controller for messages
-      const messagesAbortController = new AbortController();
+      messagesAbortController = new AbortController();
       messagesAbortControllerRef.current = messagesAbortController;
 
       if (!background) {
+        openInFlightConvIdRef.current = convId;
         setIsLoading(true);
+        setConversationLoad({ convId, status: 'loading' });
       }
       // Opening a conversation starts from one page of history; a background
       // reload of the same conversation keeps whatever window the user has
@@ -1495,12 +1559,14 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         const data = (await response.json()) as ConversationMessagesResponse;
         if (streamWasActiveAtRequestStart || activeStreamConversationIdRef.current === convId) {
           // A stream is active for this conversation — its own completion will
-          // reconcile. Don't clobber it, and treat this as a supersession.
+          // reconcile. Don't clobber it, and treat this as a supersession. The
+          // stream owns what the thread shows, so the open is over.
+          clearConversationLoad(convId);
           return 'bailed' as const;
         }
-        // A background load is deferred, so the user can have left this
-        // conversation while it was in flight.
-        if (background && conversationIdRef.current !== convId) {
+        // The user can have left this conversation while the request was in
+        // flight; its history must not replace the one now on screen.
+        if (conversationIdRef.current !== convId) {
           return 'bailed' as const;
         }
 
@@ -1529,6 +1595,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         }
         setOlderHistory({ convId, hasMore: historyHasMore });
         setOlderMessagesStatus((prev) => (prev === 'failed' ? 'idle' : prev));
+        clearConversationLoad(convId);
 
         // A foreground load means the user just opened this conversation (every
         // background reload passes background=true). Adopt the profile its
@@ -1916,6 +1983,9 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         return 'applied' as const;
       }
       // A non-OK response is a genuine reconcile failure, not a supersession.
+      if (!background) {
+        failConversationLoad(convId);
+      }
       return 'failed' as const;
     } catch (error) {
       // An AbortError means a newer load superseded this one (bailed); any other
@@ -1924,9 +1994,14 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         return 'bailed' as const;
       }
       console.error('Error loading conversation:', error);
+      if (!background) {
+        failConversationLoad(convId);
+      }
       return 'failed' as const;
     } finally {
-      if (!background) {
+      // A superseded open leaves the flag to the load that replaced it.
+      if (!background && messagesAbortControllerRef.current === messagesAbortController) {
+        openInFlightConvIdRef.current = null;
         setIsLoading(false);
       }
     }
@@ -1989,13 +2064,38 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     return () => clearInterval(intervalId);
   }, [pendingReconcileConvId, conversationId]);
 
+  // Whether the composer is mid-send: its text has gone out but its
+  // attachments are still uploading. The runtime hands the finished message to
+  // whichever conversation is open when the upload completes, so switching in
+  // that window would post this conversation's message into another one.
+  const composerSendingRef = useRef(false);
+
   // Handle conversation selection (defined early for use in notification callback)
   const handleConversationSelect = useCallback(
     (convId: string) => {
+      if (composerSendingRef.current) {
+        return;
+      }
+      // Reopening the conversation already on screen (back to the list and into
+      // it again on mobile, or its own row on desktop) keeps the transcript, the
+      // widened history window and any live stream, and catches up quietly
+      // instead of reopening it from scratch behind a loading placeholder.
+      if (convId === conversationIdRef.current && conversationLoadRef.current === null) {
+        setMobileShowList(false);
+        if (activeStreamConversationIdRef.current !== convId) {
+          void loadConversationMessages(convId, true);
+        }
+        return;
+      }
       // Cancel any active streaming before switching conversations
       cancelStream();
 
       conversationIsUnsentDraftRef.current = false;
+      // The transcript on screen belongs to the conversation being left; it
+      // must not stand in for this one while its history loads, or if it fails.
+      if (convId !== conversationIdRef.current) {
+        setMessages([]);
+      }
       setConversationId(convId);
       setMobileShowList(false);
       localStorage.setItem('lastConversationId', convId);
@@ -2055,14 +2155,10 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
   // Handle window resize
   useEffect(() => {
+    // The mobile layout doesn't render the desktop sidebar, so its open state
+    // is left as the user set it for when the window widens again.
     const handleResize = () => {
-      const newIsMobile = window.innerWidth <= 768;
-      setIsMobile(newIsMobile);
-
-      // Close sidebar when switching to mobile to prevent layout issues
-      if (newIsMobile) {
-        setSidebarOpen(false);
-      }
+      setIsMobile(window.innerWidth <= 768);
     };
 
     window.addEventListener('resize', handleResize);
@@ -2132,10 +2228,16 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
   // Handle new chat creation
   const handleNewChat = useCallback(() => {
+    if (composerSendingRef.current) {
+      return;
+    }
     // Cancel any active streaming before creating a new chat
     cancelStream();
     // A history load still in flight belongs to the conversation being left.
     messagesAbortControllerRef.current?.abort();
+    openInFlightConvIdRef.current = null;
+    setIsLoading(false);
+    setConversationLoad(null);
 
     // A new chat starts from the user's preferred profile, not whatever profile
     // an old conversation we were just viewing was adopted into.
@@ -2184,6 +2286,12 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
+      // The message being sent was written for this profile and conversation;
+      // changing either before the runtime hands it over would send it under
+      // the new one.
+      if (composerSendingRef.current) {
+        return;
+      }
       setCurrentProfileId(newProfileId);
       // Persist selection to localStorage
       localStorage.setItem('selectedProfileId', newProfileId);
@@ -2449,9 +2557,22 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     }
   }, [stopTurn]);
 
+  const retryConversationLoad = useCallback(() => {
+    const convId = conversationIdRef.current;
+    if (convId) {
+      void loadConversationMessages(convId);
+    }
+  }, [loadConversationMessages]);
+
+  const conversationLoadStatus =
+    conversationLoad && conversationLoad.convId === conversationId ? conversationLoad.status : null;
+
   const runtime = useExternalStoreRuntime({
     messages,
-    isRunning: isLoading || isStreaming,
+    // Opening a conversation is not a turn: the composer stays a composer (not a
+    // steer input) and is held back by isSendDisabled until the history lands.
+    isRunning: isStreaming,
+    isSendDisabled: conversationLoadStatus !== null,
     // @ts-expect-error - assistant-ui type mismatch with onNew handler signature
     onNew: handleNew,
     // The composer's Stop button (ComposerPrimitive.Cancel) triggers this. Stop
@@ -2467,23 +2588,81 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     },
   });
 
-  // The main composer doubles as the steer input and its runtime is reused
-  // across conversation changes. On a real conversation switch, clear it so
-  // steer text typed for the previous turn can't leak into — and be sent in —
-  // the newly selected thread. Guarded on an actual id change so an unrelated
-  // runtime re-render never wipes text the user is typing. A switch caused by
-  // a profile change is exempt: the user keeps composing the same draft, just
-  // under a different profile.
-  const prevConversationIdRef = useRef(conversationId);
+  const sendDisabledRef = useRef(false);
+  sendDisabledRef.current = conversationLoadStatus !== null;
   useEffect(() => {
-    if (prevConversationIdRef.current !== conversationId) {
-      prevConversationIdRef.current = conversationId;
-      if (preserveComposerOnConversationSwitchRef.current) {
-        preserveComposerOnConversationSwitchRef.current = false;
+    const composer = runtime.thread.composer;
+    // While sending, the composer has emptied its text but still holds the
+    // attachments it is uploading, so it is non-empty yet unable to send for a
+    // reason other than the open conversation's history still loading.
+    return composer.subscribe(() => {
+      const state = composer.getState();
+      composerSendingRef.current = !state.canSend && !state.isEmpty && !sendDisabledRef.current;
+    });
+  }, [runtime]);
+
+  // The composer and its runtime are shared by every conversation, so on a real
+  // conversation switch its contents are set aside with the conversation they
+  // were written in, and whatever was set aside for the destination comes back.
+  // Text and attachments move together: neither is lost on leaving, and neither
+  // is carried into a conversation it was not written for. That includes steer
+  // text, which stays with the conversation whose turn it was aimed at. Guarded
+  // on an actual id change so an unrelated runtime re-render never touches text
+  // the user is typing. A switch caused by a profile change is exempt: the user
+  // keeps composing the same draft, just under a different profile.
+  const prevConversationIdRef = useRef(conversationId);
+  const draftsRef = useRef(new Map<string, ConversationDraft>());
+  // A restored draft's attachments go back into the composer one at a time; a
+  // switch before they are all back must set aside the whole draft, not the
+  // part of it the composer holds so far.
+  const draftRestoreRef = useRef<{ convId: string; draft: ConversationDraft } | null>(null);
+  useEffect(() => {
+    const outgoingId = prevConversationIdRef.current;
+    if (outgoingId === conversationId) {
+      return;
+    }
+    prevConversationIdRef.current = conversationId;
+    if (preserveComposerOnConversationSwitchRef.current) {
+      preserveComposerOnConversationSwitchRef.current = false;
+      return;
+    }
+    const composer = runtime.thread.composer;
+    const { text } = composer.getState();
+    const unfinishedRestore = draftRestoreRef.current;
+    const attachments =
+      unfinishedRestore?.convId === outgoingId
+        ? unfinishedRestore.draft.attachments
+        : composer.getState().attachments;
+    if (outgoingId) {
+      if (text || attachments.length > 0) {
+        draftsRef.current.set(outgoingId, { text, attachments });
       } else {
-        runtime.thread.composer.setText('');
+        draftsRef.current.delete(outgoingId);
       }
     }
+    const incoming = conversationId ? draftsRef.current.get(conversationId) : undefined;
+    if (conversationId) {
+      draftsRef.current.delete(conversationId);
+    }
+    const restore =
+      conversationId && incoming && incoming.attachments.length > 0
+        ? { convId: conversationId, draft: incoming }
+        : null;
+    draftRestoreRef.current = restore;
+    composer.setText(incoming?.text ?? '');
+    void composer.clearAttachments().then(async () => {
+      for (const attachment of restore?.draft.attachments ?? []) {
+        // A later switch owns the composer now; what is left of this draft
+        // would land in the wrong conversation.
+        if (draftRestoreRef.current !== restore) {
+          return;
+        }
+        await composer.addAttachment(restorableAttachment(attachment));
+      }
+      if (restore && draftRestoreRef.current === restore) {
+        draftRestoreRef.current = null;
+      }
+    });
   }, [conversationId, runtime]);
 
   // Submit a steer into the running turn. While a turn runs the main composer
@@ -2577,8 +2756,12 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       olderMessagesStatus,
       loadOlderMessages: () => void loadOlderMessages(),
       pendingDelegations,
+      conversationLoadStatus,
+      retryConversationLoad,
     }),
     [
+      conversationLoadStatus,
+      retryConversationLoad,
       steerError,
       submitSteer,
       olderHistory,
@@ -2697,19 +2880,48 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         {/* Mobile: chat detail view (shown when not on list) */}
         {isMobile && !mobileShowList && (
           <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-            {/* Header with back button */}
-            <div className="flex-shrink-0 z-50 flex items-center gap-4 border-b bg-background/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleBackToList}
-                aria-label="Back to conversations"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <h2 className="text-xl font-semibold">Chat</h2>
+            {/* Header with back button. Actions sit on the first row and the
+                profile/intelligence selectors on a second, and both rows wrap,
+                so nothing is pushed past the viewport at narrow widths or zoom. */}
+            <div
+              className="flex-shrink-0 z-50 flex flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+              data-testid="mobile-chat-header"
+            >
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleBackToList}
+                  aria-label="Back to conversations"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <h2 className="min-w-0 flex-1 truncate text-xl font-semibold">Chat</h2>
+                <div className="flex flex-wrap items-center justify-end gap-1">
+                  <ShareConversationButton
+                    shareLink={shareLink}
+                    conversationId={conversationId}
+                    hasPersistedMessages={
+                      messages.length > 0 && persistedConversationId === conversationId
+                    }
+                  />
+                  <NotificationSettings
+                    enabled={notificationsEnabled}
+                    onEnabledChange={handleNotificationEnabledChange}
+                    permission={notificationPermission}
+                    onRequestPermission={requestNotificationPermission}
+                    isSupported={notificationsSupported}
+                  />
+                  <PushNotificationButton />
+                  <NavigationSheet currentPage="chat">
+                    <Button variant="ghost" size="sm" aria-label="Open navigation">
+                      <Menu className="h-4 w-4" />
+                    </Button>
+                  </NavigationSheet>
+                </div>
+              </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <ProfileSelector
                   selectedProfileId={currentProfileId}
                   onProfileChange={handleProfileChange}
@@ -2724,28 +2936,6 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
                   onChange={handleModelTierChange}
                   disabled={isLoading}
                 />
-              </div>
-
-              <div className="flex items-center gap-2 ml-auto">
-                <ShareConversationButton
-                  conversationId={conversationId}
-                  hasPersistedMessages={
-                    messages.length > 0 && persistedConversationId === conversationId
-                  }
-                />
-                <NotificationSettings
-                  enabled={notificationsEnabled}
-                  onEnabledChange={handleNotificationEnabledChange}
-                  permission={notificationPermission}
-                  onRequestPermission={requestNotificationPermission}
-                  isSupported={notificationsSupported}
-                />
-                <PushNotificationButton />
-                <NavigationSheet currentPage="chat">
-                  <Button variant="ghost" size="sm" aria-label="Open navigation">
-                    <Menu className="h-4 w-4" />
-                  </Button>
-                </NavigationSheet>
               </div>
             </div>
 
@@ -2810,6 +3000,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
 
               <div className="flex items-center gap-2 ml-auto">
                 <ShareConversationButton
+                  shareLink={shareLink}
                   conversationId={conversationId}
                   hasPersistedMessages={
                     messages.length > 0 && persistedConversationId === conversationId

@@ -143,6 +143,22 @@ class ChatPage(BasePage):
             timeout=10000,
         )
 
+    async def tab_to_message_copy(self, index: int = 0) -> Locator:
+        """Reach a reply's Copy control through the real keyboard tab order."""
+        button = self.page.get_by_role("button", name="Copy response", exact=True).nth(
+            index
+        )
+        viewport = self.page.viewport_size
+        assert viewport is not None
+        await self.page.locator("body").click(
+            position={"x": viewport["width"] - 5, "y": 5}
+        )
+        for _ in range(40):
+            await self.page.keyboard.press("Tab")
+            if await button.evaluate("el => el === document.activeElement"):
+                return button
+        raise AssertionError("Copy response was not reachable with Tab")
+
     async def get_last_assistant_message(self, timeout: int = 15000) -> str:
         """Get the text content of the last assistant message, waiting for it to stabilize."""
         await self.page.wait_for_selector(
