@@ -27,9 +27,10 @@ _ERROR_TEXT_PREFIX = "Error"
 def classify_tool_outcome(content: object, error_traceback: str | None) -> ToolOutcome:
     """Classify a terminal tool result.
 
-    ``error_traceback`` is set (possibly empty) when execution itself failed.
-    A gate that stopped the tool also records one, so a not-run result is
-    recognised first.
+    ``error_traceback`` is set (possibly empty) when execution failed, or when
+    a tool's structured data reported a failure (see ``is_error_data``). A gate
+    that stopped the tool also records one, so a not-run result is recognised
+    first.
     """
     text = content.strip() if isinstance(content, str) else ""
     if text.startswith((ACTION_CANCELLED_PREFIX, ACTION_DECLINED_PREFIX)):
@@ -55,10 +56,19 @@ def _is_error_payload(text: str) -> bool:
         payload = json.loads(text)
     except ValueError:
         return False
-    if not isinstance(payload, dict):
+    return is_error_data(payload)
+
+
+def is_error_data(data: object) -> bool:
+    """Whether a tool's structured result reports a failure.
+
+    Tools that pair readable text ("Download failed: ...") with structured
+    data carry the failure in the data, which the text classifier never sees.
+    """
+    if not isinstance(data, dict):
         return False
     return (
-        bool(payload.get("error"))
-        or payload.get("success") is False
-        or payload.get("status") == "error"
+        bool(data.get("error"))
+        or data.get("success") is False
+        or data.get("status") == "error"
     )

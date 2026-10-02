@@ -34,7 +34,7 @@ from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     confirmation_outcome_to_tool_result,
 )
-from family_assistant.tools.outcomes import ACTION_CANCELLED_PREFIX
+from family_assistant.tools.outcomes import ACTION_CANCELLED_PREFIX, is_error_data
 from family_assistant.tools.types import (
     ToolAttachment,
     ToolCallBatch,
@@ -744,6 +744,8 @@ class ToolExecutor:
         arguments: dict[str, object] | None,
     ) -> _ToolOutput:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
+        # Read before a large result's data is moved into an attachment below.
+        reported_failure = is_error_data(result.data)
         content_for_stream = result.get_text()
         (
             content_for_stream,
@@ -788,6 +790,10 @@ class ToolExecutor:
             provider_metadata=provider_metadata,
             taint_metadata=taint_metadata,
         )
+
+        if reported_failure and llm_message.error_traceback is None:
+            # No traceback to keep, but the row must still read as failed.
+            llm_message = llm_message.model_copy(update={"error_traceback": ""})
 
         if auto_attachment_ids:
             attachment_id_list = ", ".join(auto_attachment_ids)
@@ -1196,6 +1202,7 @@ class ToolExecutor:
                     type="tool_result",
                     tool_call_id=call_id,
                     tool_result=content_for_stream,
+                    error=llm_message.error_traceback,
                     metadata=stream_metadata,
                 ),
                 llm_message=llm_message,
