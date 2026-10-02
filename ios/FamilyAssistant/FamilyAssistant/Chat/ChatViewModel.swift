@@ -3583,9 +3583,11 @@ final class ChatViewModel {
     }
 
     /// Set the composer's contents aside under the conversation being left and
-    /// put back whatever was set aside for the one being entered.
+    /// put back whatever was set aside for the one being entered. A generated
+    /// conversation that was never sent has no row to return to, so its draft
+    /// is discarded rather than kept where nothing can reach it.
     private func swapDraft(leaving outgoingID: String?, entering incomingID: String?) {
-        if let outgoingID {
+        if let outgoingID, !opensGeneratedLaunchDraft {
             if draftText.isEmpty, draftAttachments.isEmpty {
                 savedDrafts[outgoingID] = nil
             } else {
