@@ -3861,7 +3861,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
             if context.taint_tracker is not None:
                 merge_taint_state_into_tracker(
                     context.taint_tracker,
-                    TurnTaintState.from_metadata(outcome.taint_metadata),
+                    TurnTaintState.from_metadata(
+                        outcome.taint_metadata, preserve_origin=True
+                    ),
                 )
         if outcome.kind == "approved":
             return None

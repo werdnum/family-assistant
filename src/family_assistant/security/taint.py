@@ -44,6 +44,10 @@ that tier — "direct input from an authenticated user, or system-authored
 control text" — so they cannot be read as evidence that a human authored the
 text. :func:`is_human_direct_metadata` treats them as not human-direct, which
 is the epoch guard for the transition."""
+_PRE_ORIGIN_TAINT_METADATA_VERSIONS = frozenset({
+    *LEGACY_TAINT_METADATA_VERSIONS,
+    PRE_ORIGIN_TAINT_METADATA_VERSION,
+})
 A2A_TAINT_METADATA_KEY = "family_assistant_taint_metadata"
 LEGACY_MISSING_TAINT_METADATA_LABEL = "legacy_missing_taint_metadata"
 
@@ -2270,7 +2274,8 @@ def prompt_window_taint(messages: Sequence[object]) -> TurnTaintState:
     A row stamped before per-source origin existed records no split. It
     contributes its attributed sources under the amnesty rule -- nothing
     synthesised from its merged maximum, no anonymous escalation or
-    re-baked fallback echo -- for as long as it is in the window.
+    re-baked fallback echo -- for as long as it is in the window. A row whose
+    version this code does not recognise contributes its whole stamp.
     """
     state = TurnTaintState.empty()
     for message in messages:
@@ -2311,12 +2316,17 @@ def _row_window_contribution(metadata: object) -> TurnTaintState:
     """What one history row introduced, as an origin-free state."""
     if not isinstance(metadata, dict):
         return TurnTaintState.malformed_history_state()
-    if _metadata_version(metadata) != TAINT_METADATA_VERSION:
+    version = _metadata_version(metadata)
+    if version in _PRE_ORIGIN_TAINT_METADATA_VERSIONS:
         try:
             SourceTrustTier.from_value(metadata.get("max_tier"))
         except (TypeError, ValueError):
             return TurnTaintState.malformed_history_state()
         return TurnTaintState.from_metadata(amnestied_history_taint_metadata(metadata))
+    if version != TAINT_METADATA_VERSION:
+        # A version this code does not know records an origin split it cannot
+        # read, so the whole stamp counts, exactly as before origin existed.
+        return TurnTaintState.from_metadata(metadata)
     stamp = TurnTaintState.from_metadata(metadata, preserve_origin=True)
     contribution = TurnTaintState.empty()
     for source in stamp.sources:

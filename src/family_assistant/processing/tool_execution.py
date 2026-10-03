@@ -397,7 +397,9 @@ class ToolExecutor:
             if tool_execution_context.taint_tracker is not None:
                 merge_taint_state_into_tracker(
                     tool_execution_context.taint_tracker,
-                    TurnTaintState.from_metadata(confirmation_result.taint_metadata),
+                    TurnTaintState.from_metadata(
+                        confirmation_result.taint_metadata, preserve_origin=True
+                    ),
                 )
 
         if confirmation_result.kind == "completed":

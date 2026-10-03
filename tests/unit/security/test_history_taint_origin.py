@@ -248,3 +248,27 @@ def test_stamp_origin_round_trips_when_preserved() -> None:
     ]
     assert restored.get("max_tier") == follow_up.get("max_tier")
     assert restored.get("introduced_max_tier") == follow_up.get("introduced_max_tier")
+
+
+def test_unrecognised_version_contributes_its_whole_stamp() -> None:
+    future: TaintMetadata = {
+        "version": "runtime_v99",
+        "max_tier": "unknown_external",
+        "sources": [],
+    }
+
+    assert (
+        prompt_window_taint([_row(future)]).max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+def test_confirmed_continuation_keeps_the_turns_carry_in_inherited() -> None:
+    turn = prompt_window_taint([_row(_web_search_row())]).add_source(_user_typed())
+    tracker = InMemoryTurnTaintTracker(turn)
+
+    merged = merge_taint_state_into_tracker(
+        tracker,
+        TurnTaintState.from_metadata(turn.to_metadata(), preserve_origin=True),
+    )
+
+    assert merged.introduced_max_tier is SourceTrustTier.TRUSTED_USER
