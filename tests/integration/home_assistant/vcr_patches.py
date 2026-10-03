@@ -3,6 +3,10 @@
 Addresses VCR.py issue #927 - MockClientResponse.content property
 lacks a setter, breaking compatibility with aiohttp 3.12+ and homeassistant_api.
 
+VCR.py releases that include kevin1024/vcrpy#1055 no longer need this: the fixture
+detects them and patches nothing. Delete this module (and its import in conftest.py)
+once uv.lock has such a release.
+
 See also: tests/integration/llm/streaming_mocks.py for similar workaround.
 """
 
@@ -33,6 +37,16 @@ def patch_vcr_mock_client_response() -> Generator[None]:
     """
     # Store reference to original property
     original_property = aiohttp_stubs.MockClientResponse.content
+
+    # VCR.py with kevin1024/vcrpy#1055 makes `content` a plain attribute, as on
+    # aiohttp's ClientResponse, so it can already be assigned. Wrapping it there
+    # would break every replay, so only patch a read-only property.
+    if (
+        not isinstance(original_property, property)
+        or original_property.fset is not None
+    ):
+        yield
+        return
 
     # Create new property with both getter and setter
     # ruff: noqa: ANN401 - Any is appropriate for monkey-patching VCR internals
