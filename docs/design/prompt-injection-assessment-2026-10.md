@@ -303,13 +303,16 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    note is not, so giving it its own cell that adjudicates at externally authored tiers
    discriminates exactly where `artifact_write` cannot. The cell is assigned through a chokepoint,
    not a list of tools: one tag names a tool as an executable-definition writer, the sink resolver
-   maps that tag to the cell, and the stamping helper that every definition write already has to
-   pass through refuses to stamp from a call whose tool lacks the tag. A writer that forgets the tag
-   then fails loudly at its first write rather than slipping into the audit cell. The restamp script
-   fills absent records only and never touches an existing one, so the definitions already stamped
-   uncured since 23 September are reviewed by hand in the artifact review UI, which is a handful,
-   and nothing new is built for them. The uncured fires in 10.8 percent of untrusted evaluations
-   come from both populations.
+   maps that tag to the cell, and a unit test derives the set of definition writers from the code
+   itself, every registered tool whose implementation reads the creation gate's outcome, and fails
+   when that set and the tagged set differ. A writer that forgets the tag then fails in CI, before
+   it can ship, rather than slipping into the audit cell. This is built in PR #1342, which adds the
+   `executable_persistence` tag and sink, adjudicating with a confirm fallback at every externally
+   authored tier, with the observe-mode review off the critical path so it costs nothing until
+   enforce. The restamp script fills absent records only and never touches an existing one, so the
+   definitions already stamped uncured since 23 September are reviewed by hand in the artifact
+   review UI, which is a handful, and nothing new is built for them. The uncured fires in 10.8
+   percent of untrusted evaluations come from both populations.
 
    Tag hygiene belongs here too. Confirm whether delegation results default to untrusted because of
    a tag mismatch between repository and deployment config, or because the children genuinely read
@@ -321,10 +324,10 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    to the share whose window genuinely holds an introducing row; by Telegram turns more than two
    hours after a web search starting clean; by a row written before the change, carrying a web
    source, still tainting the next turn inside its window and not after; by a tainted-turn
-   automation creation producing a reviewer verdict and a cured record; by a definition write from a
-   tool without the executable-definition tag being refused at the stamping chokepoint; and, for tag
-   hygiene, by delegation's share of in-turn introductions falling where a mismatch was fixed, or
-   the measured share being reported with the reason a tag stands.
+   automation creation producing a reviewer verdict and a cured record; by the writer-set test
+   failing when a registered tool that reads the gate outcome lacks the tag; and, for tag hygiene,
+   by delegation's share of in-turn introductions falling where a mismatch was fixed, or the
+   measured share being reported with the reason a tag stands.
 
 4. **Flip to enforce.** The mode change and the note review from the decision above, on a signal
    that now discriminates and with an audit that can say why. Re-read the shadow data after
