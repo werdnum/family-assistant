@@ -41,6 +41,11 @@ class ToolTag(StrEnum):
     HOME_AUTOMATION = "home_auto"
     DELEGATION = "delegation"
     FILE_SYSTEM = "file_system"
+    # Writes an executable definition: something that will run later with no
+    # human present (an automation, a stored script, a scheduled callback).
+    # Resolves to the executable_persistence sink, whose adjudicated cells are
+    # what lets the definition's creation gate review and cure it.
+    EXECUTABLE_PERSISTENCE = "executable_persistence"
 
     OUTPUT_TRUSTED = "output_trusted"
     # Structured data from a third-party service (routes, timetables, prices),

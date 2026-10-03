@@ -137,6 +137,7 @@ A `TaintSource` explains why taint changed:
 | `sandbox_network`             | Code or CLI with network access.                                                                    | Worker agent network, Monty extension command, future skills-plus-CLI egress.                                                   |
 | `sensitive_read_broadening`   | New access to private corpus after high-tier taint entered context.                                 | Semantic document search, note search, message-history search, full document fetch.                                             |
 | `ambient_prompt_write`        | A write that places material into every future prompt, unasked.                                     | A note written with `include_in_prompt`, a note whose frontmatter makes it a skill, a workspace import that asks for either.    |
+| `executable_persistence`      | A write of a definition that will run later with no human present.                                  | Automation create or update, stored script save, reminder or callback scheduling.                                               |
 
 Sink class is not identical to tool tag. A single tool may map to different sink classes by
 arguments or runtime state. For example, browser navigation to a configured origin and browser
@@ -536,6 +537,12 @@ the trusted pole at the policy lookup. `ambient_prompt_write` is never resolved 
 note tools evaluate it themselves against the resolved candidate, and its verdict is awaited in
 observe mode as well as enforce (see
 [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md)).
+
+`executable_persistence` has the same cells as `ambient_prompt_write` (allow at the trusted pole,
+adjudicate with fallback confirm at every externally authored tier) but is resolved from the
+`executable_persistence` tool tag, and its observe-mode review runs off the critical path like every
+other sink's. Its adjudicated cell is what lets a definition's creation gate review and cure it (see
+[executable-definition-taint.md](executable-definition-taint.md)).
 
 `policy` means the existing static tool policy decides. Runtime taint should not make trusted turns
 more permissive than they are today.

@@ -216,6 +216,14 @@ class SinkClass(StrEnum):
     hold for content nobody will ask for. Never resolved from tool tags: the
     note tools evaluate it themselves against the resolved candidate.
     """
+    EXECUTABLE_PERSISTENCE = "executable_persistence"
+    """A write of a definition that will run later with no human present.
+
+    An automation, a stored script or a scheduled callback. Split from
+    ``artifact_write`` because a definition's creation gate is where its
+    authoring taint is reviewed and cured, and a gate only engages where the
+    cell adjudicates. Resolved from the ``executable_persistence`` tool tag.
+    """
 
 
 class TaintPolicyOutcome(StrEnum):
@@ -1485,6 +1493,8 @@ def resolve_tool_sink_class(
         # run anything also carry ``code_execution``, while reading or cancelling
         # a worker task is an ordinary read or write.
         return SinkClass.SANDBOX_NETWORK
+    if "executable_persistence" in tag_values:
+        return SinkClass.EXECUTABLE_PERSISTENCE
     if "browser" in tag_values:
         if (
             descriptor.origin == "local"
@@ -1574,6 +1584,7 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
             SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.CONFIRM,
+            SinkClass.EXECUTABLE_PERSISTENCE: TaintPolicyOutcome.CONFIRM,
             SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.ALLOW,
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
@@ -1586,6 +1597,7 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
             SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.CONFIRM,
+            SinkClass.EXECUTABLE_PERSISTENCE: TaintPolicyOutcome.CONFIRM,
             SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.ALLOW,
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
@@ -1598,6 +1610,7 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.HOME_LOCAL: TaintPolicyOutcome.ALLOW,
             SinkClass.ARTIFACT_WRITE: TaintPolicyOutcome.AUDIT,
             SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.CONFIRM,
+            SinkClass.EXECUTABLE_PERSISTENCE: TaintPolicyOutcome.CONFIRM,
             SinkClass.LOW_BANDWIDTH_EXTERNAL: TaintPolicyOutcome.AUDIT,
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.CONFIRM,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
@@ -1622,12 +1635,14 @@ def _default_taint_matrix() -> dict[SourceTrustTier, dict[SinkClass, TaintPolicy
     for tier in (SourceTrustTier.KNOWN_CONTACT, SourceTrustTier.RECOGNIZED_MACHINE):
         matrix[tier].update({
             SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.ADJUDICATE,
+            SinkClass.EXECUTABLE_PERSISTENCE: TaintPolicyOutcome.ADJUDICATE,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
             SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
             SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE,
         })
     matrix[SourceTrustTier.UNKNOWN_EXTERNAL].update({
         SinkClass.AMBIENT_PROMPT_WRITE: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.EXECUTABLE_PERSISTENCE: TaintPolicyOutcome.ADJUDICATE,
         SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
         SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
         SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
