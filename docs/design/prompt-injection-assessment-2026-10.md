@@ -6,8 +6,9 @@ Point-in-time assessment and direction document, in the manner of
 [project-assessment-2026-07.md](project-assessment-2026-07.md). It synthesises the taint, review and
 confinement design docs, a survey of what comparable products shipped by October 2026, and thirty
 days of production audit data (3 September to 3 October 2026) pulled by the engineer profile. It is
-not an implementation design: the work it proposes is configuration, tag hygiene and logging fixes,
-and it names nothing that needs a new design document.
+not an implementation design: the work it proposes is configuration, one correction to the taint
+propagation rule, tag hygiene and logging fixes, and it names nothing that needs a new design
+document.
 
 ## Summary
 
