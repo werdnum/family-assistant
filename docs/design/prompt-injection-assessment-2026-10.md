@@ -316,16 +316,21 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
-   `require_taint_enforcement`. Collapse the six tiers to the three predicates the code already
-   asks: household-authored, machine-reviewed, externally authored. The collapse is a read-time
-   mapping, not a data rewrite: every stored tier name stays accepted, the two trusted names map to
-   household-authored, `machine_reviewed` to reviewed, and the three external names to externally
-   authored, so no message, note or definition stamp changes meaning and nothing is raised to
-   unknown-external by the removal of a name. Keep per-row and per-artifact provenance, sink
-   resolution reduced to "is this call egress, sandbox, an external message or an executable
-   definition", the reviewer's provenance-selected view, and the admission gates on stored
-   artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of the
-   tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
+   `require_taint_enforcement`. What an operator keeps is one deployment-wide map from the four
+   gated sink classes, egress, sandbox, external message and executable definition, to either review
+   or confirm, and nothing finer: it is the migration for a deployment that used `operator_minimum`
+   to put a person on tainted egress, it is not relaxable by a profile because profiles no longer
+   carry taint policy at all, and it is a dial rather than a mechanism, so it passes the
+   stratification test by not claiming to discriminate. Collapse the six tiers to the three
+   predicates the code already asks: household-authored, machine-reviewed, externally authored. The
+   collapse is a read-time mapping, not a data rewrite: every stored tier name stays accepted, the
+   two trusted names map to household-authored, `machine_reviewed` to reviewed, and the three
+   external names to externally authored, so no message, note or definition stamp changes meaning
+   and nothing is raised to unknown-external by the removal of a name. Keep per-row and per-artifact
+   provenance, sink resolution reduced to "is this call egress, sandbox, an external message or an
+   executable definition", the reviewer's provenance-selected view, and the admission gates on
+   stored artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of
+   the tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
    remains is the Chrome agent's shape with better artifact provenance: a reviewer that runs on
    egress when the turn carries external content, sees household-authored intent plus
    machine-reviewed evidence and nothing else, and a write-time gate on anything that becomes
