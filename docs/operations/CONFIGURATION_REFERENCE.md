@@ -2136,9 +2136,8 @@ ______________________________________________________________________
 ## Executable Definition Admission
 
 A tool that writes something that will run later with no human present — `create_automation`,
-`update_automation`, `save_script`, `schedule_reminder`, `schedule_future_callback`,
-`schedule_action`, `modify_pending_callback`, and `spawn_worker`, which registers a completion
-listener — carries the `executable_persistence` tool tag and resolves to the
+`update_automation`, `schedule_reminder`, `schedule_future_callback`, `schedule_action` and
+`modify_pending_callback` — carries the `executable_persistence` tool tag and resolves to the
 `executable_persistence` sink:
 
 | Turn tier                                                 | `executable_persistence`      |
@@ -2151,8 +2150,11 @@ sighted human confirmation, cures the definition so later firings resolve at `ma
 instead of `unknown_external`. In `observe` mode the review runs off the critical path: the write
 lands at once and its record picks up the verdict when the review completes, so the cell adds no
 latency and no prompts until `taint_policy.mode` is `enforce`. A definition written from a clean
-turn needs no review and is stamped trusted. `save_script` also carries `code_execution`, so it
-resolves to `sandbox_network`, which adjudicates at the same tiers.
+turn needs no review and is stamped trusted. `save_script` and `spawn_worker`, which registers a
+worker-completion listener, carry the tag too, but they also carry `code_execution`, which the
+resolver considers first, so they resolve to `sandbox_network`. That cell adjudicates at the same
+tiers; an operator who tightens `executable_persistence` and wants those two held to the same
+outcome tightens `sandbox_network` as well.
 
 `enable_automation`, `disable_automation` and the delete tools change no definition content and stay
 on `artifact_write`. Raise `executable_persistence` to `confirm` at the external tiers through
