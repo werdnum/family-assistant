@@ -277,16 +277,19 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    that matters. On the read side, history contributes only the introduced sources and the
    introduced-tier maximum of rows actually in the prompt window, never the merged maximum. Taint
    then lasts exactly as long as the introducing text is in the prompt, which is the right duration,
-   and ends when it leaves. The same rule applies to a delegation's folded-back state. A row written
-   before this change carries neither the per-source origin nor the introduced-tier maximum, so it
-   contributes under the existing amnesty rule instead: its first-hand typed sources, and nothing
-   synthesised from its merged maximum, for as long as it is in the window. Old rows therefore keep
-   tainting until they age out, and stop being re-recorded the moment the first new-format row
-   follows them. The accepted residual is paraphrase beyond the window: a reply written under taint
-   can restate an injected instruction after the source has aged out, and that reply is in the
-   prompt. It carries no taint forward. Commodity injection relies on the attacker's own text being
-   present, the reviewer still sees the influenced row as a stub while it is in the window, and the
-   alternative is the infinite propagation this milestone removes.
+   and ends when it leaves. The same rule applies to a delegation's folded-back state. The format
+   version moves with this change, and the human-direct predicate, which today admits only the
+   current version, must admit every version from the authorship split onward, or every existing
+   human-typed row would stop counting as the person's own words. A row written before this change
+   carries neither the per-source origin nor the introduced-tier maximum, so it contributes under
+   the existing amnesty rule instead: its first-hand typed sources, and nothing synthesised from its
+   merged maximum, for as long as it is in the window. Old rows therefore keep tainting until they
+   age out, and stop being re-recorded the moment the first new-format row follows them. The
+   accepted residual is paraphrase beyond the window: a reply written under taint can restate an
+   injected instruction after the source has aged out, and that reply is in the prompt. It carries
+   no taint forward. Commodity injection relies on the attacker's own text being present, the
+   reviewer still sees the influenced row as a stub while it is in the window, and the alternative
+   is the infinite propagation this milestone removes.
 
    The same milestone makes the executable-definition creation gate actually run. Today an
    automation created by the default assistant in a tainted turn is stamped externally authored with
@@ -333,35 +336,41 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
-   `require_taint_enforcement`. What an operator keeps is one deployment-wide map from the five
-   gated sink classes, egress, sandbox, external message, executable definition and ambient prompt
-   write, to review, confirm or deny, and nothing finer: it is the migration for a deployment that
-   used `operator_minimum` to put a person on tainted egress, it is not relaxable by a profile
-   because profiles no longer carry taint policy at all, and it is a dial rather than a mechanism,
-   so it passes the stratification test by not claiming to discriminate. Collapse the six tiers to
-   the four classes the code's predicates already distinguish: human-direct, model-composed inside
-   the household, machine-reviewed, externally authored. Human-direct stays its own class because
-   the reviewer uses it to select an originating request and to judge a destination echo, and a
+   `require_taint_enforcement`. What an operator keeps is one deployment-wide map from every sink
+   class to allow, review, confirm or deny, with one condition, external content present in the
+   turn, and nothing finer. The shipped default is review on the five gated classes, egress,
+   sandbox, external message, executable definition and ambient prompt write, and allow on the rest;
+   any class can be raised, so a deployment that floored sensitive reads, home actions or artifact
+   writes keeps that posture. One flat map: it is the migration for a deployment that used
+   `operator_minimum` to put a person on tainted egress, it is not relaxable by a profile because
+   profiles no longer carry taint policy at all, and it is a dial rather than a mechanism, so it
+   passes the stratification test by not claiming to discriminate. Collapse the six tiers to the
+   four classes the code's predicates already distinguish: human-direct, model-composed inside the
+   household, machine-reviewed, externally authored. Human-direct stays its own class because the
+   reviewer uses it to select an originating request and to judge a destination echo, and a
    model-composed row must remain ineligible for both. The collapse is a read-time mapping, not a
-   data rewrite: every stored tier name stays accepted, `trusted_user` maps to human-direct,
-   `trusted_internal` to model-composed, `machine_reviewed` to reviewed, and the three external
-   names to externally authored, so no message, note or definition stamp changes meaning and nothing
-   is raised to unknown-external by the removal of a name. Keep per-row and per-artifact provenance,
-   sink resolution reduced to "is this call egress, sandbox, an external message or an executable
-   definition", the reviewer's provenance-selected view, and the admission gates on stored
-   artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of the
-   tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
-   remains is the Chrome agent's shape with better artifact provenance: a reviewer that runs on
-   egress when the turn carries external content, sees household-authored intent plus
-   machine-reviewed evidence and nothing else, and a write-time gate on anything that becomes
-   ambient or executable. Subtractive by construction. The memory decision from milestone 1 is taken
-   in the same review, against the admissible share re-measured after milestone 3. Verified three
-   ways: representative stamps written before the collapse, one per old tier name, classify under
-   the predicates as they did before, including a `trusted_internal` stamp staying ineligible as an
-   originating request and as a destination echo; the set of sink classes that reach the reviewer is
-   unchanged; and the reviewer's allow, confirm and deny shares over the following thirty days each
-   sit within five percentage points of the preceding thirty on the same cells, with the deleted
-   configuration keys rejected at startup.
+   data rewrite: every stored tier name stays accepted, `trusted_user` maps to human-direct only on
+   a stamp written at or after the authorship split, because the earlier format used that name for
+   system-authored control text too and the human-direct predicate already refuses it by version, an
+   earlier `trusted_user` and every `trusted_internal` map to model-composed, `machine_reviewed` to
+   reviewed, and the three external names to externally authored, so no message, note or definition
+   stamp changes meaning and nothing is raised to unknown-external by the removal of a name. Keep
+   per-row and per-artifact provenance, sink resolution reduced to "is this call egress, sandbox, an
+   external message or an executable definition", the reviewer's provenance-selected view, and the
+   admission gates on stored artifacts. In the taint module that is roughly lines 980 to 1812 of
+   2,163, plus most of the tracking provider's evaluation plumbing and about 450 lines of
+   configuration reference. What remains is the Chrome agent's shape with better artifact
+   provenance: a reviewer that runs on egress when the turn carries external content, sees
+   household-authored intent plus machine-reviewed evidence and nothing else, and a write-time gate
+   on anything that becomes ambient or executable. Subtractive by construction. The memory decision
+   from milestone 1 is taken in the same review, against the admissible share re-measured after
+   milestone 3. Verified three ways: representative stamps written before the collapse, one per old
+   tier name, classify under the predicates as they did before, including a `trusted_internal` stamp
+   and a pre-split `trusted_user` stamp each staying ineligible as an originating request and as a
+   destination echo; the set of sink classes that reach the reviewer is unchanged; and the
+   reviewer's allow, confirm and deny shares over the following thirty days each sit within five
+   percentage points of the preceding thirty on the same cells, with the deleted configuration keys
+   rejected at startup.
 
 6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
