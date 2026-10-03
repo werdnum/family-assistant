@@ -177,10 +177,11 @@ Switch `taint_policy.mode` to `enforce` with the matrix as shipped and no new co
 untrusted-tier notes in the artifact review UI, which is already in use, and then freeze the
 framework.
 
-Expected result: at most 2.6 human prompts a day at the median, measured before the signal fix that
-precedes the flip, with the mailbox gap closed. That is above the one-a-day budget the
-risk-adjudication design set, and this document withdraws that budget as a gate: the number is
-measured, it is tolerable, and it will be re-read after thirty days.
+Expected result: a median prompt count re-measured from shadow data once the signal fix has landed,
+with the mailbox gap closed. The pre-fix figure is 2.6 a day; the fix removes carry-in adjudications
+and adds executable-definition ones, so the post-fix figure is the one the flip is held to. That is
+above the one-a-day budget the risk-adjudication design set, and this document withdraws that budget
+as a gate: the number is measured, it is tolerable, and it will be re-read after thirty days.
 
 Two configuration-only reductions were considered during review and rejected:
 
@@ -307,10 +308,10 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
 
 4. **Flip to enforce.** The mode change and the note review from the decision above, on a signal
    that now discriminates and with an audit that can say why. Re-read the shadow data after
-   milestone 3 to state the expected prompt count; 2.6 a day is the ceiling, measured before the
-   signal fix. Verified by the taint-audit endpoint showing confirm and deny outcomes with
-   `mode = enforce`, and by the median daily count in `confirmation_requests` over the first thirty
-   days of enforce landing at or under that number.
+   milestone 3 and record the median daily would-prompt count there as the ceiling; 2.6 a day is the
+   pre-fix reference, not the ceiling. Verified by the taint-audit endpoint showing confirm and deny
+   outcomes with `mode = enforce`, and by the median daily count in `confirmation_requests` over the
+   first thirty days of enforce landing at or under the recorded post-fix figure.
 
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
@@ -322,11 +323,11 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    stored artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of
    the tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
    remains is the Chrome agent's shape with better artifact provenance: a reviewer that runs on
-   egress when the turn carries external content, sees only household-authored rows, and a
-   write-time gate on anything that becomes ambient or executable. Subtractive by construction. The
-   memory decision from milestone 1 is taken in the same review. Verified by the reviewer's verdict
-   distribution on the following thirty days matching the preceding thirty, with the deleted
-   configuration keys rejected at startup.
+   egress when the turn carries external content, sees household-authored intent plus
+   machine-reviewed evidence and nothing else, and a write-time gate on anything that becomes
+   ambient or executable. Subtractive by construction. The memory decision from milestone 1 is taken
+   in the same review. Verified by the reviewer's verdict distribution on the following thirty days
+   matching the preceding thirty, with the deleted configuration keys rejected at startup.
 
 6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
