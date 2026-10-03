@@ -18,10 +18,10 @@ creates a unique calendar per test, and cleans it up afterwards. Returns
 `(base_url, username, password, calendar_url)`. It takes `db_engine`, not `pg_vector_db_engine`, so
 calendar tests are not PostgreSQL-only.
 
-Tests use `db_engine` or `pg_vector_db_engine` and open their own context via
-`DatabaseContext(engine=...)` / `get_db_context(engine=...)`; there is no `db_context` or
-`assistant` fixture. `mock_clock` (`tests/conftest.py`) is used heavily for reminder timing, and
-`task_worker_manager` for reminder execution.
+Tests use `db_engine` or `pg_vector_db_engine` and build their own handle with
+`Database(engine=...)`; there is no `db_context` or `assistant` fixture. `mock_clock`
+(`tests/conftest.py`) is used heavily for reminder timing, and `task_worker_manager` for reminder
+execution.
 
 Tests talk to the CalDAV server with the `caldav` library directly (`caldav.DAVClient`) to assert
 what actually landed on the server.

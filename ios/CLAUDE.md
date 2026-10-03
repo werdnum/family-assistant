@@ -41,11 +41,11 @@ the contract.
 
 ## Privacy Manifest
 
-`FamilyAssistant/PrivacyInfo.xcprivacy` is a bundled resource of the app target and is required for
-App Store submission. Adding a new outbound data flow needs a matching `NSPrivacyCollectedDataTypes`
-entry; calling a required-reason API (disk space, boot time, active keyboards, file timestamps)
-needs an `NSPrivacyAccessedAPITypes` entry or the upload is rejected. See
-[FamilyAssistant/README.md](FamilyAssistant/README.md) for what is currently declared and why.
+`FamilyAssistant/FamilyAssistant/PrivacyInfo.xcprivacy` is a bundled resource of the app target and
+is required for App Store submission. Adding a new outbound data flow needs a matching
+`NSPrivacyCollectedDataTypes` entry; calling a required-reason API (disk space, boot time, active
+keyboards, file timestamps) needs an `NSPrivacyAccessedAPITypes` entry or the upload is rejected.
+See [FamilyAssistant/README.md](FamilyAssistant/README.md) for what is currently declared and why.
 
 ## Push Notifications
 

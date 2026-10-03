@@ -77,7 +77,7 @@ from family_assistant.web.dependencies import get_db, get_processing_service
 
 @router.get("/my-endpoint")
 async def my_endpoint(
-    db: DatabaseContext = Depends(get_db),
+    db: Database = Depends(get_db),
     processing_service: ProcessingService = Depends(get_processing_service),
 ):
     pass
