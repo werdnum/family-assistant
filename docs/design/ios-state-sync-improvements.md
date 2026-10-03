@@ -467,7 +467,8 @@ incident).
 
 A local codex pass on the M2 branch (after rebasing onto M1's centralized-auth refactor) raised four
 findings about the new foreground-resync interacting with active sends. Disposition, applying the
-threat-model / cost-benefit / behaviour-altitude gates in `REVIEW_GUIDELINES.md`:
+threat-model / cost-benefit / behaviour-altitude gates in
+`.agents/skills/review-guidelines/references/review-guidelines.md`:
 
 - **[P1] Active-send resync erases the streaming placeholder — FIXED.** A foregrounded
   reachability/auth recovery ran `applyMessagesSnapshot` → `mergeNewMessages` while a send was
@@ -542,7 +543,8 @@ A third local codex pass confirmed the above and raised four more, disposed as f
   exfiltration, cross-user leak, or state corruption, and the re-auth resync reconciles
   authoritative state afterward. The system already converges to `authRequired` correctly. Adding
   generation-invalidation machinery to fence a sub-second, harmless-under-the-threat-model race is
-  the client-side auth over-engineering the `REVIEW_GUIDELINES.md` threat-model gate exists to
+  the client-side auth over-engineering the
+  `.agents/skills/review-guidelines/references/review-guidelines.md` threat-model gate exists to
   filter, so it is declined.
 - **[P2] Background-send tests' cancellation await was a no-op — FIXED, and uncovered a real bug.**
   The three new background-send tests read `sendTaskForTesting` *after* `scenePhaseChanged` had
@@ -610,13 +612,13 @@ second P1 was the trigger to unwind machinery from the second/third passes:
   `activeTurnSession != nil && !isStreaming`) had a worse failure mode than the race it guarded: if
   the foreground reconcile *failed*, the session stayed unreconciled and the composer was blocked
   permanently with no reconnect affordance. This is the machinery-edge-case spiral the
-  `REVIEW_GUIDELINES.md` cost/benefit gate exists to stop. Reassessed against behaviour-altitude:
-  the overlap the block prevented (a send in the sub-second foreground-reconcile window overwriting
-  the preserved session) is uncommon and *recoverable* — the original durable turn still completes
-  server-side; only client-side stop/steer of it is lost. That is "reasonable, non-broken" behaviour
-  for a rare scenario, so the block (and its `sendDraft` / steer-drain enforcement and two tests)
-  was removed outright rather than gated. The active-send placeholder protection above is
-  independent and stays.
+  `.agents/skills/review-guidelines/references/review-guidelines.md` cost/benefit gate exists to
+  stop. Reassessed against behaviour-altitude: the overlap the block prevented (a send in the
+  sub-second foreground-reconcile window overwriting the preserved session) is uncommon and
+  *recoverable* — the original durable turn still completes server-side; only client-side stop/steer
+  of it is lost. That is "reasonable, non-broken" behaviour for a rare scenario, so the block (and
+  its `sendDraft` / steer-drain enforcement and two tests) was removed outright rather than gated.
+  The active-send placeholder protection above is independent and stays.
 - **[P2] Never-registered turn leaves a "sent"-looking user row — ACCEPTED (documented).** The
   fourth-pass fix removes the orphaned *assistant* placeholder (the broken stuck-spinner); the
   unsent optimistic *user* row lingers looking sent until the next non-empty merge drops it.

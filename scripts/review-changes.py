@@ -387,7 +387,12 @@ def get_changed_files(mode: str = "staged", base: str | None = None) -> list[str
     return [f for f in result.stdout.splitlines() if f]
 
 
+REVIEW_GUIDELINES_PATH = Path(
+    ".agents/skills/review-guidelines/references/review-guidelines.md"
+)
+
 # Constants for smart truncation
+
 EXTRA_CONTEXT_LINES = 5  # Lines to include after hunk header
 HEADER_PREVIEW_LINES = 30  # Lines to check for header
 
@@ -775,10 +780,8 @@ def review_changes(
     repo_root = Path(result.stdout.strip())
 
     # Check for required files
-    if not (repo_root / "REVIEW_GUIDELINES.md").exists():
-        print(
-            "Error: REVIEW_GUIDELINES.md not found in repository root", file=sys.stderr
-        )
+    if not (repo_root / REVIEW_GUIDELINES_PATH).exists():
+        print(f"Error: {REVIEW_GUIDELINES_PATH} not found", file=sys.stderr)
         sys.exit(1)
 
     # Redirect stdout to stderr for human output if JSON mode
@@ -903,7 +906,7 @@ def review_changes(
     prompt = "\n".join(prompt_parts)
 
     # Load guidelines
-    with open(repo_root / "REVIEW_GUIDELINES.md", encoding="utf-8") as f:
+    with open(repo_root / REVIEW_GUIDELINES_PATH, encoding="utf-8") as f:
         guidelines = f.read()
 
     # Load CLAUDE.md if exists

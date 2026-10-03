@@ -365,11 +365,12 @@ supervision requirements based on input trust level:
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.
 
-## Native Codex PR Review Policy
+## Code Review
 
-- If you are performing a PR review (including native Codex review), read and follow
-  `REVIEW_GUIDELINES.md` before writing feedback.
-- Use native Codex GitHub review (`@codex review`).
+Reviewing a pull request, diff or design document, or answering review feedback on your own change,
+follows the `review-guidelines` skill
+([.agents/skills/review-guidelines/SKILL.md](.agents/skills/review-guidelines/SKILL.md)). Codex
+reviews through native Codex GitHub review (`@codex review`).
 
 ## Development Guidelines
 
@@ -390,24 +391,19 @@ least-privilege access, input validation, and defense in depth.
   uncommon/unusual scenarios should get reasonable (correct, non-broken) behaviour, not necessarily
   ideal behaviour. Do not build elaborate machinery to give rare scenarios ideal behaviour when
   reasonable behaviour suffices; that trades disproportionate complexity for negligible benefit and
-  tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in
-  `REVIEW_GUIDELINES.md`).
+  tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in the review
+  guidelines).
 - **Withdraw unrequested promises before defending them.** Do not invent guarantees, coverage
   claims, or attestations the user did not request and then add machinery to make them true. If
   review shows such a promise cannot be justified, narrow or remove the promise first; reviewers
   must question whether the promise belongs, not only whether it is proven.
-- **Stop review-fix loops at the scope boundary.** On rereview, distinguish defects in the original
-  change from defects introduced by earlier feedback. If repairing review-added code would require
-  another layer of state, validation, attestation, retries, or lifecycle machinery, prefer deletion,
-  narrowing, reuse of an existing chokepoint, or an accepted bounded residual unless the user
-  explicitly authorizes the expanded design.
 - **Design docs are approach-level documents.** When review surfaces an edge case in a design doc,
   respond by increasing altitude — restate the rule so the general case covers it — rather than
   appending a paragraph for that case. Defer construction detail (field names, wire formats,
   plumbing) to the implementing PRs, where the type checker, tests and conformance rules verify it
   instead of prose; a design doc's work plan should name each milestone's outcome and how it will be
-  verified, and leave the construction to the PR. See "Reviewing Design Documents" in
-  `REVIEW_GUIDELINES.md` for the reviewer-side counterpart.
+  verified, and leave the construction to the PR. See "Reviewing Design Documents" in the review
+  guidelines for the reviewer-side counterpart.
 - **Prefer enforcement chokepoints over enumeration.** A design that depends on finding every
   instance of something (every call site, every tool that writes, every path that renders untrusted
   text) will decay as the code evolves. Route all instances through one place — a shared serializer,

@@ -48,8 +48,8 @@ jobs:
         run: |-
           {
             echo "REVIEW_GUIDELINES<<GEMINI_REVIEW_GUIDELINES_EOF"
-            if [ -f REVIEW_GUIDELINES.md ]; then
-              cat REVIEW_GUIDELINES.md
+            if [ -f .agents/skills/review-guidelines/references/review-guidelines.md ]; then
+              cat .agents/skills/review-guidelines/references/review-guidelines.md
               echo ""
             else
               echo "No project-specific review guidelines found."
