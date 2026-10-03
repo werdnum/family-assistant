@@ -248,6 +248,8 @@ class ProcessingServiceConfig:
     id: str  # Unique identifier for this service profile
     allowed_delegation_sources: list[str] | None = None
     description: str = ""  # Human-readable description of this profile
+    # Whether the profile pickers offer this profile. See ServiceProfile.
+    user_selectable: bool = False
     model_parameters: dict[str, dict[str, object]] | None = (
         None  # regex pattern -> provider params mapping
     )

@@ -659,6 +659,12 @@ class ServiceProfile(BaseModel):
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
+    # Whether the web and iOS profile pickers offer this profile. Opt-in, so an
+    # internal profile (a delegation target, a background task's profile) stays
+    # out of the picker without anyone remembering to hide it. Listing only: it
+    # does not stop a slash command, a delegation or an explicit request from
+    # reaching the profile. The default profile is always offered.
+    user_selectable: bool = False
     visibility_grants: list[str] = Field(default_factory=list)
     # Tool names to withhold from this profile even though `global_tools_policy`
     # grants them to every profile. A profile's own `tools_policy` cannot deny a

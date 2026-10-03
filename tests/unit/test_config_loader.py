@@ -1675,6 +1675,45 @@ class TestLoadConfig:
         assert config.model == "gemini/gemini-3.8-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
+    def test_user_selectable_survives_partial_operator_override(
+        self, tmp_path: Path
+    ) -> None:
+        """An operator override that does not mention the flag keeps it."""
+        defaults_file = tmp_path / "defaults.yaml"
+        defaults_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "default_assistant", "user_selectable": True},
+                    {"id": "coder", "user_selectable": True},
+                    {"id": "internal"},
+                ]
+            })
+        )
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            yaml.dump({
+                "service_profiles": [
+                    {"id": "coder", "description": "Operator coder"},
+                    {"id": "operator_added"},
+                ]
+            })
+        )
+
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(tmp_path / "prompts.yaml"),
+            load_dotenv_file=False,
+        )
+
+        selectable = {p.id: p.user_selectable for p in config.service_profiles}
+        assert selectable == {
+            "default_assistant": True,
+            "coder": True,
+            "internal": False,
+            "operator_added": False,
+        }
+
     def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:
         """Test that defaults.yaml overrides pydantic field defaults."""
         defaults_file = tmp_path / "defaults.yaml"
@@ -2653,6 +2692,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         # Set from the profile definition directly rather than merged.
         "id",
         "description",
+        "user_selectable",
         # Injected by the operator-policy layer, never from a profile block.
         "operator_tools_policy",
     }

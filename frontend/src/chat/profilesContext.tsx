@@ -16,6 +16,11 @@ export interface ServiceProfile {
   available_tools: string[];
   enabled_mcp_servers: string[];
   /**
+   * Whether the picker offers this profile. Internal profiles are still listed
+   * so a past message recorded on one can be labelled.
+   */
+  user_selectable?: boolean;
+  /**
    * Tiers this profile permits the user to choose, in configuration order.
    * Empty for profiles whose model is pinned.
    */
