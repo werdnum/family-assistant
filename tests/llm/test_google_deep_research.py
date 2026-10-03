@@ -200,6 +200,10 @@ async def test_deep_research_replays_interactions_2x_stream_schema(
     reasoning_info = metadata.get("reasoning_info")
     assert reasoning_info is not None
     assert reasoning_info.get("thought_summaries") == [{"summary": "Checking sources"}]
+    # The agent read the web server-side, so the response declares it for taint.
+    external_read = metadata.get("provider_external_read")
+    assert external_read is not None
+    assert external_read["source_id"] == "deep_research:inter_2x"
 
 
 @pytest.mark.asyncio

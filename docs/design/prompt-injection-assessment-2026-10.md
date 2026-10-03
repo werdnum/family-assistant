@@ -340,6 +340,10 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    words. Dropping it would let injected log text reach a full-tool `complex_tasks` child, or a
    scheduled callback, as trusted. The cost is small, because every engineer side effect is already
    reviewed or confirmed by static policy, and its note reads sit on the cell the deployment audits.
+   One gap ran the other way: a direct `/research` or `/coder` turn recorded nothing for the web its
+   agent read server-side, while the same agent behind delegation graded untrusted. The provider now
+   declares that read on its response, and the turn's reply is stamped `unknown_external` like the
+   delegated result.
 
    Verified by the share of turns untrusted before their first tool call falling from 81.5 percent
    to the share whose window genuinely holds an introducing row; by Telegram turns more than two
