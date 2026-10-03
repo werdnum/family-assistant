@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
-from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
 
 from pydantic import (
     BaseModel,
@@ -25,7 +25,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TAINT_METADATA_VERSION = "runtime_v2"
+TAINT_METADATA_VERSION = "runtime_v3"
+PRE_ORIGIN_TAINT_METADATA_VERSION = "runtime_v2"
+"""The version written after the authorship split but before per-source origin.
+
+A ``runtime_v2`` stamp is the merged snapshot of the turn that wrote it, with
+no record of which sources that turn introduced and which it inherited from
+its prompt window. It is still a post-split stamp for authorship purposes."""
+HUMAN_DIRECT_TAINT_METADATA_VERSIONS = frozenset({
+    PRE_ORIGIN_TAINT_METADATA_VERSION,
+    TAINT_METADATA_VERSION,
+})
 LEGACY_TAINT_METADATA_VERSIONS = frozenset({"runtime_v1"})
 """Metadata versions written before the trusted-pole authorship split.
 
@@ -180,13 +190,14 @@ def is_human_direct_metadata(metadata: object) -> bool:
     """Whether a stamp attests that a human typed this text themselves.
 
     True only for content stamped exactly ``trusted_user`` under the post-split
-    vocabulary. Pre-split (``runtime_v1``) stamps used ``trusted_user`` for
-    system-authored control text too, so they never qualify -- the epoch guard
-    that keeps the transition from laundering machine text into human words.
+    vocabulary, which is every version from ``runtime_v2`` onward. Pre-split
+    (``runtime_v1``) stamps used ``trusted_user`` for system-authored control
+    text too, so they never qualify -- the epoch guard that keeps the
+    transition from laundering machine text into human words.
     """
     if not isinstance(metadata, dict):
         return False
-    if metadata.get("version") != TAINT_METADATA_VERSION:
+    if metadata.get("version") not in HUMAN_DIRECT_TAINT_METADATA_VERSIONS:
         return False
     try:
         tier = SourceTrustTier.from_value(metadata.get("max_tier"))
@@ -269,6 +280,30 @@ class TaintSource:
     tier: SourceTrustTier
     labels: frozenset[str]
     reason: str
+    inherited: bool = False
+    """Whether the turn holding this source took it from its prompt window.
+
+    An inherited source is in the turn because an earlier row that introduced
+    it is still in the prompt, not because this turn read anything. Rows carry
+    the flag so the next turn's window read can take only what each row
+    introduced (see :func:`prompt_window_taint`). It is turn-relative, so
+    :meth:`TurnTaintState.from_metadata` drops it unless asked to keep it. Not
+    part of the semantic key: the same source inherited and introduced is one
+    source, and it resolves to introduced."""
+
+
+def as_introduced(source: TaintSource) -> TaintSource:
+    """Return ``source`` marked as introduced by the turn holding it."""
+    if not source.inherited:
+        return source
+    return replace(source, inherited=False)
+
+
+def as_inherited(source: TaintSource) -> TaintSource:
+    """Return ``source`` marked as carried in from the prompt window."""
+    if source.inherited:
+        return source
+    return replace(source, inherited=True)
 
 
 SensitiveReadKind = Literal[
@@ -378,9 +413,22 @@ class TurnTaintState:
     total_source_count: int = 0
     distinct_source_count: int = 0
     has_explicit_counts: bool = False
+    introduced_max_tier: SourceTrustTier = SourceTrustTier.TRUSTED_USER
+    """The highest tier this turn introduced itself, excluding window carry-in.
+
+    Persisted beside ``max_tier`` because ``sources`` is bounded: a turn that
+    introduced one untrusted source and then enough lower-tier ones would
+    otherwise lose the detail that matters to the next turn's window read."""
     _seen_keys: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
+        # With nothing marked inherited, all of the state's taint is its own.
+        # This is the conservative reading for a state built without origin
+        # tracking, and it keeps a replace() that raises max_tier honest.
+        if self.introduced_max_tier < self.max_tier and not any(
+            source.inherited for source in self.sources
+        ):
+            object.__setattr__(self, "introduced_max_tier", self.max_tier)
         if not self._seen_keys and self.sources:
             seen_hashes: list[int] = []
             distinct: list[TaintSource] = []
@@ -456,9 +504,21 @@ class TurnTaintState:
         *,
         from_history: bool = False,
     ) -> TurnTaintState:
-        """Return a new state containing one additional source."""
+        """Return a new state containing one additional source.
+
+        ``from_history`` records whether high taint arrived from stored rows
+        rather than fresh reads; the source's own ``inherited`` flag records
+        whether this turn introduced it. A retained source held as inherited
+        and now introduced is upgraded and moved to the tail of the retained
+        sources, so introductions are the last thing the bound evicts.
+        """
         next_sequence = self.sequence + 1
         max_tier = max(self.max_tier, source.tier)
+        introduced_max_tier = (
+            self.introduced_max_tier
+            if source.inherited
+            else max(self.introduced_max_tier, source.tier)
+        )
         fresh_high_sequence = self.fresh_high_taint_seen_at_sequence
         history_high_present = self.history_high_taint_present
         if source.tier >= SourceTrustTier.UNKNOWN_EXTERNAL:
@@ -467,11 +527,30 @@ class TurnTaintState:
             elif fresh_high_sequence is None:
                 fresh_high_sequence = next_sequence
 
-        key_hash = hash(taint_source_semantic_key(source))
+        source_key = taint_source_semantic_key(source)
+        key_hash = hash(source_key)
         if key_hash in self._seen_keys:
+            sources = self.sources
+            if not source.inherited:
+                held = [
+                    existing
+                    for existing in self.sources
+                    if taint_source_semantic_key(existing) == source_key
+                ]
+                # An evicted copy stays evicted: introduced_max_tier already
+                # carries its tier, and the retained detail stays FIFO.
+                if held and all(existing.inherited for existing in held):
+                    others = tuple(
+                        existing
+                        for existing in self.sources
+                        if taint_source_semantic_key(existing) != source_key
+                    )
+                    sources = (*others, source)[-DEFAULT_MAX_SOURCES:]
             return replace(
                 self,
                 max_tier=max_tier,
+                introduced_max_tier=introduced_max_tier,
+                sources=sources,
                 fresh_high_taint_seen_at_sequence=fresh_high_sequence,
                 history_high_taint_present=history_high_present,
                 sequence=next_sequence,
@@ -497,6 +576,7 @@ class TurnTaintState:
         return replace(
             self,
             max_tier=max_tier,
+            introduced_max_tier=introduced_max_tier,
             sources=new_sources,
             fresh_high_taint_seen_at_sequence=fresh_high_sequence,
             history_high_taint_present=history_high_present,
@@ -568,9 +648,14 @@ class TurnTaintState:
         ``trusted_internal``, and a tainted turn's stays at the turn maximum,
         because the floor only ever raises.
         """
-        if self.max_tier >= SourceTrustTier.TRUSTED_INTERNAL:
+        floor = SourceTrustTier.TRUSTED_INTERNAL
+        if self.introduced_max_tier >= floor:
             return self
-        return replace(self, max_tier=SourceTrustTier.TRUSTED_INTERNAL)
+        return replace(
+            self,
+            max_tier=max(self.max_tier, floor),
+            introduced_max_tier=floor,
+        )
 
     def to_metadata(
         self,
@@ -583,18 +668,10 @@ class TurnTaintState:
         metadata: TaintMetadata = {
             "version": TAINT_METADATA_VERSION,
             "max_tier": self.max_tier.config_value,
+            "introduced_max_tier": self.introduced_max_tier.config_value,
             "history_high_taint_present": self.history_high_taint_present,
             "fresh_high_taint_seen_at_sequence": self.fresh_high_taint_seen_at_sequence,
-            "sources": [
-                {
-                    "source_type": source.source_type.value,
-                    "source_id": source.source_id,
-                    "tier": source.tier.config_value,
-                    "labels": sorted(source.labels),
-                    "reason": source.reason,
-                }
-                for source in retained
-            ],
+            "sources": [_source_to_metadata(source) for source in retained],
             "approved_sinks": sorted(self.approved_sinks),
         }
         if self.sensitive_reads:
@@ -626,8 +703,18 @@ class TurnTaintState:
         metadata: object,
         *,
         from_history: bool = False,
+        preserve_origin: bool = False,
     ) -> TurnTaintState:
-        """Deserialize taint metadata, defaulting malformed data to unknown external."""
+        """Deserialize taint metadata, defaulting malformed data to unknown external.
+
+        Origin is relative to the turn that wrote the stamp, so by default
+        every source and the stamp's whole ``max_tier`` come back as
+        introduced: content read from a stored stamp enters the reading turn
+        as that turn's own. ``preserve_origin`` keeps the stamp's split, for
+        the readers that continue the same turn or hand it on -- a delegation
+        handoff and its result, and the turn's own rows. Forgetting it costs
+        taint that lasts too long, never taint that ends too soon.
+        """
         if not isinstance(metadata, dict):
             if metadata is None:
                 return cls.empty()
@@ -637,13 +724,38 @@ class TurnTaintState:
             max_tier = SourceTrustTier.from_value(metadata.get("max_tier"))
         except (TypeError, ValueError):
             return cls.malformed_history_state()
+        introduced_max_tier = max_tier
+        if preserve_origin and "introduced_max_tier" in metadata:
+            try:
+                introduced_max_tier = min(
+                    SourceTrustTier.from_value(metadata.get("introduced_max_tier")),
+                    max_tier,
+                )
+            except (TypeError, ValueError):
+                introduced_max_tier = max_tier
 
         state = cls.empty()
         raw_sources = metadata.get("sources")
         if isinstance(raw_sources, list):
             for raw_source in raw_sources:
                 source = _source_from_metadata(raw_source, fallback_tier=max_tier)
+                if not preserve_origin:
+                    source = as_introduced(source)
                 state = state.add_source(source, from_history=from_history)
+            if introduced_max_tier > state.introduced_max_tier:
+                state = state.add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.MANUAL,
+                        source_id=None,
+                        tier=introduced_max_tier,
+                        labels=frozenset(),
+                        reason=(
+                            "Persisted taint metadata introduced_max_tier exceeded "
+                            "retained source summaries."
+                        ),
+                    ),
+                    from_history=from_history,
+                )
         elif max_tier > SourceTrustTier.TRUSTED_USER:
             state = state.add_source(
                 TaintSource(
@@ -666,6 +778,7 @@ class TurnTaintState:
                         "Persisted taint metadata max_tier exceeded retained "
                         "source summaries."
                     ),
+                    inherited=introduced_max_tier < max_tier,
                 ),
                 from_history=from_history,
             )
@@ -759,6 +872,7 @@ class TaintMetadataSource(TypedDict):
     tier: str
     labels: list[str]
     reason: str
+    inherited: NotRequired[bool]
 
 
 class TaintMetadataSensitiveRead(TypedDict):
@@ -775,6 +889,7 @@ class TaintMetadata(TypedDict, total=False):
 
     version: str
     max_tier: str
+    introduced_max_tier: str
     history_high_taint_present: bool
     fresh_high_taint_seen_at_sequence: int | None
     sources: list[TaintMetadataSource]
@@ -865,16 +980,20 @@ def floor_machine_authored_metadata(
     """
     if metadata is None:
         return None
-    try:
-        tier = SourceTrustTier.from_value(metadata.get("max_tier"))
-    except (TypeError, ValueError):
+    floor = SourceTrustTier.TRUSTED_INTERNAL
+    floored = dict(metadata)
+    for key in ("max_tier", "introduced_max_tier"):
+        if key not in metadata:
+            continue
+        try:
+            tier = SourceTrustTier.from_value(metadata.get(key))
+        except (TypeError, ValueError):
+            return metadata
+        if tier < floor:
+            floored[key] = floor.config_value
+    if floored == metadata:
         return metadata
-    if tier >= SourceTrustTier.TRUSTED_INTERNAL:
-        return metadata
-    return {
-        **metadata,
-        "max_tier": SourceTrustTier.TRUSTED_INTERNAL.config_value,
-    }
+    return cast("TaintMetadata", floored)
 
 
 def merge_taint_state_into_tracker(
@@ -885,22 +1004,12 @@ def merge_taint_state_into_tracker(
 ) -> TurnTaintState:
     """Merge a deserialized taint state without losing persisted max_tier."""
     before = tracker.snapshot()
-    merged = before
-    for source in state.sources:
-        merged = merged.add_source(source, from_history=from_history)
-    if state.max_tier > merged.max_tier:
-        merged = merged.add_source(
-            TaintSource(
-                source_type=TaintSourceType.MANUAL,
-                source_id=None,
-                tier=state.max_tier,
-                labels=frozenset(),
-                reason=(
-                    "Merged taint state max_tier exceeded retained source summaries."
-                ),
-            ),
-            from_history=from_history,
-        )
+    merged = merge_taint_state_origins(
+        before,
+        state,
+        from_history=from_history,
+        reason="Merged taint state max_tier exceeded retained source summaries.",
+    )
     if state.history_high_taint_present and not merged.history_high_taint_present:
         merged = replace(merged, history_high_taint_present=True)
     if state.approved_sinks and not from_history:
@@ -954,11 +1063,57 @@ def _sensitive_read_from_metadata(
     )
 
 
+def merge_taint_state_origins(
+    target: TurnTaintState,
+    state: TurnTaintState,
+    *,
+    from_history: bool = False,
+    reason: str,
+) -> TurnTaintState:
+    """Add ``state``'s sources to ``target`` and raise it to ``state``'s tiers.
+
+    Each source keeps its own origin, and the two maxima are raised separately:
+    an explaining source is introduced where ``state`` introduced that tier and
+    inherited where only its carry-in reached it.
+    """
+    merged = target
+    for source in state.sources:
+        merged = merged.add_source(source, from_history=from_history)
+    if state.introduced_max_tier > merged.introduced_max_tier:
+        merged = merged.add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=state.introduced_max_tier,
+                labels=frozenset(),
+                reason=reason,
+            ),
+            from_history=from_history,
+        )
+    if state.max_tier > merged.max_tier:
+        merged = merged.add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=state.max_tier,
+                labels=frozenset(),
+                reason=reason,
+                inherited=True,
+            ),
+            from_history=from_history,
+        )
+    return merged
+
+
 def raise_taint_state_to(
     state: TurnTaintState, tier: SourceTrustTier, *, reason: str
 ) -> TurnTaintState:
-    """Return ``state`` raised to at least ``tier`` with an explaining source."""
-    if state.max_tier >= tier:
+    """Return ``state`` raised to at least ``tier`` with an explaining source.
+
+    The raise is something this turn did, so it is measured against what the
+    turn introduced: taint carried in from the window does not satisfy it.
+    """
+    if state.introduced_max_tier >= tier:
         return state
     return state.add_source(
         TaintSource(
@@ -976,7 +1131,7 @@ def merge_taint_states(*states: TurnTaintState) -> TurnTaintState:
     merged = TurnTaintState.empty()
     for state in states:
         for source in state.sources:
-            merged = merged.add_source(source)
+            merged = merged.add_source(as_introduced(source))
         merged = raise_taint_state_to(
             merged,
             state.max_tier,
@@ -2004,7 +2159,13 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
     persisted_max_tier = TurnTaintState.from_metadata(metadata).max_tier
     if persisted_max_tier > state.max_tier:
         state = replace(state, max_tier=persisted_max_tier)
-    return state.to_metadata()
+    restamped = state.to_metadata()
+    original_version = _metadata_version(cast("Mapping[str, object]", metadata))
+    if original_version is not None:
+        # Still the legacy row it was: the window read must not take this
+        # recomputation for a stamp that records per-source origin.
+        restamped["version"] = original_version
+    return restamped
 
 
 def artifact_taint_sources(
@@ -2055,14 +2216,25 @@ def artifact_taint_sources(
     )
 
 
-def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
-    """Build an initial turn state from included message history."""
+def merge_history_taint(
+    messages: Sequence[object], *, preserve_origin: bool = False
+) -> TurnTaintState:
+    """The union of every row's whole stamp, carry-in included.
+
+    For reading what a set of rows *is* -- a memory chunk's provenance, a
+    delegate's accumulated result, the rows of a turn being closed. The
+    taint a new turn starts from is :func:`prompt_window_taint`, which takes
+    only what each row introduced. ``preserve_origin`` is as for
+    :meth:`TurnTaintState.from_metadata`.
+    """
     state = TurnTaintState.empty()
     for message in messages:
         metadata = getattr(message, "taint_metadata", None)
         if metadata is None:
             continue
-        history_state = TurnTaintState.from_metadata(metadata, from_history=True)
+        history_state = TurnTaintState.from_metadata(
+            metadata, from_history=True, preserve_origin=preserve_origin
+        )
         # Each row's stamp is the whole turn that wrote it, history included,
         # so its occurrence total already counts every earlier row's. A history
         # read therefore contributes its distinct sources only; occurrences are
@@ -2075,10 +2247,91 @@ def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
             state = state.add_source(source, from_history=True)
         if history_state.max_tier > state.max_tier:
             state = replace(state, max_tier=history_state.max_tier)
+        if history_state.introduced_max_tier > state.introduced_max_tier:
+            state = replace(
+                state, introduced_max_tier=history_state.introduced_max_tier
+            )
         if history_state.history_high_taint_present:
             state = replace(state, history_high_taint_present=True)
         state = _merge_snapshot_counts(before, state, history_state)
     return state
+
+
+def prompt_window_taint(messages: Sequence[object]) -> TurnTaintState:
+    """The taint a turn starts with from the history rows in its prompt.
+
+    Each row contributes what its own turn introduced -- its introduced
+    sources and introduced maximum -- never the merged stamp it also carries,
+    and every contribution enters as inherited. Taint therefore lasts exactly
+    as long as the text that introduced it is in the prompt: a row that only
+    inherited taint does not pass it on, so a conversation heals once the
+    introducing row leaves the window.
+
+    A row stamped before per-source origin existed records no split. It
+    contributes its attributed sources under the amnesty rule -- nothing
+    synthesised from its merged maximum, no anonymous escalation or
+    re-baked fallback echo -- for as long as it is in the window.
+    """
+    state = TurnTaintState.empty()
+    for message in messages:
+        metadata = getattr(message, "taint_metadata", None)
+        if metadata is None:
+            continue
+        contribution = _row_window_contribution(metadata)
+        before = state
+        for source in contribution.sources:
+            state = state.add_source(as_inherited(source), from_history=True)
+        if contribution.max_tier > state.max_tier:
+            state = state.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.MANUAL,
+                    source_id=None,
+                    tier=contribution.max_tier,
+                    labels=frozenset(),
+                    reason=(
+                        "History row introduced_max_tier exceeded retained "
+                        "source summaries."
+                    ),
+                    inherited=True,
+                ),
+                from_history=True,
+            )
+        state = _merge_snapshot_counts(
+            before,
+            state,
+            replace(
+                contribution,
+                total_source_count=contribution.distinct_source_count,
+            ),
+        )
+    return state
+
+
+def _row_window_contribution(metadata: object) -> TurnTaintState:
+    """What one history row introduced, as an origin-free state."""
+    if not isinstance(metadata, dict):
+        return TurnTaintState.malformed_history_state()
+    if _metadata_version(metadata) != TAINT_METADATA_VERSION:
+        try:
+            SourceTrustTier.from_value(metadata.get("max_tier"))
+        except (TypeError, ValueError):
+            return TurnTaintState.malformed_history_state()
+        return TurnTaintState.from_metadata(amnestied_history_taint_metadata(metadata))
+    stamp = TurnTaintState.from_metadata(metadata, preserve_origin=True)
+    contribution = TurnTaintState.empty()
+    for source in stamp.sources:
+        if not source.inherited:
+            contribution = contribution.add_source(source)
+    return raise_taint_state_to(
+        contribution,
+        stamp.introduced_max_tier,
+        reason="History row introduced_max_tier exceeded retained source summaries.",
+    )
+
+
+def _metadata_version(metadata: Mapping[str, object]) -> str | None:
+    version = metadata.get("version")
+    return version if isinstance(version, str) else None
 
 
 def _merge_snapshot_counts(
@@ -2166,7 +2419,21 @@ def _source_from_metadata(
         tier=tier,
         labels=labels,
         reason=str(reason) if reason else "Persisted taint source.",
+        inherited=raw_source.get("inherited") is True,
     )
+
+
+def _source_to_metadata(source: TaintSource) -> TaintMetadataSource:
+    serialized: TaintMetadataSource = {
+        "source_type": source.source_type.value,
+        "source_id": source.source_id,
+        "tier": source.tier.config_value,
+        "labels": sorted(source.labels),
+        "reason": source.reason,
+    }
+    if source.inherited:
+        serialized["inherited"] = True
+    return serialized
 
 
 def coerce_taint_metadata(value: object) -> TaintMetadata | None:

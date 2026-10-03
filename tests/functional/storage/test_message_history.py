@@ -585,7 +585,7 @@ async def test_add_message_without_taint_metadata_logs_regression_guard(
         classified_id
     )
     assert classified_row is not None
-    assert classified_row["taint_metadata_version"] == "runtime_v2"
+    assert classified_row["taint_metadata_version"] == "runtime_v3"
 
 
 @pytest.mark.asyncio
@@ -756,7 +756,7 @@ async def test_script_preparation_error_persists_taint_metadata(
     assert internal_id is not None
     row = await db_context.message_history.get_row_by_internal_id(internal_id)
     assert row is not None
-    assert row["taint_metadata_version"] == "runtime_v2"
+    assert row["taint_metadata_version"] == "runtime_v3"
     assert len(history) == 1
     assert isinstance(history[0], ToolMessage)
     assert history[0].taint_metadata == state.with_authorship_floor().to_metadata()

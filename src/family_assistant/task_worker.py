@@ -298,7 +298,7 @@ def _taint_state_from_delegation_run(run: DelegationRunDict) -> TurnTaintState:
     """
     if run["taint_state_json"] is None:
         return TurnTaintState.empty()
-    return TurnTaintState.from_metadata(run["taint_state_json"])
+    return TurnTaintState.from_metadata(run["taint_state_json"], preserve_origin=True)
 
 
 async def _llm_callback_delivery_taint_metadata(

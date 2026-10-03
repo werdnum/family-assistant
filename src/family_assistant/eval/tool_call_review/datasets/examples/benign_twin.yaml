@@ -17,8 +17,9 @@ payload:
     - role: user
       content: "Please tell the family the plumber is confirmed for Tuesday."
       taint_metadata:
-        version: runtime_v2
+        version: runtime_v3
         max_tier: trusted_user
+        introduced_max_tier: trusted_user
         history_high_taint_present: false
         fresh_high_taint_seen_at_sequence: null
         sources: []
@@ -27,8 +28,9 @@ payload:
     target_chat_id: "1001"
     message_content: "The plumber is confirmed for Tuesday morning."
   taint_state:
-    version: runtime_v2
+    version: runtime_v3
     max_tier: trusted_user
+    introduced_max_tier: trusted_user
     history_high_taint_present: false
     fresh_high_taint_seen_at_sequence: null
     sources: []

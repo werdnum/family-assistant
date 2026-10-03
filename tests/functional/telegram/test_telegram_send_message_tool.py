@@ -251,7 +251,7 @@ async def test_send_message_to_user_tool(
             assert_that([
                 msg["taint_metadata_version"] for msg in bob_assistant_rows
             ]).described_as("Taint metadata version on recorded rows").contains_only(
-                "runtime_v2"
+                "runtime_v3"
             )
             assert_that([msg["content"] for msg in bob_assistant_rows]).described_as(
                 "Recorded content for Bob's assistant rows"

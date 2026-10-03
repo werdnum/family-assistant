@@ -38,6 +38,7 @@ from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.taint import (
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     LEGACY_TAINT_METADATA_VERSIONS,
+    PRE_ORIGIN_TAINT_METADATA_VERSION,
     TAINT_METADATA_VERSION,
     SourceTrustTier,
     TaintMetadata,
@@ -423,6 +424,7 @@ class MessageHistoryRepository(BaseRepository):
         valid_tiers = {tier.config_value for tier in SourceTrustTier}
         valid_versions = {
             TAINT_METADATA_VERSION,
+            PRE_ORIGIN_TAINT_METADATA_VERSION,
             *LEGACY_TAINT_METADATA_VERSIONS,
             "legacy_inferred",
         }
@@ -1856,7 +1858,7 @@ class MessageHistoryRepository(BaseRepository):
         if not rows:
             return None
         messages = [self._process_message_row(row) for row in rows]
-        state = merge_history_taint(messages)
+        state = merge_history_taint(messages, preserve_origin=True)
         for message in messages:
             state = state.with_sensitive_reads_from(
                 getattr(message, "taint_metadata", None)

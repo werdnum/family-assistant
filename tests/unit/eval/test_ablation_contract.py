@@ -227,8 +227,9 @@ def test_matched_ablation_requires_browser_boundary() -> None:
         arguments={},
         sink_class="none",
         taint_state={
-            "version": "runtime_v2",
+            "version": "runtime_v3",
             "max_tier": "trusted_user",
+            "introduced_max_tier": "trusted_user",
             "history_high_taint_present": False,
             "fresh_high_taint_seen_at_sequence": None,
             "sources": [],

@@ -1084,7 +1084,7 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
         .where(message_history_table.c.role == "assistant")
     )
     assert len(notification_rows) == 1
-    assert notification_rows[0]["taint_metadata_version"] == "runtime_v2"
+    assert notification_rows[0]["taint_metadata_version"] == "runtime_v3"
     assert notification_rows[0]["taint_metadata_json"] is not None
     assert notification_rows[0]["taint_metadata_json"]["max_tier"] == "unknown_external"
 
@@ -1151,7 +1151,7 @@ async def test_notification_uses_delegated_result_taint_not_trusted_parent(
         .where(message_history_table.c.subconversation_id.is_(None))
     )
     assert len(notification_rows) == 1
-    assert notification_rows[0]["taint_metadata_version"] == "runtime_v2"
+    assert notification_rows[0]["taint_metadata_version"] == "runtime_v3"
     assert notification_rows[0]["taint_metadata_json"]["max_tier"] == "unknown_external"
 
 
@@ -1647,8 +1647,8 @@ async def test_source_wake_creates_history_row_for_attachment_only_web_response(
     assert len(rows) == 2
     source_row, visible_row = rows
     # Worker-persisted delivery rows always carry runtime taint metadata.
-    assert source_row["taint_metadata_version"] == "runtime_v2"
-    assert visible_row["taint_metadata_version"] == "runtime_v2"
+    assert source_row["taint_metadata_version"] == "runtime_v3"
+    assert visible_row["taint_metadata_version"] == "runtime_v3"
     assert source_row["content"] == "Delegated task finished."
     assert source_row["processing_profile_id"] == "source_profile"
     assert source_row["turn_id"] is not None

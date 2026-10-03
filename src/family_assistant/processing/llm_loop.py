@@ -22,8 +22,8 @@ from family_assistant.observability.metrics import TurnMetrics
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     TurnTaintState,
-    merge_history_taint,
     merge_taint_state_into_tracker,
+    prompt_window_taint,
 )
 from family_assistant.tools import (
     TaintTrackingToolsProvider,
@@ -395,7 +395,7 @@ class LLMStreamingLoop:
             else None
         )
         activated_on_demand: frozenset[str] = frozenset()
-        initial_taint_state = merge_history_taint(messages)
+        initial_taint_state = prompt_window_taint(messages)
         for source in initial_taint_sources or ():
             initial_taint_state = initial_taint_state.add_source(source)
         if taint_tracker is None:
