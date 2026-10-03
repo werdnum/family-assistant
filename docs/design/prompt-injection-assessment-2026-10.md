@@ -162,7 +162,7 @@ information and buys nothing. Applied to the September data:
 | Static confirm list                                            | Yes: 0.6 prompts a day, 17 of 18 approved                     | Keep                                                |
 | Ambient-write admission                                        | No evidence: no ambient write in a tainted turn               | Keep; one wiring test, milestone 1                  |
 | Executable-definition cure                                     | No: its creation gate sits on an audit cell, so it never runs | Build the cell it was designed against, milestone 3 |
-| Source tiers                                                   | No: only the two poles occur                                  | Collapse to household, reviewed, external           |
+| Source tiers                                                   | No: only the two poles occur                                  | Collapse to the four classes the predicates ask     |
 | History carry-in                                               | No: 81.5% of turns tainted before any tool call               | Fix, milestone 3                                    |
 | Outcome lattice, floors, operator minimum, redact, mode switch | No: never exercised                                           | Delete, milestone 5                                 |
 
@@ -266,12 +266,16 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    that matters. On the read side, history contributes only the introduced sources and the
    introduced-tier maximum of rows actually in the prompt window, never the merged maximum. Taint
    then lasts exactly as long as the introducing text is in the prompt, which is the right duration,
-   and ends when it leaves. The same rule applies to a delegation's folded-back state. The accepted
-   residual is paraphrase beyond the window: a reply written under taint can restate an injected
-   instruction after the source has aged out, and that reply is in the prompt. It carries no taint
-   forward. Commodity injection relies on the attacker's own text being present, the reviewer still
-   sees the influenced row as a stub while it is in the window, and the alternative is the infinite
-   propagation this milestone removes.
+   and ends when it leaves. The same rule applies to a delegation's folded-back state. A row written
+   before this change carries neither the per-source origin nor the introduced-tier maximum, so it
+   contributes under the existing amnesty rule instead: its first-hand typed sources, and nothing
+   synthesised from its merged maximum, for as long as it is in the window. Old rows therefore keep
+   tainting until they age out, and stop being re-recorded the moment the first new-format row
+   follows them. The accepted residual is paraphrase beyond the window: a reply written under taint
+   can restate an injected instruction after the source has aged out, and that reply is in the
+   prompt. It carries no taint forward. Commodity injection relies on the attacker's own text being
+   present, the reviewer still sees the influenced row as a stub while it is in the window, and the
+   alternative is the infinite propagation this milestone removes.
 
    The same milestone makes the executable-definition creation gate actually run. Today an
    automation created by the default assistant in a tainted turn is stamped externally authored with
@@ -301,10 +305,11 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
 
    Verified by the share of turns untrusted before their first tool call falling from 81.5 percent
    to the share whose window genuinely holds an introducing row; by Telegram turns more than two
-   hours after a web search starting clean; by a tainted-turn automation creation producing a
-   reviewer verdict and a cured record; and, for tag hygiene, by delegation's share of in-turn
-   introductions falling where a mismatch was fixed, or the measured share being reported with the
-   reason a tag stands.
+   hours after a web search starting clean; by a row written before the change, carrying a web
+   source, still tainting the next turn inside its window and not after; by a tainted-turn
+   automation creation producing a reviewer verdict and a cured record; and, for tag hygiene, by
+   delegation's share of in-turn introductions falling where a mismatch was fixed, or the measured
+   share being reported with the reason a tag stands.
 
 4. **Flip to enforce.** The mode change and the note review from the decision above, on a signal
    that now discriminates and with an audit that can say why. Re-read the shadow data after
@@ -321,25 +326,29 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    or confirm, and nothing finer: it is the migration for a deployment that used `operator_minimum`
    to put a person on tainted egress, it is not relaxable by a profile because profiles no longer
    carry taint policy at all, and it is a dial rather than a mechanism, so it passes the
-   stratification test by not claiming to discriminate. Collapse the six tiers to the three
-   predicates the code already asks: household-authored, machine-reviewed, externally authored. The
-   collapse is a read-time mapping, not a data rewrite: every stored tier name stays accepted, the
-   two trusted names map to household-authored, `machine_reviewed` to reviewed, and the three
-   external names to externally authored, so no message, note or definition stamp changes meaning
-   and nothing is raised to unknown-external by the removal of a name. Keep per-row and per-artifact
-   provenance, sink resolution reduced to "is this call egress, sandbox, an external message or an
-   executable definition", the reviewer's provenance-selected view, and the admission gates on
-   stored artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of
-   the tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
+   stratification test by not claiming to discriminate. Collapse the six tiers to the four classes
+   the code's predicates already distinguish: human-direct, model-composed inside the household,
+   machine-reviewed, externally authored. Human-direct stays its own class because the reviewer uses
+   it to select an originating request and to judge a destination echo, and a model-composed row
+   must remain ineligible for both. The collapse is a read-time mapping, not a data rewrite: every
+   stored tier name stays accepted, `trusted_user` maps to human-direct, `trusted_internal` to
+   model-composed, `machine_reviewed` to reviewed, and the three external names to externally
+   authored, so no message, note or definition stamp changes meaning and nothing is raised to
+   unknown-external by the removal of a name. Keep per-row and per-artifact provenance, sink
+   resolution reduced to "is this call egress, sandbox, an external message or an executable
+   definition", the reviewer's provenance-selected view, and the admission gates on stored
+   artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of the
+   tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
    remains is the Chrome agent's shape with better artifact provenance: a reviewer that runs on
    egress when the turn carries external content, sees household-authored intent plus
    machine-reviewed evidence and nothing else, and a write-time gate on anything that becomes
    ambient or executable. Subtractive by construction. The memory decision from milestone 1 is taken
    in the same review. Verified three ways: representative stamps written before the collapse, one
-   per old tier name, classify under the predicates as they did before; the set of sink classes that
-   reach the reviewer is unchanged; and the reviewer's allow, confirm and deny shares over the
-   following thirty days each sit within five percentage points of the preceding thirty on the same
-   cells, with the deleted configuration keys rejected at startup.
+   per old tier name, classify under the predicates as they did before, including a
+   `trusted_internal` stamp staying ineligible as an originating request and as a destination echo;
+   the set of sink classes that reach the reviewer is unchanged; and the reviewer's allow, confirm
+   and deny shares over the following thirty days each sit within five percentage points of the
+   preceding thirty on the same cells, with the deleted configuration keys rejected at startup.
 
 6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
