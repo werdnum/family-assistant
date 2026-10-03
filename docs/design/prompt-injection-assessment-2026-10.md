@@ -7,8 +7,8 @@ Point-in-time assessment and direction document, in the manner of
 confinement design docs, a survey of what comparable products shipped by October 2026, and thirty
 days of production audit data (3 September to 3 October 2026) pulled by the engineer profile. It is
 not an implementation design: the work it proposes is configuration, one correction to the taint
-propagation rule, tag hygiene and logging fixes, and it names nothing that needs a new design
-document.
+propagation rule, one sink cell the definition gate was designed against, tag hygiene and logging
+fixes, and it names nothing that needs a new design document.
 
 ## Summary
 
@@ -154,17 +154,17 @@ produces different outcomes for different risk in the traffic actually observed;
 the same answer for nearly everything, whether that answer is "tainted" or "allow", carries no
 information and buys nothing. Applied to the September data:
 
-| Mechanism                                                      | Discriminates in production                      | Disposition                               |
-| -------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- |
-| Profile confinement                                            | Yes, by entry point                              | Keep                                      |
-| Sink classes                                                   | Yes: 73% of evaluations audit, 18% adjudicate    | Keep, reduced to the egress question      |
-| Tool-call reviewer                                             | Yes: 74% allow, 22% confirm, 4% deny             | Keep                                      |
-| Static confirm list                                            | Yes: 0.6 prompts a day, 17 of 18 approved        | Keep                                      |
-| Ambient-write admission                                        | No evidence: no ambient write in a tainted turn  | Keep; one wiring test, milestone 5        |
-| Executable-definition cure                                     | Partly: 10.8% of evaluations carry uncured fires | Restamp, milestone 2                      |
-| Source tiers                                                   | No: only the two poles occur                     | Collapse to household, reviewed, external |
-| History carry-in                                               | No: 81.5% of turns tainted before any tool call  | Fix, milestone 2                          |
-| Outcome lattice, floors, operator minimum, redact, mode switch | No: never exercised                              | Delete, milestone 7                       |
+| Mechanism                                                      | Discriminates in production                                   | Disposition                                         |
+| -------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------- |
+| Profile confinement                                            | Yes, by entry point                                           | Keep                                                |
+| Sink classes                                                   | Yes: 73% of evaluations audit, 18% adjudicate                 | Keep, reduced to the egress question                |
+| Tool-call reviewer                                             | Yes: 74% allow, 22% confirm, 4% deny                          | Keep                                                |
+| Static confirm list                                            | Yes: 0.6 prompts a day, 17 of 18 approved                     | Keep                                                |
+| Ambient-write admission                                        | No evidence: no ambient write in a tainted turn               | Keep; one wiring test, milestone 5                  |
+| Executable-definition cure                                     | No: its creation gate sits on an audit cell, so it never runs | Build the cell it was designed against, milestone 2 |
+| Source tiers                                                   | No: only the two poles occur                                  | Collapse to household, reviewed, external           |
+| History carry-in                                               | No: 81.5% of turns tainted before any tool call               | Fix, milestone 2                                    |
+| Outcome lattice, floors, operator minimum, redact, mode switch | No: never exercised                                           | Delete, milestone 7                                 |
 
 Two consequences follow. A flag that is on for most turns is not a taint signal, it is a constant,
 and the re-baking defect turned the turn-level tier into one; milestone 2 restores the signal. And
@@ -232,15 +232,25 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    contributes only the introduced sources of rows actually in the prompt window, never a stored
    maximum. Taint then lasts exactly as long as the introducing text is in the prompt, which is the
    right duration, and ends when it leaves. The same rule applies to a delegation's folded-back
-   state. Uncured automation definitions, which fired at the untrusted tier in 10.8 percent of
-   untrusted evaluations, are restamped with the existing script in the same milestone. The accepted
-   residual is paraphrase beyond the window: a reply written under taint can restate an injected
-   instruction after the source has aged out, and that reply is in the prompt. It carries no taint
-   forward. Commodity injection relies on the attacker's own text being present, the reviewer still
-   sees the influenced row as a stub while it is in the window, and the alternative is the infinite
-   propagation this milestone removes. Verified by the share of turns untrusted before their first
-   tool call falling from 81.5 percent to the share whose window genuinely holds an introducing row,
-   and by Telegram turns more than two hours after a web search starting clean.
+   state. The same milestone makes the executable-definition creation gate actually run. Today an
+   automation created by the default assistant in a tainted turn is stamped externally authored with
+   no disposition and resolves uncured, so it shows up needing human review even though the gate
+   exists: `create_automation`, the listener and script tools all resolve to `artifact_write`, which
+   is `audit` at every externally authored tier, and a gate only engages where the cell adjudicates.
+   The executable-definition design assumed the risk document's executable-persistence sink split
+   and says so; that split was never built. It is the one addition this document makes to the sink
+   vocabulary, and it passes the stratification test by construction: a stored definition is future
+   unattended execution, which a note is not, so giving it its own cell that adjudicates at
+   externally authored tiers discriminates exactly where `artifact_write` cannot. Definitions
+   already stamped uncured, which fired at the untrusted tier in 10.8 percent of untrusted
+   evaluations, are then restamped with the existing script. The accepted residual is paraphrase
+   beyond the window: a reply written under taint can restate an injected instruction after the
+   source has aged out, and that reply is in the prompt. It carries no taint forward. Commodity
+   injection relies on the attacker's own text being present, the reviewer still sees the influenced
+   row as a stub while it is in the window, and the alternative is the infinite propagation this
+   milestone removes. Verified by the share of turns untrusted before their first tool call falling
+   from 81.5 percent to the share whose window genuinely holds an introducing row, and by Telegram
+   turns more than two hours after a web search starting clean.
 3. **Make the next audit attributable.** Record each tool's own result tier alongside the running
    tier. Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation
    reviews. Make confirmation expiry run. Verified by a re-run of the September audit queries
