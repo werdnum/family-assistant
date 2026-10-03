@@ -66,7 +66,7 @@ past year.
 | Processing-profile confinement (Rule of Two)              | yes   | yes                |
 | Static tool policy, confirm list, `excluded_global_tools` | yes   | yes                |
 | Durable cross-interface confirmations                     | yes   | yes                |
-| Ambient-write admission for notes and skills              | yes   | never fired        |
+| Ambient-write admission for notes and skills              | yes   | yes, unexercised   |
 | Executable-definition taint                               | yes   | partly             |
 | Tool-call reviewer (judge)                                | yes   | shadow only        |
 | Runtime taint matrix                                      | yes   | observe only       |
@@ -118,7 +118,9 @@ gate on egress.
 **Logging defects.** `result_taint` records the turn's running tier, not the tool's own. Audit
 sources redact external entries to identical stubs, so attribution is impossible from the audit
 table alone. Coder delegation reviews carry no turn id. Two confirmation requests from May are still
-pending past expiry. The ambient-write sink has no events, ever.
+pending past expiry. The ambient-write sink has no events: no ambient note or skill was written in a
+tainted turn in the window, and an ungated write records nothing, so the gate has no production
+evidence either way.
 
 ## Why "one more" keeps happening
 
@@ -156,7 +158,7 @@ information and buys nothing. Applied to the September data:
 | Sink classes                                                   | Yes: 73% of evaluations audit, 18% adjudicate    | Keep, reduced to the egress question      |
 | Tool-call reviewer                                             | Yes: 74% allow, 22% confirm, 4% deny             | Keep                                      |
 | Static confirm list                                            | Yes: 0.6 prompts a day, 17 of 18 approved        | Keep                                      |
-| Ambient-write admission                                        | Unknown: never fired                             | Verify, milestone 5                       |
+| Ambient-write admission                                        | No evidence: no ambient write in a tainted turn  | Keep; one wiring test, milestone 5        |
 | Executable-definition cure                                     | Partly: 10.8% of evaluations carry uncured fires | Restamp, milestone 2                      |
 | Source tiers                                                   | No: only the two poles occur                     | Collapse to household, reviewed, external |
 | History carry-in                                               | No: 81.5% of turns tainted before any tool call  | Fix, milestone 2                          |
@@ -247,9 +249,13 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    outcome: a mismatch is fixed, and a justified tag is kept and its justification recorded here.
    Verified, for a fixed mismatch, by delegation's share of in-turn introductions falling in the
    next audit; for a retained tag, by the measured share being reported with the reason it stands.
-5. **Verify the ambient-write gate.** In a throwaway conversation, read a web page, then write a
-   note with `include_in_prompt` set. Verified by an `ambient_prompt_write` audit event. If none
-   appears, the gate is not wired, and that is a bug to fix, not a design to write.
+5. **Exercise the ambient-write gate once.** It is implemented and wired, for notes and skills at
+   `add_or_update_note` and for automation and script definitions at their creation gate, and it
+   runs the reviewer synchronously in observe mode too. It simply has not been reached: ambient
+   writes are rare by instruction, and an ungated write records nothing. In a throwaway
+   conversation, read a web page, then write a note with `include_in_prompt` set. Verified by an
+   `ambient_prompt_write` review event with a verdict. If none appears, that is a bug to fix, not a
+   design to write.
 6. **Memory yield.** Query `memory_change_log` outcomes and the admissible share of assistant rows.
    The curator transcript omits every assistant row whose stored turn tier is untrusted, which in
    production is most of them, so the curator reads user lines with the answers missing. Showing it
