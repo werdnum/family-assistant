@@ -2137,8 +2137,9 @@ ______________________________________________________________________
 
 A tool that writes something that will run later with no human present — `create_automation`,
 `update_automation`, `save_script`, `schedule_reminder`, `schedule_future_callback`,
-`schedule_action` and `modify_pending_callback` — carries the `executable_persistence` tool tag and
-resolves to the `executable_persistence` sink:
+`schedule_action`, `modify_pending_callback`, and `spawn_worker`, which registers a completion
+listener — carries the `executable_persistence` tool tag and resolves to the
+`executable_persistence` sink:
 
 | Turn tier                                                 | `executable_persistence`      |
 | --------------------------------------------------------- | ----------------------------- |

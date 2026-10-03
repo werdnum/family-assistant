@@ -12,6 +12,7 @@ import aiofiles.os
 
 from family_assistant.plugins.ai_workers.instance import AIWorkersInstance
 from family_assistant.plugins.ai_workers.lifecycle import TERMINAL_DB_STATUSES
+from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.storage.events import WORKER_COMPLETION_EVENT_TYPE
 from family_assistant.tools.confirmation_format import (
     confirmation_field,
@@ -398,6 +399,10 @@ async def spawn_worker_tool(
                 },
                 one_time=True,
                 enabled=True,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
+                definition_gate=exec_context.definition_gate_outcome,
             )
 
         await db_context.atomic(_create_worker_with_listener)
@@ -757,6 +762,7 @@ AI_WORKER_TOOLS: tuple[ToolRegistration, ...] = (
         ToolTag.CODE_EXECUTION,
         ToolTag.STATE_CHANGING,
         ToolTag.WORKER,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_UNSPECIFIED,
         confirmation=ToolConfirmation(
             render=render_spawn_worker_confirmation,
