@@ -23,6 +23,9 @@ messages as you would to a person.
   request of its own, so the assistant asks you to wait for the current one to finish or
   `/interrupt` it.
 - **`/interrupt`** stops the request currently being processed in that chat.
+- **Restarts:** if the assistant restarts while it is answering, it picks the reply back up and
+  sends it when it's done, usually within a minute or two. A slash-command request is not picked
+  back up; send it again.
 - **Confirmations** arrive as inline **✅ Confirm** and **❌ Cancel** buttons. See
   [confirmations-and-safety.md](confirmations-and-safety.md).
 
@@ -118,8 +121,8 @@ the same controls.
 reply, it picks the reply back up where it left off, usually within a minute or two, and the chat
 fills in when it does. It won't carry on if you've sent something else in the meantime, or if the
 reply was waiting for you to approve an action (the approval prompt still works). If it can't
-continue, the reply is marked as interrupted, so ask again. Telegram replies are not picked back up
-yet.
+continue, the reply is marked as interrupted, so ask again. Telegram replies are picked back up the
+same way.
 
 ### Voice
 
