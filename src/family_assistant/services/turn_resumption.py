@@ -104,6 +104,15 @@ class TurnResumer(Protocol):
         """
         ...
 
+    async def deliver_pending_reply(self, payload: TurnResumePayload) -> None:
+        """Finish a turn whose reply was generated but may never have been sent.
+
+        Called when the interrupted turn turns out to have a terminal reply. A
+        path whose clients read replies from history has nothing to do; one
+        that pushes replies out (a chat bot) sends it if it was not delivered.
+        """
+        ...
+
 
 class ResumeDecision(Enum):
     RESUME = "resume"
@@ -207,14 +216,31 @@ class TurnLeaseRegistry:
         return entry is not None and not entry.task.done()
 
     def _on_turn_done(self, entry: _TrackedTurn) -> None:
-        if entry.suspend_requested:
+        if entry.suspend_requested or not self._untrack(entry):
             return
-        turn_id = entry.lease.payload.turn_id
-        if self._tracked.get(turn_id) is entry:
-            del self._tracked[turn_id]
         release = asyncio.ensure_future(self._release(entry))
         self._release_tasks.add(release)
         release.add_done_callback(self._release_tasks.discard)
+
+    def _untrack(self, entry: _TrackedTurn) -> bool:
+        """Stop tracking ``entry``; False if it was no longer tracked."""
+        turn_id = entry.lease.payload.turn_id
+        if self._tracked.get(turn_id) is not entry:
+            return False
+        del self._tracked[turn_id]
+        return True
+
+    async def release(self, lease: TurnLease) -> None:
+        """Delete the lease of a turn that has ended, ahead of its task ending.
+
+        For a launch path whose task outlives the turn -- one that goes on to
+        deliver the reply, or to run another turn. A suspended turn keeps its
+        lease for the hand-off, as it would when its task ended.
+        """
+        entry = self._tracked.get(lease.payload.turn_id)
+        if entry is None or entry.suspend_requested or not self._untrack(entry):
+            return
+        await self._release(entry)
 
     @staticmethod
     async def _release(entry: _TrackedTurn) -> None:
@@ -369,6 +395,9 @@ class TurnLeaseRegistry:
         )
         if decision in {ResumeDecision.EXHAUSTED, ResumeDecision.NO_RESUMER}:
             await persist_interrupted_marker(db, payload)
+            return
+        if decision is ResumeDecision.FINISHED and payload.resumer in self._resumers:
+            await self._resumers[payload.resumer].deliver_pending_reply(payload)
             return
         if decision is not ResumeDecision.RESUME:
             return

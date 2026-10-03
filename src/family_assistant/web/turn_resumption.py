@@ -194,3 +194,6 @@ class WebTurnResumer:
             payload.attempt + 1,
         )
         return True
+
+    async def deliver_pending_reply(self, payload: TurnResumePayload) -> None:
+        """Nothing to send: web clients read a finished turn's reply from history."""

@@ -9,7 +9,7 @@ import pytest
 from family_assistant.telegram.handler import TelegramUpdateHandler
 
 if TYPE_CHECKING:
-    from telegram.ext import ContextTypes
+    from telegram import Bot
 
 
 @pytest.mark.asyncio
@@ -22,10 +22,7 @@ async def test_typing_notifications_shutdown_timeout_is_suppressed() -> None:
         # Simulate a hung network call so typing_task cannot finish within 1s.
         await never_finishes_event.wait()
 
-    context = cast(
-        "ContextTypes.DEFAULT_TYPE",
-        SimpleNamespace(bot=SimpleNamespace(send_chat_action=send_chat_action)),
-    )
+    bot = cast("Bot", SimpleNamespace(send_chat_action=send_chat_action))
 
-    async with handler._typing_notifications(context, chat_id=123):
+    async with handler._typing_notifications(bot, chat_id=123):
         pass

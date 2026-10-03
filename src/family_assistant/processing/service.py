@@ -1183,6 +1183,15 @@ class ProcessingService:
         return synthesized, dropped
 
     @staticmethod
+    async def _completed_tool_rounds(db_context: Database, turn_id: str) -> int:
+        """How many loop iterations an interrupted turn already spent on tools."""
+        return sum(
+            1
+            for message in await db_context.message_history.get_by_turn_id(turn_id)
+            if isinstance(message, AssistantMessage) and message.tool_calls
+        )
+
+    @staticmethod
     def _index_after(messages_for_llm: list[LLMMessage], anchor: LLMMessage) -> int:
         """Position just after ``anchor`` (by identity), or the end if absent."""
         for index, message in enumerate(messages_for_llm):
@@ -1862,6 +1871,8 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
+        allow_quiet_end: bool = False,
         completed_iterations: int = 0,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
@@ -1895,6 +1906,8 @@ class ProcessingService:
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
+            allow_quiet_end=allow_quiet_end,
             completed_iterations=completed_iterations,
         ):
             yield item
@@ -1927,6 +1940,7 @@ class ProcessingService:
         model_selection: ResolvedModelSelection | None = None,
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
+        resume: bool = False,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1961,6 +1975,8 @@ class ProcessingService:
                 absent or unfrozen default-sourced one may be routed by Auto.
             allow_quiet_end: Offer the model ``end_turn_quietly``. Pass it only
                 for a turn nobody is owed a reply on; see ``quiet_turn``.
+            resume: Continue an interrupted turn from the rows it already
+                persisted (see ``_prepare_turn_messages_for_llm``).
 
         Returns:
             ChatInteractionResult containing:
@@ -1991,7 +2007,7 @@ class ProcessingService:
             acting_user_id=user_id,
             trigger_is_internal=trigger_is_internal,
             trigger_role=trigger_role,
-            exclude_turn_id=turn_id if reuse_existing_user_row else None,
+            exclude_turn_id=turn_id if reuse_existing_user_row or resume else None,
         )
 
         thread_root_id_for_turn: int | None = None
@@ -2022,14 +2038,27 @@ class ProcessingService:
                 reuse_existing_user_row=reuse_existing_user_row,
                 initial_taint_sources=initial_taint_sources,
                 llm_client=run_llm_client,
+                resume=resume,
             )
 
-            # --- 3. Call Core LLM Processing (self.process_message) ---
-            (
-                generated_turn_messages,
-                final_reasoning_info_from_process_msg,
-                response_attachment_ids,
-            ) = await self.process_message(
+            # --- 3-4. Run the loop, saving each message as it is produced ---
+            # Saved as they arrive rather than once the loop returns, exactly as
+            # the streaming path does: under commit-as-you-go a turn's tool
+            # effects are durable the moment they happen, so its rows must be
+            # too -- a turn interrupted partway (a restart, a cancelled task)
+            # is then something history can explain and a resume can continue.
+            completed_iterations = (
+                await self._completed_tool_rounds(db_context, turn_id) if resume else 0
+            )
+            final_reasoning_info: MessageReasoningInfo | None = None
+            response_attachment_ids: list[str] | None = None
+            final_text_reply = ""
+            final_assistant_message_internal_id = None
+            ended_quietly = False
+            # Ids already recorded on a tool row of this turn, so the closing
+            # assistant row doesn't repeat them.
+            recorded_on_tool_rows: set[str] = set()
+            async for event, turn_msg in self.process_message_stream(
                 db_context=db_context,
                 messages=typed_messages_for_llm,
                 interface_type=interface_type,
@@ -2052,89 +2081,69 @@ class ProcessingService:
                 tool_call_review_trigger=tool_call_review_trigger,
                 memory_review=memory_review,
                 allow_quiet_end=allow_quiet_end,
-            )
-            final_reasoning_info = final_reasoning_info_from_process_msg
+                completed_iterations=completed_iterations,
+            ):
+                if event.metadata:
+                    if "reasoning_info" in event.metadata:
+                        final_reasoning_info = event.metadata["reasoning_info"]
+                    if "attachment_ids" in event.metadata:
+                        response_attachment_ids = event.metadata["attachment_ids"]
+                if turn_msg is None:
+                    continue
 
-            # --- 4. Save Generated Turn Messages & Extract Final Reply ---
-            final_text_reply = ""
-            final_assistant_message_internal_id = None
-            ended_quietly = False
-
-            if generated_turn_messages:
-                # The reply's attachments belong on the last assistant row of the
-                # turn, and only where a tool row isn't already carrying them.
-                recorded_on_tool_rows: set[str] = set()
-                for turn_msg in generated_turn_messages:
-                    recorded_on_tool_rows |= _tool_row_attachment_ids(turn_msg)
-                final_assistant_index = max(
-                    (
-                        index
-                        for index, message in enumerate(generated_turn_messages)
-                        if _is_turn_closing_assistant_message(message)
-                        and message.content
-                    ),
-                    default=None,
-                )
-
-                for index, turn_msg in enumerate(generated_turn_messages):
-                    if (
-                        isinstance(turn_msg, AssistantMessage)
-                        and turn_msg.content
-                        and not turn_msg.tool_calls
-                    ):
-                        # Skip messages that carry tool calls: their content
-                        # may be cryptographically tied to a Google thought
-                        # signature (see ContextPreparer.format_history) and
-                        # rewriting it would break replay continuity.
-                        turn_msg.content = normalize_latex_to_unicode(turn_msg.content)
-
+                if (
+                    isinstance(turn_msg, AssistantMessage)
+                    and turn_msg.content
+                    and not turn_msg.tool_calls
+                ):
+                    # Skip messages that carry tool calls: their content may be
+                    # cryptographically tied to a Google thought signature (see
+                    # ContextPreparer.format_history) and rewriting it would
+                    # break replay continuity.
+                    turn_msg.content = normalize_latex_to_unicode(turn_msg.content)
+                recorded_on_tool_rows |= _tool_row_attachment_ids(turn_msg)
+                saved_turn_msg_record = await self._save_history_message(
+                    db_context,
+                    message=turn_msg,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id_for_turn,
+                    subconversation_id=subconversation_id,
+                    user_id=user_id,
                     # Each assistant message carries the call that produced it.
                     # Falling back to the turn's last call would attribute one
                     # call's tokens to every iteration of a tool loop.
-                    reasoning_info_for_msg = (
+                    reasoning_info=(
                         turn_msg.reasoning_info
                         if isinstance(turn_msg, AssistantMessage)
                         else None
-                    )
-                    saved_turn_msg_record = await self._save_history_message(
-                        db_context,
-                        message=turn_msg,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        turn_id=turn_id,
-                        thread_root_id=thread_root_id_for_turn,
-                        subconversation_id=subconversation_id,
-                        user_id=user_id,
-                        reasoning_info=reasoning_info_for_msg,
-                        attachments=(
-                            _response_attachment_references(
-                                response_attachment_ids,
-                                recorded_on_tool_rows=recorded_on_tool_rows,
-                            )
-                            if index == final_assistant_index
-                            else None
-                        ),
-                        is_internal=(
-                            isinstance(turn_msg, AssistantMessage)
-                            and turn_msg.ended_quietly
-                        ),
-                    )
-
-                    if (
+                    ),
+                    # The turn's closing assistant message arrives on the same
+                    # event as its response attachment ids.
+                    attachments=(
+                        _response_attachment_references(
+                            event.metadata.get("attachment_ids"),
+                            recorded_on_tool_rows=recorded_on_tool_rows,
+                        )
+                        if _is_turn_closing_assistant_message(turn_msg)
+                        and event.metadata
+                        else None
+                    ),
+                    is_internal=(
                         isinstance(turn_msg, AssistantMessage)
                         and turn_msg.ended_quietly
-                    ):
-                        ended_quietly = True
-                        final_text_reply = ""
-                        final_assistant_message_internal_id = saved_turn_msg_record
-                    elif isinstance(turn_msg, AssistantMessage) and turn_msg.content:
-                        final_text_reply = turn_msg.content
-                        if saved_turn_msg_record is not None:
-                            final_assistant_message_internal_id = saved_turn_msg_record
-            else:
-                logger.warning(
-                    f"No messages generated by self.process_message for turn {turn_id}."
+                    ),
                 )
+
+                if isinstance(turn_msg, AssistantMessage) and turn_msg.ended_quietly:
+                    ended_quietly = True
+                    final_text_reply = ""
+                    final_assistant_message_internal_id = saved_turn_msg_record
+                elif isinstance(turn_msg, AssistantMessage) and turn_msg.content:
+                    final_text_reply = turn_msg.content
+                    if saved_turn_msg_record is not None:
+                        final_assistant_message_internal_id = saved_turn_msg_record
 
             if ended_quietly:
                 return ChatInteractionResult.quiet(
@@ -2298,15 +2307,7 @@ class ProcessingService:
 
             # --- 3. Stream LLM Processing ---
             completed_iterations = (
-                sum(
-                    1
-                    for message in await db_context.message_history.get_by_turn_id(
-                        turn_id
-                    )
-                    if isinstance(message, AssistantMessage) and message.tool_calls
-                )
-                if resume
-                else 0
+                await self._completed_tool_rounds(db_context, turn_id) if resume else 0
             )
             # Ids already recorded on a tool row of this turn, so the
             # closing assistant row doesn't repeat them.
