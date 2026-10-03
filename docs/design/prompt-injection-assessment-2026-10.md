@@ -307,9 +307,10 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    to the share whose window genuinely holds an introducing row; by Telegram turns more than two
    hours after a web search starting clean; by a row written before the change, carrying a web
    source, still tainting the next turn inside its window and not after; by a tainted-turn
-   automation creation producing a reviewer verdict and a cured record; and, for tag hygiene, by
-   delegation's share of in-turn introductions falling where a mismatch was fixed, or the measured
-   share being reported with the reason a tag stands.
+   automation creation producing a reviewer verdict and a cured record; by a definition write from a
+   tool without the executable-definition tag being refused at the stamping chokepoint; and, for tag
+   hygiene, by delegation's share of in-turn introductions falling where a mismatch was fixed, or
+   the measured share being reported with the reason a tag stands.
 
 4. **Flip to enforce.** The mode change and the note review from the decision above, on a signal
    that now discriminates and with an audit that can say why. Re-read the shadow data after
@@ -321,21 +322,21 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
-   `require_taint_enforcement`. What an operator keeps is one deployment-wide map from the four
-   gated sink classes, egress, sandbox, external message and executable definition, to either review
-   or confirm, and nothing finer: it is the migration for a deployment that used `operator_minimum`
-   to put a person on tainted egress, it is not relaxable by a profile because profiles no longer
-   carry taint policy at all, and it is a dial rather than a mechanism, so it passes the
-   stratification test by not claiming to discriminate. Collapse the six tiers to the four classes
-   the code's predicates already distinguish: human-direct, model-composed inside the household,
-   machine-reviewed, externally authored. Human-direct stays its own class because the reviewer uses
-   it to select an originating request and to judge a destination echo, and a model-composed row
-   must remain ineligible for both. The collapse is a read-time mapping, not a data rewrite: every
-   stored tier name stays accepted, `trusted_user` maps to human-direct, `trusted_internal` to
-   model-composed, `machine_reviewed` to reviewed, and the three external names to externally
-   authored, so no message, note or definition stamp changes meaning and nothing is raised to
-   unknown-external by the removal of a name. Keep per-row and per-artifact provenance, sink
-   resolution reduced to "is this call egress, sandbox, an external message or an executable
+   `require_taint_enforcement`. What an operator keeps is one deployment-wide map from the five
+   gated sink classes, egress, sandbox, external message, executable definition and ambient prompt
+   write, to review, confirm or deny, and nothing finer: it is the migration for a deployment that
+   used `operator_minimum` to put a person on tainted egress, it is not relaxable by a profile
+   because profiles no longer carry taint policy at all, and it is a dial rather than a mechanism,
+   so it passes the stratification test by not claiming to discriminate. Collapse the six tiers to
+   the four classes the code's predicates already distinguish: human-direct, model-composed inside
+   the household, machine-reviewed, externally authored. Human-direct stays its own class because
+   the reviewer uses it to select an originating request and to judge a destination echo, and a
+   model-composed row must remain ineligible for both. The collapse is a read-time mapping, not a
+   data rewrite: every stored tier name stays accepted, `trusted_user` maps to human-direct,
+   `trusted_internal` to model-composed, `machine_reviewed` to reviewed, and the three external
+   names to externally authored, so no message, note or definition stamp changes meaning and nothing
+   is raised to unknown-external by the removal of a name. Keep per-row and per-artifact provenance,
+   sink resolution reduced to "is this call egress, sandbox, an external message or an executable
    definition", the reviewer's provenance-selected view, and the admission gates on stored
    artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of the
    tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
