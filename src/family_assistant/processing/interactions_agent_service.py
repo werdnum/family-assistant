@@ -282,6 +282,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         self,
         state: TurnTaintState,
         *,
+        turn_id: str | None,
         conversation_id: str,
         subconversation_id: str | None,
         user_name: str,
@@ -295,7 +296,8 @@ class InteractionsAgentProcessingService(ProcessingService):
         ``ProcessingService.sink_refusal_reason``), against the turn's complete
         taint. This path never runs the loop, so it evaluates what it has: the
         parent turn's state -- carrying any approval the delegation gate
-        recorded -- plus the attachments it is about to mount.
+        recorded -- plus the attachments it is about to mount. It audits under
+        the delegating turn's id, since that is the turn it decides for.
 
         Production providers include :class:`TaintTrackingToolsProvider`, whose
         named-sink authorization records policy audit, launches observe-mode
@@ -320,7 +322,7 @@ class InteractionsAgentProcessingService(ProcessingService):
             interface_type="delegation",
             conversation_id=conversation_id,
             user_name=user_name,
-            turn_id=None,
+            turn_id=turn_id,
             db_context=db_context,
             processing_service=self,
             # An Interactions API agent is configured inline on its profile,
@@ -450,6 +452,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         initial_taint_sources: Sequence[TaintSource] | None = None,
         acting_user_id: str | None = None,
         initial_taint_state: TurnTaintState | None = None,
+        source_turn_id: str | None = None,
     ) -> RemoteSubmission:
         """Start the agent interaction without blocking on its result.
 
@@ -490,6 +493,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         )
         await self._authorize_profile_sink(
             state,
+            turn_id=source_turn_id,
             conversation_id=conversation_id,
             subconversation_id=subconversation_id,
             user_name=user_name,

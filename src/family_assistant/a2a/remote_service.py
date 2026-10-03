@@ -199,6 +199,7 @@ class RemoteA2AService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         acting_user_id: str | None = None,
         initial_taint_state: TurnTaintState | None = None,
+        source_turn_id: str | None = None,
     ) -> RemoteSubmission:
         """Submit to the remote agent without blocking; the remote assigns the id.
 
@@ -209,8 +210,8 @@ class RemoteA2AService:
         agent that ignored ``blocking=false``), the converted result is returned
         in ``terminal_result`` so the caller can complete without polling.
         ``acting_user_id`` scopes the attachments this turn may send and owns
-        any file the remote returns terminally. ``user_name``, ``db_context``
-        and ``initial_taint_state`` are unused: the remote agent's own
+        any file the remote returns terminally. ``user_name``, ``db_context``,
+        ``initial_taint_state`` and ``source_turn_id`` are unused: the remote agent's own
         context_id already carries continuity, unlike a local pollable target,
         and this service reads attachments through its own registry handle.
         """

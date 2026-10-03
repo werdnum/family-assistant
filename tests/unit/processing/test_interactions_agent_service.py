@@ -902,6 +902,7 @@ async def test_submit_async_observe_review_is_detached_and_drained_on_close(
         subconversation_id="sub-1",
         user_name="Andrew",
         db_context=db_context,
+        source_turn_id="turn-parent",
         initial_taint_sources=[
             TaintSource(
                 source_type=TaintSourceType.EMAIL,
@@ -927,6 +928,8 @@ async def test_submit_async_observe_review_is_detached_and_drained_on_close(
     assert len(reviews) == 1
     assert reviews[0]["review_verdict"] == ToolCallReviewVerdict.DENY.value
     assert reviews[0]["review_status"] == ToolCallReviewStatus.MODEL_VERDICT.value
+    # Audited under the delegating turn, so it joins that turn's other rows.
+    assert reviews[0]["turn_id"] == "turn-parent"
 
 
 @pytest.mark.asyncio

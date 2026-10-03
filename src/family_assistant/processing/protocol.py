@@ -185,6 +185,7 @@ class PollableDelegationService(Protocol):
         initial_taint_sources: Sequence[TaintSource] | None = None,
         acting_user_id: str | None = None,
         initial_taint_state: TurnTaintState | None = None,
+        source_turn_id: str | None = None,
     ) -> RemoteSubmission:
         """Submit without a client-supplied task id; the remote assigns one.
 
@@ -196,7 +197,8 @@ class PollableDelegationService(Protocol):
         template or look up prior delegation state; remote implementations may
         ignore them. ``acting_user_id`` is the run's owner, for an
         implementation that resolves owner-scoped artifacts (attachments)
-        rather than only text.
+        rather than only text. ``source_turn_id`` is the delegating turn, for
+        an implementation that audits a decision on that turn's behalf.
         """
         ...
 

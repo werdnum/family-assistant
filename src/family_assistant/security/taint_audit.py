@@ -47,7 +47,9 @@ def taint_audit_sources(
 
     Externally authored source metadata is deliberately stubbed, just as it is
     in the reviewer prompt's provenance digest: the audit says that an
-    untrusted source was present, not what it said.
+    untrusted source was present, not what it said. The source type and the
+    introducing tool's name are registry-controlled rather than authored, so
+    they survive the stub and keep the row attributable.
     """
     summaries: list[TaintAuditSourceSummary] = []
     for source in state.sources[:max_sources]:
@@ -56,6 +58,9 @@ def taint_audit_sources(
             # These are enum-backed, closed-vocabulary provenance fields.
             "source_type": source.source_type.value,
             "tier": source.tier.config_value,
+            "tool_name": bounded_audit_text(source.tool_name, 255)
+            if source.tool_name is not None
+            else None,
             "source_id": bounded_audit_text(source.source_id, 256)
             if trusted and source.source_id is not None
             else None,
