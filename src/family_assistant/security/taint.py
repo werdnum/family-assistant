@@ -2164,12 +2164,14 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
         state = state.add_source(source, from_history=True)
     if not state.sources:
         return None
-    persisted_max_tier = TurnTaintState.from_metadata(metadata).max_tier
-    if persisted_max_tier > state.max_tier:
+    persisted = TurnTaintState.from_metadata(metadata, preserve_origin=True)
+    if persisted.max_tier > state.max_tier:
         state = replace(
             state,
-            max_tier=persisted_max_tier,
-            introduced_max_tier=persisted_max_tier,
+            max_tier=persisted.max_tier,
+            introduced_max_tier=max(
+                state.introduced_max_tier, persisted.introduced_max_tier
+            ),
         )
     restamped = state.to_metadata()
     original_version = _metadata_version(cast("Mapping[str, object]", metadata))

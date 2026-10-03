@@ -32,6 +32,12 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     stamp_model_selection,
 )
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.turn_resumption import (
     TURN_RESUME_TASK_TYPE,
     TurnLeaseRegistry,
@@ -338,6 +344,76 @@ async def test_resumed_turn_finishes_from_its_persisted_rows(
     assert [row.role for row in rows] == ["user", "assistant", "tool", "assistant"]
     assert isinstance(rows[-1], AssistantMessage)
     assert rows[-1].content == RESUMED_REPLY
+
+
+async def test_resumed_turn_keeps_the_taint_its_interrupted_run_introduced(
+    app_fixture: FastAPI,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    lease_registry: TurnLeaseRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    api_mock_llm_client.rules.append((
+        _reply_after_tool_result,
+        LLMOutput(content=RESUMED_REPLY, tool_calls=None, reasoning_info=_usage()),
+    ))
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    search_taint = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="web_search",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="web_search output",
+            )
+        )
+        .to_metadata()
+    )
+    await _add_turn_row(
+        db, UserMessage.from_trusted_user(content=PROMPT), conversation_id, turn_id
+    )
+    await _add_turn_row(
+        db,
+        AssistantMessage(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_1",
+                    type="function",
+                    function=ToolCallFunction(name="web_search", arguments="{}"),
+                )
+            ],
+        ),
+        conversation_id,
+        turn_id,
+    )
+    await _add_turn_row(
+        db,
+        ToolMessage(
+            tool_call_id="call_1",
+            name="web_search",
+            content="Search results.",
+            taint_metadata=search_taint,
+        ),
+        conversation_id,
+        turn_id,
+    )
+
+    await _resume(lease_registry, db, conversation_id, turn_id)
+
+    await wait_for_condition(
+        _turn_status(hub, conversation_id, turn_id, "complete"),
+        description="resumed turn complete",
+    )
+    rows = await db.message_history.get_by_turn_id(turn_id)
+    final = rows[-1]
+    assert isinstance(final, AssistantMessage)
+    assert final.taint_metadata is not None
+    assert final.taint_metadata.get("introduced_max_tier") == "unknown_external"
 
 
 async def test_resumed_turn_puts_turn_context_back_after_the_prompt(

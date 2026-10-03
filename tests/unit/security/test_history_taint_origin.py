@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from family_assistant.security.taint import (
     DEFAULT_MAX_SOURCES,
+    LEGACY_MISSING_TAINT_METADATA_LABEL,
     PRE_ORIGIN_TAINT_METADATA_VERSION,
     TAINT_METADATA_VERSION,
     InMemoryTurnTaintTracker,
@@ -19,6 +20,7 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
     prompt_window_taint,
     raise_taint_state_to,
+    strip_legacy_labeled_echoes,
 )
 
 
@@ -282,3 +284,26 @@ def test_evicted_carry_in_is_not_promoted_to_introduced() -> None:
 
     assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert state.introduced_max_tier is SourceTrustTier.TRUSTED_INTERNAL
+
+
+def test_stripping_an_inherited_echo_keeps_the_rows_introduced_maximum() -> None:
+    echo = TaintSource(
+        source_type=TaintSourceType.MANUAL,
+        source_id=None,
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({LEGACY_MISSING_TAINT_METADATA_LABEL}),
+        reason="Legacy fallback echo.",
+        inherited=True,
+    )
+    row = (
+        TurnTaintState
+        .empty()
+        .add_source(echo, from_history=True)
+        .add_source(_user_typed())
+        .to_metadata()
+    )
+
+    stripped = strip_legacy_labeled_echoes(row)
+
+    assert stripped is not None
+    assert stripped.get("introduced_max_tier") == "trusted_user"
