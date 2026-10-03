@@ -608,6 +608,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     else:
                         raise
 
+            if attachment_ids:
+                try:
+                    await self.telegram_service.chat_interface._send_attachments(
+                        chat_id=chat_id,
+                        attachment_ids=attachment_ids,
+                        reply_to_msg_id=reply_to_message_id,
+                        on_behalf_of_user_id=on_behalf_of_user_id,
+                    )
+                except Exception as attachment_err:
+                    logger.exception(
+                        f"Failed to send attachments {attachment_ids}: {attachment_err}"
+                    )
+
+            # Stamped last: the stamp is what marks the reply delivered, so a
+            # process that stops before its attachments go out leaves the reply
+            # to be sent again in full rather than losing the attachments.
             if sent_assistant_message and assistant_internal_id is not None:
                 try:
                     await self.database.message_history.update_interface_id(
@@ -625,19 +641,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 logger.warning(
                     f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({assistant_internal_id}) to update."
                 )
-
-            if attachment_ids:
-                try:
-                    await self.telegram_service.chat_interface._send_attachments(
-                        chat_id=chat_id,
-                        attachment_ids=attachment_ids,
-                        reply_to_msg_id=reply_to_message_id,
-                        on_behalf_of_user_id=on_behalf_of_user_id,
-                    )
-                except Exception as attachment_err:
-                    logger.exception(
-                        f"Failed to send attachments {attachment_ids}: {attachment_err}"
-                    )
         elif error_traceback and reply_to_message_id:
             error_message_to_send = (
                 "Sorry, something went wrong while processing your request."
@@ -815,6 +818,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     ),
                 )
             return
+        finally:
+            # Covers failures before the turn reaches _active_turn, whose own
+            # cleanup would otherwise never run for the slot reserved for it.
+            self._release_turn_slot(chat_id, controller)
         if pending_mid_turn_batch:
             await self.process_batch(
                 chat_id=chat_id,

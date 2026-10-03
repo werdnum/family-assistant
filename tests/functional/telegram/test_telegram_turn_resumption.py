@@ -430,8 +430,14 @@ async def test_redelivered_reply_carries_its_tool_attachments(
     sent_attachment_ids: list[list[str]] = []
     real_send_attachments = chat_interface._send_attachments
 
+    still_undelivered_while_sending: list[bool] = []
+
     async def spy_send_attachments(**kwargs: Any) -> Any:  # noqa: ANN401
         sent_attachment_ids.append(list(kwargs["attachment_ids"]))
+        still_undelivered_while_sending.append(
+            await fix.database.message_history.get_undelivered_terminal_reply(turn_id)
+            is not None
+        )
         return await real_send_attachments(**kwargs)
 
     monkeypatch.setattr(chat_interface, "_send_attachments", spy_send_attachments)
@@ -440,3 +446,45 @@ async def test_redelivered_reply_carries_its_tool_attachments(
 
     await assert_bot_sent_message(fix.telegram_client, RESUMED_REPLY, timeout=10)
     assert sent_attachment_ids == [[attachment.attachment_id]]
+    # Marked delivered only once the attachments are out, so a process that
+    # stops in between sends the reply again rather than losing them.
+    assert still_undelivered_while_sending == [True]
+
+
+@pytest.mark.asyncio
+async def test_failed_resume_setup_frees_the_chat(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resume that fails before it runs gives the chat back, so the next
+    message starts a turn of its own instead of queueing on a dead one."""
+    fix = telegram_handler_fixture
+    mock_llm = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    mock_llm.rules = [(lambda kwargs: True, LLMOutput(content="Fresh answer"))]
+    turn_id = str(uuid.uuid4())
+    await _seed_turn(
+        fix,
+        turn_id,
+        [
+            UserMessage.from_trusted_user(content="What's on my notes list?"),
+            AssistantMessage(content="", tool_calls=[_note_tool_call("call_1")]),
+        ],
+    )
+
+    async def failing_model_selection(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("transient database error")
+
+    monkeypatch.setattr(
+        "family_assistant.telegram.handler.resumed_model_selection",
+        failing_model_selection,
+    )
+    await _resume(fix, turn_id)
+    await assert_bot_sent_message(
+        fix.telegram_client, "Sorry, an unexpected error occurred", timeout=10
+    )
+    sent = await fix.telegram_client.send_message("Something else")
+    update = Update.de_json(sent.get("result", {}), fix.bot)
+
+    await fix.handler.message_handler(update, create_mock_context(fix.application))
+
+    await assert_bot_sent_message(fix.telegram_client, "Fresh answer", timeout=10)
