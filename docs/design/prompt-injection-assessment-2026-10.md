@@ -218,9 +218,11 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    producing the per-tool attribution table that the first run could not.
 4. **Tag hygiene.** Confirm whether delegation results default to untrusted because of a tag
    mismatch between repository and deployment config, or because the children genuinely read the
-   web; fix the former. Confirm the engineer profile's database and log reads need the untrusted
-   tag, given that profile's side effects are already judged by static review. Verified by the share
-   of turns untrusted before their first tool call falling in the next audit.
+   web. Confirm whether the engineer profile's database and log reads need the untrusted tag, given
+   that profile's side effects are already judged by static review. Either answer is a valid
+   outcome: a mismatch is fixed, and a justified tag is kept and its justification recorded here.
+   Verified, for a fixed mismatch, by delegation's share of in-turn introductions falling in the
+   next audit; for a retained tag, by the measured share being reported with the reason it stands.
 5. **Verify the ambient-write gate.** In a throwaway conversation, read a web page, then write a
    note with `include_in_prompt` set. Verified by an `ambient_prompt_write` audit event. If none
    appears, the gate is not wired, and that is a bug to fix, not a design to write.
