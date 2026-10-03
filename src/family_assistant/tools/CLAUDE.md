@@ -130,7 +130,7 @@ infrastructure is added.
 ## Special Context Injection
 
 `LocalToolsProvider` injects a parameter automatically when its name and annotation match:
-`exec_context: ToolExecutionContext`, `db_context: DatabaseContext`,
+`exec_context: ToolExecutionContext`, `db_context: Database`,
 `embedding_generator: EmbeddingGenerator`, or `calendar_config: dict[str, Any]`. The calendar config
 comes from `exec_context.calendar_config`, which the processing service sets to the profile's
 effective calendars; anything else that needs it (a confirmation renderer, say) reads it there too.
@@ -238,15 +238,13 @@ and falls back to `ToolFallback` when there is no entry. Components receive `arg
 Create a custom UI when the tool is frequently used by end users, has complex parameters (scripts,
 schedules, JSON configs), needs domain-specific result visualization, or is part of a larger feature
 (automations, calendar, tasks). Skip it for internal/diagnostic tools, tools with one or two basic
-parameters, and rarely-used administrative tools — `ToolFallback` handles those, and it also remains
-the comprehensive parameter view for tools that do have custom UIs.
+parameters, and rarely-used administrative tools — `ToolFallback` handles those with a one-line
+summary, keeping the raw arguments and result behind its Details disclosure.
 
 Practical points:
 
 - Use the `CodeHighlight` wrapper already defined in `ToolUI.jsx` for scripts and code rather than
   importing `react-syntax-highlighter` directly; it lazy-loads Prism and its theme.
-- Use `ToolParameterViewer` (`@/components/tools/ToolParameterViewer`, default export, props `data`
-  and `toolName`) for complex or complete parameter dumps, and custom markup for the key fields.
 - Show status (pending, success, error) and surface errors prominently; put detail in expandable
   sections.
 

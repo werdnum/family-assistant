@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Guidelines"
+  short_description: "Family Assistant code review standards"
+  default_prompt: "Review this change against the Family Assistant review guidelines."

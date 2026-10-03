@@ -5,8 +5,8 @@ End-to-end tests for automations, the event system, and delegation, in
 
 ## Fixtures
 
-These tests take `db_engine` (from `tests/conftest.py`) and open their own `DatabaseContext` /
-`get_db_context(engine=...)`; there is no shared `db_context` or `assistant` fixture.
+These tests take `db_engine` (from `tests/conftest.py`) and build their own `Database(engine=...)`
+handle; there is no shared `db_context` or `assistant` fixture.
 
 `task_worker_manager` (function scope, `tests/conftest.py`) yields a **factory**, not a worker. Call
 it with a `ProcessingService` and a chat interface to get

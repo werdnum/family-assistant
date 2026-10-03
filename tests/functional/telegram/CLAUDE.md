@@ -17,7 +17,7 @@ Function-scoped, defined in `tests/functional/telegram/conftest.py`. Yields a
 - `mock_confirmation_manager` — `AsyncMock` replacing `confirmation_manager.request_confirmation`
 - `application` — real Telegram `Application`
 - `processing_service` / `tools_provider` — the assistant's defaults
-- `get_db_context_func` — async context manager factory for `DatabaseContext`
+- `database` — the `Database` handle the assistant was built with
 - `telegram_client` — `TelegramTestClient` (`tests/mocks/telegram_test_server.py`) for simulating
   user input
 

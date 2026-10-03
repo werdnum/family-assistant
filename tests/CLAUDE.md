@@ -73,8 +73,8 @@ per test. Requesting it forces the test to the postgres backend only.
 SQLite engine for performance-critical **read-only** tests; state persists across tests in the
 session. One database file per `pytest-xdist` worker.
 
-**`api_db_context`** (function scope, `tests/functional/web/conftest.py`) — an already-entered
-`DatabaseContext` over `db_engine`, so API tests can call repository methods directly.
+**`api_db_context`** (function scope, `tests/functional/web/conftest.py`) — a `Database` handle over
+`db_engine`, so API tests can call repository methods directly.
 
 ### Task Worker Fixtures
 

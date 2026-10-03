@@ -60,7 +60,8 @@ and whether the change does the right thing.
 **Always prefer throwing an error to a graceful fallback.** This is one of the most important
 principles to enforce during review — graceful fallbacks routinely mask real bugs, produce confusing
 downstream symptoms, and cause more problems than they solve. See
-[docs/development/error-handling.md](docs/development/error-handling.md) for the full rationale.
+[docs/development/error-handling.md](../../../../docs/development/error-handling.md) for the full
+rationale.
 
 **Block** the following patterns as `ERROR_HANDLING_ISSUE` or `LOGIC_ERROR`:
 
@@ -321,8 +322,8 @@ Examples:
 
 **Exit Code Impact: 2 (blocking)**
 
-See **[docs/development/error-handling.md](docs/development/error-handling.md)** for comprehensive
-guidelines.
+See **[docs/development/error-handling.md](../../../../docs/development/error-handling.md)** for
+comprehensive guidelines.
 
 Improper error handling that masks bugs, creates confusing errors, or silently loses data:
 

@@ -9,8 +9,6 @@ This file provides guidance for working with GitHub Actions workflows.
   for each. Triggers on push to `main` and on pull requests.
 - **`build-containers.yml`**: builds and pushes the application and devcontainer images.
 - **`ios-tests.yml`**: iOS app tests (`workflow_call` / `workflow_dispatch`).
-- **`gemini-dispatch.yml`** plus the other `gemini-*.yml` files: Gemini-driven triage, review, and
-  plan/execute automation.
 - **`auto-request-review.yml`**: requests reviewers when a PR is opened or marked ready.
 
 ## When Working on CI Workflows
