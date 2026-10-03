@@ -143,6 +143,30 @@ and the adaptive-attack literature says no probabilistic layer survives a determ
 achievable end state is the one the industry occupies: enforced, measured, residual accepted and
 written down. By that standard the battle is nearly over, and the last move is not a mechanism.
 
+## The test every mechanism must pass
+
+The point of all of this infrastructure is to stratify risk. A mechanism earns its place only if it
+produces different outcomes for different risk in the traffic actually observed; one that returns
+the same answer for nearly everything, whether that answer is "tainted" or "allow", carries no
+information and buys nothing. Applied to the September data:
+
+| Mechanism                                                      | Discriminates in production                      | Disposition                               |
+| -------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| Profile confinement                                            | Yes, by entry point                              | Keep                                      |
+| Sink classes                                                   | Yes: 73% of evaluations audit, 18% adjudicate    | Keep, reduced to the egress question      |
+| Tool-call reviewer                                             | Yes: 74% allow, 22% confirm, 4% deny             | Keep                                      |
+| Static confirm list                                            | Yes: 0.6 prompts a day, 17 of 18 approved        | Keep                                      |
+| Ambient-write admission                                        | Unknown: never fired                             | Verify, milestone 5                       |
+| Executable-definition cure                                     | Partly: 10.8% of evaluations carry uncured fires | Restamp, milestone 2                      |
+| Source tiers                                                   | No: only the two poles occur                     | Collapse to household, reviewed, external |
+| History carry-in                                               | No: 81.5% of turns tainted before any tool call  | Fix, milestone 2                          |
+| Outcome lattice, floors, operator minimum, redact, mode switch | No: never exercised                              | Delete, milestone 7                       |
+
+Two consequences follow. A flag that is on for most turns is not a taint signal, it is a constant,
+and the re-baking defect turned the turn-level tier into one; milestone 2 restores the signal. And
+the parts of the framework that have never produced a second outcome are not defence in depth, they
+are surface area, and the thirty-day milestone removes them.
+
 ## Decision
 
 Switch `taint_policy.mode` to `enforce` with the matrix as shipped and no new code, review the 14
@@ -236,12 +260,26 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    from tainted stretches through the existing write-time admission review, so they land as
    `machine_reviewed` only on a judge verdict. That choice waits for the thirty-day review. Verified
    for now by the two queries producing a number.
-7. **Contingent, on evidence only.** After thirty days of enforce, if the audit indicts a cell:
+7. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
+   matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
+   `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
+   `require_taint_enforcement`. Collapse the six tiers to the three predicates the code already
+   asks: household-authored, machine-reviewed, externally authored. Keep per-row and per-artifact
+   provenance, sink resolution reduced to "is this call egress, sandbox or an external message", the
+   reviewer's provenance-selected view, and the admission gates on stored artifacts. In the taint
+   module that is roughly lines 980 to 1812 of 2,163, plus most of the tracking provider's
+   evaluation plumbing and about 450 lines of configuration reference. What remains is the Chrome
+   agent's shape with better artifact provenance: a reviewer that runs on egress when the turn
+   carries external content, sees only household-authored rows, and a write-time gate on anything
+   that becomes ambient. Subtractive by construction. Verified by the reviewer's verdict
+   distribution on the following thirty days matching the preceding thirty, with the deleted
+   configuration keys rejected at startup.
+8. **Contingent, on evidence only.** After thirty days of enforce, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
    largest confirm category with a rule; calendar provenance wired into the context provider, which
    is a tag fix; an allowlist egress proxy around worker and script sandboxes, which would retire
-   the largest cell and all the shell denies. Each is substitutive. Each needs a number from
-   milestone 3 before it starts.
+   the largest cell and all the shell denies; a handback-aware split of browser egress. Each is
+   substitutive. Each needs a number from milestone 3 before it starts.
 
 ## Deliberate simplifications and accepted residuals
 
