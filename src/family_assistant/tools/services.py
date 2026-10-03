@@ -24,6 +24,7 @@ from family_assistant.llm.model_selection import (
     resolve_model_selection,
 )
 from family_assistant.security.taint import (
+    SourceTrustTier,
     TaintMetadata,
     TaintSource,
     TaintSourceType,
@@ -538,6 +539,7 @@ async def _run_synchronous_delegation(
         )
         await _merge_delegated_result_taint(
             exec_context,
+            target_service_id=target_service_id,
             subconversation_id=subconversation_id,
             parent_taint_metadata=None,
         )
@@ -550,6 +552,7 @@ async def _run_synchronous_delegation(
     # carry the caller's state.
     await _merge_delegated_result_taint(
         exec_context,
+        target_service_id=target_service_id,
         subconversation_id=subconversation_id,
         parent_taint_metadata=None,
     )
@@ -589,6 +592,7 @@ async def _run_synchronous_delegation(
 async def delegated_result_taint_metadata(
     db_context: DatabaseExecutor,
     *,
+    target_service_id: str,
     interface_type: str,
     conversation_id: str,
     subconversation_id: str,
@@ -602,7 +606,10 @@ async def delegated_result_taint_metadata(
     merged stamps of the rows persisted in its subconversation -- with the
     caller's taint folded in (max wins). When the delegate left no stamped row
     behind, the result's provenance is unknown and it is treated as
-    unknown_external rather than as the caller's state.
+    unknown_external rather than as the caller's state. That is the normal case
+    for a pollable target (a remote A2A agent, an Interactions API agent), whose
+    reads happen outside this application, so the source names the target: the
+    audit then attributes the taint to that agent rather than to a gap.
     """
     result_metadata = (
         await db_context.message_history.get_merged_taint_metadata_for_subconversation(
@@ -611,14 +618,25 @@ async def delegated_result_taint_metadata(
             subconversation_id=subconversation_id,
         )
     )
-    merged = TurnTaintState.from_metadata(
-        result_metadata
-        if result_metadata is not None
-        else unknown_external_taint_metadata(
-            "Delegated result taint unavailable; conservatively treated as "
-            "unknown external."
+    if result_metadata is None:
+        merged = TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"delegate_to_service:{target_service_id}",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason=(
+                    f"Result of delegation to '{target_service_id}', which left "
+                    "no message history here: its reads happened outside this "
+                    "application (a remote or provider-hosted agent) or it failed "
+                    "before persisting any. Treated as unknown external."
+                ),
+            )
         )
-    ).with_sensitive_reads_from(result_metadata)
+    else:
+        merged = TurnTaintState.from_metadata(
+            result_metadata
+        ).with_sensitive_reads_from(result_metadata)
 
     if parent_taint_metadata is not None:
         parent_state = TurnTaintState.from_metadata(parent_taint_metadata)
@@ -647,6 +665,7 @@ async def delegation_run_result_taint_metadata(
     """Taint for the result of a durable delegation run."""
     return await delegated_result_taint_metadata(
         db_context,
+        target_service_id=run["target_service_id"],
         interface_type=run["interface_type"],
         conversation_id=run["conversation_id"],
         subconversation_id=run["subconversation_id"],
@@ -657,6 +676,7 @@ async def delegation_run_result_taint_metadata(
 async def _merge_delegated_result_taint(
     exec_context: ToolExecutionContext,
     *,
+    target_service_id: str,
     subconversation_id: str,
     parent_taint_metadata: TaintMetadata | None,
 ) -> None:
@@ -665,6 +685,7 @@ async def _merge_delegated_result_taint(
         return
     metadata = await delegated_result_taint_metadata(
         exec_context.db_context,
+        target_service_id=target_service_id,
         interface_type=_delegation_interface_type(exec_context),
         conversation_id=exec_context.conversation_id,
         subconversation_id=subconversation_id,
@@ -760,6 +781,7 @@ async def _inline_delegation_result(
 
     await _merge_delegated_result_taint(
         exec_context,
+        target_service_id=target_service_id,
         subconversation_id=run["subconversation_id"],
         parent_taint_metadata=run["taint_state_json"],
     )

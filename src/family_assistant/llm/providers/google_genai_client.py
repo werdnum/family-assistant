@@ -2260,6 +2260,14 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
             if last_event_id:
                 done_metadata["last_event_id"] = last_event_id
+            # Both agents read the open web server-side and quote it back.
+            done_metadata["provider_external_read"] = {
+                "source_id": f"{self.agent_operation_name}:{interaction_id or self.model_name}",
+                "reason": (
+                    f"{agent_label} read the web on the provider's side; its "
+                    "reply carries what it read."
+                ),
+            }
 
             run_usage = self._reasoning_info_from_interaction_usage(interaction_usage)
             if thought_summaries:
