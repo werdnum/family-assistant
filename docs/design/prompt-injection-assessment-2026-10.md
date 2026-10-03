@@ -232,16 +232,27 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    `sink_class = 'ambient_prompt_write'` carrying a verdict, and a missing row is a bug to fix, not
    a design to write. This proves note and skill admission only; the executable-definition gate is a
    separate path that cannot engage until milestone 3 gives it an adjudicating cell, and is verified
-   there. Then query `memory_change_log` outcomes and the admissible share of assistant rows. The
-   curator transcript omits every assistant row whose stored turn tier is untrusted, which in
-   production is most of them, so the curator reads user lines with the answers missing. Showing it
-   those rows is not the fix: the memory write invariant refuses any edit whose provenance is not
-   admissible for reuse, and a curator reading untrusted rows while it reads and writes household
-   memory would hold all three Rule-of-Two properties. If the query confirms the diagnosis, the
-   choice is between accepting the yield as the price of confinement and routing candidate entries
-   from tainted stretches through the existing write-time admission review, so they land as
-   `machine_reviewed` only on a judge verdict; that choice waits for the thirty-day review. Verified
-   by the two queries producing a number.
+   there. The memory queries have already been run, on 3 October, and confirm the diagnosis. Since
+   14 September the curator ran 90 reviews: 51 skipped on the outside-content gate before 26
+   September, 38 ended with no edits proposed, one applied three entries. Since the gate was
+   corrected, 38 of 39 reviews proposed nothing, and the proposal tool was called in none of the
+   last ten runs. The cause is the transcript: the curator omits every assistant row whose stored
+   turn tier is untrusted, and in reviewed conversations that is 94 percent of assistant rows, so a
+   typical twenty-row stretch reaches the curator as three or four isolated user lines in about
+   1,200 characters, with the answers missing and a system prompt that says nothing durable is the
+   common case. The store is near empty, so budget is not a factor. Showing the curator those rows
+   is not the fix: the memory write invariant refuses any edit whose provenance is not admissible
+   for reuse, and a curator reading untrusted rows while it reads and writes household memory would
+   hold all three Rule-of-Two properties. Two things change the picture before any decision.
+   Milestone 3 removes inherited taint from rows that introduced nothing, which is most of the
+   assistant rows on Telegram, where a conversation heals two hours after its last external read; on
+   the web, where the window is a hundred messages, a thread that searched once stays influenced for
+   most of its length. So the admissible share is re-measured after milestone 3. If it is still low,
+   the choice is between accepting the yield as the price of confinement and a confined pipeline
+   that keeps each stage inside the Rule of Two: an extractor that reads the full stretch and
+   nothing else and emits candidate entries stamped untrusted, the existing write-time admission
+   review deciding which land as `machine_reviewed`, and the curator merging only admitted
+   candidates. That choice waits for the thirty-day review.
 
 2. **Make the audit attributable.** Record each tool's own result tier alongside the running tier.
    Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation reviews.
@@ -344,12 +355,13 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    egress when the turn carries external content, sees household-authored intent plus
    machine-reviewed evidence and nothing else, and a write-time gate on anything that becomes
    ambient or executable. Subtractive by construction. The memory decision from milestone 1 is taken
-   in the same review. Verified three ways: representative stamps written before the collapse, one
-   per old tier name, classify under the predicates as they did before, including a
-   `trusted_internal` stamp staying ineligible as an originating request and as a destination echo;
-   the set of sink classes that reach the reviewer is unchanged; and the reviewer's allow, confirm
-   and deny shares over the following thirty days each sit within five percentage points of the
-   preceding thirty on the same cells, with the deleted configuration keys rejected at startup.
+   in the same review, against the admissible share re-measured after milestone 3. Verified three
+   ways: representative stamps written before the collapse, one per old tier name, classify under
+   the predicates as they did before, including a `trusted_internal` stamp staying ineligible as an
+   originating request and as a destination echo; the set of sink classes that reach the reviewer is
+   unchanged; and the reviewer's allow, confirm and deny shares over the following thirty days each
+   sit within five percentage points of the preceding thirty on the same cells, with the deleted
+   configuration keys rejected at startup.
 
 6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
