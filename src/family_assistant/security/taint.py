@@ -1163,6 +1163,44 @@ def merge_taint_state_origins(
     return merged
 
 
+def sources_explaining_state(
+    state: TurnTaintState, *, reason: str
+) -> tuple[TaintSource, ...]:
+    """``state``'s sources, plus a stand-in for each maximum they no longer explain.
+
+    The source list is bounded and a maximum is not, so replaying only the
+    sources into another state can lose a tier whose summary was evicted.
+    """
+    sources = list(state.sources)
+    introduced_tiers = [s.tier for s in sources if not s.inherited]
+    if state.introduced_max_tier > max(
+        introduced_tiers, default=SourceTrustTier.TRUSTED_USER
+    ):
+        sources.append(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=state.introduced_max_tier,
+                labels=frozenset(),
+                reason=reason,
+            )
+        )
+    if state.max_tier > max(
+        (s.tier for s in sources), default=SourceTrustTier.TRUSTED_USER
+    ):
+        sources.append(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=state.max_tier,
+                labels=frozenset(),
+                reason=reason,
+                inherited=True,
+            )
+        )
+    return tuple(sources)
+
+
 def raise_taint_state_to(
     state: TurnTaintState, tier: SourceTrustTier, *, reason: str
 ) -> TurnTaintState:

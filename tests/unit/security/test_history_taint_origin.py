@@ -20,6 +20,7 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
     prompt_window_taint,
     raise_taint_state_to,
+    sources_explaining_state,
     strip_legacy_labeled_echoes,
 )
 
@@ -307,3 +308,17 @@ def test_stripping_an_inherited_echo_keeps_the_rows_introduced_maximum() -> None
 
     assert stripped is not None
     assert stripped.get("introduced_max_tier") == "trusted_user"
+
+
+def test_replayed_sources_keep_a_maximum_whose_source_was_evicted() -> None:
+    state = TurnTaintState.empty().add_source(
+        _source(SourceTrustTier.UNKNOWN_EXTERNAL, "web_search")
+    )
+    for index in range(DEFAULT_MAX_SOURCES + 2):
+        state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
+
+    replayed = TurnTaintState.empty()
+    for source in sources_explaining_state(state, reason="Replayed."):
+        replayed = replayed.add_source(source)
+
+    assert replayed.introduced_max_tier is SourceTrustTier.UNKNOWN_EXTERNAL

@@ -44,6 +44,7 @@ from family_assistant.security.taint import (
     TaintPolicyOutcome,
     TurnTaintState,
     merge_history_taint,
+    sources_explaining_state,
 )
 from family_assistant.storage.delegation_runs import (
     historical_delegation_wake_content,
@@ -1792,10 +1793,13 @@ class ProcessingService:
             # this turn's own: what they introduced stays introduced.
             context_taint_sources = (
                 *context_taint_sources,
-                *merge_history_taint(
-                    await db_context.message_history.get_by_turn_id(turn_id),
-                    preserve_origin=True,
-                ).sources,
+                *sources_explaining_state(
+                    merge_history_taint(
+                        await db_context.message_history.get_by_turn_id(turn_id),
+                        preserve_origin=True,
+                    ),
+                    reason="Taint accumulated by the interrupted run of this turn.",
+                ),
             )
         return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
 
