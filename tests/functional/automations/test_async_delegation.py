@@ -3364,6 +3364,12 @@ async def test_a_pollable_run_that_persists_no_history_is_tainted_conservatively
     _, send_kwargs = chat_interface.send_message.await_args
     assert send_kwargs["taint_metadata"] is not None
     assert send_kwargs["taint_metadata"]["max_tier"] == "unknown_external"
+    # Attributed to the target, so the audit can say which agent introduced it.
+    assert [
+        (source["source_type"], source["source_id"])
+        for source in send_kwargs["taint_metadata"]["sources"]
+        if source["tier"] == "unknown_external"
+    ] == [("tool_output", "delegate_to_service:target_profile")]
 
 
 class _NoToolsProvider:

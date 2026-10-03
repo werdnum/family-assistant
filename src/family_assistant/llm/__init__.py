@@ -59,6 +59,17 @@ class ParsedSSEChunk(TypedDict, total=False):
     choices: list[ParsedChoice]
 
 
+class ProviderExternalRead(TypedDict):
+    """External content a provider read on its own side while answering.
+
+    A hosted agent that browses the web does so with no tool call on our side,
+    so nothing else records that its reply carries what it read.
+    """
+
+    source_id: str
+    reason: str
+
+
 class StreamEventMetadata(TypedDict, total=False):
     """Metadata attached to LLMStreamEvent, shape varies by event type."""
 
@@ -75,6 +86,7 @@ class StreamEventMetadata(TypedDict, total=False):
     error_type: str
     provider: str
     model: str
+    provider_external_read: ProviderExternalRead
 
 
 StreamingMetadata = StreamEventMetadata

@@ -21,6 +21,9 @@ from family_assistant.llm.messages import (
 from family_assistant.observability.metrics import TurnMetrics
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
     TurnTaintState,
     merge_taint_state_into_tracker,
     prompt_window_taint,
@@ -58,7 +61,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.plugins.runtime import ProfilePlugins
-    from family_assistant.security.taint import TaintSource, TurnTaintTracker
+    from family_assistant.security.taint import TurnTaintTracker
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
@@ -692,6 +695,7 @@ class LLMStreamingLoop:
                 accumulated_content = []
                 tool_calls_from_stream = []
                 done_provider_metadata = None
+                done_external_read = None
 
                 async def stream_events(
                     messages_for_attempt: list[LLMMessage],
@@ -701,6 +705,7 @@ class LLMStreamingLoop:
                     tool_calls_for_attempt: list[ToolCallItem],
                 ) -> AsyncGenerator[LLMStreamEvent]:
                     nonlocal done_provider_metadata, final_reasoning_info
+                    nonlocal done_external_read
                     async for event in llm_client.generate_response_stream(
                         messages=messages_for_attempt,
                         tools=tools_for_attempt,
@@ -723,6 +728,11 @@ class LLMStreamingLoop:
                             # Extract provider_metadata from done event if present
                             done_provider_metadata = (
                                 event.metadata.get("provider_metadata")
+                                if event.metadata
+                                else None
+                            )
+                            done_external_read = (
+                                event.metadata.get("provider_external_read")
                                 if event.metadata
                                 else None
                             )
@@ -823,6 +833,17 @@ class LLMStreamingLoop:
                 if retry_empty_response:
                     continue
                 break  # Success, exit while loop
+
+            if done_external_read is not None:
+                taint_tracker.add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.TOOL_OUTPUT,
+                        source_id=done_external_read["source_id"],
+                        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                        labels=frozenset(),
+                        reason=done_external_read["reason"],
+                    )
+                )
 
             # Combine accumulated content
             final_content = (
