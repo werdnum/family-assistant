@@ -200,8 +200,10 @@ Two configuration-only reductions were considered during review and rejected:
 
 **Framework freeze.** Until enforce has run for thirty days and the audit has been re-read:
 
-- No new tiers, sink classes, outcomes or admission states. The two middle tiers stay as they are;
-  the email allowlists stay empty until mailbox sync exists to populate them.
+- No new tiers, sink classes, outcomes or admission states, with the pre-flip corrections in
+  milestone 3 exempted by name: the one executable-definition sink cell, the propagation-rule fix
+  and the tag hygiene. The two middle tiers stay as they are; the email allowlists stay empty until
+  mailbox sync exists to populate them.
 - No input injection probe. Adaptive evaluation shows filter defences collapsing, and an
   escalate-only probe adds a classifier to a system whose judge already sees the payload.
 - No content-derived or value-level stamping.
@@ -273,13 +275,18 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    The same milestone makes the executable-definition creation gate actually run. Today an
    automation created by the default assistant in a tainted turn is stamped externally authored with
    no disposition and resolves uncured, so it shows up needing human review even though the gate
-   exists: `create_automation`, the listener and script tools all resolve to `artifact_write`, which
-   is `audit` at every externally authored tier, and a gate only engages where the cell adjudicates.
-   The executable-definition design assumed the risk document's executable-persistence sink split
-   and says so; that split was never built. It is the one addition this document makes to the sink
-   vocabulary, and it passes the stratification test by construction: a stored definition is future
-   unattended execution, which a note is not, so giving it its own cell that adjudicates at
-   externally authored tiers discriminates exactly where `artifact_write` cannot. The restamp script
+   exists: every tool that stamps a definition, the automation, listener and script tools and the
+   one-shot callback tools alike, resolves to `artifact_write`, which is `audit` at every externally
+   authored tier, and a gate only engages where the cell adjudicates. The executable-definition
+   design assumed the risk document's executable-persistence sink split and says so; that split was
+   never built. It is the one addition this document makes to the sink vocabulary, and it passes the
+   stratification test by construction: a stored definition is future unattended execution, which a
+   note is not, so giving it its own cell that adjudicates at externally authored tiers
+   discriminates exactly where `artifact_write` cannot. The cell is assigned through a chokepoint,
+   not a list of tools: one tag names a tool as an executable-definition writer, the sink resolver
+   maps that tag to the cell, and the stamping helper that every definition write already has to
+   pass through refuses to stamp from a call whose tool lacks the tag. A writer that forgets the tag
+   then fails loudly at its first write rather than slipping into the audit cell. The restamp script
    fills absent records only and never touches an existing one, so the definitions already stamped
    uncured since 23 September are reviewed by hand in the artifact review UI, which is a handful,
    and nothing new is built for them. The uncured fires in 10.8 percent of untrusted evaluations
@@ -302,8 +309,8 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    that now discriminates and with an audit that can say why. Re-read the shadow data after
    milestone 3 to state the expected prompt count; 2.6 a day is the ceiling, measured before the
    signal fix. Verified by the taint-audit endpoint showing confirm and deny outcomes with
-   `mode = enforce`, and by prompts per day in `confirmation_requests` landing at or under that
-   number.
+   `mode = enforce`, and by the median daily count in `confirmation_requests` over the first thirty
+   days of enforce landing at or under that number.
 
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
