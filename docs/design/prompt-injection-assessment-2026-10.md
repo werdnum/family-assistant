@@ -221,22 +221,24 @@ ahead of the flip are bounded corrections, not new mechanisms, and the flip is o
 configuration line: if they slip beyond a few weeks, flip anyway and fix under enforce.
 
 1. **Establish two facts.** Half a day of queries and one test. Exercise the ambient-write gate
-   once: it is implemented and wired, for notes and skills at `add_or_update_note` and for
-   automation and script definitions at their creation gate, and runs the reviewer synchronously in
-   observe mode too, but ambient writes are rare by instruction, an ungated write records nothing,
-   and it has had ten days in production. In a throwaway conversation, read a web page, then write a
-   note with `include_in_prompt` set; verified by a `taint_audit_events` row with
-   `event_type = 'ambient_note_admission'` and `sink_class = 'ambient_prompt_write'` carrying a
-   verdict, and a missing row is a bug to fix, not a design to write. Then query `memory_change_log`
-   outcomes and the admissible share of assistant rows. The curator transcript omits every assistant
-   row whose stored turn tier is untrusted, which in production is most of them, so the curator
-   reads user lines with the answers missing. Showing it those rows is not the fix: the memory write
-   invariant refuses any edit whose provenance is not admissible for reuse, and a curator reading
-   untrusted rows while it reads and writes household memory would hold all three Rule-of-Two
-   properties. If the query confirms the diagnosis, the choice is between accepting the yield as the
-   price of confinement and routing candidate entries from tainted stretches through the existing
-   write-time admission review, so they land as `machine_reviewed` only on a judge verdict; that
-   choice waits for the thirty-day review. Verified by the two queries producing a number.
+   once. It is implemented and wired for notes and skills at `add_or_update_note`, and runs the
+   reviewer synchronously in observe mode too, but ambient writes are rare by instruction, an
+   ungated write records nothing, and it has had ten days in production. In a throwaway
+   conversation, read a web page, then write a note with `include_in_prompt` set; verified by a
+   `taint_audit_events` row with `event_type = 'ambient_note_admission'` and
+   `sink_class = 'ambient_prompt_write'` carrying a verdict, and a missing row is a bug to fix, not
+   a design to write. This proves note and skill admission only; the executable-definition gate is a
+   separate path that cannot engage until milestone 3 gives it an adjudicating cell, and is verified
+   there. Then query `memory_change_log` outcomes and the admissible share of assistant rows. The
+   curator transcript omits every assistant row whose stored turn tier is untrusted, which in
+   production is most of them, so the curator reads user lines with the answers missing. Showing it
+   those rows is not the fix: the memory write invariant refuses any edit whose provenance is not
+   admissible for reuse, and a curator reading untrusted rows while it reads and writes household
+   memory would hold all three Rule-of-Two properties. If the query confirms the diagnosis, the
+   choice is between accepting the yield as the price of confinement and routing candidate entries
+   from tainted stretches through the existing write-time admission review, so they land as
+   `machine_reviewed` only on a judge verdict; that choice waits for the thirty-day review. Verified
+   by the two queries producing a number.
 
 2. **Make the audit attributable.** Record each tool's own result tier alongside the running tier.
    Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation reviews.
@@ -255,15 +257,18 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    keeps only an aggregate bit, so per-source origin is new state this milestone adds: each source
    carries whether it was introduced or inherited, and a source present in both resolves to
    introduced. The row keeps its merged `max_tier`, which is what the row *is*: the reviewer still
-   renders an influenced reply as a stub, and memory still refuses it. On the read side, history
-   contributes only the introduced sources of rows actually in the prompt window, never a stored
-   maximum. Taint then lasts exactly as long as the introducing text is in the prompt, which is the
-   right duration, and ends when it leaves. The same rule applies to a delegation's folded-back
-   state. The accepted residual is paraphrase beyond the window: a reply written under taint can
-   restate an injected instruction after the source has aged out, and that reply is in the prompt.
-   It carries no taint forward. Commodity injection relies on the attacker's own text being present,
-   the reviewer still sees the influenced row as a stub while it is in the window, and the
-   alternative is the infinite propagation this milestone removes.
+   renders an influenced reply as a stub, and memory still refuses it. Beside it the row persists an
+   introduced-tier maximum, because the source list is bounded to twelve entries and a child that
+   introduced one untrusted source and then enough lower-tier ones would otherwise evict the detail
+   that matters. On the read side, history contributes only the introduced sources and the
+   introduced-tier maximum of rows actually in the prompt window, never the merged maximum. Taint
+   then lasts exactly as long as the introducing text is in the prompt, which is the right duration,
+   and ends when it leaves. The same rule applies to a delegation's folded-back state. The accepted
+   residual is paraphrase beyond the window: a reply written under taint can restate an injected
+   instruction after the source has aged out, and that reply is in the prompt. It carries no taint
+   forward. Commodity injection relies on the attacker's own text being present, the reviewer still
+   sees the influenced row as a stub while it is in the window, and the alternative is the infinite
+   propagation this milestone removes.
 
    The same milestone makes the executable-definition creation gate actually run. Today an
    automation created by the default assistant in a tainted turn is stamped externally authored with
@@ -274,9 +279,11 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    and says so; that split was never built. It is the one addition this document makes to the sink
    vocabulary, and it passes the stratification test by construction: a stored definition is future
    unattended execution, which a note is not, so giving it its own cell that adjudicates at
-   externally authored tiers discriminates exactly where `artifact_write` cannot. Definitions
-   already stamped uncured, which fired at the untrusted tier in 10.8 percent of untrusted
-   evaluations, are then restamped with the existing script.
+   externally authored tiers discriminates exactly where `artifact_write` cannot. The restamp script
+   fills absent records only and never touches an existing one, so the definitions already stamped
+   uncured since 23 September are reviewed by hand in the artifact review UI, which is a handful,
+   and nothing new is built for them. The uncured fires in 10.8 percent of untrusted evaluations
+   come from both populations.
 
    Tag hygiene belongs here too. Confirm whether delegation results default to untrusted because of
    a tag mismatch between repository and deployment config, or because the children genuinely read
