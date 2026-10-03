@@ -222,26 +222,29 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    those stamps the rows after it, and a conversation never heals: the Telegram window is ten
    messages or two hours, yet 81.5 percent of untrusted turns were untrusted before their first tool
    call. The correction has two halves. On the write side, a row persists only the sources its own
-   turn introduced; the tracker already knows which those are, because `add_source` is told whether
-   a source came from history, and that distinction is currently thrown away at serialisation. The
-   row keeps its merged `max_tier`, which is what the row *is*: the reviewer still renders an
-   influenced reply as a stub, and memory still refuses it. On the read side, history contributes
-   only the introduced sources of rows actually in the prompt window, never a stored maximum. Taint
-   then lasts exactly as long as the introducing text is in the prompt, which is the right duration,
-   and ends when it leaves. The same rule applies to a delegation's folded-back state. Uncured
-   automation definitions, which fired at the untrusted tier in 10.8 percent of untrusted
-   evaluations, are restamped with the existing script in the same milestone. The accepted residual
-   is paraphrase beyond the window: a reply written under taint can restate an injected instruction
-   after the source has aged out, and that reply is in the prompt. It carries no taint forward.
-   Commodity injection relies on the attacker's own text being present, the reviewer still sees the
-   influenced row as a stub while it is in the window, and the alternative is the infinite
+   turn introduced. The tracker is told at `add_source` whether a source came from history, but it
+   keeps only an aggregate bit, so per-source origin is new state this milestone adds: each source
+   carries whether it was introduced or inherited, and a source present in both resolves to
+   introduced. The row keeps its merged `max_tier`, which is what the row *is*: the reviewer still
+   renders an influenced reply as a stub, and memory still refuses it. On the read side, history
+   contributes only the introduced sources of rows actually in the prompt window, never a stored
+   maximum. Taint then lasts exactly as long as the introducing text is in the prompt, which is the
+   right duration, and ends when it leaves. The same rule applies to a delegation's folded-back
+   state. Uncured automation definitions, which fired at the untrusted tier in 10.8 percent of
+   untrusted evaluations, are restamped with the existing script in the same milestone. The accepted
+   residual is paraphrase beyond the window: a reply written under taint can restate an injected
+   instruction after the source has aged out, and that reply is in the prompt. It carries no taint
+   forward. Commodity injection relies on the attacker's own text being present, the reviewer still
+   sees the influenced row as a stub while it is in the window, and the alternative is the infinite
    propagation this milestone removes. Verified by the share of turns untrusted before their first
    tool call falling from 81.5 percent to the share whose window genuinely holds an introducing row,
    and by Telegram turns more than two hours after a web search starting clean.
 3. **Make the next audit attributable.** Record each tool's own result tier alongside the running
    tier. Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation
    reviews. Make confirmation expiry run. Verified by a re-run of the September audit queries
-   producing the per-tool attribution table that the first run could not.
+   producing the per-tool attribution table that the first run could not, and separately by the two
+   May requests reaching `expired` and a query for pending rows past `expires_at` returning none
+   after the sweep.
 4. **Tag hygiene.** Confirm whether delegation results default to untrusted because of a tag
    mismatch between repository and deployment config, or because the children genuinely read the
    web. Confirm whether the engineer profile's database and log reads need the untrusted tag, given
@@ -253,9 +256,10 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    `add_or_update_note` and for automation and script definitions at their creation gate, and it
    runs the reviewer synchronously in observe mode too. It simply has not been reached: ambient
    writes are rare by instruction, and an ungated write records nothing. In a throwaway
-   conversation, read a web page, then write a note with `include_in_prompt` set. Verified by an
-   `ambient_prompt_write` review event with a verdict. If none appears, that is a bug to fix, not a
-   design to write.
+   conversation, read a web page, then write a note with `include_in_prompt` set. Verified by a
+   `taint_audit_events` row with `event_type = 'ambient_note_admission'` and
+   `sink_class = 'ambient_prompt_write'` carrying a verdict. If none appears, that is a bug to fix,
+   not a design to write.
 6. **Memory yield.** Query `memory_change_log` outcomes and the admissible share of assistant rows.
    The curator transcript omits every assistant row whose stored turn tier is untrusted, which in
    production is most of them, so the curator reads user lines with the answers missing. Showing it
