@@ -304,9 +304,13 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    discriminates exactly where `artifact_write` cannot. The cell is assigned through a chokepoint,
    not a list of tools: one tag names a tool as an executable-definition writer, the sink resolver
    maps that tag to the cell, and a unit test derives the set of definition writers from the code
-   itself, every registered tool whose implementation reads the creation gate's outcome, and fails
-   when that set and the tagged set differ. A writer that forgets the tag then fails in CI, before
-   it can ship, rather than slipping into the audit cell. This is built in PR #1342, which adds the
+   itself and fails when that set and the tagged set differ. The set must come from the stamping
+   chokepoint that the existing conformance rule already forces every definition write through, not
+   from which tools read the gate's outcome: a writer that stamps without consulting the gate would
+   otherwise be absent from both sets and pass. A writer that forgets the tag then fails in CI,
+   before it can ship. Should one slip through anyway, the failure is on the safe side: its
+   definitions are stamped uncured and fire as untrusted until a person reviews them, which is what
+   happens to every tainted definition today. This is built in PR #1342, which adds the
    `executable_persistence` tag and sink, adjudicating with a confirm fallback at every externally
    authored tier, with the observe-mode review off the critical path so it costs nothing until
    enforce. The restamp script fills absent records only and never touches an existing one, so the
@@ -325,9 +329,9 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    hours after a web search starting clean; by a row written before the change, carrying a web
    source, still tainting the next turn inside its window and not after; by a tainted-turn
    automation creation producing a reviewer verdict and a cured record; by the writer-set test
-   failing when a registered tool that reads the gate outcome lacks the tag; and, for tag hygiene,
-   by delegation's share of in-turn introductions falling where a mismatch was fixed, or the
-   measured share being reported with the reason a tag stands.
+   failing when a tool that reaches the stamping chokepoint lacks the tag; and, for tag hygiene, by
+   delegation's share of in-turn introductions falling where a mismatch was fixed, or the measured
+   share being reported with the reason a tag stands.
 
 4. **Flip to enforce.** The mode change and the note review from the decision above, on a signal
    that now discriminates and with an audit that can say why. Re-read the shadow data after
