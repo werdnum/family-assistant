@@ -118,9 +118,11 @@ gate on egress.
 **Logging defects.** `result_taint` records the turn's running tier, not the tool's own. Audit
 sources redact external entries to identical stubs, so attribution is impossible from the audit
 table alone. Coder delegation reviews carry no turn id. Two confirmation requests from May are still
-pending past expiry. The ambient-write sink has no events: no ambient note or skill was written in a
-tainted turn in the window, and an ungated write records nothing, so the gate has no production
-evidence either way.
+pending past expiry. The ambient-write sink has no events, which is less surprising than it looks:
+the gate merged on 23 September (PR #1256), so it has had ten days in production, an event needs a
+note written with `include_in_prompt` or skill frontmatter in a turn carrying external material, the
+model is told to leave `include_in_prompt` off, and an ungated write records nothing. The gate has
+no production evidence either way.
 
 ## Why "one more" keeps happening
 
