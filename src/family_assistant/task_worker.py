@@ -298,7 +298,7 @@ def _taint_state_from_delegation_run(run: DelegationRunDict) -> TurnTaintState:
     """
     if run["taint_state_json"] is None:
         return TurnTaintState.empty()
-    return TurnTaintState.from_metadata(run["taint_state_json"])
+    return TurnTaintState.from_metadata(run["taint_state_json"], preserve_origin=True)
 
 
 async def _llm_callback_delivery_taint_metadata(
@@ -6602,7 +6602,7 @@ async def _build_confirmation_execution_context(
 
     tools_provider = processing_service.tools_provider
     taint_state = (
-        TurnTaintState.from_metadata(request["taint_state_json"])
+        TurnTaintState.from_metadata(request["taint_state_json"], preserve_origin=True)
         if request["taint_state_json"] is not None
         else None
     )
@@ -6726,7 +6726,7 @@ def _build_confirmation_notification_context(
 ) -> ToolExecutionContext:
     """Reconstruct enough context to notify the original conversation."""
     request_taint_state = (
-        TurnTaintState.from_metadata(request["taint_state_json"])
+        TurnTaintState.from_metadata(request["taint_state_json"], preserve_origin=True)
         if request["taint_state_json"] is not None
         else None
     )
@@ -6890,7 +6890,9 @@ def _confirmation_result_taint_metadata(
     if context.taint_tracker is not None:
         return context.taint_tracker.snapshot().to_metadata()
     if request["taint_state_json"] is not None:
-        return TurnTaintState.from_metadata(request["taint_state_json"]).to_metadata()
+        return TurnTaintState.from_metadata(
+            request["taint_state_json"], preserve_origin=True
+        ).to_metadata()
     return unknown_external_taint_metadata(
         "Confirmation result taint unavailable; conservatively treated as "
         "unknown external."

@@ -30,6 +30,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     merge_taint_state_into_tracker,
+    merge_taint_state_origins,
     unknown_external_taint_metadata,
 )
 from family_assistant.services.tool_call_review import (
@@ -156,7 +157,7 @@ def _taint_sources_from_metadata(
 ) -> tuple[TaintSource, ...]:
     if metadata is None:
         return ()
-    return TurnTaintState.from_metadata(metadata).sources
+    return TurnTaintState.from_metadata(metadata, preserve_origin=True).sources
 
 
 async def _delegation_review_trigger(
@@ -635,26 +636,15 @@ async def delegated_result_taint_metadata(
         )
     else:
         merged = TurnTaintState.from_metadata(
-            result_metadata
+            result_metadata, preserve_origin=True
         ).with_sensitive_reads_from(result_metadata)
 
     if parent_taint_metadata is not None:
-        parent_state = TurnTaintState.from_metadata(parent_taint_metadata)
-        for source in parent_state.sources:
-            merged = merged.add_source(source)
-        if parent_state.max_tier > merged.max_tier:
-            merged = merged.add_source(
-                TaintSource(
-                    source_type=TaintSourceType.MANUAL,
-                    source_id=None,
-                    tier=parent_state.max_tier,
-                    labels=frozenset(),
-                    reason=(
-                        "Parent delegation taint max_tier exceeded retained "
-                        "source summaries."
-                    ),
-                )
-            )
+        merged = merge_taint_state_origins(
+            merged,
+            TurnTaintState.from_metadata(parent_taint_metadata, preserve_origin=True),
+            reason="Parent delegation taint max_tier exceeded retained source summaries.",
+        )
     return merged.to_metadata()
 
 
@@ -693,7 +683,9 @@ async def _merge_delegated_result_taint(
     )
     merge_taint_state_into_tracker(
         exec_context.taint_tracker,
-        TurnTaintState.from_metadata(metadata).with_sensitive_reads_from(metadata),
+        TurnTaintState.from_metadata(
+            metadata, preserve_origin=True
+        ).with_sensitive_reads_from(metadata),
     )
 
 
@@ -1155,7 +1147,8 @@ def _merge_confirmed_delegation_taint(
             "treated as unknown external."
         )
     merge_taint_state_into_tracker(
-        exec_context.taint_tracker, TurnTaintState.from_metadata(metadata)
+        exec_context.taint_tracker,
+        TurnTaintState.from_metadata(metadata, preserve_origin=True),
     )
 
 

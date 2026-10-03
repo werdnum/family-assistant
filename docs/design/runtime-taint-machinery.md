@@ -473,6 +473,22 @@ This is conservative enough for prompt injection because tool outputs are the ma
 untrusted content, while assistant messages cover summaries and transformations that would otherwise
 lose provenance.
 
+A row's stamp is its turn's whole merged state, but a later turn's window read takes only what that
+row's own turn *introduced*. Each persisted source records whether it was introduced or inherited
+from the window, and the stamp carries an `introduced_max_tier` beside `max_tier`, because the
+retained source list is bounded. `prompt_window_taint()` builds a turn's starting state from those
+introduced parts, marking all of them inherited. Taint therefore lasts exactly as long as the
+introducing row is in the prompt: a reply that only inherited taint does not pass it on, so a
+conversation heals once the row that read the web leaves the window. The row's `max_tier` stays
+merged, since that is what the row *is*: the reviewer still renders an influenced reply as a stub,
+and memory still refuses it. Origin is turn-relative, so a stamp read back by a tool (a note's
+provenance, a searched message, a definition trigger) enters the reading turn as introduced. Only
+the paths that continue a turn keep the stamp's split: a delegation handoff and its folded-back
+result, and a turn's own rows. A row stamped before origin tracking (`runtime_v2`) contributes under
+the amnesty rule while it is in the window: its attributed sources, and nothing synthesized from its
+merged maximum. The accepted residual is paraphrase beyond the window, recorded in
+[prompt-injection-assessment-2026-10.md](prompt-injection-assessment-2026-10.md).
+
 This creates an important usability problem: if an old unknown-external email remains in the history
 window, every later turn starts with `max_tier=UNKNOWN_EXTERNAL`. The design handles that by
 distinguishing context taint from fresh taint:

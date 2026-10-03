@@ -18,7 +18,12 @@ from telegram import Update
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.turn_resumption import (
     TURN_RESUME_TASK_TYPE,
     TurnLeaseRegistry,
@@ -296,6 +301,57 @@ async def test_resumed_telegram_turn_replies_in_the_chat(
     await _resume(fix, turn_id)
 
     await assert_bot_sent_message(fix.telegram_client, RESUMED_REPLY, timeout=10)
+
+
+@pytest.mark.asyncio
+async def test_resumed_telegram_turn_keeps_the_taint_it_introduced(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+) -> None:
+    fix = telegram_handler_fixture
+    mock_llm = cast("RuleBasedMockLLMClient", fix.mock_llm)
+
+    def after_tool_result(kwargs: MatcherArgs) -> bool:
+        return any(message.role == "tool" for message in kwargs["messages"])
+
+    mock_llm.rules = [(after_tool_result, LLMOutput(content=RESUMED_REPLY))]
+    turn_id = str(uuid.uuid4())
+    search_taint = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="web_search",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="web_search output",
+            )
+        )
+        .to_metadata()
+    )
+    await _seed_turn(
+        fix,
+        turn_id,
+        [
+            UserMessage.from_trusted_user(content="What's on my notes list?"),
+            AssistantMessage(content="", tool_calls=[_note_tool_call("call_1")]),
+            ToolMessage(
+                tool_call_id="call_1",
+                name="add_or_update_note",
+                content="Saved.",
+                taint_metadata=search_taint,
+            ),
+        ],
+    )
+
+    await _resume(fix, turn_id)
+
+    await assert_bot_sent_message(fix.telegram_client, RESUMED_REPLY, timeout=10)
+    rows = await fix.database.message_history.get_by_turn_id(turn_id)
+    final = rows[-1]
+    assert isinstance(final, AssistantMessage)
+    assert final.taint_metadata is not None
+    assert final.taint_metadata.get("introduced_max_tier") == "unknown_external"
 
 
 @pytest.mark.asyncio

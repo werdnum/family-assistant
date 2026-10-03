@@ -41,6 +41,8 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_history_taint,
     merge_taint_state_into_tracker,
+    merge_taint_state_origins,
+    prompt_window_taint,
 )
 from family_assistant.services.confirmation_service import (
     ConfirmationService,
@@ -114,12 +116,14 @@ async def initial_turn_taint(
     *,
     interface_type: str,
     conversation_id: str,
+    resumed_turn_id: str | None = None,
 ) -> InitialTurnTaint:
     """Read the history and context taint a turn on this conversation starts with.
 
-    For a new turn this runs before its prompt is written. For a resumed turn
-    it runs after, so the history window includes the rows the interrupted run
-    already produced -- which is the taint that run had accumulated.
+    For a new turn this runs before its prompt is written. A resumed turn
+    starts where the interrupted run left off: the window the run started from,
+    plus the rows it already produced with their recorded origin -- they are
+    this turn's own, not carry-in.
     """
     history_limit, history_max_age = (
         processing_service.context_preparer.get_history_limits(interface_type)
@@ -132,8 +136,20 @@ async def initial_turn_taint(
         processing_profile_id=processing_service.service_config.id,
         subconversation_id=None,
         current_time=processing_service.clock.now(),
+        exclude_turn_id=resumed_turn_id,
     )
-    history_taint = merge_history_taint(history_messages).to_metadata()
+    history_state = prompt_window_taint(history_messages)
+    if resumed_turn_id is not None:
+        history_state = merge_taint_state_origins(
+            history_state,
+            merge_history_taint(
+                await db.message_history.get_by_turn_id(resumed_turn_id),
+                preserve_origin=True,
+            ),
+            from_history=True,
+            reason="Taint accumulated by the interrupted run of this turn.",
+        )
+    history_taint = history_state.to_metadata()
     context_taint_state = TurnTaintState.empty()
     # Gated exactly as the turn itself gates the context (see
     # ProcessingService._prepare_turn_messages_for_llm): a profile that never
@@ -145,7 +161,7 @@ async def initial_turn_taint(
             await processing_service.context_preparer.aggregate_context_taint_sources()
         ):
             context_taint_state = context_taint_state.add_source(source)
-    live_taint_state = TurnTaintState.from_metadata(history_taint)
+    live_taint_state = TurnTaintState.from_metadata(history_taint, preserve_origin=True)
     for source in context_taint_state.sources:
         live_taint_state = live_taint_state.add_source(source)
     return InitialTurnTaint(
@@ -255,7 +271,9 @@ async def run_turn_producer(
     final_reply_parts: list[str] = []
     latex_normalizer = StreamingLatexNormalizer()
     live_taint_tracker = InMemoryTurnTaintTracker(
-        TurnTaintState.from_metadata(initial_history_taint_metadata)
+        TurnTaintState.from_metadata(
+            initial_history_taint_metadata, preserve_origin=True
+        )
     )
     merge_taint_state_into_tracker(
         live_taint_tracker,
@@ -660,7 +678,9 @@ async def persist_stopped_reply(
         # plus any tool results committed before the stop).
         turn_messages = await db_context.message_history.get_by_turn_id(turn_id)
         stopped_taint_tracker = InMemoryTurnTaintTracker(
-            TurnTaintState.from_metadata(initial_history_taint_metadata)
+            TurnTaintState.from_metadata(
+                initial_history_taint_metadata, preserve_origin=True
+            )
         )
         merge_taint_state_into_tracker(
             stopped_taint_tracker,
@@ -668,11 +688,11 @@ async def persist_stopped_reply(
         )
         merge_taint_state_into_tracker(
             stopped_taint_tracker,
-            TurnTaintState.from_metadata(live_taint_metadata),
+            TurnTaintState.from_metadata(live_taint_metadata, preserve_origin=True),
         )
         merge_taint_state_into_tracker(
             stopped_taint_tracker,
-            merge_history_taint(turn_messages),
+            merge_history_taint(turn_messages, preserve_origin=True),
         )
         stopped_taint_metadata = stopped_taint_tracker.snapshot().to_metadata()
         await db_context.message_history.add_message(

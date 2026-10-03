@@ -433,7 +433,9 @@ async def persist_interrupted_marker(db: Database, payload: TurnResumePayload) -
     await db.message_history.add_message(
         AssistantMessage(
             content=INTERRUPTED_TURN_MARKER,
-            taint_metadata=merge_history_taint(turn_rows).to_metadata(),
+            taint_metadata=merge_history_taint(
+                turn_rows, preserve_origin=True
+            ).to_metadata(),
         ),
         interface_type=payload.interface_type,
         conversation_id=payload.conversation_id,

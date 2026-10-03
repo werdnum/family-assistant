@@ -3396,7 +3396,11 @@ def test_legacy_metadata_round_trip_compatibility() -> None:
 
     state = TurnTaintState.from_metadata(legacy_metadata)
     reserialized = state.to_metadata()
-    assert reserialized == legacy_metadata
+    assert reserialized == {
+        **legacy_metadata,
+        "version": "runtime_v3",
+        "introduced_max_tier": "trusted_user",
+    }
 
     # Metadata that already contains explicit count fields preserves them on round-trip
     metadata_with_counts: TaintMetadata = {

@@ -96,6 +96,7 @@ class WebTurnResumer:
                 processing_service,
                 interface_type=payload.interface_type,
                 conversation_id=payload.conversation_id,
+                resumed_turn_id=payload.turn_id,
             )
             lease = await registry.arm(db.tasks, payload.next_attempt())
         except Exception:
