@@ -343,46 +343,43 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
 5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
-   `require_taint_enforcement`. What an operator keeps is one deployment-wide map from every sink
-   class to allow, review, confirm or deny, with one condition, unreviewed external content present
-   in the turn, and nothing finer. Unreviewed is the word that matters: machine-reviewed content
-   takes the trusted cells today and keeps doing so, so an admitted note in context does not send
-   ordinary calls to the reviewer. A floor an operator wants regardless of taint, on a clean turn as
-   much as a tainted one, is not this map's job and never needed the taint layer: static tool policy
-   already confirms or denies a tool unconditionally, and that is where such a floor moves. The
-   shipped default is review on the five gated classes, egress, sandbox, external message,
-   executable definition and ambient prompt write, and allow on the rest; any class can be raised,
-   so a deployment that floored sensitive reads, home actions or artifact writes keeps that posture.
-   One flat map: it is the migration for a deployment that used `operator_minimum` to put a person
-   on tainted egress, it is not relaxable by a profile because profiles no longer carry taint policy
-   at all, and it is a dial rather than a mechanism, so it passes the stratification test by not
-   claiming to discriminate. Collapse the six tiers to the four classes the code's predicates
-   already distinguish: human-direct, model-composed inside the household, machine-reviewed,
-   externally authored. Human-direct stays its own class because the reviewer uses it to select an
-   originating request and to judge a destination echo, and a model-composed row must remain
-   ineligible for both. The collapse is a read-time mapping, not a data rewrite: every stored tier
-   name stays accepted, `trusted_user` maps to human-direct only on a stamp written at or after the
-   authorship split, because the earlier format used that name for system-authored control text too
-   and the human-direct predicate already refuses it by version, an earlier `trusted_user` and every
-   `trusted_internal` map to model-composed, `machine_reviewed` to reviewed, and the three external
-   names to externally authored, so no message, note or definition stamp changes meaning and nothing
-   is raised to unknown-external by the removal of a name. Keep per-row and per-artifact provenance,
-   sink resolution for every class, since the map is keyed by class, but with nothing left that
-   depends on the tier beyond the one condition, the reviewer's provenance-selected view, and the
-   admission gates on stored artifacts. In the taint module that is roughly lines 980 to 1812 of
-   2,163, plus most of the tracking provider's evaluation plumbing and about 450 lines of
-   configuration reference. What remains is the Chrome agent's shape with better artifact
-   provenance: a reviewer that runs on egress when the turn carries external content, sees
-   household-authored intent plus machine-reviewed evidence and nothing else, and a write-time gate
-   on anything that becomes ambient or executable. Subtractive by construction. The memory decision
-   from milestone 1 is taken in the same review, against the admissible share re-measured after
-   milestone 3. Verified three ways: representative stamps written before the collapse, one per old
-   tier name, classify under the predicates as they did before, including a `trusted_internal` stamp
-   and a pre-split `trusted_user` stamp each staying ineligible as an originating request and as a
-   destination echo; the set of sink classes that reach the reviewer is unchanged; and the
-   reviewer's allow, confirm and deny shares over the following thirty days each sit within five
-   percentage points of the preceding thirty on the same cells, with the deleted configuration keys
-   rejected at startup.
+   `require_taint_enforcement`. No operator taint dial survives the cut. The production deployment
+   was checked against its configuration repository on 3 October: it sets no `operator_minimum`, no
+   matrix replacement, and one `matrix_overrides` entry that relaxes sensitive reads from confirm to
+   audit, which the shipped default already is. The dial has never been turned, and a dial nobody
+   turns is surface area by the stratification test, so it goes rather than being rebuilt for a
+   hypothetical other deployment. After the cut the rule is fixed: the five gated sink classes,
+   egress, sandbox, external message, executable definition and ambient prompt write, are reviewed
+   when unreviewed external content is present in the turn, and every other call is allowed.
+   Machine-reviewed content does not count as unreviewed, so an admitted note in context does not
+   send ordinary calls to the reviewer. A floor an operator wants regardless of taint belongs to
+   static tool policy, which already confirms or denies a tool unconditionally. Collapse the six
+   tiers to the four classes the code's predicates already distinguish: human-direct, model-composed
+   inside the household, machine-reviewed, externally authored. Human-direct stays its own class
+   because the reviewer uses it to select an originating request and to judge a destination echo,
+   and a model-composed row must remain ineligible for both. The collapse is a read-time mapping,
+   not a data rewrite: every stored tier name stays accepted, `trusted_user` maps to human-direct
+   only on a stamp written at or after the authorship split, because the earlier format used that
+   name for system-authored control text too and the human-direct predicate already refuses it by
+   version, an earlier `trusted_user` and every `trusted_internal` map to model-composed,
+   `machine_reviewed` to reviewed, and the three external names to externally authored, so no
+   message, note or definition stamp changes meaning and nothing is raised to unknown-external by
+   the removal of a name. Keep per-row and per-artifact provenance, sink resolution reduced to the
+   one question that remains, whether a call is one of the five gated classes, the reviewer's
+   provenance-selected view, and the admission gates on stored artifacts. In the taint module that
+   is roughly lines 980 to 1812 of 2,163, plus most of the tracking provider's evaluation plumbing
+   and about 450 lines of configuration reference. What remains is the Chrome agent's shape with
+   better artifact provenance: a reviewer that runs on egress when the turn carries external
+   content, sees household-authored intent plus machine-reviewed evidence and nothing else, and a
+   write-time gate on anything that becomes ambient or executable. Subtractive by construction. The
+   memory decision from milestone 1 is taken in the same review, against the admissible share
+   re-measured after milestone 3. Verified three ways: representative stamps written before the
+   collapse, one per old tier name, classify under the predicates as they did before, including a
+   `trusted_internal` stamp and a pre-split `trusted_user` stamp each staying ineligible as an
+   originating request and as a destination echo; the set of sink classes that reach the reviewer is
+   unchanged; and the reviewer's allow, confirm and deny shares over the following thirty days each
+   sit within five percentage points of the preceding thirty on the same cells, with the deleted
+   configuration keys rejected at startup.
 
 6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
@@ -404,6 +401,8 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
   configuration reference should say that a deployment adding a lock, alarm or garage opener needs a
   gate on those domains before it is safe at any tier.
 - Turn-level taint remains the enforcement unit. Value-level provenance is not coming.
+- No operator taint dial survives the cut. Production never set one, and unconditional floors live
+  in static tool policy.
 - History taint lasts as long as the introducing text is in the prompt window and no longer. A reply
   that paraphrases an injected instruction after its source has aged out carries no taint forward;
   see milestone 3.
