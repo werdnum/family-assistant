@@ -160,14 +160,14 @@ information and buys nothing. Applied to the September data:
 | Sink classes                                                   | Yes: 73% of evaluations audit, 18% adjudicate                 | Keep, reduced to the egress question                |
 | Tool-call reviewer                                             | Yes: 74% allow, 22% confirm, 4% deny                          | Keep                                                |
 | Static confirm list                                            | Yes: 0.6 prompts a day, 17 of 18 approved                     | Keep                                                |
-| Ambient-write admission                                        | No evidence: no ambient write in a tainted turn               | Keep; one wiring test, milestone 5                  |
-| Executable-definition cure                                     | No: its creation gate sits on an audit cell, so it never runs | Build the cell it was designed against, milestone 2 |
+| Ambient-write admission                                        | No evidence: no ambient write in a tainted turn               | Keep; one wiring test, milestone 1                  |
+| Executable-definition cure                                     | No: its creation gate sits on an audit cell, so it never runs | Build the cell it was designed against, milestone 3 |
 | Source tiers                                                   | No: only the two poles occur                                  | Collapse to household, reviewed, external           |
-| History carry-in                                               | No: 81.5% of turns tainted before any tool call               | Fix, milestone 2                                    |
-| Outcome lattice, floors, operator minimum, redact, mode switch | No: never exercised                                           | Delete, milestone 7                                 |
+| History carry-in                                               | No: 81.5% of turns tainted before any tool call               | Fix, milestone 3                                    |
+| Outcome lattice, floors, operator minimum, redact, mode switch | No: never exercised                                           | Delete, milestone 5                                 |
 
 Two consequences follow. A flag that is on for most turns is not a taint signal, it is a constant,
-and the re-baking defect turned the turn-level tier into one; milestone 2 restores the signal. And
+and the re-baking defect turned the turn-level tier into one; milestone 3 restores the signal. And
 the parts of the framework that have never produced a second outcome are not defence in depth, they
 are surface area, and the thirty-day milestone removes them.
 
@@ -177,9 +177,10 @@ Switch `taint_policy.mode` to `enforce` with the matrix as shipped and no new co
 untrusted-tier notes in the artifact review UI, which is already in use, and then freeze the
 framework.
 
-Expected result: about 2.6 human prompts a day at the median, with the mailbox gap closed. That is
-above the one-a-day budget the risk-adjudication design set, and this document withdraws that budget
-as a gate: the number is measured, it is tolerable, and it will be re-read after thirty days.
+Expected result: at most 2.6 human prompts a day at the median, measured before the signal fix that
+precedes the flip, with the mailbox gap closed. That is above the one-a-day budget the
+risk-adjudication design set, and this document withdraws that budget as a gate: the number is
+measured, it is tolerable, and it will be re-read after thirty days.
 
 Two configuration-only reductions were considered during review and rejected:
 
@@ -212,13 +213,39 @@ Two configuration-only reductions were considered during review and rejected:
 
 ## Work plan
 
-Milestones deliver standalone value and are verified as stated. No calendar estimates.
+Milestones deliver standalone value and are verified as stated. No calendar estimates. The order is:
+establish facts, make the audit attributable, fix the signal, then enforce on it. Enforcing first
+would not be useless, because the reviewer discriminates per call whatever the taint flag does, but
+it would run the reviewer on nearly every egress call and the audit could not say why. The fixes
+ahead of the flip are bounded corrections, not new mechanisms, and the flip is one reversible
+configuration line: if they slip beyond a few weeks, flip anyway and fix under enforce.
 
-1. **Flip to enforce.** The mode change and the note review above. Verified by the taint-audit
-   endpoint showing confirm and deny outcomes with `mode = enforce`, and by prompts per day in
-   `confirmation_requests` landing near the measured 2.6.
-2. **Stop poisoning new turns.** Addressed with prejudice, because it is the largest single source
-   of friction and it is a defect in the propagation rule, not a policy choice. Every row persists
+1. **Establish two facts.** Half a day of queries and one test. Exercise the ambient-write gate
+   once: it is implemented and wired, for notes and skills at `add_or_update_note` and for
+   automation and script definitions at their creation gate, and runs the reviewer synchronously in
+   observe mode too, but ambient writes are rare by instruction, an ungated write records nothing,
+   and it has had ten days in production. In a throwaway conversation, read a web page, then write a
+   note with `include_in_prompt` set; verified by a `taint_audit_events` row with
+   `event_type = 'ambient_note_admission'` and `sink_class = 'ambient_prompt_write'` carrying a
+   verdict, and a missing row is a bug to fix, not a design to write. Then query `memory_change_log`
+   outcomes and the admissible share of assistant rows. The curator transcript omits every assistant
+   row whose stored turn tier is untrusted, which in production is most of them, so the curator
+   reads user lines with the answers missing. Showing it those rows is not the fix: the memory write
+   invariant refuses any edit whose provenance is not admissible for reuse, and a curator reading
+   untrusted rows while it reads and writes household memory would hold all three Rule-of-Two
+   properties. If the query confirms the diagnosis, the choice is between accepting the yield as the
+   price of confinement and routing candidate entries from tainted stretches through the existing
+   write-time admission review, so they land as `machine_reviewed` only on a judge verdict; that
+   choice waits for the thirty-day review. Verified by the two queries producing a number.
+
+2. **Make the audit attributable.** Record each tool's own result tier alongside the running tier.
+   Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation reviews.
+   Make confirmation expiry run. Verified by a re-run of the September audit queries producing the
+   per-tool attribution table that the first run could not, and separately by the two May requests
+   reaching `expired` and a query for pending rows past `expires_at` returning none after the sweep.
+
+3. **Fix the signal.** Addressed with prejudice, because turn-start poisoning is the largest single
+   source of friction and a defect in the propagation rule, not a policy choice. Every row persists
    the turn's merged snapshot, history included, and `merge_history_taint` raises the next turn to
    each row's stored maximum. One web search therefore stamps every later row in the window, each of
    those stamps the rows after it, and a conversation never heals: the Telegram window is ten
@@ -232,7 +259,13 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    contributes only the introduced sources of rows actually in the prompt window, never a stored
    maximum. Taint then lasts exactly as long as the introducing text is in the prompt, which is the
    right duration, and ends when it leaves. The same rule applies to a delegation's folded-back
-   state. The same milestone makes the executable-definition creation gate actually run. Today an
+   state. The accepted residual is paraphrase beyond the window: a reply written under taint can
+   restate an injected instruction after the source has aged out, and that reply is in the prompt.
+   It carries no taint forward. Commodity injection relies on the attacker's own text being present,
+   the reviewer still sees the influenced row as a stub while it is in the window, and the
+   alternative is the infinite propagation this milestone removes.
+
+   The same milestone makes the executable-definition creation gate actually run. Today an
    automation created by the default assistant in a tainted turn is stamped externally authored with
    no disposition and resolves uncured, so it shows up needing human review even though the gate
    exists: `create_automation`, the listener and script tools all resolve to `artifact_write`, which
@@ -243,65 +276,50 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    unattended execution, which a note is not, so giving it its own cell that adjudicates at
    externally authored tiers discriminates exactly where `artifact_write` cannot. Definitions
    already stamped uncured, which fired at the untrusted tier in 10.8 percent of untrusted
-   evaluations, are then restamped with the existing script. The accepted residual is paraphrase
-   beyond the window: a reply written under taint can restate an injected instruction after the
-   source has aged out, and that reply is in the prompt. It carries no taint forward. Commodity
-   injection relies on the attacker's own text being present, the reviewer still sees the influenced
-   row as a stub while it is in the window, and the alternative is the infinite propagation this
-   milestone removes. Verified by the share of turns untrusted before their first tool call falling
-   from 81.5 percent to the share whose window genuinely holds an introducing row, and by Telegram
-   turns more than two hours after a web search starting clean.
-3. **Make the next audit attributable.** Record each tool's own result tier alongside the running
-   tier. Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation
-   reviews. Make confirmation expiry run. Verified by a re-run of the September audit queries
-   producing the per-tool attribution table that the first run could not, and separately by the two
-   May requests reaching `expired` and a query for pending rows past `expires_at` returning none
-   after the sweep.
-4. **Tag hygiene.** Confirm whether delegation results default to untrusted because of a tag
-   mismatch between repository and deployment config, or because the children genuinely read the
-   web. Confirm whether the engineer profile's database and log reads need the untrusted tag, given
-   that profile's side effects are already judged by static review. Either answer is a valid
+   evaluations, are then restamped with the existing script.
+
+   Tag hygiene belongs here too. Confirm whether delegation results default to untrusted because of
+   a tag mismatch between repository and deployment config, or because the children genuinely read
+   the web. Confirm whether the engineer profile's database and log reads need the untrusted tag,
+   given that profile's side effects are already judged by static review. Either answer is a valid
    outcome: a mismatch is fixed, and a justified tag is kept and its justification recorded here.
-   Verified, for a fixed mismatch, by delegation's share of in-turn introductions falling in the
-   next audit; for a retained tag, by the measured share being reported with the reason it stands.
-5. **Exercise the ambient-write gate once.** It is implemented and wired, for notes and skills at
-   `add_or_update_note` and for automation and script definitions at their creation gate, and it
-   runs the reviewer synchronously in observe mode too. It simply has not been reached: ambient
-   writes are rare by instruction, and an ungated write records nothing. In a throwaway
-   conversation, read a web page, then write a note with `include_in_prompt` set. Verified by a
-   `taint_audit_events` row with `event_type = 'ambient_note_admission'` and
-   `sink_class = 'ambient_prompt_write'` carrying a verdict. If none appears, that is a bug to fix,
-   not a design to write.
-6. **Memory yield.** Query `memory_change_log` outcomes and the admissible share of assistant rows.
-   The curator transcript omits every assistant row whose stored turn tier is untrusted, which in
-   production is most of them, so the curator reads user lines with the answers missing. Showing it
-   those rows is not the fix: the memory write invariant refuses any edit whose provenance is not
-   admissible for reuse, and a curator reading untrusted rows while it reads and writes household
-   memory would hold all three Rule-of-Two properties. If the query confirms the diagnosis, the
-   choice is between accepting the yield as the price of confinement and routing candidate entries
-   from tainted stretches through the existing write-time admission review, so they land as
-   `machine_reviewed` only on a judge verdict. That choice waits for the thirty-day review. Verified
-   for now by the two queries producing a number.
-7. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
+
+   Verified by the share of turns untrusted before their first tool call falling from 81.5 percent
+   to the share whose window genuinely holds an introducing row; by Telegram turns more than two
+   hours after a web search starting clean; by a tainted-turn automation creation producing a
+   reviewer verdict and a cured record; and, for tag hygiene, by delegation's share of in-turn
+   introductions falling where a mismatch was fixed, or the measured share being reported with the
+   reason a tag stands.
+
+4. **Flip to enforce.** The mode change and the note review from the decision above, on a signal
+   that now discriminates and with an audit that can say why. Re-read the shadow data after
+   milestone 3 to state the expected prompt count; 2.6 a day is the ceiling, measured before the
+   signal fix. Verified by the taint-audit endpoint showing confirm and deny outcomes with
+   `mode = enforce`, and by prompts per day in `confirmation_requests` landing at or under that
+   number.
+
+5. **Cut the framework back to what discriminates.** After thirty days of enforce. Delete the policy
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
    `require_taint_enforcement`. Collapse the six tiers to the three predicates the code already
    asks: household-authored, machine-reviewed, externally authored. Keep per-row and per-artifact
-   provenance, sink resolution reduced to "is this call egress, sandbox or an external message", the
-   reviewer's provenance-selected view, and the admission gates on stored artifacts. In the taint
-   module that is roughly lines 980 to 1812 of 2,163, plus most of the tracking provider's
-   evaluation plumbing and about 450 lines of configuration reference. What remains is the Chrome
-   agent's shape with better artifact provenance: a reviewer that runs on egress when the turn
-   carries external content, sees only household-authored rows, and a write-time gate on anything
-   that becomes ambient. Subtractive by construction. Verified by the reviewer's verdict
+   provenance, sink resolution reduced to "is this call egress, sandbox, an external message or an
+   executable definition", the reviewer's provenance-selected view, and the admission gates on
+   stored artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of
+   the tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
+   remains is the Chrome agent's shape with better artifact provenance: a reviewer that runs on
+   egress when the turn carries external content, sees only household-authored rows, and a
+   write-time gate on anything that becomes ambient or executable. Subtractive by construction. The
+   memory decision from milestone 1 is taken in the same review. Verified by the reviewer's verdict
    distribution on the following thirty days matching the preceding thirty, with the deleted
    configuration keys rejected at startup.
-8. **Contingent, on evidence only.** After thirty days of enforce, if the audit indicts a cell:
+
+6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
    largest confirm category with a rule; calendar provenance wired into the context provider, which
    is a tag fix; an allowlist egress proxy around worker and script sandboxes, which would retire
    the largest cell and all the shell denies; a handback-aware split of browser egress. Each is
-   substitutive. Each needs a number from milestone 3 before it starts.
+   substitutive. Each needs a number from milestone 2 before it starts.
 
 ## Deliberate simplifications and accepted residuals
 
@@ -318,7 +336,7 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
 - Turn-level taint remains the enforcement unit. Value-level provenance is not coming.
 - History taint lasts as long as the introducing text is in the prompt window and no longer. A reply
   that paraphrases an injected instruction after its source has aged out carries no taint forward;
-  see milestone 2.
+  see milestone 3.
 - The middle tiers are uncalibrated and will stay so until a mailbox connector supplies evidence.
 - Shadow allows cure definition records. Cures are not re-judged when the reviewer improves.
 - The agent model is a security control this project does not own. Published numbers show an
