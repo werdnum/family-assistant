@@ -189,9 +189,11 @@ Two configuration-only reductions were considered during review and rejected:
   holds no household context when it starts, but its handoff path lets a person log the shared
   browser in and hand it back, after which the agent reads private pages and an injected page could
   direct an ungated navigation carrying them. The profile is therefore not reliably without
-  sensitive data, and it stays adjudicated. A handback-aware split, auditing egress only until a
-  session has been handed back, is contingent work for the thirty-day review; the cost of not having
-  it is about one gated turn a day.
+  sensitive data, and it stays adjudicated. The cost is about one gated turn a day, accepted: a
+  split that audits egress only until a session has been handed back would need session state
+  threaded into sink resolution, which is the binding-condition machinery this document otherwise
+  declines to build, and the reviews it would remove are the judge working on the profile that reads
+  the most attacker-controlled text.
 - **Restricting the `sandbox_network` verdict space to allow and confirm**, which would have turned
   the shell-command denies into prompts. The adjudicate cell exposes only a verdict floor, so a
   ceiling is not expressible. Denies stand as deny-and-continue: the agent receives a structured
@@ -385,8 +387,8 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
    largest confirm category with a rule; calendar provenance wired into the context provider, which
    is a tag fix; an allowlist egress proxy around worker and script sandboxes, which would retire
-   the largest cell and all the shell denies; a handback-aware split of browser egress. Each is
-   substitutive. Each needs a number from milestone 2 before it starts.
+   the largest cell and all the shell denies. Each is substitutive. Each needs a number from
+   milestone 2 before it starts.
 
 ## Deliberate simplifications and accepted residuals
 
