@@ -827,6 +827,10 @@ class AttachmentCleanupPayload(TypedDict, total=False):
     limit: int
 
 
+class ConfirmationExpiryPayload(TypedDict, total=False):
+    """Payload for confirmation_expiry tasks; it takes no options."""
+
+
 class ScheduleAutomationAdvancePayload(TypedDict, total=False):
     """Payload for retryable schedule automation advancement tasks."""
 
@@ -2521,6 +2525,7 @@ class TaskWorker:
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
                 acting_user_id=run["user_id"],
                 initial_taint_state=_taint_state_from_delegation_run(run),
+                source_turn_id=run["source_turn_id"],
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -2652,6 +2657,7 @@ class TaskWorker:
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
                 acting_user_id=run["user_id"],
                 initial_taint_state=_taint_state_from_delegation_run(run),
+                source_turn_id=run["source_turn_id"],
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -5797,6 +5803,26 @@ async def _cleanup_spent_one_shot_schedules(
     return deleted
 
 
+async def handle_confirmation_expiry(
+    exec_context: ToolExecutionContext,
+    payload: ConfirmationExpiryPayload,
+) -> None:
+    """Task handler marking pending confirmation requests past their deadline.
+
+    Each interface expires its own prompt when its wait times out, but a prompt
+    whose waiter never got there -- the process restarted, the turn was
+    abandoned -- stays ``pending`` forever without this sweep. Resolution
+    already refuses a request past ``expires_at``, so this corrects the
+    recorded state rather than what a person can still approve.
+    """
+    _ = payload
+    clock = exec_context.clock or SystemClock()
+    expired = await exec_context.db_context.confirmation_requests.mark_expired(
+        now=clock.now()
+    )
+    logger.info(f"Confirmation expiry sweep marked {expired} request(s) expired.")
+
+
 async def handle_stale_automation_cleanup(
     exec_context: ToolExecutionContext,
     payload: StaleAutomationCleanupPayload,
@@ -7169,6 +7195,7 @@ __all__ = [
     "TaskWorker",
     "build_script_confirmation_callback",
     "handle_attachment_cleanup",
+    "handle_confirmation_expiry",
     "handle_confirmation_tool_execution",
     "handle_llm_callback",
     "handle_log_message",

@@ -1169,6 +1169,7 @@ async def test_review_audit_stores_rationale_and_omits_raw_evidence(
     assert sources == [
         {
             "source_type": "email",
+            "tool_name": None,
             "source_id": None,
             "tier": "unknown_external",
             "labels": [],
@@ -1402,8 +1403,15 @@ async def test_failed_denial_escalation_preserves_confirmation_outcome_taint(
 
     assert isinstance(result, ToolResult)
     assert result.get_text() == "approved execution failed safely"
+    # The outcome's sources merged in during this call, so they are attributed
+    # to the tool whose confirmation produced them.
     assert context.tool_result_taint_metadata["failed-escalation-call"] == (
-        outcome_state.to_metadata()
+        TurnTaintState
+        .empty()
+        .add_source(
+            replace(outcome_state.sources[0], tool_name="reviewed_tool"),
+        )
+        .to_metadata()
     )
     assert context.taint_tracker is not None
     assert all(

@@ -41,6 +41,7 @@ class TaintAuditEventsRepository(BaseRepository):
         review_status: str | None = None,
         review_latency_ms: float | None = None,
         review_context: TaintAuditReviewContext | None = None,
+        result_tier: str | None = None,
     ) -> None:
         """Persist a taint audit event."""
         stmt = insert(taint_audit_events_table).values(
@@ -54,6 +55,7 @@ class TaintAuditEventsRepository(BaseRepository):
             tool_call_id=tool_call_id,
             sink_class=sink_class,
             max_tier=max_tier,
+            result_tier=result_tier,
             sources_json=sources,
             requested_outcome=requested_outcome,
             effective_outcome=effective_outcome,

@@ -59,6 +59,7 @@ from family_assistant.security.definition_resolution import attach_pending_verdi
 from family_assistant.security.taint import (
     SensitiveReadScope,
     SinkClass,
+    SourceTrustTier,
     TaintPolicyConfig,
     TaintPolicyEvaluation,
     TaintPolicyEvaluator,
@@ -66,6 +67,7 @@ from family_assistant.security.taint import (
     TaintPolicyOutcome,
     TaintSourceType,
     TurnTaintState,
+    attributing_sources_to_tool,
     derive_tool_result_taint_source,
     merge_taint_state_into_tracker,
     resolve_tool_sink_class,
@@ -2318,7 +2320,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
         started = time.monotonic()
         outcome = "error"
         try:
-            result = await self._execute_tool_tracked(name, arguments, context, call_id)
+            with attributing_sources_to_tool(name):
+                result = await self._execute_tool_tracked(
+                    name, arguments, context, call_id
+                )
             # `returned`, not `success`: a tool reports an expected failure by
             # returning a result, and ToolResult has no status field, so
             # nothing here can tell a refusal from an answer.
@@ -3433,6 +3438,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         review_status: str | None = None,
         review_latency_ms: float | None = None,
         review_context: TaintAuditReviewContext | None = None,
+        result_tier: SourceTrustTier | None = None,
     ) -> str:
         """Persist a taint audit event with bounded sources and provenance counts."""
         event_id = str(uuid.uuid4())
@@ -3458,6 +3464,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             tool_call_id=tool_call_id,
             sink_class=sink_class,
             max_tier=state.max_tier.config_value,
+            result_tier=result_tier.config_value if result_tier is not None else None,
             sources=taint_audit_sources(state),
             requested_outcome=requested_outcome,
             effective_outcome=effective_outcome,
@@ -3961,7 +3968,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None,
         state_before_execution: TurnTaintState | None,
         result: object = None,
-    ) -> TurnTaintState | None:
+    ) -> tuple[TurnTaintState, SourceTrustTier] | None:
+        """Fold the tool's result into the turn; return the state and its own tier.
+
+        The tier is what this call contributed, as distinct from the turn's
+        running maximum the state carries: the declared result source, or
+        else the most tainted of the sources added while the tool ran.
+        """
         graded = result if isinstance(result, ToolResult) else None
         source = derive_tool_result_taint_source(
             descriptor=descriptor,
@@ -3990,7 +4003,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 call_id,
                 state.max_tier.config_value,
             )
-            return state
+            return state, _tier_added_since(state_before_execution, state)
 
         state = context.taint_tracker.add_source(source)
         metadata = state.to_metadata()
@@ -4001,7 +4014,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             call_id,
             state.max_tier.config_value,
         )
-        return state
+        return state, source.tier
 
     async def _record_result_taint_and_audit(
         self,
@@ -4012,19 +4025,21 @@ class TaintTrackingToolsProvider(ToolsProvider):
         state_before_execution: TurnTaintState | None,
         result: object = None,
     ) -> None:
-        recorded_state = self._record_result_taint(
+        recorded = self._record_result_taint(
             descriptor=descriptor,
             context=context,
             call_id=call_id,
             state_before_execution=state_before_execution,
             result=result,
         )
-        if recorded_state is not None:
+        if recorded is not None:
+            recorded_state, result_tier = recorded
             await self._record_result_taint_audit(
                 descriptor=descriptor,
                 context=context,
                 call_id=call_id,
                 state=recorded_state,
+                result_tier=result_tier,
             )
 
     async def _record_result_taint_audit(
@@ -4034,6 +4049,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         call_id: str | None,
         state: TurnTaintState,
+        result_tier: SourceTrustTier,
     ) -> None:
         await self._record_taint_audit_event(
             context=context,
@@ -4047,6 +4063,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             mode=self._taint_evaluator.mode.value,
             reason=f"Recorded taint metadata for tool '{descriptor.name}' output.",
             arguments_summary=None,
+            result_tier=result_tier,
         )
 
     async def close(self) -> None:
@@ -4055,6 +4072,19 @@ class TaintTrackingToolsProvider(ToolsProvider):
             await asyncio.gather(*tuple(self._review_tasks), return_exceptions=True)
             self._review_tasks.clear()
         await self.wrapped_provider.close()
+
+
+def _tier_added_since(before: TurnTaintState, after: TurnTaintState) -> SourceTrustTier:
+    """The most tainted tier among sources ``after`` holds and ``before`` lacked.
+
+    A raised maximum with no retained new source -- every one evicted by the
+    source bound -- still counts, as the maximum it raised to.
+    """
+    previous = set(before.sources)
+    added = [source.tier for source in after.sources if source not in previous]
+    if after.max_tier > before.max_tier:
+        added.append(after.max_tier)
+    return max(added, default=SourceTrustTier.TRUSTED_INTERNAL)
 
 
 def find_provider_by_type[T](
