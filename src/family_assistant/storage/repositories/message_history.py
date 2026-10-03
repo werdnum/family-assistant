@@ -2073,6 +2073,20 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
+    async def get_rows_by_turn_id(self, turn_id: str) -> list[MessageHistoryRow]:
+        """A turn's rows with every stored field, oldest first.
+
+        For callers that need what typed messages leave out, such as the
+        attachments a tool row recorded.
+        """
+        stmt = (
+            select(message_history_table)
+            .where(message_history_table.c.turn_id == turn_id)
+            .order_by(message_history_table.c.internal_id.asc())
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [self._process_message_row_as_dict(row) for row in rows]
+
     async def get_by_internal_ids(
         self,
         internal_ids: tuple[int, ...],

@@ -191,6 +191,7 @@ from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIMa
 
 from .services.turn_resumption import TURN_RESUME_TASK_TYPE, TurnLeaseRegistry
 from .telegram.service import TelegramService
+from .telegram.turn_resumption import TELEGRAM_RESUMER, TelegramTurnResumer
 
 if TYPE_CHECKING:
     import socket
@@ -1908,6 +1909,10 @@ class Assistant:
             )
             self.fastapi_app.state.confirmation_ui_managers["telegram"] = (
                 self.telegram_service.confirmation_manager
+            )
+            self._turn_lease_registry().register_resumer(
+                TELEGRAM_RESUMER,
+                TelegramTurnResumer(self.telegram_service.update_handler),
             )
             logger.info(
                 "TelegramService instantiated and stored in FastAPI app state during setup_dependencies."

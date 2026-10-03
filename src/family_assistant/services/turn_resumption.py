@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from family_assistant.llm.messages import AssistantMessage
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    model_selection_from_reasoning,
+)
 from family_assistant.security.taint import merge_history_taint
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.utils.clock import Clock, SystemClock
@@ -101,6 +105,15 @@ class TurnResumer(Protocol):
 
         Returns False without launching when the conversation already has a
         running turn, which supersedes this one.
+        """
+        ...
+
+    async def deliver_pending_reply(self, payload: TurnResumePayload) -> None:
+        """Finish a turn whose reply was generated but may never have been sent.
+
+        Called when the interrupted turn turns out to have a terminal reply. A
+        path whose clients read replies from history has nothing to do; one
+        that pushes replies out (a chat bot) sends it if it was not delivered.
         """
         ...
 
@@ -207,14 +220,31 @@ class TurnLeaseRegistry:
         return entry is not None and not entry.task.done()
 
     def _on_turn_done(self, entry: _TrackedTurn) -> None:
-        if entry.suspend_requested:
+        if entry.suspend_requested or not self._untrack(entry):
             return
-        turn_id = entry.lease.payload.turn_id
-        if self._tracked.get(turn_id) is entry:
-            del self._tracked[turn_id]
         release = asyncio.ensure_future(self._release(entry))
         self._release_tasks.add(release)
         release.add_done_callback(self._release_tasks.discard)
+
+    def _untrack(self, entry: _TrackedTurn) -> bool:
+        """Stop tracking ``entry``; False if it was no longer tracked."""
+        turn_id = entry.lease.payload.turn_id
+        if self._tracked.get(turn_id) is not entry:
+            return False
+        del self._tracked[turn_id]
+        return True
+
+    async def release(self, lease: TurnLease) -> None:
+        """Delete the lease of a turn that has ended, ahead of its task ending.
+
+        For a launch path whose task outlives the turn -- one that goes on to
+        deliver the reply, or to run another turn. A suspended turn keeps its
+        lease for the hand-off, as it would when its task ended.
+        """
+        entry = self._tracked.get(lease.payload.turn_id)
+        if entry is None or entry.suspend_requested or not self._untrack(entry):
+            return
+        await self._release(entry)
 
     @staticmethod
     async def _release(entry: _TrackedTurn) -> None:
@@ -367,8 +397,18 @@ class TurnLeaseRegistry:
             payload.attempt,
             decision.value,
         )
-        if decision in {ResumeDecision.EXHAUSTED, ResumeDecision.NO_RESUMER}:
+        if decision is ResumeDecision.NO_RESUMER:
             await persist_interrupted_marker(db, payload)
+            return
+        if decision is ResumeDecision.EXHAUSTED:
+            await persist_interrupted_marker(db, payload)
+            # The marker is the turn's terminal reply now; a path that pushes
+            # replies out sends it, or the user would hear nothing at all.
+            if payload.resumer in self._resumers:
+                await self._resumers[payload.resumer].deliver_pending_reply(payload)
+            return
+        if decision is ResumeDecision.FINISHED and payload.resumer in self._resumers:
+            await self._resumers[payload.resumer].deliver_pending_reply(payload)
             return
         if decision is not ResumeDecision.RESUME:
             return
@@ -402,3 +442,27 @@ async def persist_interrupted_marker(db: Database, payload: TurnResumePayload) -
         user_id=payload.user_id,
         processing_profile_id=payload.processing_profile_id,
     )
+
+
+async def resumed_model_selection(
+    db: Database, payload: TurnResumePayload
+) -> ResolvedModelSelection | None:
+    """The tier the resumed turn runs on: the one its earlier rows ran on.
+
+    The lease holds the envelope the launch path admitted, which under Auto is
+    the unrouted default. Once a model call has run, the routed envelope is
+    stamped on its row, and the continuation must stay on it rather than
+    switch tiers partway through the turn. If no call ran, nothing was decided
+    yet, so the admitted envelope goes through exactly as it was admitted --
+    still open to routing.
+    """
+    for reasoning in reversed(
+        await db.message_history.get_assistant_reasoning_infos_for_turn(payload.turn_id)
+    ):
+        stamped = model_selection_from_reasoning(reasoning)
+        if stamped is not None:
+            return stamped
+    if payload.model_selection is None:
+        return None
+    admitted = ResolvedModelSelection.from_json(payload.model_selection)
+    return replace(admitted, frozen=False)

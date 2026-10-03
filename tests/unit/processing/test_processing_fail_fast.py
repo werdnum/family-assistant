@@ -265,7 +265,16 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
 @pytest.mark.asyncio
 async def test_sync_persists_errors_as_error_messages(db_engine: AsyncEngine) -> None:
     service = _make_service()
-    service.process_message = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
+
+    async def fake_process_message_stream(
+        **kwargs: object,
+    ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
+        # An unreachable yield is what makes this an async generator.
+        if False:  # pylint: disable=using-constant-test
+            yield (LLMStreamEvent(type="done"), None)
+        raise RuntimeError("boom")
+
+    service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
 
     db_context = Database(db_engine)
     result = await service.handle_chat_interaction(

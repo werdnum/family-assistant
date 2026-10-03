@@ -8,12 +8,14 @@ import io
 import logging
 import os
 import traceback
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry import trace
 from sqlalchemy import update as sqlalchemy_update
 from telegram import (
+    Bot,
     ForceReply,
     Message,
     MessageOriginChannel,
@@ -42,7 +44,16 @@ from family_assistant.llm.model_selection import (
     ModelTierNotPermitted,
 )
 from family_assistant.processing import ProcessingService
-from family_assistant.processing.types import MidTurnUserInput
+from family_assistant.processing.types import (
+    MidTurnUserInput,
+    RequestConfirmationCallback,
+)
+from family_assistant.services.turn_resumption import (
+    TurnLease,
+    TurnLeaseRegistry,
+    TurnResumePayload,
+    resumed_model_selection,
+)
 from family_assistant.services.user_identity import (
     ResolvedUserIdentity,
     UserIdentityResolutionError,
@@ -66,6 +77,7 @@ from family_assistant.telegram.rich_messages import (
     send_rich_message,
     should_attempt_rich_message,
 )
+from family_assistant.telegram.turn_resumption import TELEGRAM_RESUMER
 from family_assistant.telegram.types import AttachmentData, TriggerAttachment
 from family_assistant.tools.confirmation import render_tool_confirmation
 
@@ -76,6 +88,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.processing import DelegatableService
     from family_assistant.storage.database import Database
+    from family_assistant.storage.types import MessageHistoryRow
     from family_assistant.telegram.protocols import (
         ConfirmationUIManager,
         MessageBatcher,
@@ -111,6 +124,34 @@ class _QueuedMidTurnUpdate:
         return bool(self.attachments)
 
 
+def _telegram_message_id(interface_message_id: str | None) -> int | None:
+    """A stored interface message id as a Telegram message id, if it is one.
+
+    A turn whose trigger had no message id stores a ``temp_`` placeholder.
+    """
+    if interface_message_id is None or not interface_message_id.isdigit():
+        return None
+    return int(interface_message_id)
+
+
+def _resumed_trigger_content_parts(
+    user_row: MessageHistoryRow,
+) -> list[ContentPartDict]:
+    """Rebuild a resumed turn's trigger content as ``process_batch`` built it."""
+    parts: list[ContentPartDict] = [text_content(user_row["content"] or "")]
+    for attachment in user_row["attachments"] or []:
+        content_url = attachment.get("content_url")
+        mime_type = str(
+            attachment.get("content_type") or attachment.get("mime_type") or ""
+        )
+        if content_url and (
+            mime_type.startswith(("image/", "video/", "audio/"))
+            or mime_type == "application/pdf"
+        ):
+            parts.append(image_url_content(content_url))
+    return parts
+
+
 class TelegramMidTurnController:
     """Tracks live user updates for one active Telegram turn."""
 
@@ -118,12 +159,21 @@ class TelegramMidTurnController:
         self._lock = asyncio.Lock()
         self._queued_updates: list[_QueuedMidTurnUpdate] = []
         self._interrupted = False
+        self._suspend_requested = False
 
     def request_interrupt(self) -> None:
         self._interrupted = True
 
+    def request_suspend(self) -> None:
+        """Halt at the next loop boundary so another process can resume the turn."""
+        self._suspend_requested = True
+
+    @property
+    def suspend_requested(self) -> bool:
+        return self._suspend_requested
+
     def should_interrupt(self) -> bool:
-        return self._interrupted
+        return self._interrupted or self._suspend_requested
 
     async def add_update(
         self,
@@ -204,6 +254,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
         self._active_mid_turns: dict[int, TelegramMidTurnController] = {}
         self._active_processing_tasks: dict[int, asyncio.Task[None]] = {}
+        # Strong references to resumed turns, which no update handler owns.
+        self._resumed_turn_tasks: set[asyncio.Task[None]] = set()
 
     def _resolve_telegram_user(
         self, telegram_user_id: int
@@ -288,9 +340,28 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             user_name=user_name,
         )
 
+    def _reserve_turn_slot(self, chat_id: int) -> TelegramMidTurnController:
+        """Claim this chat's turn slot synchronously, ahead of running the turn.
+
+        For a turn that must await before it can run: claiming the slot first
+        means a message arriving in between steers this turn instead of
+        starting a rival one. Hand the controller to ``_active_turn``.
+        """
+        controller = TelegramMidTurnController()
+        self._active_mid_turns[chat_id] = controller
+        return controller
+
+    def _release_turn_slot(
+        self, chat_id: int, controller: TelegramMidTurnController
+    ) -> None:
+        if self._active_mid_turns.get(chat_id) is controller:
+            self._active_mid_turns.pop(chat_id, None)
+
     @contextlib.asynccontextmanager
     async def _active_turn(
-        self, chat_id: int
+        self,
+        chat_id: int,
+        controller: TelegramMidTurnController | None = None,
     ) -> AsyncIterator[TelegramMidTurnController]:
         """Hold this chat's turn slot for the length of one LLM loop.
 
@@ -303,16 +374,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         Every path that calls ``handle_chat_interaction`` for a Telegram chat
         goes through here -- a plain message and a slash command alike.
         """
-        controller = TelegramMidTurnController()
-        self._active_mid_turns[chat_id] = controller
+        if controller is None:
+            controller = self._reserve_turn_slot(chat_id)
         current_task = asyncio.current_task()
         if current_task is not None:
             self._active_processing_tasks[chat_id] = current_task
         try:
             yield controller
         finally:
-            if self._active_mid_turns.get(chat_id) is controller:
-                self._active_mid_turns.pop(chat_id, None)
+            self._release_turn_slot(chat_id, controller)
             if (
                 current_task is not None
                 and self._active_processing_tasks.get(chat_id) is current_task
@@ -347,7 +417,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
     async def _send_message_chunks(
         self,
-        context: ContextTypes.DEFAULT_TYPE,
+        bot: Bot,
         chat_id: int,
         text: str,
         parse_mode: ParseMode | None,
@@ -369,7 +439,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         first_sent_message: Message | None = None
         for i, chunk_text in enumerate(chunks):
-            sent_msg = await context.bot.send_message(
+            sent_msg = await bot.send_message(
                 chat_id=chat_id,
                 text=chunk_text,
                 parse_mode=parse_mode,
@@ -385,7 +455,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
     @contextlib.asynccontextmanager
     async def _typing_notifications(
         self,
-        context: ContextTypes.DEFAULT_TYPE,
+        bot: Bot,
         chat_id: int,
         action: str = ChatAction.TYPING,
     ) -> AsyncIterator[None]:
@@ -395,7 +465,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         async def typing_loop() -> None:
             while not stop_event.is_set():
                 try:
-                    await context.bot.send_chat_action(chat_id=chat_id, action=action)
+                    await bot.send_chat_action(chat_id=chat_id, action=action)
                 except Exception as e:
                     # Typing indicators are non-critical UX niceties - don't fail the message flow
                     # This also handles telegram-test-api which doesn't support sendChatAction
@@ -410,6 +480,477 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             stop_event.set()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(typing_task, timeout=1.0)
+
+    def _confirmation_callback_for(
+        self, target_user_id: str
+    ) -> RequestConfirmationCallback:
+        """The tool-confirmation callback for a turn acting for ``target_user_id``."""
+
+        async def confirmation_callback_wrapper(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
+            tool_args: dict[str, Any],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> ConfirmationOutcome:
+            logger.debug("confirmation_callback_wrapper called!")
+            prompt_text = await render_tool_confirmation(tool_name, tool_args, context)
+
+            source_message_internal_id = None
+            if turn_id is not None:
+                source_row = (
+                    await context.db_context.message_history.get_user_row_by_turn_id(
+                        turn_id
+                    )
+                )
+                if source_row is not None:
+                    source_message_internal_id = source_row["internal_id"]
+
+            taint_state_json = (
+                context.taint_tracker.snapshot().to_metadata()
+                if context.taint_tracker is not None
+                else None
+            )
+            result = await self.confirmation_manager.request_confirmation(
+                conversation_id=conversation_id,
+                interface_type=interface_type,
+                turn_id=turn_id,
+                prompt_text=prompt_text,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                timeout=timeout_seconds,
+                target_user_id=target_user_id,
+                tool_call_id=call_id,
+                source_message_internal_id=source_message_internal_id,
+                taint_state_json=taint_state_json,
+                processing_profile_id=context.processing_profile_id,
+                tool_call_review_authorization=(context.tool_call_review_authorization),
+            )
+            return result
+
+        return confirmation_callback_wrapper
+
+    async def _deliver_turn_reply(
+        self,
+        bot: Bot,
+        chat_id: int,
+        *,
+        text_reply: str | None,
+        assistant_internal_id: int | None,
+        error_traceback: str | None,
+        attachment_ids: list[str] | None,
+        reply_to_message_id: int | None,
+        on_behalf_of_user_id: str,
+    ) -> None:
+        """Send a finished turn's reply (or its error) and record the delivery.
+
+        Stamping the sent message id on the reply's row is what marks it
+        delivered, which is how a resumed turn tells a reply that still needs
+        sending from one that went out before the process stopped.
+        """
+        force_reply_markup = ForceReply(selective=False)
+
+        if text_reply:
+            sent_assistant_message = None
+            if should_attempt_rich_message(text_reply):
+                try:
+                    sent_assistant_message = await send_rich_message(
+                        bot=bot,
+                        chat_id=chat_id,
+                        text=text_reply,
+                        reply_to_message_id=reply_to_message_id,
+                        reply_markup=force_reply_markup,
+                    )
+                    logger.info(
+                        "Sent assistant response as Telegram rich message to chat %s.",
+                        chat_id,
+                    )
+                except Exception as rich_err:
+                    if not is_rich_message_compatibility_error(rich_err):
+                        raise
+                    logger.info(
+                        "Telegram rejected rich message (%s); falling back to standard sendMessage.",
+                        rich_err,
+                    )
+
+            if sent_assistant_message is None:
+                # Convert to Telegram MarkdownV2 with bug fixes
+                text_to_send, parse_mode = convert_to_telegram_markdown(text_reply)
+
+                try:
+                    sent_assistant_message = await self._send_message_chunks(
+                        bot=bot,
+                        chat_id=chat_id,
+                        text=text_to_send,
+                        parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
+                        reply_to_message_id=reply_to_message_id,
+                        reply_markup=force_reply_markup,
+                    )
+                except BadRequest as parse_err:
+                    # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                    if "Can't parse entities" in str(parse_err) and parse_mode:
+                        logger.warning(
+                            f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                            exc_info=False,
+                        )
+                        sent_assistant_message = await self._send_message_chunks(
+                            bot=bot,
+                            chat_id=chat_id,
+                            text=text_reply,
+                            parse_mode=None,
+                            reply_to_message_id=reply_to_message_id,
+                            reply_markup=force_reply_markup,
+                        )
+                    else:
+                        raise
+
+            if attachment_ids:
+                try:
+                    await self.telegram_service.chat_interface._send_attachments(
+                        chat_id=chat_id,
+                        attachment_ids=attachment_ids,
+                        reply_to_msg_id=reply_to_message_id,
+                        on_behalf_of_user_id=on_behalf_of_user_id,
+                    )
+                except Exception as attachment_err:
+                    logger.exception(
+                        f"Failed to send attachments {attachment_ids}: {attachment_err}"
+                    )
+
+            # Stamped last: the stamp is what marks the reply delivered, so a
+            # process that stops before its attachments go out leaves the reply
+            # to be sent again in full rather than losing the attachments.
+            if sent_assistant_message and assistant_internal_id is not None:
+                try:
+                    await self.database.message_history.update_interface_id(
+                        internal_id=assistant_internal_id,
+                        interface_message_id=str(sent_assistant_message.message_id),
+                    )
+                    logger.info(
+                        f"Updated interface_message_id for internal_id {assistant_internal_id} to {sent_assistant_message.message_id}"
+                    )
+                except Exception as update_err:
+                    logger.exception(
+                        f"Failed to update interface_message_id for internal_id {assistant_internal_id}: {update_err}"
+                    )
+            elif sent_assistant_message:
+                logger.warning(
+                    f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({assistant_internal_id}) to update."
+                )
+        elif error_traceback and reply_to_message_id:
+            error_message_to_send = (
+                "Sorry, something went wrong while processing your request."
+            )
+            if self.debug_mode:
+                logger.info(f"Sending DEBUG error traceback to chat {chat_id}")
+                error_message_to_send = (
+                    "Encountered error during processing \\(debug mode\\):\n"
+                    f"<pre>{html.escape(error_traceback)}</pre>"
+                )
+            else:
+                logger.info(f"Sending generic error message to chat {chat_id}")
+
+            await self._send_message_chunks(
+                bot=bot,
+                chat_id=chat_id,
+                text=error_message_to_send,
+                parse_mode=(ParseMode.HTML if self.debug_mode else None),
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=force_reply_markup,
+            )
+        else:
+            logger.warning(
+                "Received empty response from LLM (and no processing error detected)."
+            )
+            if reply_to_message_id:
+                await self._send_message_chunks(
+                    bot=bot,
+                    chat_id=chat_id,
+                    text="Sorry, I couldn't process that request.",
+                    parse_mode=None,
+                    reply_to_message_id=reply_to_message_id,
+                    reply_markup=force_reply_markup,
+                )
+
+    # ------------------------------------------------------------------ #
+    # Resuming turns across restarts; see the turn-resumption design doc.
+    # ------------------------------------------------------------------ #
+
+    def _turn_lease_registry(self) -> TurnLeaseRegistry | None:
+        app = self.telegram_service.fastapi_app
+        return getattr(app.state, "turn_lease_registry", None) if app else None
+
+    async def _arm_turn_lease(
+        self,
+        *,
+        service: ProcessingService,
+        chat_id: int,
+        turn_id: str,
+        user_id: str,
+        user_name: str,
+    ) -> TurnLease | None:
+        """Arm the lease that lets another process resume this turn.
+
+        Armed before the turn writes its prompt. A lease whose prompt never
+        landed comes due as an unknown turn and is dropped.
+        """
+        registry = self._turn_lease_registry()
+        if registry is None:
+            return None
+        return await registry.arm(
+            self.database.tasks,
+            TurnResumePayload(
+                resumer=TELEGRAM_RESUMER,
+                interface_type="telegram",
+                conversation_id=str(chat_id),
+                turn_id=turn_id,
+                user_id=user_id,
+                user_name=user_name,
+                processing_profile_id=service.service_config.id,
+            ),
+        )
+
+    def _track_turn_lease(
+        self, lease: TurnLease | None, controller: TelegramMidTurnController
+    ) -> None:
+        registry = self._turn_lease_registry()
+        task = asyncio.current_task()
+        if registry is None or lease is None or task is None:
+            return
+        registry.track(
+            lease,
+            task,
+            database=self.database,
+            request_suspend=controller.request_suspend,
+        )
+
+    async def _release_turn_lease(self, lease: TurnLease | None) -> None:
+        """Drop the lease once the turn's reply is out.
+
+        The processing task outlives the turn -- it may go on to a follow-up
+        batch -- so the lease is released here rather than when it ends.
+        """
+        registry = self._turn_lease_registry()
+        if registry is not None and lease is not None:
+            await registry.release(lease)
+
+    def _service_for_resumed_turn(self, profile_id: str) -> ProcessingService:
+        service = self._local_service_for_profile(profile_id)
+        if service is None and self.processing_service.service_config.id == profile_id:
+            service = self.processing_service
+        if service is None:
+            raise RuntimeError(
+                f"Cannot resume turn: processing profile '{profile_id}' is not "
+                "configured"
+            )
+        return service
+
+    async def resume_interrupted_turn(
+        self, payload: TurnResumePayload, registry: TurnLeaseRegistry
+    ) -> bool:
+        """Relaunch a Telegram turn an earlier process was running.
+
+        Returns False without launching when the chat already has a turn
+        running, which supersedes this one.
+        """
+        chat_id = int(payload.conversation_id)
+        if chat_id in self._active_mid_turns:
+            return False
+        service = self._service_for_resumed_turn(payload.processing_profile_id)
+        # Claimed before the awaits below, so a message arriving meanwhile
+        # steers this turn rather than starting a second loop on the chat.
+        controller = self._reserve_turn_slot(chat_id)
+        try:
+            user_row = await self.database.message_history.get_user_row_by_turn_id(
+                payload.turn_id
+            )
+            if user_row is None:
+                raise RuntimeError(
+                    f"Turn {payload.turn_id} has no user message to resume"
+                )
+            lease = await registry.arm(self.database.tasks, payload.next_attempt())
+        except BaseException:
+            self._release_turn_slot(chat_id, controller)
+            raise
+        task = asyncio.create_task(
+            self._run_resumed_turn(payload, service, user_row, lease, controller),
+            name=f"telegram-resumed-turn:{chat_id}:{payload.turn_id}",
+        )
+        self._resumed_turn_tasks.add(task)
+        task.add_done_callback(self._resumed_turn_tasks.discard)
+        logger.info(
+            "Resumed Telegram turn %s in chat %s (attempt %d)",
+            payload.turn_id,
+            chat_id,
+            payload.attempt + 1,
+        )
+        return True
+
+    async def _run_resumed_turn(
+        self,
+        payload: TurnResumePayload,
+        service: ProcessingService,
+        user_row: MessageHistoryRow,
+        lease: TurnLease,
+        controller: TelegramMidTurnController,
+    ) -> None:
+        chat_id = int(payload.conversation_id)
+        try:
+            pending_mid_turn_batch = await self._run_and_deliver_resumed_turn(
+                payload, service, user_row, lease, controller
+            )
+        except Exception:
+            logger.exception(
+                "Resumed Telegram turn %s for chat %s failed", payload.turn_id, chat_id
+            )
+            with contextlib.suppress(Exception):
+                await self._send_message_chunks(
+                    bot=self.telegram_service.application.bot,
+                    chat_id=chat_id,
+                    text="Sorry, an unexpected error occurred.",
+                    parse_mode=None,
+                    reply_to_message_id=_telegram_message_id(
+                        user_row["interface_message_id"]
+                    ),
+                )
+            return
+        finally:
+            # Covers failures before the turn reaches _active_turn, whose own
+            # cleanup would otherwise never run for the slot reserved for it.
+            self._release_turn_slot(chat_id, controller)
+        if pending_mid_turn_batch:
+            await self.process_batch(
+                chat_id=chat_id,
+                batch=pending_mid_turn_batch,
+                context=CallbackContext(
+                    self.telegram_service.application, chat_id=chat_id
+                ),
+            )
+
+    async def _run_and_deliver_resumed_turn(
+        self,
+        payload: TurnResumePayload,
+        service: ProcessingService,
+        user_row: MessageHistoryRow,
+        lease: TurnLease,
+        controller: TelegramMidTurnController,
+    ) -> list[tuple[Update, list[AttachmentData] | None]]:
+        """Run the resumed turn and send its reply.
+
+        Returns the steering updates the turn never drained, for a follow-up
+        batch -- empty if the turn was interrupted or suspended again.
+        """
+        chat_id = int(payload.conversation_id)
+        bot = self.telegram_service.application.bot
+        model_selection = await resumed_model_selection(self.database, payload)
+        async with self._typing_notifications(bot, chat_id):
+            async with self._active_turn(chat_id, controller) as mid_turn_controller:
+                self._track_turn_lease(lease, mid_turn_controller)
+                try:
+                    result = await service.handle_chat_interaction(
+                        db_context=self.database,
+                        interface_type="telegram",
+                        conversation_id=payload.conversation_id,
+                        trigger_content_parts=_resumed_trigger_content_parts(user_row),
+                        trigger_interface_message_id=user_row["interface_message_id"],
+                        user_name=payload.user_name,
+                        user_id=payload.user_id,
+                        chat_interface=self.telegram_service.chat_interface,
+                        chat_interfaces=self._get_chat_interfaces(),
+                        confirmation_ui_managers=self._get_confirmation_ui_managers(),
+                        request_confirmation_callback=self._confirmation_callback_for(
+                            payload.user_id
+                        ),
+                        trigger_attachments=user_row["attachments"],
+                        mid_turn_input_provider=mid_turn_controller,
+                        turn_id=payload.turn_id,
+                        thread_root_id=user_row["thread_root_id"],
+                        model_selection=model_selection,
+                        resume=True,
+                    )
+                except asyncio.CancelledError:
+                    logger.info(
+                        "Resumed Telegram turn %s for chat %s was interrupted.",
+                        payload.turn_id,
+                        chat_id,
+                    )
+                    return []
+            pending_mid_turn_batch = (
+                []
+                if mid_turn_controller.should_interrupt()
+                else await mid_turn_controller.pop_unconsumed_batch()
+            )
+        await self._deliver_turn_reply(
+            bot,
+            chat_id,
+            text_reply=result.text_reply,
+            assistant_internal_id=result.assistant_message_internal_id,
+            error_traceback=result.error_traceback,
+            attachment_ids=result.attachment_ids,
+            reply_to_message_id=_telegram_message_id(user_row["interface_message_id"]),
+            on_behalf_of_user_id=payload.user_id,
+        )
+        await self._release_turn_lease(lease)
+        return pending_mid_turn_batch
+
+    async def _turn_reply_attachment_ids(
+        self, turn_id: str, reply: MessageHistoryRow
+    ) -> list[str]:
+        """The attachments a turn's reply would have been sent with.
+
+        The closing row records only what its tool rows did not, so the tool
+        rows are read too. An ``attach_to_response`` selection that dropped a
+        tool's own attachment cannot be told apart from here; sending it as
+        well is the side to err on.
+        """
+        attachment_ids: list[str] = []
+        rows = [
+            *(
+                row["attachments"] or []
+                for row in await self.database.message_history.get_rows_by_turn_id(
+                    turn_id
+                )
+                if row["role"] == "tool"
+            ),
+            reply["attachments"] or [],
+        ]
+        for attachments in rows:
+            for attachment in attachments:
+                attachment_id = attachment.get("attachment_id")
+                if attachment_id and attachment_id not in attachment_ids:
+                    attachment_ids.append(attachment_id)
+        return attachment_ids
+
+    async def deliver_pending_reply(self, payload: TurnResumePayload) -> None:
+        """Send a finished turn's reply if the process stopped before it went out."""
+        reply = await self.database.message_history.get_undelivered_terminal_reply(
+            payload.turn_id
+        )
+        if reply is None or reply["is_internal"]:
+            return
+        user_row = await self.database.message_history.get_user_row_by_turn_id(
+            payload.turn_id
+        )
+        await self._deliver_turn_reply(
+            self.telegram_service.application.bot,
+            int(payload.conversation_id),
+            text_reply=reply["content"],
+            assistant_internal_id=reply["internal_id"],
+            error_traceback=None,
+            attachment_ids=await self._turn_reply_attachment_ids(
+                payload.turn_id, reply
+            ),
+            reply_to_message_id=(
+                _telegram_message_id(user_row["interface_message_id"])
+                if user_row is not None
+                else None
+            ),
+            on_behalf_of_user_id=payload.user_id,
+        )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Sends a welcome message when the /start command is issued."""
@@ -681,60 +1222,24 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         f"Could not get user message ID for chat {chat_id} to save to history."
                     )
 
-                async with self._typing_notifications(context, chat_id):
-
-                    async def confirmation_callback_wrapper(
-                        interface_type: str,
-                        conversation_id: str,
-                        turn_id: str | None,
-                        tool_name: str,
-                        call_id: str,
-                        # ast-grep-ignore: no-dict-any - tool args have varying keys per tool
-                        tool_args: dict[str, Any],
-                        timeout_seconds: float,
-                        context: ToolExecutionContext,
-                    ) -> ConfirmationOutcome:
-                        logger.debug("confirmation_callback_wrapper called!")
-                        prompt_text = await render_tool_confirmation(
-                            tool_name, tool_args, context
-                        )
-
-                        source_message_internal_id = None
-                        if turn_id is not None:
-                            source_row = await context.db_context.message_history.get_user_row_by_turn_id(
-                                turn_id
-                            )
-                            if source_row is not None:
-                                source_message_internal_id = source_row["internal_id"]
-
-                        taint_state_json = (
-                            context.taint_tracker.snapshot().to_metadata()
-                            if context.taint_tracker is not None
-                            else None
-                        )
-                        result = await self.confirmation_manager.request_confirmation(
-                            conversation_id=conversation_id,
-                            interface_type=interface_type,
-                            turn_id=turn_id,
-                            prompt_text=prompt_text,
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            timeout=timeout_seconds,
-                            target_user_id=resolved_user.user_id,
-                            tool_call_id=call_id,
-                            source_message_internal_id=source_message_internal_id,
-                            taint_state_json=taint_state_json,
-                            processing_profile_id=context.processing_profile_id,
-                            tool_call_review_authorization=(
-                                context.tool_call_review_authorization
-                            ),
-                        )
-                        return result
+                async with self._typing_notifications(context.bot, chat_id):
+                    confirmation_callback_wrapper = self._confirmation_callback_for(
+                        resolved_user.user_id
+                    )
 
                     chat_interfaces = self._get_chat_interfaces()
                     confirmation_ui_managers = self._get_confirmation_ui_managers()
+                    turn_id = str(uuid.uuid4())
+                    turn_lease = await self._arm_turn_lease(
+                        service=selected_processing_service,
+                        chat_id=chat_id,
+                        turn_id=turn_id,
+                        user_id=resolved_user.user_id,
+                        user_name=user_name,
+                    )
 
                     async with self._active_turn(chat_id) as mid_turn_controller:
+                        self._track_turn_lease(turn_lease, mid_turn_controller)
                         try:
                             result = await selected_processing_service.handle_chat_interaction(
                                 db_context=db_context,
@@ -751,6 +1256,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 request_confirmation_callback=confirmation_callback_wrapper,
                                 trigger_attachments=trigger_attachments,  # type: ignore
                                 mid_turn_input_provider=mid_turn_controller,
+                                turn_id=turn_id,
                             )
                         except asyncio.CancelledError:
                             logger.info(
@@ -773,139 +1279,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     processing_error_traceback = result.error_traceback
                     response_attachment_ids = result.attachment_ids
 
-                force_reply_markup = ForceReply(selective=False)
-
-                if final_llm_content_to_send:
-                    sent_assistant_message = None
-                    if should_attempt_rich_message(final_llm_content_to_send):
-                        try:
-                            sent_assistant_message = await send_rich_message(
-                                bot=context.bot,
-                                chat_id=chat_id,
-                                text=final_llm_content_to_send,
-                                reply_to_message_id=reply_target_message_id,
-                                reply_markup=force_reply_markup,
-                            )
-                            logger.info(
-                                "Sent assistant response as Telegram rich message to chat %s.",
-                                chat_id,
-                            )
-                        except Exception as rich_err:
-                            if not is_rich_message_compatibility_error(rich_err):
-                                raise
-                            logger.info(
-                                "Telegram rejected rich message (%s); falling back to standard sendMessage.",
-                                rich_err,
-                            )
-
-                    if sent_assistant_message is None:
-                        # Convert to Telegram MarkdownV2 with bug fixes
-                        text_to_send, parse_mode = convert_to_telegram_markdown(
-                            final_llm_content_to_send
-                        )
-
-                        try:
-                            sent_assistant_message = await self._send_message_chunks(
-                                context=context,
-                                chat_id=chat_id,
-                                text=text_to_send,
-                                parse_mode=ParseMode.MARKDOWN_V2
-                                if parse_mode
-                                else None,
-                                reply_to_message_id=reply_target_message_id,
-                                reply_markup=force_reply_markup,
-                            )
-                        except BadRequest as parse_err:
-                            # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                            if "Can't parse entities" in str(parse_err) and parse_mode:
-                                logger.warning(
-                                    f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
-                                    exc_info=False,
-                                )
-                                sent_assistant_message = (
-                                    await self._send_message_chunks(
-                                        context=context,
-                                        chat_id=chat_id,
-                                        text=final_llm_content_to_send,
-                                        parse_mode=None,
-                                        reply_to_message_id=reply_target_message_id,
-                                        reply_markup=force_reply_markup,
-                                    )
-                                )
-                            else:
-                                raise
-
-                    if (
-                        sent_assistant_message
-                        and last_assistant_internal_id is not None
-                    ):
-                        try:
-                            await db_context.message_history.update_interface_id(
-                                internal_id=last_assistant_internal_id,
-                                interface_message_id=str(
-                                    sent_assistant_message.message_id
-                                ),
-                            )
-                            logger.info(
-                                f"Updated interface_message_id for internal_id {last_assistant_internal_id} to {sent_assistant_message.message_id}"
-                            )
-                        except Exception as update_err:
-                            logger.exception(
-                                f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}"
-                            )
-                    elif sent_assistant_message:
-                        logger.warning(
-                            f"Sent assistant message {sent_assistant_message.message_id} but couldn't find its internal_id ({last_assistant_internal_id}) to update."
-                        )
-
-                    if response_attachment_ids:
-                        try:
-                            await (
-                                self.telegram_service.chat_interface._send_attachments(
-                                    chat_id=chat_id,
-                                    attachment_ids=response_attachment_ids,
-                                    reply_to_msg_id=reply_target_message_id,
-                                    on_behalf_of_user_id=resolved_user.user_id,
-                                )
-                            )
-                        except Exception as attachment_err:
-                            logger.exception(
-                                f"Failed to send attachments {response_attachment_ids}: {attachment_err}"
-                            )
-                elif processing_error_traceback and reply_target_message_id:
-                    error_message_to_send = (
-                        "Sorry, something went wrong while processing your request."
-                    )
-                    if self.debug_mode:
-                        logger.info(f"Sending DEBUG error traceback to chat {chat_id}")
-                        error_message_to_send = (
-                            "Encountered error during processing \\(debug mode\\):\n"
-                            f"<pre>{html.escape(processing_error_traceback)}</pre>"
-                        )
-                    else:
-                        logger.info(f"Sending generic error message to chat {chat_id}")
-
-                    await self._send_message_chunks(
-                        context=context,
-                        chat_id=chat_id,
-                        text=error_message_to_send,
-                        parse_mode=(ParseMode.HTML if self.debug_mode else None),
-                        reply_to_message_id=reply_target_message_id,
-                        reply_markup=force_reply_markup,
-                    )
-                else:
-                    logger.warning(
-                        "Received empty response from LLM (and no processing error detected)."
-                    )
-                    if reply_target_message_id:
-                        await self._send_message_chunks(
-                            context=context,
-                            chat_id=chat_id,
-                            text="Sorry, I couldn't process that request.",
-                            parse_mode=None,
-                            reply_to_message_id=reply_target_message_id,
-                            reply_markup=force_reply_markup,
-                        )
+                await self._deliver_turn_reply(
+                    context.bot,
+                    chat_id,
+                    text_reply=final_llm_content_to_send,
+                    assistant_internal_id=last_assistant_internal_id,
+                    error_traceback=processing_error_traceback,
+                    attachment_ids=response_attachment_ids,
+                    reply_to_message_id=reply_target_message_id,
+                    on_behalf_of_user_id=resolved_user.user_id,
+                )
+                await self._release_turn_lease(turn_lease)
 
                 if pending_mid_turn_batch:
                     logger.info(
@@ -935,7 +1319,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             else "Sorry, an unexpected error occurred."
                         )
                         await self._send_message_chunks(
-                            context=context,
+                            bot=context.bot,
                             chat_id=chat_id,
                             text=error_text_to_send_unhandled,
                             parse_mode=(
@@ -1593,7 +1977,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             chat_interfaces = self._get_chat_interfaces()
             confirmation_ui_managers = self._get_confirmation_ui_managers()
 
-            async with self._typing_notifications(context, chat_id):
+            async with self._typing_notifications(context.bot, chat_id):
                 result = await service.handle_chat_interaction(
                     db_context=db_ctx,
                     interface_type="telegram",
@@ -1655,7 +2039,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
                     try:
                         sent_assistant_message = await self._send_message_chunks(
-                            context=context,
+                            bot=context.bot,
                             chat_id=chat_id,
                             text=text_to_send,
                             parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
@@ -1670,7 +2054,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 exc_info=False,
                             )
                             sent_assistant_message = await self._send_message_chunks(
-                                context=context,
+                                bot=context.bot,
                                 chat_id=chat_id,
                                 text=final_llm_content_to_send,
                                 parse_mode=None,
@@ -1715,7 +2099,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         f"<pre>{html.escape(processing_error_traceback)}</pre>"
                     )
                 await self._send_message_chunks(
-                    context=context,
+                    bot=context.bot,
                     chat_id=chat_id,
                     text=error_message_to_send,
                     parse_mode=(ParseMode.HTML if self.debug_mode else None),
@@ -1727,7 +2111,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     "Slash command resulted in empty response and no processing error."
                 )
                 await self._send_message_chunks(
-                    context=context,
+                    bot=context.bot,
                     chat_id=chat_id,
                     text="Sorry, I couldn't process that command.",
                     parse_mode=None,
@@ -1751,7 +2135,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     else "Sorry, an unexpected error occurred with your command."
                 )
                 await self._send_message_chunks(
-                    context=context,
+                    bot=context.bot,
                     chat_id=chat_id,
                     text=error_text_to_send_unhandled_cmd,
                     parse_mode=(

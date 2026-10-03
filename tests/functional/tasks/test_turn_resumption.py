@@ -132,6 +132,7 @@ def _exec_context(db: Database) -> ToolExecutionContext:
 class _RecordingResumer:
     def __init__(self, *, launched: bool = True) -> None:
         self.calls: list[TurnResumePayload] = []
+        self.deliveries: list[TurnResumePayload] = []
         self._launched = launched
 
     async def resume(
@@ -139,6 +140,9 @@ class _RecordingResumer:
     ) -> bool:
         self.calls.append(payload)
         return self._launched
+
+    async def deliver_pending_reply(self, payload: TurnResumePayload) -> None:
+        self.deliveries.append(payload)
 
 
 def _parked_turn(release: asyncio.Event) -> "asyncio.Task[None]":
@@ -210,6 +214,43 @@ async def test_turn_that_finishes_releases_its_lease(db_engine: AsyncEngine) -> 
 
     await wait_for_condition(lease_gone, description="lease deleted")
     assert not registry.is_live(turn_id)
+
+
+async def test_released_lease_is_deleted_while_its_task_runs_on(
+    db_engine: AsyncEngine,
+) -> None:
+    """A path whose task outlives the turn releases the lease when the turn
+    ends, not when the task does."""
+    registry = TurnLeaseRegistry()
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    lease = await registry.arm(db.tasks, _payload(conversation_id, turn_id))
+    release = asyncio.Event()
+    task = _parked_turn(release)
+    registry.track(lease, task, database=db, request_suspend=release.set)
+
+    await registry.release(lease)
+
+    assert await _leases(db) == []
+    release.set()
+    await task
+
+
+async def test_releasing_a_suspended_turn_keeps_its_lease(
+    db_engine: AsyncEngine,
+) -> None:
+    registry = TurnLeaseRegistry()
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    lease = await registry.arm(db.tasks, _payload(conversation_id, turn_id))
+    release = asyncio.Event()
+    task = _parked_turn(release)
+    registry.track(lease, task, database=db, request_suspend=release.set)
+    await registry.suspend_all(grace_seconds=5.0)
+
+    await registry.release(lease)
+
+    assert len(await _leases(db)) == 1
 
 
 async def test_suspended_turn_lease_is_handed_off_due_now(
@@ -441,3 +482,49 @@ async def test_handler_rearms_a_lease_for_a_turn_still_running_here(
     assert not resumer.calls
     release.set()
     await task
+
+
+async def test_handler_hands_a_finished_turn_to_its_resumer_for_delivery(
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn with a terminal reply is not run again, but its resumer gets the
+    chance to send a reply that never went out."""
+    registry = TurnLeaseRegistry()
+    resumer = _RecordingResumer()
+    registry.register_resumer("fake", resumer)
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    await _seed_interrupted_turn(db, conversation_id, turn_id)
+    await _add_row(
+        db,
+        AssistantMessage(content="all done"),
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+    )
+    payload = _payload(conversation_id, turn_id)
+
+    await registry.handle_resume_task(
+        _exec_context(db), payload.model_dump(mode="json")
+    )
+
+    assert (resumer.calls, resumer.deliveries) == ([], [payload])
+
+
+async def test_exhausted_turn_hands_its_marker_to_the_resumer(
+    db_engine: AsyncEngine,
+) -> None:
+    """A path that pushes replies out gets to send the interrupted marker, or
+    its user would hear nothing once the attempts run out."""
+    registry = TurnLeaseRegistry(max_resume_attempts=1)
+    resumer = _RecordingResumer()
+    registry.register_resumer("fake", resumer)
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    await _seed_interrupted_turn(db, conversation_id, turn_id)
+    payload = _payload(conversation_id, turn_id, attempt=1)
+
+    await registry.handle_resume_task(
+        _exec_context(db), payload.model_dump(mode="json")
+    )
+
+    assert (resumer.calls, resumer.deliveries) == ([], [payload])

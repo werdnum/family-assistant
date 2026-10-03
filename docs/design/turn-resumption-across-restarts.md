@@ -1,7 +1,7 @@
 # Resuming in-progress turns across server restarts
 
-**Status:** Milestone 1 implemented (web streaming turns, graceful hand-off, crash recovery).
-Milestone 2 (Telegram) and Milestone 3 (task-worker handlers) are proposed. **Date:** 2026-10-02
+**Status:** Milestones 1 (web streaming turns, graceful hand-off, crash recovery) and 2 (Telegram
+turns) implemented. Milestone 3 (task-worker handlers) is proposed. **Date:** 2026-10-02
 
 ## Problem
 
@@ -159,11 +159,27 @@ For web turns, the relaunch goes through the same producer as a new turn, with t
    the persisted rows, and a test that a suspended turn's lease is handed off while a completed
    turn's is deleted.
 
-2. **Telegram turns.** `handle_chat_interaction` saves a turn's assistant and tool rows only once
-   the loop returns, so a Telegram turn that is killed leaves nothing to resume from. The fix is to
-   persist incrementally, as the streaming path does, and add a resumer that delivers through the
-   Telegram chat interface with the existing delivery checkpoint (`get_undelivered_terminal_reply`).
-   Verified by a Telegram functional test mirroring the web one.
+2. **Telegram turns** (implemented). `handle_chat_interaction` used to save a turn's assistant and
+   tool rows only once the loop returned, so a Telegram turn that was killed left nothing to resume
+   from. It now saves them as they are produced, as the streaming path does, for every caller.
+
+   A Telegram message turn arms a lease before it runs and holds the chat's turn slot while it does.
+   A suspension stops it before it replies. Its resumer reruns the turn in the same slot, so new
+   messages still steer it, and delivers through the same path as any Telegram reply. A turn that
+   comes due with a terminal reply but no delivered message id has its reply sent instead of being
+   run again: the registry hands every finished turn to its resumer, and only resumers that push
+   replies out act on it.
+
+   Slash-command turns arm no lease and are not resumed. A resumed reply to an earlier message
+   continues in that thread, but is rebuilt from recent history rather than the full thread.
+
+   Verified by Telegram functional tests for each of these:
+
+   - the tool-calling row is durable while the tool runs;
+   - a running turn holds a lease, which it releases once it replies;
+   - a suspended turn keeps its rows and its lease;
+   - a resumed turn replies in the chat;
+   - an undelivered reply is sent without rerunning the turn.
 
 3. **Task-worker handlers.** A cancelled handler leaves its row `processing` until the 15-minute
    stale reclaim. On graceful shutdown, return those rows to `pending` straight away. Their own
