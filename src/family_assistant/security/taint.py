@@ -426,11 +426,15 @@ class TurnTaintState:
     _seen_keys: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        # With nothing marked inherited, all of the state's taint is its own.
-        # This is the conservative reading for a state built without origin
-        # tracking, and it keeps a replace() that raises max_tier honest.
-        if self.introduced_max_tier < self.max_tier and not any(
-            source.inherited for source in self.sources
+        # A state constructed directly, rather than grown by add_source, has
+        # no origin record: with nothing marked inherited, all of its taint is
+        # its own. Grown states carry introduced_max_tier explicitly, and the
+        # bound on retained sources means their summaries cannot be used to
+        # infer it.
+        if (
+            not self._seen_keys
+            and self.introduced_max_tier < self.max_tier
+            and not any(source.inherited for source in self.sources)
         ):
             object.__setattr__(self, "introduced_max_tier", self.max_tier)
         if not self._seen_keys and self.sources:
@@ -2162,7 +2166,11 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
         return None
     persisted_max_tier = TurnTaintState.from_metadata(metadata).max_tier
     if persisted_max_tier > state.max_tier:
-        state = replace(state, max_tier=persisted_max_tier)
+        state = replace(
+            state,
+            max_tier=persisted_max_tier,
+            introduced_max_tier=persisted_max_tier,
+        )
     restamped = state.to_metadata()
     original_version = _metadata_version(cast("Mapping[str, object]", metadata))
     if original_version is not None:

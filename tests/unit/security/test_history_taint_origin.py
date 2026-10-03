@@ -272,3 +272,13 @@ def test_confirmed_continuation_keeps_the_turns_carry_in_inherited() -> None:
     )
 
     assert merged.introduced_max_tier is SourceTrustTier.TRUSTED_USER
+
+
+def test_evicted_carry_in_is_not_promoted_to_introduced() -> None:
+    state = prompt_window_taint([_row(_web_search_row())])
+    for index in range(DEFAULT_MAX_SOURCES + 2):
+        state = state.add_source(_source(SourceTrustTier.TRUSTED_INTERNAL, f"t{index}"))
+    assert not any(source.inherited for source in state.sources)
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.introduced_max_tier is SourceTrustTier.TRUSTED_INTERNAL
