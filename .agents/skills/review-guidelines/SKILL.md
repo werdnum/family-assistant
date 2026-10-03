@@ -8,9 +8,8 @@ description: Family Assistant's code review standards — severity levels, the p
 Read [references/review-guidelines.md](references/review-guidelines.md) in full before writing
 review feedback. It defines what makes a comment actionable, the severity levels and the threat
 model behind `SECURITY_RISK`, the cost/benefit gate for proportionality, how to review a design
-document, and what not to comment on. The automated reviewers (`scripts/review-changes.py` and the
-Gemini review workflow) load the same file, so a review you write and a bot's review apply one
-standard.
+document, and what not to comment on. The automated reviewer (`scripts/review-changes.py`) loads the
+same file, so a review you write and the script's review apply one standard.
 
 ## Answering review on your own change
 

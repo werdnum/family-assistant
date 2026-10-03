@@ -40,7 +40,6 @@ test_results.log
 test-results
 
 .gemini/*
-!.gemini/commands/
 gha-creds-*.json
 .review_cache
 frontend/dev-dist
