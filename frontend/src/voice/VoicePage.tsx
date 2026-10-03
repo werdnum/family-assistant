@@ -5,6 +5,7 @@
  * using the Gemini Live API.
  */
 
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { SESSION_CONFIG } from './types';
 import { StatusIndicator } from './StatusIndicator';
@@ -118,6 +119,14 @@ function ErrorDisplay({ error, onDismiss }: { error: string; onDismiss: () => vo
  */
 export function VoicePage() {
   const { sessionState, transcripts, connect, disconnect } = useGeminiLive();
+
+  // The page needs no data to render, so it is ready once mounted.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-app-ready', 'true');
+    return () => {
+      document.documentElement.removeAttribute('data-app-ready');
+    };
+  }, []);
 
   const handleStartCall = () => {
     void resolveVoiceProfileId().then(connect);
