@@ -185,22 +185,45 @@ Two configuration-only reductions were considered during review and rejected:
 
 Milestones deliver standalone value and are verified as stated. No calendar estimates.
 
-1. **Flip to enforce.** The three configuration changes above. Verified by the taint-audit endpoint
-   showing confirm and deny outcomes with `mode = enforce`, and by prompts per day in
-   `confirmation_requests` landing near one.
-2. **Make the next audit attributable.** Record each tool's own result tier alongside the running
+1. **Flip to enforce.** The mode change and the note review above. Verified by the taint-audit
+   endpoint showing confirm and deny outcomes with `mode = enforce`, and by prompts per day in
+   `confirmation_requests` landing near the measured 2.6.
+2. **Stop poisoning new turns.** Addressed with prejudice, because it is the largest single source
+   of friction and it is a defect in the propagation rule, not a policy choice. Every row persists
+   the turn's merged snapshot, history included, and `merge_history_taint` raises the next turn to
+   each row's stored maximum. One web search therefore stamps every later row in the window, each of
+   those stamps the rows after it, and a conversation never heals: the Telegram window is ten
+   messages or two hours, yet 81.5 percent of untrusted turns were untrusted before their first tool
+   call. The correction has two halves. On the write side, a row persists only the sources its own
+   turn introduced; the tracker already knows which those are, because `add_source` is told whether
+   a source came from history, and that distinction is currently thrown away at serialisation. The
+   row keeps its merged `max_tier`, which is what the row *is*: the reviewer still renders an
+   influenced reply as a stub, and memory still refuses it. On the read side, history contributes
+   only the introduced sources of rows actually in the prompt window, never a stored maximum. Taint
+   then lasts exactly as long as the introducing text is in the prompt, which is the right duration,
+   and ends when it leaves. The same rule applies to a delegation's folded-back state. Uncured
+   automation definitions, which fired at the untrusted tier in 10.8 percent of untrusted
+   evaluations, are restamped with the existing script in the same milestone. The accepted residual
+   is paraphrase beyond the window: a reply written under taint can restate an injected instruction
+   after the source has aged out, and that reply is in the prompt. It carries no taint forward.
+   Commodity injection relies on the attacker's own text being present, the reviewer still sees the
+   influenced row as a stub while it is in the window, and the alternative is the infinite
+   propagation this milestone removes. Verified by the share of turns untrusted before their first
+   tool call falling from 81.5 percent to the share whose window genuinely holds an introducing row,
+   and by Telegram turns more than two hours after a web search starting clean.
+3. **Make the next audit attributable.** Record each tool's own result tier alongside the running
    tier. Keep tool name and source type on redacted audit sources. Stamp turn ids on delegation
    reviews. Make confirmation expiry run. Verified by a re-run of the September audit queries
    producing the per-tool attribution table that the first run could not.
-3. **Tag hygiene.** Confirm whether delegation results default to untrusted because of a tag
+4. **Tag hygiene.** Confirm whether delegation results default to untrusted because of a tag
    mismatch between repository and deployment config, or because the children genuinely read the
    web; fix the former. Confirm the engineer profile's database and log reads need the untrusted
    tag, given that profile's side effects are already judged by static review. Verified by the share
    of turns untrusted before their first tool call falling in the next audit.
-4. **Verify the ambient-write gate.** In a throwaway conversation, read a web page, then write a
+5. **Verify the ambient-write gate.** In a throwaway conversation, read a web page, then write a
    note with `include_in_prompt` set. Verified by an `ambient_prompt_write` audit event. If none
    appears, the gate is not wired, and that is a bug to fix, not a design to write.
-5. **Memory yield.** Query `memory_change_log` outcomes and the admissible share of assistant rows.
+6. **Memory yield.** Query `memory_change_log` outcomes and the admissible share of assistant rows.
    The curator transcript omits every assistant row whose stored turn tier is untrusted, which in
    production is most of them, so the curator reads user lines with the answers missing. Showing it
    those rows is not the fix: the memory write invariant refuses any edit whose provenance is not
@@ -210,12 +233,12 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    from tainted stretches through the existing write-time admission review, so they land as
    `machine_reviewed` only on a judge verdict. That choice waits for the thirty-day review. Verified
    for now by the two queries producing a number.
-6. **Contingent, on evidence only.** After thirty days of enforce, if the audit indicts a cell:
+7. **Contingent, on evidence only.** After thirty days of enforce, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
    largest confirm category with a rule; calendar provenance wired into the context provider, which
    is a tag fix; an allowlist egress proxy around worker and script sandboxes, which would retire
    the largest cell and all the shell denies. Each is substitutive. Each needs a number from
-   milestone 2 before it starts.
+   milestone 3 before it starts.
 
 ## Deliberate simplifications and accepted residuals
 
@@ -230,6 +253,9 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
   configuration reference should say that a deployment adding a lock, alarm or garage opener needs a
   gate on those domains before it is safe at any tier.
 - Turn-level taint remains the enforcement unit. Value-level provenance is not coming.
+- History taint lasts as long as the introducing text is in the prompt window and no longer. A reply
+  that paraphrases an injected instruction after its source has aged out carries no taint forward;
+  see milestone 2.
 - The middle tiers are uncalibrated and will stay so until a mailbox connector supplies evidence.
 - Shadow allows cure definition records. Cures are not re-judged when the reviewer improves.
 - The agent model is a security control this project does not own. Published numbers show an
