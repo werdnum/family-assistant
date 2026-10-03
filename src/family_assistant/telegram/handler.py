@@ -52,6 +52,7 @@ from family_assistant.services.turn_resumption import (
     TurnLease,
     TurnLeaseRegistry,
     TurnResumePayload,
+    resumed_model_selection,
 )
 from family_assistant.services.user_identity import (
     ResolvedUserIdentity,
@@ -339,9 +340,28 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             user_name=user_name,
         )
 
+    def _reserve_turn_slot(self, chat_id: int) -> TelegramMidTurnController:
+        """Claim this chat's turn slot synchronously, ahead of running the turn.
+
+        For a turn that must await before it can run: claiming the slot first
+        means a message arriving in between steers this turn instead of
+        starting a rival one. Hand the controller to ``_active_turn``.
+        """
+        controller = TelegramMidTurnController()
+        self._active_mid_turns[chat_id] = controller
+        return controller
+
+    def _release_turn_slot(
+        self, chat_id: int, controller: TelegramMidTurnController
+    ) -> None:
+        if self._active_mid_turns.get(chat_id) is controller:
+            self._active_mid_turns.pop(chat_id, None)
+
     @contextlib.asynccontextmanager
     async def _active_turn(
-        self, chat_id: int
+        self,
+        chat_id: int,
+        controller: TelegramMidTurnController | None = None,
     ) -> AsyncIterator[TelegramMidTurnController]:
         """Hold this chat's turn slot for the length of one LLM loop.
 
@@ -354,16 +374,15 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         Every path that calls ``handle_chat_interaction`` for a Telegram chat
         goes through here -- a plain message and a slash command alike.
         """
-        controller = TelegramMidTurnController()
-        self._active_mid_turns[chat_id] = controller
+        if controller is None:
+            controller = self._reserve_turn_slot(chat_id)
         current_task = asyncio.current_task()
         if current_task is not None:
             self._active_processing_tasks[chat_id] = current_task
         try:
             yield controller
         finally:
-            if self._active_mid_turns.get(chat_id) is controller:
-                self._active_mid_turns.pop(chat_id, None)
+            self._release_turn_slot(chat_id, controller)
             if (
                 current_task is not None
                 and self._active_processing_tasks.get(chat_id) is current_task
@@ -739,14 +758,23 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         if chat_id in self._active_mid_turns:
             return False
         service = self._service_for_resumed_turn(payload.processing_profile_id)
-        user_row = await self.database.message_history.get_user_row_by_turn_id(
-            payload.turn_id
-        )
-        if user_row is None:
-            raise RuntimeError(f"Turn {payload.turn_id} has no user message to resume")
-        lease = await registry.arm(self.database.tasks, payload.next_attempt())
+        # Claimed before the awaits below, so a message arriving meanwhile
+        # steers this turn rather than starting a second loop on the chat.
+        controller = self._reserve_turn_slot(chat_id)
+        try:
+            user_row = await self.database.message_history.get_user_row_by_turn_id(
+                payload.turn_id
+            )
+            if user_row is None:
+                raise RuntimeError(
+                    f"Turn {payload.turn_id} has no user message to resume"
+                )
+            lease = await registry.arm(self.database.tasks, payload.next_attempt())
+        except BaseException:
+            self._release_turn_slot(chat_id, controller)
+            raise
         task = asyncio.create_task(
-            self._run_resumed_turn(payload, service, user_row, lease),
+            self._run_resumed_turn(payload, service, user_row, lease, controller),
             name=f"telegram-resumed-turn:{chat_id}:{payload.turn_id}",
         )
         self._resumed_turn_tasks.add(task)
@@ -765,11 +793,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         service: ProcessingService,
         user_row: MessageHistoryRow,
         lease: TurnLease,
+        controller: TelegramMidTurnController,
     ) -> None:
         chat_id = int(payload.conversation_id)
         try:
             pending_mid_turn_batch = await self._run_and_deliver_resumed_turn(
-                payload, service, user_row, lease
+                payload, service, user_row, lease, controller
             )
         except Exception:
             logger.exception(
@@ -801,6 +830,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         service: ProcessingService,
         user_row: MessageHistoryRow,
         lease: TurnLease,
+        controller: TelegramMidTurnController,
     ) -> list[tuple[Update, list[AttachmentData] | None]]:
         """Run the resumed turn and send its reply.
 
@@ -809,8 +839,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         """
         chat_id = int(payload.conversation_id)
         bot = self.telegram_service.application.bot
+        model_selection = await resumed_model_selection(self.database, payload)
         async with self._typing_notifications(bot, chat_id):
-            async with self._active_turn(chat_id) as mid_turn_controller:
+            async with self._active_turn(chat_id, controller) as mid_turn_controller:
                 self._track_turn_lease(lease, mid_turn_controller)
                 try:
                     result = await service.handle_chat_interaction(
@@ -831,6 +862,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         mid_turn_input_provider=mid_turn_controller,
                         turn_id=payload.turn_id,
                         thread_root_id=user_row["thread_root_id"],
+                        model_selection=model_selection,
                         resume=True,
                     )
                 except asyncio.CancelledError:
@@ -858,6 +890,34 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         await self._release_turn_lease(lease)
         return pending_mid_turn_batch
 
+    async def _turn_reply_attachment_ids(
+        self, turn_id: str, reply: MessageHistoryRow
+    ) -> list[str]:
+        """The attachments a turn's reply would have been sent with.
+
+        The closing row records only what its tool rows did not, so the tool
+        rows are read too. An ``attach_to_response`` selection that dropped a
+        tool's own attachment cannot be told apart from here; sending it as
+        well is the side to err on.
+        """
+        attachment_ids: list[str] = []
+        rows = [
+            *(
+                row["attachments"] or []
+                for row in await self.database.message_history.get_rows_by_turn_id(
+                    turn_id
+                )
+                if row["role"] == "tool"
+            ),
+            reply["attachments"] or [],
+        ]
+        for attachments in rows:
+            for attachment in attachments:
+                attachment_id = attachment.get("attachment_id")
+                if attachment_id and attachment_id not in attachment_ids:
+                    attachment_ids.append(attachment_id)
+        return attachment_ids
+
     async def deliver_pending_reply(self, payload: TurnResumePayload) -> None:
         """Send a finished turn's reply if the process stopped before it went out."""
         reply = await self.database.message_history.get_undelivered_terminal_reply(
@@ -874,11 +934,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             text_reply=reply["content"],
             assistant_internal_id=reply["internal_id"],
             error_traceback=None,
-            attachment_ids=[
-                attachment_id
-                for attachment in reply["attachments"] or []
-                if (attachment_id := attachment.get("attachment_id"))
-            ],
+            attachment_ids=await self._turn_reply_attachment_ids(
+                payload.turn_id, reply
+            ),
             reply_to_message_id=(
                 _telegram_message_id(user_row["interface_message_id"])
                 if user_row is not None

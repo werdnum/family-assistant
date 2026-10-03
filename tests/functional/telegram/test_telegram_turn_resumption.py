@@ -18,6 +18,7 @@ from telegram import Update
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.turn_resumption import (
     TURN_RESUME_TASK_TYPE,
     TurnLeaseRegistry,
@@ -321,3 +322,121 @@ async def test_finished_but_undelivered_telegram_reply_is_sent(
         await fix.database.message_history.get_undelivered_terminal_reply(turn_id)
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_message_arriving_while_a_resume_starts_steers_it(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resumed turn claims the chat before it awaits anything, so a message
+    landing in that window steers it instead of starting a second loop."""
+    fix = telegram_handler_fixture
+    mock_llm = cast("RuleBasedMockLLMClient", fix.mock_llm)
+    mock_llm.rules = [(lambda kwargs: True, LLMOutput(content=RESUMED_REPLY))]
+    turn_id = str(uuid.uuid4())
+    await _seed_turn(
+        fix,
+        turn_id,
+        [
+            UserMessage.from_trusted_user(content="What's on my notes list?"),
+            AssistantMessage(content="", tool_calls=[_note_tool_call("call_1")]),
+            ToolMessage(
+                tool_call_id="call_1", name="add_or_update_note", content="Saved."
+            ),
+        ],
+    )
+    registry = _registry(fix)
+    real_arm = registry.arm
+    arming, proceed = asyncio.Event(), asyncio.Event()
+
+    async def slow_arm(
+        tasks: Any,  # noqa: ANN401 - forwarded unchanged
+        payload: TurnResumePayload,
+    ) -> Any:  # noqa: ANN401 - forwarded unchanged
+        arming.set()
+        await proceed.wait()
+        return await real_arm(tasks, payload)
+
+    monkeypatch.setattr(registry, "arm", slow_arm)
+    resume = asyncio.create_task(_resume(fix, turn_id))
+    await wait_for_condition(arming.is_set, timeout=10, description="resume arming")
+    sent = await fix.telegram_client.send_message("Also check tomorrow")
+    update = Update.de_json(sent.get("result", {}), fix.bot)
+
+    await fix.handler.message_handler(update, create_mock_context(fix.application))
+
+    proceed.set()
+    await asyncio.wait_for(resume, timeout=10)
+    await assert_bot_sent_message(
+        fix.telegram_client, "I'll apply that to the current response", timeout=10
+    )
+
+
+@pytest.mark.asyncio
+async def test_redelivered_reply_carries_its_tool_attachments(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reply's closing row omits ids its tool rows already record, so the
+    redelivery reads them from the tool rows too."""
+    fix = telegram_handler_fixture
+    attachment_registry = fix.assistant.attachment_registry
+    assert attachment_registry is not None
+    attachment = await attachment_registry.store_and_register_tool_attachment(
+        file_content=b"fake document content",
+        filename="report.pdf",
+        content_type="application/pdf",
+        tool_name="add_or_update_note",
+        owner_user_id=_user_id(fix),
+        db_context=fix.database,
+        taint_state=TurnTaintState.empty(),
+    )
+    turn_id = str(uuid.uuid4())
+    await _seed_turn(
+        fix,
+        turn_id,
+        [
+            UserMessage.from_trusted_user(content="Make me a report"),
+            AssistantMessage(content="", tool_calls=[_note_tool_call("call_1")]),
+        ],
+    )
+    await fix.database.message_history.add_message(
+        ToolMessage(tool_call_id="call_1", name="add_or_update_note", content="Done."),
+        interface_type="telegram",
+        conversation_id=CHAT_ID,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id=_user_id(fix),
+        processing_profile_id=fix.processing_service.service_config.id,
+        attachments=[
+            {
+                "type": "document",
+                "attachment_id": attachment.attachment_id,
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+    await fix.database.message_history.add_message(
+        AssistantMessage(content=RESUMED_REPLY),
+        interface_type="telegram",
+        conversation_id=CHAT_ID,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id=_user_id(fix),
+        processing_profile_id=fix.processing_service.service_config.id,
+    )
+    chat_interface = fix.handler.telegram_service.chat_interface
+    sent_attachment_ids: list[list[str]] = []
+    real_send_attachments = chat_interface._send_attachments
+
+    async def spy_send_attachments(**kwargs: Any) -> Any:  # noqa: ANN401
+        sent_attachment_ids.append(list(kwargs["attachment_ids"]))
+        return await real_send_attachments(**kwargs)
+
+    monkeypatch.setattr(chat_interface, "_send_attachments", spy_send_attachments)
+
+    await _resume(fix, turn_id)
+
+    await assert_bot_sent_message(fix.telegram_client, RESUMED_REPLY, timeout=10)
+    assert sent_attachment_ids == [[attachment.attachment_id]]

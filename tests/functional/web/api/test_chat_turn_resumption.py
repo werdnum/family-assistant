@@ -36,6 +36,7 @@ from family_assistant.services.turn_resumption import (
     TURN_RESUME_TASK_TYPE,
     TurnLeaseRegistry,
     TurnResumePayload,
+    resumed_model_selection,
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import TaskAttempt
@@ -45,7 +46,6 @@ from family_assistant.web.turn_producer import trigger_content_parts_for
 from family_assistant.web.turn_resumption import (
     WEB_STREAM_RESUMER,
     WebTurnResumer,
-    resumed_model_selection,
 )
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient

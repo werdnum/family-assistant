@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
@@ -25,6 +25,10 @@ from typing import TYPE_CHECKING, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from family_assistant.llm.messages import AssistantMessage
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    model_selection_from_reasoning,
+)
 from family_assistant.security.taint import merge_history_taint
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.utils.clock import Clock, SystemClock
@@ -431,3 +435,27 @@ async def persist_interrupted_marker(db: Database, payload: TurnResumePayload) -
         user_id=payload.user_id,
         processing_profile_id=payload.processing_profile_id,
     )
+
+
+async def resumed_model_selection(
+    db: Database, payload: TurnResumePayload
+) -> ResolvedModelSelection | None:
+    """The tier the resumed turn runs on: the one its earlier rows ran on.
+
+    The lease holds the envelope the launch path admitted, which under Auto is
+    the unrouted default. Once a model call has run, the routed envelope is
+    stamped on its row, and the continuation must stay on it rather than
+    switch tiers partway through the turn. If no call ran, nothing was decided
+    yet, so the admitted envelope goes through exactly as it was admitted --
+    still open to routing.
+    """
+    for reasoning in reversed(
+        await db.message_history.get_assistant_reasoning_infos_for_turn(payload.turn_id)
+    ):
+        stamped = model_selection_from_reasoning(reasoning)
+        if stamped is not None:
+            return stamped
+    if payload.model_selection is None:
+        return None
+    admitted = ResolvedModelSelection.from_json(payload.model_selection)
+    return replace(admitted, frozen=False)
