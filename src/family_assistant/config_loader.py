@@ -915,6 +915,7 @@ def resolve_service_profile(
     resolved = copy.deepcopy(default_settings)
     resolved["id"] = profile_def["id"]
     resolved["description"] = profile_def.get("description", "")
+    resolved["user_selectable"] = profile_def.get("user_selectable", False)
 
     profile_id = profile_def["id"]
 

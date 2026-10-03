@@ -53,6 +53,11 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   }, [selectedProfileId, defaultProfileId, onProfileChange]);
 
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
+  // The current selection stays listed even when it is not offered, so a
+  // conversation already on an internal profile still shows what it is on.
+  const pickerProfiles = profiles.filter(
+    (p) => p.user_selectable !== false || p.id === selectedProfileId
+  );
 
   if (loading) {
     return (
@@ -91,7 +96,7 @@ const ProfileSelector: React.FC<ProfileSelectorProps> = ({
           </div>
         </SelectTrigger>
         <SelectContent>
-          {profiles.map((profile) => (
+          {pickerProfiles.map((profile) => (
             <SelectItem key={profile.id} value={profile.id}>
               <div className="flex flex-col gap-1 py-1">
                 <div className="flex items-center gap-2">

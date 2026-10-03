@@ -1410,6 +1410,7 @@ class Assistant:
             allowed_delegation_sources=(profile_proc_conf.allowed_delegation_sources),
             id=profile_id,
             description=profile_conf.description or f"Processing profile: {profile_id}",
+            user_selectable=profile_conf.user_selectable,
             visibility_grants=profile_grants,
             required_note_read_labels=(profile_proc_conf.required_note_read_labels),
             default_note_visibility_labels=(

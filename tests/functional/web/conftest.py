@@ -361,6 +361,7 @@ async def _create_web_assistant(
         "service_profiles": [
             {
                 "id": "default_assistant",
+                "user_selectable": True,
                 "description": "Test profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a helpful test assistant."},
@@ -408,6 +409,7 @@ async def _create_web_assistant(
             },
             {
                 "id": "test_browser",
+                "user_selectable": True,
                 "description": "Test browser profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a test browser assistant."},
@@ -437,6 +439,7 @@ async def _create_web_assistant(
             },
             {
                 "id": "test_research",
+                "user_selectable": True,
                 "description": "Test research profile for web UI",
                 "processing_config": {
                     "prompts": {"system_prompt": "You are a test research assistant."},

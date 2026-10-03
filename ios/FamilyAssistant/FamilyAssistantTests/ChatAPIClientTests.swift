@@ -457,6 +457,12 @@ final class ChatAPIClientTests: XCTestCase {
             false,
             "A profile pinned to one model offers no intelligence control."
         )
+        XCTAssertEqual(profiles.first?.userSelectable, true)
+        XCTAssertEqual(
+            profiles.last?.userSelectable,
+            false,
+            "Without user_selectable, a delegation-only profile is not offered."
+        )
     }
 
     func testStartTurnOmitsModelTierWhenTheUserChoseNone() async throws {

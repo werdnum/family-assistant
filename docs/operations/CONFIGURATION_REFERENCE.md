@@ -2880,6 +2880,26 @@ Default service profile to use when none specified.
 
 ______________________________________________________________________
 
+### service_profiles[].user_selectable
+
+Whether the web and iOS profile pickers offer the profile. Opt-in: a profile without it is treated
+as internal (a delegation target, a background task's profile) and left out of the picker. It only
+controls listing; slash commands, delegation and explicit API requests still reach the profile. The
+default profile is always offered, and remote A2A profiles never are.
+
+```yaml
+service_profiles:
+  - id: "my_profile"
+    user_selectable: true
+```
+
+| Property | Value   |
+| -------- | ------- |
+| Required | No      |
+| Default  | `false` |
+
+______________________________________________________________________
+
 ### MCP_CONFIG_PATH
 
 Path to MCP server configuration file.

@@ -2311,6 +2311,14 @@ class ServiceProfile(BaseModel):
         default=False,
         description="If true, this profile is a remote delegation target and cannot be used for direct chat",
     )
+    user_selectable: bool = Field(
+        default=False,
+        description=(
+            "Whether a profile picker should offer this profile. False for "
+            "internal profiles, which are listed so a client can still name "
+            "one recorded on a past message. The default profile is always true."
+        ),
+    )
 
 
 class ProfilesResponse(BaseModel):
@@ -3725,6 +3733,10 @@ async def get_available_profiles(
             ServiceProfile(
                 id=profile_id,
                 description=description,
+                user_selectable=(
+                    service_config.user_selectable
+                    or profile_id == default_processing_service.service_config.id
+                ),
                 llm_model=getattr(service_config, "llm_model", None),
                 available_tools=sorted(available_tools),
                 enabled_mcp_servers=sorted(enabled_mcp_servers),

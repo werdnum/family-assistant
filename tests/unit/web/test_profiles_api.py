@@ -123,3 +123,56 @@ async def test_profiles_api_does_not_fallback_to_all_mcp_servers_when_none_visib
     body = response.json()
     assert body["default_profile_id"] == "profile-no-mcp"
     assert body["profiles"][0]["enabled_mcp_servers"] == []
+
+
+def _make_service(profile_id: str, *, user_selectable: bool) -> ProcessingService:
+    return ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(content="ok", tool_calls=None),
+        ),
+        tools_provider=EmptyDescriptorWrappingProvider(
+            MCPToolsProvider(mcp_server_configs={}, initialization_timeout_seconds=1)
+        ),
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a test assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=5,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id=profile_id,
+            description=f"Profile {profile_id}",
+            user_selectable=user_selectable,
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_profiles_api_reports_user_selectable() -> None:
+    default_service = _make_service("main", user_selectable=False)
+    services = {
+        "main": default_service,
+        "research": _make_service("research", user_selectable=True),
+        "internal": _make_service("internal", user_selectable=False),
+    }
+
+    app = FastAPI()
+    app.include_router(chat_api_router, prefix="/api")
+    app.state.processing_service = default_service
+    app.state.processing_services = services
+    app.state.config = AppConfig(default_service_profile_id="main")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/api/v1/profiles")
+
+    assert response.status_code == 200
+    selectable = {p["id"]: p["user_selectable"] for p in response.json()["profiles"]}
+    # Internal profiles stay listed so clients can label past messages; the
+    # default is offered even without the flag.
+    assert selectable == {"internal": False, "main": True, "research": True}

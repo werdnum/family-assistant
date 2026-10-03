@@ -1693,7 +1693,7 @@ final class ChatViewModel {
         do {
             let response = try await apiClient.listProfiles()
             defaultProfileID = response.defaultProfileID
-            profiles = response.profiles.filter { !$0.delegationOnly }
+            profiles = response.profiles.filter { $0.userSelectable }
             // Deliberately do NOT reset the selection when it's absent from the
             // fetched list. The list is empty during a backend cold start
             // (`/v1/profiles` returns `{"profiles":[]}` before the registry is

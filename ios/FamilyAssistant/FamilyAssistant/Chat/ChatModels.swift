@@ -124,6 +124,9 @@ struct ChatProfile: Codable, Equatable, Identifiable {
     let availableTools: [String]
     let enabledMCPServers: [String]
     let delegationOnly: Bool
+    /// Whether the profile picker offers this profile. False for internal
+    /// profiles such as delegation targets and background tasks.
+    let userSelectable: Bool
     /// Tiers this profile permits the user to choose between, in configuration
     /// order. Empty for a profile pinned to one model, which is how the client
     /// knows to offer no intelligence control for it.
@@ -139,6 +142,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         case availableTools = "available_tools"
         case enabledMCPServers = "enabled_mcp_servers"
         case delegationOnly = "delegation_only"
+        case userSelectable = "user_selectable"
         case modelTiers = "model_tiers"
         case defaultModelTier = "default_model_tier"
     }
@@ -150,6 +154,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         availableTools: [String],
         enabledMCPServers: [String],
         delegationOnly: Bool,
+        userSelectable: Bool? = nil,
         modelTiers: [ChatModelTier] = [],
         defaultModelTier: String? = nil
     ) {
@@ -159,6 +164,7 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         self.availableTools = availableTools
         self.enabledMCPServers = enabledMCPServers
         self.delegationOnly = delegationOnly
+        self.userSelectable = userSelectable ?? !delegationOnly
         self.modelTiers = modelTiers
         self.defaultModelTier = defaultModelTier
     }
@@ -171,6 +177,10 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         availableTools = try container.decode([String].self, forKey: .availableTools)
         enabledMCPServers = try container.decode([String].self, forKey: .enabledMCPServers)
         delegationOnly = try container.decode(Bool.self, forKey: .delegationOnly)
+        // Absent against a server that predates the flag, which listed every
+        // profile it did not mark delegation-only.
+        userSelectable = try container.decodeIfPresent(Bool.self, forKey: .userSelectable)
+            ?? !delegationOnly
         // Absent against a server that predates tier selection: no tiers means no
         // control, which is the same thing a pinned profile reports.
         modelTiers = try container.decodeIfPresent([ChatModelTier].self, forKey: .modelTiers) ?? []

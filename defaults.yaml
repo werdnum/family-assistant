@@ -1047,8 +1047,11 @@ default_profile_settings:
 # - 'openai': Direct OpenAI SDK integration (requires OPENAI_API_KEY)
 # - 'anthropic': Direct Anthropic SDK integration (requires ANTHROPIC_API_KEY)
 # Provider is auto-detected from the model name if not specified.
+# 'user_selectable: true' lists a profile in the web and iOS profile pickers;
+# profiles without it are internal (delegation targets, background tasks).
 service_profiles:
   - id: "default_assistant"
+    user_selectable: true
     description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
     # This profile inherits the default non-browser tool access from
     # 'default_profile_settings', and raises max_iterations so the main
@@ -1203,6 +1206,7 @@ service_profiles:
           priority: 10
     slash_commands: []
   - id: "browser_profile"
+    user_selectable: true
     description: "Assistant profile with web browsing capabilities using semantic accessibility snapshots. Handles reading pages, filling forms, clicking elements, and extracting content. Delegates to browser_visual_profile for tasks that can only be solved visually (canvas, image maps, drag-and-drop that doesn't target DOM nodes)."
     processing_config:
       max_iterations: 25
@@ -1248,6 +1252,7 @@ service_profiles:
     slash_commands:
       - "/browse"
   - id: "browser_visual_profile"
+    user_selectable: true
     description: "Visual browser automation profile driven by Gemini's native computer-use capability. Uses coordinate-based click/type/scroll against screenshots. Used when a task can only be solved visually (canvas, image maps, drag-and-drop on non-DOM elements). Typically invoked by delegation from browser_profile, which shares the same browser tab."
     processing_config:
       # Using simple format (no retry/fallback for browser tasks)
@@ -1298,6 +1303,7 @@ service_profiles:
       - "/browse_visual"
   # On-demand credential browsing uses a separate protected remote context.
   - id: "credential_browser_profile"
+    user_selectable: true
     description: "Browser for tasks requiring Keychute credentials at arbitrary URLs. No site registration is required. Requests a named secret with Keychute approval in a separate protected session; cannot run arbitrary JavaScript or raw DOM extraction. Delegate here directly for login tasks or after encountering a login wall."
     processing_config:
       max_iterations: 40
@@ -1587,6 +1593,7 @@ service_profiles:
       - "report_technical_problem"
     slash_commands: []
   - id: "research"
+    user_selectable: true
     description: "Assistant profile for deep research, utilizing the Google Gemini Deep Research agent (regular tier). Faster turnaround; ideal for everyday research questions that benefit from web-grounded synthesis."
     processing_config:
       provider: "google"
@@ -1600,6 +1607,7 @@ service_profiles:
     slash_commands:
       - "/research"
   - id: "research_max"
+    user_selectable: true
     description: "Assistant profile for in-depth deep research, utilizing the Google Gemini Deep Research Max agent. Slower but most comprehensive; ideal for longer, multi-source investigations where thoroughness matters more than latency."
     processing_config:
       provider: "google"
@@ -1615,6 +1623,7 @@ service_profiles:
     slash_commands:
       - "/research_max"
   - id: "coder"
+    user_selectable: true
     description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent (Gemini 3.8 Flash) in a throwaway Google-hosted Linux sandbox, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data."
     processing_config:
       provider: "google"
@@ -1671,6 +1680,7 @@ service_profiles:
     slash_commands:
       - "/coder"
   - id: "data_visualization"
+    user_selectable: true
     description: "Assistant profile optimized for creating data visualizations and charts. Uses Vega/Vega-Lite to generate professional charts from user data."
     processing_config:
       include_aggregated_context: true
@@ -1969,6 +1979,7 @@ service_profiles:
       - "report_technical_problem"
     slash_commands: []
   - id: "artist"
+    user_selectable: true
     description: "Creative assistant specialized in generating and manipulating images and videos using advanced AI models."
     processing_config:
       provider: "google"
@@ -2175,6 +2186,7 @@ service_profiles:
           priority: 10
     slash_commands: []
   - id: "camera_analyst"
+    user_selectable: true
     description: "Analyze camera footage to investigate events using binary search through thumbnails"
     processing_config:
       include_aggregated_context: true
@@ -2202,6 +2214,7 @@ service_profiles:
       - "/camera"
       - "/investigate"
   - id: "complex_tasks"
+    user_selectable: true
     description: "Long-running investigation profile for complex, multi-step work that needs deep analysis, planning or sophisticated judgment. Runs on a stronger model tier with a much higher tool-call budget, so it can keep working on one problem well past the point an ordinary turn would stop."
     processing_config:
       include_aggregated_context: true
@@ -2419,6 +2432,7 @@ service_profiles:
   # or message anyone; a member's only outward action is a sandboxed coding run
   # through `coder`, which the taint policy gates as it does everywhere else.
   - id: "council"
+    user_selectable: true
     description: "Use for an explicit multi-model council, broad exploratory work, or a difficult design or speculative question where independent proposals and critical review are valuable. Several strong models (GPT-6 Astra, Claude Fable 5.1 and Kimi K3) each research the question independently, review and revise against each other over two rounds, and the council returns a synthesis with evidence, alternatives and remaining uncertainties. Slow and expensive. Not the default for routine lookups, straightforward coding or implementation. It sees none of the household's notes, calendar or documents, so put everything the question depends on in the request, and pass relevant attachments."
     # The coordinator reads only the council's own skill: the label floor keeps
     # household notes out of get_note, and the grant is what lets it see the
@@ -2558,6 +2572,7 @@ service_profiles:
       - "report_technical_problem"
     slash_commands: []
   - id: "engineer"
+    user_selectable: true
     description: "Engineering diagnostic profile with read-only access to source code, database, and error logs, plus sandboxed code execution for reproducing problems. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify application data or run code inside the application."
     processing_config:
       include_aggregated_context: true

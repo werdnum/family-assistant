@@ -12,7 +12,8 @@ followed by your request:
 
 In the web interface and the iOS app there is no command prefix — pick the profile you want from the
 profile picker instead, and then type your request normally. Typing `/research …` into a web or iOS
-chat sends it as ordinary text and does not switch modes.
+chat sends it as ordinary text and does not switch modes. The picker lists only the profiles meant
+for direct use, not the assistant's internal helpers.
 
 Which commands exist depends on how your deployment is configured; these are the standard ones.
 
