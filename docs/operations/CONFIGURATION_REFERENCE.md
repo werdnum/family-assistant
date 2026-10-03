@@ -2133,6 +2133,30 @@ provenance after the restamp is a write-path regression and is logged at ERROR w
 
 ______________________________________________________________________
 
+## Executable Definition Admission
+
+A tool that writes something that will run later with no human present — `create_automation`,
+`update_automation`, `save_script`, `schedule_reminder`, `schedule_future_callback`,
+`schedule_action` and `modify_pending_callback` — carries the `executable_persistence` tool tag and
+resolves to the `executable_persistence` sink:
+
+| Turn tier                                                 | `executable_persistence`      |
+| --------------------------------------------------------- | ----------------------------- |
+| `trusted_user`, `trusted_internal`, `machine_reviewed`    | allow                         |
+| `known_contact`, `recognized_machine`, `unknown_external` | adjudicate (fallback confirm) |
+
+The adjudicated cell is what makes the definition's creation gate run. A reviewer `allow`, or a
+sighted human confirmation, cures the definition so later firings resolve at `machine_reviewed`
+instead of `unknown_external`. In `observe` mode the review runs off the critical path: the write
+lands at once and its record picks up the verdict when the review completes, so the cell adds no
+latency and no prompts until `taint_policy.mode` is `enforce`. A definition written from a clean
+turn needs no review and is stamped trusted. `save_script` also carries `code_execution`, so it
+resolves to `sandbox_network`, which adjudicates at the same tiers.
+
+`enable_automation`, `disable_automation` and the delete tools change no definition content and stay
+on `artifact_write`. Raise `executable_persistence` to `confirm` at the external tiers through
+`matrix_overrides` to make every cure human-backed.
+
 ## Legacy Definition Amnesty
 
 An automation, event listener, or stored script written before definition records shipped carries

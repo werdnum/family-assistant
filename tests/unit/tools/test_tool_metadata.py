@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
+import family_assistant
 from family_assistant.plugins.registry import plugin_tool_registrations
+from family_assistant.security.taint import (
+    SinkClass,
+    SourceTrustTier,
+    TaintPolicyConfig,
+    TaintPolicyEvaluator,
+    TaintPolicyOutcome,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+    resolve_tool_sink_class,
+)
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS,
     LOCAL_TOOL_DESCRIPTORS,
@@ -69,6 +83,134 @@ def test_every_registered_tool_declares_output_trust() -> None:
         "Tools missing an output trust tag "
         f"({', '.join(sorted(OUTPUT_TRUST_TAGS))}): {missing}"
     )
+
+
+def _collect_gate_readers(
+    node: ast.AST,
+    scope: tuple[str, ...],
+    readers: set[tuple[str, ...]],
+    *,
+    in_function: bool = False,
+) -> None:
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.ClassDef) or (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not in_function
+        ):
+            _collect_gate_readers(
+                child,
+                (*scope, child.name),
+                readers,
+                in_function=not isinstance(child, ast.ClassDef),
+            )
+            continue
+        if (
+            isinstance(child, ast.Attribute)
+            and child.attr == "definition_gate_outcome"
+            and isinstance(child.ctx, ast.Load)
+            and scope
+        ):
+            readers.add(scope)
+        _collect_gate_readers(child, scope, readers, in_function=in_function)
+
+
+def _functions_reading_definition_gate() -> set[tuple[str, str]]:
+    """Module and qualified name of every function that reads the gate outcome.
+
+    A read inside a nested function belongs to the function that encloses it.
+    The gating wrapper in ``tools/infrastructure.py`` deposits the outcome, so
+    it is the one reader excluded.
+    """
+    package_root = Path(family_assistant.__file__).parent
+    readers: set[tuple[str, str]] = set()
+    for path in package_root.rglob("*.py"):
+        if path == package_root / "tools" / "infrastructure.py":
+            continue
+        module = ".".join((
+            "family_assistant",
+            *path.relative_to(package_root).with_suffix("").parts,
+        ))
+        scopes: set[tuple[str, ...]] = set()
+        _collect_gate_readers(ast.parse(path.read_text(encoding="utf-8")), (), scopes)
+        readers.update((module, ".".join(scope)) for scope in scopes)
+    return readers
+
+
+def test_definition_writers_carry_the_executable_persistence_tag() -> None:
+    """A tool that writes an executable definition must resolve to its sink.
+
+    The definition's creation gate only reviews -- and so can only cure -- a
+    call whose sink cell adjudicates. Reading the gate outcome is what makes a
+    tool a definition writer, so the tag is tied to that read rather than to a
+    list of tool names: a new writer without the tag fails here instead of
+    landing in the audit-only ``artifact_write`` cell.
+    """
+    registrations = [*LOCAL_TOOL_REGISTRATIONS, *plugin_tool_registrations()]
+    by_function = {
+        (
+            registration.implementation.__module__,
+            registration.implementation.__qualname__,
+        ): registration
+        for registration in registrations
+    }
+    readers = _functions_reading_definition_gate()
+    assert readers, "Found no reader of definition_gate_outcome; the scan is broken"
+
+    unregistered = sorted(".".join(reader) for reader in readers - by_function.keys())
+    assert not unregistered, (
+        "definition_gate_outcome must be read by the registered tool implementation "
+        f"itself, not a helper, so its tag can be checked: {unregistered}"
+    )
+    writers = {by_function[reader].name for reader in readers}
+    tagged = {
+        registration.name
+        for registration in registrations
+        if ToolTag.EXECUTABLE_PERSISTENCE in registration.tags
+    }
+    assert writers == tagged
+
+
+def test_definition_writers_resolve_to_executable_persistence() -> None:
+    """Every definition writer reaches a cell that adjudicates at external tiers.
+
+    ``save_script`` also carries ``code_execution``, whose ``sandbox_network``
+    cell adjudicates at the same tiers, so it is gated either way.
+    """
+    descriptors = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    resolved = {
+        descriptor.name: resolve_tool_sink_class(descriptor)
+        for descriptor in descriptors.values()
+        if ToolTag.EXECUTABLE_PERSISTENCE in descriptor.tags
+    }
+    assert resolved.pop("save_script") is SinkClass.SANDBOX_NETWORK
+    assert resolved
+    assert set(resolved.values()) == {SinkClass.EXECUTABLE_PERSISTENCE}
+
+    evaluator = TaintPolicyEvaluator(TaintPolicyConfig())
+    for tier in (
+        SourceTrustTier.KNOWN_CONTACT,
+        SourceTrustTier.RECOGNIZED_MACHINE,
+        SourceTrustTier.UNKNOWN_EXTERNAL,
+    ):
+        state = TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="external",
+                tier=tier,
+                labels=frozenset(),
+                reason="External content in the authoring turn.",
+            )
+        )
+        evaluation = evaluator.evaluate(
+            state=state, sink_class=SinkClass.EXECUTABLE_PERSISTENCE
+        )
+        assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE, tier
+        assert evaluation.fallback_outcome is TaintPolicyOutcome.CONFIRM, tier
+
+    clean = evaluator.evaluate(
+        state=TurnTaintState.empty(), sink_class=SinkClass.EXECUTABLE_PERSISTENCE
+    )
+    assert clean.requested_outcome is TaintPolicyOutcome.ALLOW
 
 
 def test_build_local_tool_registrations_rejects_missing_metadata() -> None:

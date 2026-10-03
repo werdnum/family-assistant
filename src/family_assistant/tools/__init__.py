@@ -766,11 +766,13 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "schedule_reminder": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.SCHEDULING,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "schedule_future_callback": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.SCHEDULING,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_pending_callbacks": _metadata(
@@ -783,6 +785,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "modify_pending_callback": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.SCHEDULING,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "cancel_pending_callback": _metadata(
@@ -795,6 +798,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.SCHEDULING,
         ToolTag.AUTOMATION,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "search_documents": _metadata(
@@ -848,6 +852,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.AUTOMATION,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_automations": _metadata(
@@ -873,6 +878,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.AUTOMATION,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "enable_automation": _metadata(
@@ -992,6 +998,7 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.CODE_EXECUTION,
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
+        ToolTag.EXECUTABLE_PERSISTENCE,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "list_scripts": _metadata(

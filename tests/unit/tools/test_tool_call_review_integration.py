@@ -301,9 +301,17 @@ def _registration(
     delegation: bool = False,
     output_untrusted: bool = False,
     sensitive_read: bool = False,
+    executable_persistence: bool = False,
     deferred_confirmation_eligible: bool = False,
 ) -> ToolRegistration:
-    if browser:
+    if executable_persistence:
+        tags = (
+            ToolTag.STATE_CHANGING,
+            ToolTag.AUTOMATION,
+            ToolTag.EXECUTABLE_PERSISTENCE,
+            ToolTag.OUTPUT_TRUSTED,
+        )
+    elif browser:
         tags = (ToolTag.BROWSER, ToolTag.EXTERNAL_COMM, ToolTag.OUTPUT_UNTRUSTED)
     elif sandbox:
         tags = (ToolTag.WORKER, ToolTag.CODE_EXECUTION, ToolTag.OUTPUT_TRUSTED)
@@ -354,6 +362,7 @@ def _provider(
     delegation: bool = False,
     output_untrusted: bool = False,
     sensitive_read: bool = False,
+    executable_persistence: bool = False,
     deferred_confirmation_eligible: bool = False,
     review_config: ToolCallReviewConfig | None = None,
 ) -> TaintTrackingToolsProvider:
@@ -367,6 +376,7 @@ def _provider(
                 delegation=delegation,
                 output_untrusted=output_untrusted,
                 sensitive_read=sensitive_read,
+                executable_persistence=executable_persistence,
                 deferred_confirmation_eligible=deferred_confirmation_eligible,
             )
         ]
@@ -2627,6 +2637,7 @@ def _recording_provider(
     static_decision: ToolPolicyDecision,
     taint_policy: TaintPolicyConfig,
     confirmation: RequestConfirmationCallback | None = None,
+    executable_persistence: bool = False,
 ) -> tuple[_GateOutcomeRecorder, TaintTrackingToolsProvider, ToolExecutionContext]:
     recorder = _GateOutcomeRecorder()
     context = _context(db_engine, state, confirmation=confirmation)
@@ -2644,6 +2655,7 @@ def _recording_provider(
         ),
         static_decision=static_decision,
         taint_policy=taint_policy,
+        executable_persistence=executable_persistence,
     )
     return recorder, provider, context
 
@@ -2669,6 +2681,48 @@ def _adjudicating_policy(
             }
         },
     )
+
+
+async def test_shipped_matrix_cures_a_tainted_definition_write_on_allow(
+    db_engine: AsyncEngine,
+) -> None:
+    """The executable-persistence cell adjudicates as shipped, so the gate runs."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        executable_persistence=True,
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is CreationDisposition.JUDGE_ALLOWED
+    assert outcome.cure_permitted
+    assert outcome.gate.layer is GateLayer.TAINT_CELL
+
+
+async def test_shipped_matrix_shadow_reviews_a_tainted_definition_write_in_observe(
+    db_engine: AsyncEngine,
+) -> None:
+    """Observe mode does not block the write; its verdict lands on the record."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE),
+        executable_persistence=True,
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is None
+    assert outcome.pending is not None
+    assert outcome.gate.layer is GateLayer.TAINT_CELL
 
 
 async def test_an_allow_records_the_taint_cell_that_delegated_it(
