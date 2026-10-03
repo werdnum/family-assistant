@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import math
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
-from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
 
 from pydantic import (
     BaseModel,
@@ -19,7 +21,7 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
 
     from family_assistant.tools.metadata import ToolDescriptor
 
@@ -269,6 +271,41 @@ class TaintSource:
     tier: SourceTrustTier
     labels: frozenset[str]
     reason: str
+    tool_name: str | None = None
+    """The tool whose execution introduced this source, when one did.
+
+    Registry-controlled, so it survives the audit trail's stubbing of an
+    externally authored source's details. Not part of the semantic key.
+    """
+
+
+_executing_tool_name: ContextVar[str | None] = ContextVar(
+    "taint_executing_tool_name", default=None
+)
+
+
+@contextmanager
+def attributing_sources_to_tool(tool_name: str) -> Iterator[None]:
+    """Stamp ``tool_name`` on sources a tracker records while this is active.
+
+    The tool-call chokepoint wraps execution in this, so a source a tool adds
+    from inside -- a note it read, a calendar event, a delegate's folded-back
+    state -- is attributable without each tool naming itself.
+    """
+    token = _executing_tool_name.set(tool_name)
+    try:
+        yield
+    finally:
+        _executing_tool_name.reset(token)
+
+
+def _attributed_to_executing_tool(
+    source: TaintSource, *, from_history: bool
+) -> TaintSource:
+    executing_tool = _executing_tool_name.get()
+    if executing_tool is None or source.tool_name is not None or from_history:
+        return source
+    return replace(source, tool_name=executing_tool)
 
 
 SensitiveReadKind = Literal[
@@ -585,16 +622,7 @@ class TurnTaintState:
             "max_tier": self.max_tier.config_value,
             "history_high_taint_present": self.history_high_taint_present,
             "fresh_high_taint_seen_at_sequence": self.fresh_high_taint_seen_at_sequence,
-            "sources": [
-                {
-                    "source_type": source.source_type.value,
-                    "source_id": source.source_id,
-                    "tier": source.tier.config_value,
-                    "labels": sorted(source.labels),
-                    "reason": source.reason,
-                }
-                for source in retained
-            ],
+            "sources": [_source_to_metadata(source) for source in retained],
             "approved_sinks": sorted(self.approved_sinks),
         }
         if self.sensitive_reads:
@@ -759,6 +787,7 @@ class TaintMetadataSource(TypedDict):
     tier: str
     labels: list[str]
     reason: str
+    tool_name: NotRequired[str]
 
 
 class TaintMetadataSensitiveRead(TypedDict):
@@ -821,7 +850,10 @@ class InMemoryTurnTaintTracker:
         from_history: bool = False,
     ) -> TurnTaintState:
         """Synchronously merge a source into the tracker."""
-        self._state = self._state.add_source(source, from_history=from_history)
+        self._state = self._state.add_source(
+            _attributed_to_executing_tool(source, from_history=from_history),
+            from_history=from_history,
+        )
         return self._state
 
 
@@ -887,17 +919,24 @@ def merge_taint_state_into_tracker(
     before = tracker.snapshot()
     merged = before
     for source in state.sources:
-        merged = merged.add_source(source, from_history=from_history)
+        merged = merged.add_source(
+            _attributed_to_executing_tool(source, from_history=from_history),
+            from_history=from_history,
+        )
     if state.max_tier > merged.max_tier:
         merged = merged.add_source(
-            TaintSource(
-                source_type=TaintSourceType.MANUAL,
-                source_id=None,
-                tier=state.max_tier,
-                labels=frozenset(),
-                reason=(
-                    "Merged taint state max_tier exceeded retained source summaries."
+            _attributed_to_executing_tool(
+                TaintSource(
+                    source_type=TaintSourceType.MANUAL,
+                    source_id=None,
+                    tier=state.max_tier,
+                    labels=frozenset(),
+                    reason=(
+                        "Merged taint state max_tier exceeded retained source "
+                        "summaries."
+                    ),
                 ),
+                from_history=from_history,
             ),
             from_history=from_history,
         )
@@ -1848,6 +1887,7 @@ def derive_tool_result_taint_source(
                 labels=frozenset(),
                 reason=claimed_reason
                 or f"Tool '{descriptor.name}' graded its own result.",
+                tool_name=descriptor.name,
             )
         logger.error(
             "Tool '%s' graded its own result but declares no cleanest_result_tier; "
@@ -1897,6 +1937,7 @@ def derive_tool_result_taint_source(
         tier=tier,
         labels=frozenset(),
         reason=reason,
+        tool_name=descriptor.name,
     )
 
 
@@ -2160,13 +2201,28 @@ def _source_from_metadata(
     )
     source_id = raw_source.get("source_id")
     reason = raw_source.get("reason")
+    tool_name = raw_source.get("tool_name")
     return TaintSource(
         source_type=source_type,
         source_id=str(source_id) if source_id is not None else None,
         tier=tier,
         labels=labels,
         reason=str(reason) if reason else "Persisted taint source.",
+        tool_name=str(tool_name) if tool_name else None,
     )
+
+
+def _source_to_metadata(source: TaintSource) -> TaintMetadataSource:
+    serialized: TaintMetadataSource = {
+        "source_type": source.source_type.value,
+        "source_id": source.source_id,
+        "tier": source.tier.config_value,
+        "labels": sorted(source.labels),
+        "reason": source.reason,
+    }
+    if source.tool_name is not None:
+        serialized["tool_name"] = source.tool_name
+    return serialized
 
 
 def coerce_taint_metadata(value: object) -> TaintMetadata | None:

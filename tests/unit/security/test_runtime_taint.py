@@ -2254,7 +2254,9 @@ async def test_tool_output_tags_update_turn_taint(
     assert result_events[0]["tool_name"] == "untrusted_tool"
     assert result_events[0]["tool_call_id"] == "call_untrusted"
     assert result_events[0]["max_tier"] == "unknown_external"
+    assert result_events[0]["result_tier"] == "unknown_external"
     assert result_events[0]["sources_json"][-1]["source_type"] == "tool_output"
+    assert result_events[0]["sources_json"][-1].get("tool_name") == "untrusted_tool"
     assert result_events[0]["sources_json"][-1]["source_id"] is None
     assert result_events[0]["sources_json"][-1]["labels"] == []
     assert result_events[0]["sources_json"][-1]["reason"] == (
@@ -3083,6 +3085,53 @@ async def test_dynamic_provenance_added_by_trusted_read_is_persisted_on_result(
     assert len(result_events) == 1
     assert result_events[0]["tool_name"] == "dynamic_taint_read"
     assert result_events[0]["max_tier"] == "unknown_external"
+    assert result_events[0]["result_tier"] == "unknown_external"
+    # The tool added the note source itself; the chokepoint attributes it.
+    assert result_events[0]["sources_json"][-1]["source_type"] == "note"
+    assert result_events[0]["sources_json"][-1].get("tool_name") == "dynamic_taint_read"
+    assert tracker.snapshot().sources[-1].tool_name == "dynamic_taint_read"
+
+
+@pytest.mark.asyncio
+async def test_result_taint_records_the_tools_own_tier_not_the_turns(
+    db_engine: AsyncEngine,
+) -> None:
+    """A cleaner tool in an already-tainted turn keeps its own tier on the row."""
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                _registration(
+                    "machine_tool", _trusted_tool, ToolTag.OUTPUT_MACHINE_DATA
+                )
+            ]
+        )
+    )
+    tracker = InMemoryTurnTaintTracker(
+        TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-1",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Inbound email.",
+            )
+        )
+    )
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
+
+    await provider.execute_tool("machine_tool", {}, context, "call_machine")
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    result_events = [
+        event for event in audit_events if event["event_type"] == "result_taint"
+    ]
+    assert len(result_events) == 1
+    assert result_events[0]["max_tier"] == "unknown_external"
+    assert result_events[0]["result_tier"] == "recognized_machine"
+    sources = result_events[0]["sources_json"]
+    assert [source.get("tool_name") for source in sources] == [None, "machine_tool"]
+    assert tracker.snapshot().sources[0].tool_name is None
 
 
 def test_taint_source_semantic_identity_and_repeated_duplicates() -> None:

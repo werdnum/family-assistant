@@ -2829,8 +2829,9 @@ class FakePollableService:
         initial_taint_sources: object | None = None,
         acting_user_id: str | None = None,
         initial_taint_state: object | None = None,
+        source_turn_id: str | None = None,
     ) -> RemoteSubmission:
-        _ = (content_parts, user_name, db_context, acting_user_id)
+        _ = (content_parts, user_name, db_context, acting_user_id, source_turn_id)
         self.submitted_taint_sources.append(initial_taint_sources)
         self.submitted_taint_states.append(initial_taint_state)
         error = self._submit_error

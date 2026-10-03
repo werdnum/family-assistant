@@ -151,7 +151,10 @@ class TaintAuditDiagnostics(BaseModel):
     by_review_verdict: list[DiagnosticCount]
     by_review_status: list[DiagnosticCount]
     by_tool: list[DiagnosticCount]
+    by_tool_result_tier: list[DiagnosticCount]
+    """``result_taint`` rows keyed ``tool:tier`` by the tool's own result tier."""
     source_type_occurrences: list[DiagnosticCount]
+    source_tool_occurrences: list[DiagnosticCount]
     source_tier_occurrences: list[DiagnosticCount]
     source_label_occurrences: list[DiagnosticCount]
 
@@ -610,7 +613,9 @@ async def get_taint_diagnostics(
     review_verdict_counts: Counter[str | None] = Counter()
     review_status_counts: Counter[str | None] = Counter()
     tool_counts: Counter[str | None] = Counter()
+    tool_result_tier_counts: Counter[str | None] = Counter()
     source_type_counts: Counter[str | None] = Counter()
+    source_tool_counts: Counter[str | None] = Counter()
     source_tier_counts: Counter[str | None] = Counter()
     source_label_counts: Counter[str | None] = Counter()
     for event in audit_events:
@@ -623,8 +628,12 @@ async def get_taint_diagnostics(
         review_verdict_counts[event["review_verdict"]] += 1
         review_status_counts[event["review_status"]] += 1
         tool_counts[event["tool_name"]] += 1
+        if event["result_tier"] is not None:
+            tool_result_tier_counts[f"{event['tool_name']}:{event['result_tier']}"] += 1
         for source in event["sources_json"]:
             source_type_counts[source["source_type"]] += 1
+            # Rows written before sources carried a tool name lack the key.
+            source_tool_counts[source.get("tool_name")] += 1
             source_tier_counts[source["tier"]] += 1
             for label in source["labels"]:
                 source_label_counts[label] += 1
@@ -684,7 +693,9 @@ async def get_taint_diagnostics(
             by_review_verdict=_diagnostic_counts(review_verdict_counts),
             by_review_status=_diagnostic_counts(review_status_counts),
             by_tool=_diagnostic_counts(tool_counts),
+            by_tool_result_tier=_diagnostic_counts(tool_result_tier_counts),
             source_type_occurrences=_diagnostic_counts(source_type_counts),
+            source_tool_occurrences=_diagnostic_counts(source_tool_counts),
             source_tier_occurrences=_diagnostic_counts(source_tier_counts),
             source_label_occurrences=_diagnostic_counts(source_label_counts),
         ),

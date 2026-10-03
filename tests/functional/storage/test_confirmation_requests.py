@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import insert, update
@@ -26,10 +27,13 @@ from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestsRepository,
 )
 from family_assistant.storage.tasks import TaskPriority
+from family_assistant.task_worker import handle_confirmation_expiry
 from family_assistant.tools.types import (
     ToolArgumentsView,
     ToolCallReviewAuthorization,
+    ToolExecutionContext,
 )
+from family_assistant.utils.clock import MockClock
 
 RaceMode = Literal[
     "reject_before_approve",
@@ -731,3 +735,42 @@ async def test_enqueue_failure_rolls_back_approval(db_engine: AsyncEngine) -> No
     assert request["status"] == "pending"
     assert request.get("execution_task_id") is None
     assert [task["task_id"] for task in tasks] == [execution_task_id]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_expiry_task_expires_requests_no_waiter_closed(
+    db_engine: AsyncEngine,
+) -> None:
+    """The sweep closes a prompt whose waiter was lost, e.g. to a restart."""
+    created_at = datetime.now(UTC)
+    orphaned_id = await _create_request(
+        db_engine, expires_at=created_at + timedelta(minutes=10)
+    )
+    live_id = await _create_request(
+        db_engine, expires_at=created_at + timedelta(hours=3)
+    )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="system",
+        conversation_id="system",
+        user_name="system",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=MockClock(created_at + timedelta(hours=1)),
+        plugins=None,
+        event_sources=None,
+        attachment_registry=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+    )
+
+    await handle_confirmation_expiry(context, {})
+
+    orphaned = await db.confirmation_requests.get(orphaned_id)
+    live = await db.confirmation_requests.get(live_id)
+    assert orphaned is not None
+    assert orphaned["status"] == "expired"
+    assert live is not None
+    assert live["status"] == "pending"

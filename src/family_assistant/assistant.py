@@ -153,6 +153,7 @@ from family_assistant.task_worker import (
     TaskWorker,
     handle_attachment_cleanup,
     handle_completed_automation_cleanup,
+    handle_confirmation_expiry,
     handle_confirmation_tool_execution,
     handle_llm_callback,
     handle_reindex_document,
@@ -2470,6 +2471,23 @@ class Assistant:
             except Exception as e:
                 logger.info(f"Delegation run cleanup task setup: {e}")
 
+            # Upsert the confirmation expiry sweep. It runs once at startup,
+            # which is when prompts orphaned by a restart are found, and
+            # hourly after that.
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_confirmation_expiry_hourly",
+                    task_type="confirmation_expiry",
+                    payload={},
+                    scheduled_at=datetime.now(UTC),
+                    recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
+                    max_retries_override=5,
+                    priority=TaskPriority.BACKGROUND,
+                )
+                logger.info("Confirmation expiry sweep scheduled (hourly)")
+            except Exception:
+                logger.exception("Confirmation expiry sweep setup failed")
+
             # Upsert the completed automation cleanup task
             try:
                 await db_ctx.tasks.enqueue(
@@ -2665,6 +2683,7 @@ class Assistant:
         worker.register_task_handler(
             "stale_automation_cleanup", handle_stale_automation_cleanup
         )
+        worker.register_task_handler("confirmation_expiry", handle_confirmation_expiry)
         worker.register_task_handler("attachment_cleanup", handle_attachment_cleanup)
         worker.register_task_handler("reindex_document", self.handle_reindex_document)
         worker.register_task_handler(

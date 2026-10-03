@@ -1,7 +1,7 @@
 """Type definitions for storage layer return types."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 if TYPE_CHECKING:
     from family_assistant.llm.google_types import GeminiProviderMetadata
@@ -145,6 +145,8 @@ class TaintAuditSourceSummary(TypedDict):
     """Compact taint source summary persisted in audit rows."""
 
     source_type: str
+    # Absent on rows written before sources carried the introducing tool.
+    tool_name: NotRequired[str | None]
     source_id: str | None
     tier: str
     labels: list[str]
@@ -187,6 +189,7 @@ class TaintAuditEventRow(TypedDict):
     tool_call_id: str | None
     sink_class: str | None
     max_tier: str
+    result_tier: str | None
     sources_json: list[TaintAuditSourceSummary]
     requested_outcome: str | None
     effective_outcome: str | None
