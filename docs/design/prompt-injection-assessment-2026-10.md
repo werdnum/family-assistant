@@ -95,10 +95,11 @@ is adjudicated by the judge. Under enforce with the judge deciding first:
 Without the judge, with every adjudicate cell a human prompt, the median is 8 gated turns a day.
 
 **Where the friction is.** The judge allowed 74 percent of 1,305 shadow reviews, confirmed 22 and
-denied 4. Browser egress in `browser_profile` produced 133 of the 285 confirms, and that profile
-holds no household context. Shell commands produced 45 of the 52 denies. With no attacks in the
-traffic, every one of those is a false positive. Fallbacks were rare and all resolved to confirm.
-The escalation path for repeated denies has never recorded an event.
+denied 4. Browser egress in `browser_profile` produced 133 of the 285 confirms; that profile holds
+no household context until a person hands back a logged-in session. Shell commands produced 45 of
+the 52 denies. With no attacks in the traffic, every one of those is a false positive. Fallbacks
+were rare and all resolved to confirm. The escalation path for repeated denies has never recorded an
+event.
 
 **Where the taint comes from.** 81.5 percent of untrusted-tier turns are untrusted before their
 first tool call, carried in from history and from the 14 untrusted-tier notes that appear in 43
@@ -143,21 +144,29 @@ written down. By that standard the battle is nearly over, and the last move is n
 
 ## Decision
 
-Switch `taint_policy.mode` to `enforce` with three configuration changes and no new code, then
-freeze the framework. Concretely:
+Switch `taint_policy.mode` to `enforce` with the matrix as shipped and no new code, review the 14
+untrusted-tier notes in the artifact review UI, which is already in use, and then freeze the
+framework.
 
-1. In the deployment matrix, set `attacker_addressable_egress` at the untrusted tier to `audit`, and
-   tighten it back to `adjudicate` on the profiles that hold household context: `default_assistant`,
-   `complex_tasks` and `credential_browser_profile`. Profiles can only tighten, so this is
-   expressible today. It removes about half the confirms and most of the latency from a profile that
-   has nothing to disclose.
-2. Restrict the `sandbox_network` cell's verdict space to allow and confirm until the escalation
-   path has been exercised in production. A visible prompt on a blocked shell command beats a silent
-   deny in a household where the user is present; unattended turns still fail closed.
-3. Review the 14 untrusted-tier notes in the artifact review UI, which is already in use.
+Expected result: about 2.6 human prompts a day at the median, with the mailbox gap closed. That is
+above the one-a-day budget the risk-adjudication design set, and this document withdraws that budget
+as a gate: the number is measured, it is tolerable, and it will be re-read after thirty days.
 
-Expected result: about one gated turn a day, inside the original budget, with the mailbox gap
-closed.
+Two configuration-only reductions were considered during review and rejected:
+
+- **Auditing egress on `browser_profile`**, which produced about half the confirms. The profile
+  holds no household context when it starts, but its handoff path lets a person log the shared
+  browser in and hand it back, after which the agent reads private pages and an injected page could
+  direct an ungated navigation carrying them. The profile is therefore not reliably without
+  sensitive data, and it stays adjudicated. A handback-aware split, auditing egress only until a
+  session has been handed back, is contingent work for the thirty-day review; the cost of not having
+  it is about one gated turn a day.
+- **Restricting the `sandbox_network` verdict space to allow and confirm**, which would have turned
+  the shell-command denies into prompts. The adjudicate cell exposes only a verdict floor, so a
+  ceiling is not expressible. Denies stand as deny-and-continue: the agent receives a structured
+  refusal and can route around it, with escalation to a human after three consecutive or twenty
+  per-turn denials. That escalation has never fired and is the first thing to watch under enforce. A
+  verdict ceiling is a small code change if deny-and-continue proves wrong in practice.
 
 **Framework freeze.** Until enforce has run for thirty days and the audit has been re-read:
 
@@ -193,10 +202,14 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
    appears, the gate is not wired, and that is a bug to fix, not a design to write.
 5. **Memory yield.** Query `memory_change_log` outcomes and the admissible share of assistant rows.
    The curator transcript omits every assistant row whose stored turn tier is untrusted, which in
-   production is most of them, so the curator reads user lines with the answers missing. If the
-   query confirms it, show the curator assistant rows from tainted turns and stamp the stretch's
-   taint on the resulting edits; the write floor already confines what it can touch. Verified by
-   applied edits per review rising.
+   production is most of them, so the curator reads user lines with the answers missing. Showing it
+   those rows is not the fix: the memory write invariant refuses any edit whose provenance is not
+   admissible for reuse, and a curator reading untrusted rows while it reads and writes household
+   memory would hold all three Rule-of-Two properties. If the query confirms the diagnosis, the
+   choice is between accepting the yield as the price of confinement and routing candidate entries
+   from tainted stretches through the existing write-time admission review, so they land as
+   `machine_reviewed` only on a judge verdict. That choice waits for the thirty-day review. Verified
+   for now by the two queries producing a number.
 6. **Contingent, on evidence only.** After thirty days of enforce, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
    largest confirm category with a rule; calendar provenance wired into the context provider, which
@@ -210,9 +223,9 @@ Milestones deliver standalone value and are verified as stated. No calendar esti
   allowed no attack across every corpus, with at most 62 independent families, so the bound is weak.
   Accepted, because the alternative is confirm floors on every egress call, which is the
   configuration that stalled for a year.
-- Browser egress in profiles without household context runs on audit. The profile holds nothing to
-  disclose; the residual is same-origin action under a loaded login, already recorded in the
-  authenticated-site design.
+- `browser_profile` stays adjudicated on egress because a handed-back session may be logged in. The
+  residual is same-origin action under a loaded login, already recorded in the authenticated-site
+  design, and about one gated turn a day of friction.
 - `home_local` stays allow at every tier. The deployment has no high-impact actuators. The
   configuration reference should say that a deployment adding a lock, alarm or garage opener needs a
   gate on those domains before it is safe at any tier.
