@@ -326,6 +326,21 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    given that profile's side effects are already judged by static review. Either answer is a valid
    outcome: a mismatch is fixed, and a justified tag is kept and its justification recorded here.
 
+   Outcome, checked against the code and the deployment config on 3 October. There is no mismatch.
+   Every deployment MCP server carries a `*` entry, so no tool falls back to unspecified output, and
+   the repository's tags agree with the deployment's. `delegate_to_service` is tagged trusted and
+   folds back the child's own stamped rows, so a local child taints the caller only by what it read,
+   plus what it inherited, which the propagation fix above covers. The untrusted default is real but
+   narrower: a pollable target (`k8s_agent`, `omnigent`, `coder`, `research`) writes no rows here,
+   so its result falls to `unknown_external`. That tier is kept, because each of those agents reads
+   the open web or pod logs out of our sight. The source now names the target instead of reading as
+   missing data, which is the per-target share this milestone reports. The engineer's untrusted
+   reads are kept too. Static review judges each engineer call, but the reviewer and any child the
+   engineer delegates to rely on the taint to know that log and row text is not the household's
+   words. Dropping it would let injected log text reach a full-tool `complex_tasks` child, or a
+   scheduled callback, as trusted. The cost is small, because every engineer side effect is already
+   reviewed or confirmed by static policy, and its note reads sit on the cell the deployment audits.
+
    Verified by the share of turns untrusted before their first tool call falling from 81.5 percent
    to the share whose window genuinely holds an introducing row; by Telegram turns more than two
    hours after a web search starting clean; by a row written before the change, carrying a web
