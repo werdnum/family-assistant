@@ -397,8 +397,15 @@ class TurnLeaseRegistry:
             payload.attempt,
             decision.value,
         )
-        if decision in {ResumeDecision.EXHAUSTED, ResumeDecision.NO_RESUMER}:
+        if decision is ResumeDecision.NO_RESUMER:
             await persist_interrupted_marker(db, payload)
+            return
+        if decision is ResumeDecision.EXHAUSTED:
+            await persist_interrupted_marker(db, payload)
+            # The marker is the turn's terminal reply now; a path that pushes
+            # replies out sends it, or the user would hear nothing at all.
+            if payload.resumer in self._resumers:
+                await self._resumers[payload.resumer].deliver_pending_reply(payload)
             return
         if decision is ResumeDecision.FINISHED and payload.resumer in self._resumers:
             await self._resumers[payload.resumer].deliver_pending_reply(payload)

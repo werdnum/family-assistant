@@ -508,3 +508,23 @@ async def test_handler_hands_a_finished_turn_to_its_resumer_for_delivery(
     )
 
     assert (resumer.calls, resumer.deliveries) == ([], [payload])
+
+
+async def test_exhausted_turn_hands_its_marker_to_the_resumer(
+    db_engine: AsyncEngine,
+) -> None:
+    """A path that pushes replies out gets to send the interrupted marker, or
+    its user would hear nothing once the attempts run out."""
+    registry = TurnLeaseRegistry(max_resume_attempts=1)
+    resumer = _RecordingResumer()
+    registry.register_resumer("fake", resumer)
+    db = Database(db_engine)
+    conversation_id, turn_id = _ids()
+    await _seed_interrupted_turn(db, conversation_id, turn_id)
+    payload = _payload(conversation_id, turn_id, attempt=1)
+
+    await registry.handle_resume_task(
+        _exec_context(db), payload.model_dump(mode="json")
+    )
+
+    assert (resumer.calls, resumer.deliveries) == ([], [payload])
