@@ -317,17 +317,24 @@ configuration line: if they slip beyond a few weeks, flip anyway and fix under e
    matrix evaluator and its outcome lattice, tighten-only profile merging, `operator_minimum`,
    `matrix_overrides`, the `redact` outcome, the observe-versus-enforce mode and
    `require_taint_enforcement`. Collapse the six tiers to the three predicates the code already
-   asks: household-authored, machine-reviewed, externally authored. Keep per-row and per-artifact
-   provenance, sink resolution reduced to "is this call egress, sandbox, an external message or an
-   executable definition", the reviewer's provenance-selected view, and the admission gates on
-   stored artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of
-   the tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
+   asks: household-authored, machine-reviewed, externally authored. The collapse is a read-time
+   mapping, not a data rewrite: every stored tier name stays accepted, the two trusted names map to
+   household-authored, `machine_reviewed` to reviewed, and the three external names to externally
+   authored, so no message, note or definition stamp changes meaning and nothing is raised to
+   unknown-external by the removal of a name. Keep per-row and per-artifact provenance, sink
+   resolution reduced to "is this call egress, sandbox, an external message or an executable
+   definition", the reviewer's provenance-selected view, and the admission gates on stored
+   artifacts. In the taint module that is roughly lines 980 to 1812 of 2,163, plus most of the
+   tracking provider's evaluation plumbing and about 450 lines of configuration reference. What
    remains is the Chrome agent's shape with better artifact provenance: a reviewer that runs on
    egress when the turn carries external content, sees household-authored intent plus
    machine-reviewed evidence and nothing else, and a write-time gate on anything that becomes
    ambient or executable. Subtractive by construction. The memory decision from milestone 1 is taken
-   in the same review. Verified by the reviewer's verdict distribution on the following thirty days
-   matching the preceding thirty, with the deleted configuration keys rejected at startup.
+   in the same review. Verified three ways: representative stamps written before the collapse, one
+   per old tier name, classify under the predicates as they did before; the set of sink classes that
+   reach the reviewer is unchanged; and the reviewer's allow, confirm and deny shares over the
+   following thirty days each sit within five percentage points of the preceding thirty on the same
+   cells, with the deleted configuration keys rejected at startup.
 
 6. **Contingent, on evidence only.** After the same thirty days, if the audit indicts a cell:
    destination provenance for fetch and send as a gate rather than a judge hint, which replaces the
