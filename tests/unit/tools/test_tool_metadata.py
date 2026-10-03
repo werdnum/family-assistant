@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,7 @@ from family_assistant.tools import (
     LOCAL_TOOL_METADATA_BY_NAME,
     LOCAL_TOOL_REGISTRATIONS,
     TOOLS_DEFINITION,
+    ToolRegistration,
 )
 from family_assistant.tools.infrastructure import LocalToolsProvider
 from family_assistant.tools.metadata import (
@@ -85,83 +87,140 @@ def test_every_registered_tool_declares_output_trust() -> None:
     )
 
 
-def _collect_gate_readers(
-    node: ast.AST,
-    scope: tuple[str, ...],
-    readers: set[tuple[str, ...]],
-    *,
-    in_function: bool = False,
-) -> None:
-    for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.ClassDef) or (
-            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and not in_function
-        ):
-            _collect_gate_readers(
-                child,
-                (*scope, child.name),
-                readers,
-                in_function=not isinstance(child, ast.ClassDef),
+_STAMPING_HELPERS = frozenset({"stamp_definition", "stamp_callback_definition"})
+
+
+def _call_name(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _stamping_repository_methods() -> set[tuple[str, str]]:
+    """(repository class, method) for every repository method that stamps.
+
+    Derived from the repositories themselves: a method whose body calls a
+    stamping helper is a definition-write entry point, whatever it is named.
+    """
+    package_root = Path(family_assistant.__file__).parent
+    found: set[tuple[str, str]] = set()
+    for path in (package_root / "storage" / "repositories").glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for klass in ast.walk(tree):
+            if not isinstance(klass, ast.ClassDef):
+                continue
+            for method in klass.body:
+                if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if any(
+                    isinstance(node, ast.Call) and _call_name(node) in _STAMPING_HELPERS
+                    for node in ast.walk(method)
+                ):
+                    found.add((klass.name, method.name))
+    assert found, "Found no repository method that stamps; the scan is broken"
+    return found
+
+
+def _stamping_entry_points() -> set[tuple[str, str]]:
+    """(handle attribute, method) a caller writes a definition through.
+
+    The handle attribute is the ``Database`` property that returns the
+    repository class, so ``db.events.create_event_listener`` becomes
+    ``("events", "create_event_listener")``; ``DatabaseTransaction`` shares
+    the properties.
+    """
+    package_root = Path(family_assistant.__file__).parent
+    tree = ast.parse((package_root / "storage" / "database.py").read_text("utf-8"))
+    handle_by_class: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and isinstance(node.returns, ast.Name)
+            and any(
+                isinstance(d, ast.Name) and d.id == "property"
+                for d in node.decorator_list
             )
-            continue
+        ):
+            handle_by_class[node.returns.id] = node.name
+    entry_points = {
+        (handle_by_class[klass], method)
+        for klass, method in _stamping_repository_methods()
+        if klass in handle_by_class
+    }
+    assert entry_points, "No stamping repository is exposed on Database; scan broken"
+    return entry_points
+
+
+def _writes_definition(node: ast.AST, entry_points: set[tuple[str, str]]) -> bool:
+    """Whether this function body reads the gate or reaches a stamping entry point.
+
+    Nested functions count as part of the function that encloses them.
+    """
+    for child in ast.walk(node):
         if (
             isinstance(child, ast.Attribute)
             and child.attr == "definition_gate_outcome"
             and isinstance(child.ctx, ast.Load)
-            and scope
         ):
-            readers.add(scope)
-        _collect_gate_readers(child, scope, readers, in_function=in_function)
-
-
-def _functions_reading_definition_gate() -> set[tuple[str, str]]:
-    """Module and qualified name of every function that reads the gate outcome.
-
-    A read inside a nested function belongs to the function that encloses it.
-    The gating wrapper in ``tools/infrastructure.py`` deposits the outcome, so
-    it is the one reader excluded.
-    """
-    package_root = Path(family_assistant.__file__).parent
-    readers: set[tuple[str, str]] = set()
-    for path in package_root.rglob("*.py"):
-        if path == package_root / "tools" / "infrastructure.py":
+            return True
+        if not isinstance(child, ast.Call):
             continue
-        module = ".".join((
-            "family_assistant",
-            *path.relative_to(package_root).with_suffix("").parts,
-        ))
-        scopes: set[tuple[str, ...]] = set()
-        _collect_gate_readers(ast.parse(path.read_text(encoding="utf-8")), (), scopes)
-        readers.update((module, ".".join(scope)) for scope in scopes)
-    return readers
+        name = _call_name(child)
+        if name in _STAMPING_HELPERS:
+            return True
+        func = child.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Attribute)
+            and (func.value.attr, func.attr) in entry_points
+        ):
+            return True
+    return False
+
+
+def _definition_writers(
+    registrations: list[ToolRegistration],
+) -> set[str]:
+    """Names of the registered tools whose implementation writes a definition."""
+    entry_points = _stamping_entry_points()
+    writers: set[str] = set()
+    for registration in registrations:
+        implementation = registration.implementation
+        source = Path(inspect.getsourcefile(implementation) or "")
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        qualname = implementation.__qualname__.split(".")
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == qualname[-1]
+                and _writes_definition(node, entry_points)
+            ):
+                writers.add(registration.name)
+    return writers
 
 
 def test_definition_writers_carry_the_executable_persistence_tag() -> None:
     """A tool that writes an executable definition must resolve to its sink.
 
     The definition's creation gate only reviews -- and so can only cure -- a
-    call whose sink cell adjudicates. Reading the gate outcome is what makes a
-    tool a definition writer, so the tag is tied to that read rather than to a
-    list of tool names: a new writer without the tag fails here instead of
-    landing in the audit-only ``artifact_write`` cell.
+    call whose sink cell adjudicates. A tool is a definition writer when its
+    implementation reads the gate outcome or reaches a stamping entry point:
+    the stamping helpers themselves, or a repository method that calls them,
+    found by scanning the repositories rather than by naming tools. A new
+    writer without the tag fails here instead of landing in the audit-only
+    ``artifact_write`` cell, and a writer that stamps without consulting the
+    gate is caught by the call rather than hidden by the missing read.
+
+    The residual is a tool that reaches a stamping repository through a helper
+    in another module; such a write still lands uncured and fires untrusted,
+    so the failure is on the safe side.
     """
     registrations = [*LOCAL_TOOL_REGISTRATIONS, *plugin_tool_registrations()]
-    by_function = {
-        (
-            registration.implementation.__module__,
-            registration.implementation.__qualname__,
-        ): registration
-        for registration in registrations
-    }
-    readers = _functions_reading_definition_gate()
-    assert readers, "Found no reader of definition_gate_outcome; the scan is broken"
-
-    unregistered = sorted(".".join(reader) for reader in readers - by_function.keys())
-    assert not unregistered, (
-        "definition_gate_outcome must be read by the registered tool implementation "
-        f"itself, not a helper, so its tag can be checked: {unregistered}"
-    )
-    writers = {by_function[reader].name for reader in readers}
+    writers = _definition_writers(registrations)
+    assert writers, "Found no definition writer; the scan is broken"
     tagged = {
         registration.name
         for registration in registrations
@@ -173,18 +232,28 @@ def test_definition_writers_carry_the_executable_persistence_tag() -> None:
 def test_definition_writers_resolve_to_executable_persistence() -> None:
     """Every definition writer reaches a cell that adjudicates at external tiers.
 
-    ``save_script`` also carries ``code_execution``, whose ``sandbox_network``
-    cell adjudicates at the same tiers, so it is gated either way.
+    A writer that also carries ``code_execution`` (``save_script``,
+    ``spawn_worker``) resolves to ``sandbox_network`` instead, whose cell
+    adjudicates at the same tiers, so it is gated either way.
     """
-    descriptors = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
-    resolved = {
-        descriptor.name: resolve_tool_sink_class(descriptor)
-        for descriptor in descriptors.values()
+    writers = [
+        descriptor
+        for descriptor in LOCAL_TOOL_DESCRIPTORS
         if ToolTag.EXECUTABLE_PERSISTENCE in descriptor.tags
+    ]
+    sandboxed = {
+        descriptor.name: resolve_tool_sink_class(descriptor)
+        for descriptor in writers
+        if ToolTag.CODE_EXECUTION in descriptor.tags
     }
-    assert resolved.pop("save_script") is SinkClass.SANDBOX_NETWORK
-    assert resolved
-    assert set(resolved.values()) == {SinkClass.EXECUTABLE_PERSISTENCE}
+    persisted = {
+        descriptor.name: resolve_tool_sink_class(descriptor)
+        for descriptor in writers
+        if ToolTag.CODE_EXECUTION not in descriptor.tags
+    }
+    assert sandboxed and persisted
+    assert set(sandboxed.values()) == {SinkClass.SANDBOX_NETWORK}
+    assert set(persisted.values()) == {SinkClass.EXECUTABLE_PERSISTENCE}
 
     evaluator = TaintPolicyEvaluator(TaintPolicyConfig())
     for tier in (
