@@ -187,7 +187,7 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
     client = LLMClientFactory.create_client({**resolved, "api_key": "test-key"})
 
     assert isinstance(client, AnthropicClient)
-    assert client.model == "claude-fable-5"
+    assert client.model == "claude-fable-5-1"
     assert client._get_model_specific_params(client.model) == {
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": "xhigh"},

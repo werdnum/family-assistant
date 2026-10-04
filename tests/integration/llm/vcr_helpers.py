@@ -63,7 +63,10 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
             # Handle different content types
             content = msg.get("content")
             if isinstance(content, str):
-                norm_msg["content"] = content
+                # A bare string and a one-element text block list are the same
+                # message. The Anthropic client sends the list form so a message
+                # keeps one shape whether or not it merges with a neighbour.
+                norm_msg["content"] = [{"text": content, "type": "text"}]
             elif isinstance(content, list):
                 # For multipart content (text + images)
                 norm_msg["content"] = sorted(content, key=lambda x: x.get("type", ""))

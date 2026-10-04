@@ -58,14 +58,14 @@ llm_parameters:
   #   top_k: 50
   # Extended thinking on Claude. The shape differs by model generation and is
   # NOT interchangeable -- claude-sonnet-4-6 takes `enabled` + `budget_tokens`,
-  # while claude-fable-5 rejects that and wants `adaptive` + output_config
+  # while claude-fable-5-1 rejects that and wants `adaptive` + output_config
   # effort. budget_tokens must be less than max_tokens (default 8192).
   # Thinking blocks are captured and replayed automatically once enabled.
   # "claude-sonnet-4-6":
   #   thinking:
   #     type: enabled
   #     budget_tokens: 4096
-  # "claude-fable-5":
+  # "claude-fable-5-1":
   #   thinking:
   #     type: adaptive
   #   output_config:
@@ -210,13 +210,13 @@ model_tiers:
       # Fable takes the `adaptive` + output_config shape and rejects the
       # previous generation's `enabled` + `budget_tokens`. This entry is the
       # only place it is configured -- the global map deliberately has no
-      # claude-fable- key (it matches by substring, so one would reach 5.1
-      # too), so Fable 5.1 inherits nothing wherever a deployment names it
-      # and runs at its own default effort there. Thinking
+      # claude-fable- key (it matches by substring), so the
+      # `claude_fable_5_1` preset below inherits nothing and runs at the
+      # model's own default effort. Thinking
       # shares the max_tokens budget with the response, so the client's 8192
       # default is raised to match the effort.
       - provider: "anthropic"
-        model: "claude-fable-5"
+        model: "claude-fable-5-1"
         llm_parameters:
           thinking:
             type: "adaptive"

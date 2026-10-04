@@ -295,10 +295,10 @@ async def test_format_history_with_tool_call(
     assert actual_output == expected_output
 
 
-async def test_format_history_strips_assistant_text_for_tool_call_without_signature(
+async def test_format_history_preserves_assistant_text_alongside_tool_calls(
     processing_service: ProcessingService,
 ) -> None:
-    """Assistant text is stripped when tool calls are present without thought signatures."""
+    """Assistant text sent with tool calls is replayed unchanged on later turns."""
     tool_call = create_tool_call(
         call_id="call_no_signature",
         function_name="get_weather",
@@ -316,7 +316,7 @@ async def test_format_history_strips_assistant_text_for_tool_call_without_signat
     )
 
     assert actual_output == [
-        AssistantMessage(content=None, tool_calls=[tool_call]),
+        AssistantMessage(content="I will call a tool now", tool_calls=[tool_call]),
     ]
 
 

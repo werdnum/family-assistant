@@ -19,7 +19,8 @@ Two costs follow:
   `frontier` tier either errors into its fallback model or carries invalid reasoning from its second
   turn on.
 
-Three other places edit history the same way:
+Three other places edit history the same way (the first is fixed for every provider: assistant text
+is now replayed exactly as it was sent):
 
 - `format_history` strips the text from an assistant message that also made tool calls, unless it
   carries a Gemini thought signature.
@@ -97,8 +98,9 @@ request can be retried on a different provider, and each adapter has to render i
 
 ### Anthropic
 
-- Assistant text that precedes tool calls is replayed when the message carries Anthropic thinking
-  blocks, the same exemption Gemini thought signatures already have.
+- User content is always sent as a block list, so a message has one wire shape whether or not a tool
+  result or steering message merges into it. One cache breakpoint at the end of the conversation
+  replaces the one that had to skip back over the turn-context block.
 - Every request sends `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` under the
   `thinking-binding-controls-2026-08-01` beta, so a remaining mismatch drops the affected thinking
   blocks instead of failing the request into its fallback. `input_transformations` is logged:
