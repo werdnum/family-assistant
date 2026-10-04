@@ -35,8 +35,8 @@ the only memory, and the model can already fetch its own history when it knows s
 
 ## Approach
 
-**History is built from whole turns against a size budget, and compacted at discrete points. Between
-compaction points the prompt is append-only.**
+**History is built from whole turns against a size budget, and compacted at discrete events. Between
+compaction events the prompt is append-only.**
 
 ### Turns and budget
 
@@ -51,18 +51,19 @@ compaction points the prompt is append-only.**
   de-duplicated once. Every path that builds a window, including the web turn producer's taint
   computation, goes through it.
 
-### Compaction points
+### Compaction events
 
-- The loader keeps a **compaction point**. Turns before it render compacted; turns after it render
-  verbatim. **Anything that removes or re-renders an earlier turn happens only at a compaction
-  event**, and that includes the age cap: turns that age out between events leave at the next one.
-  The point moves only at an event, and both the point and the compacted rendering are derived
+- Each compaction event decides, for every turn up to that event, whether it renders verbatim,
+  compacted, or not at all; the kept-verbatim turns need not be contiguous. Turns after the latest
+  event render verbatim. **Anything that removes or re-renders an earlier turn happens only at a
+  compaction event**, and that includes the age cap: turns that age out between events leave at the
+  next one. The decision is recorded with the event, and the compacted rendering is derived
   deterministically from stored rows, so replays are byte-identical without persisting a summary.
 - **Events, with hysteresis.** A compaction runs at the start of a user turn (never inside a tool
-  round) when the verbatim part passes the budget, and compacts well below it, so the next event is
-  many turns away. On Telegram, the first message after an idle gap is also an event. Provider
-  caches live for minutes, so after an idle gap the cache is already cold and compacting there costs
-  almost nothing extra.
+  round) when the whole rendered window, compacted turns included, passes the budget, and compacts
+  well below it, so the next event is many turns away. On Telegram, the first message after an idle
+  gap is also an event. Provider caches live for minutes, so after an idle gap the cache is already
+  cold and compacting there costs almost nothing extra.
 - **Compacted rendering.** A compacted turn keeps what the user said and the assistant's final
   answer, and reduces each tool call to a one-line stub that names the tool and says the detail is
   retrievable with `get_message_history`. Old attachments become references (id, type, filename)
@@ -135,7 +136,7 @@ today. Window taint is computed over the rendered window by the same loader on e
    Verified by tests that a window never splits a turn, that a Telegram conversation with tool-heavy
    turns keeps the previous request, and that two consecutive turns with no event between them
    render as strict prefix plus append.
-2. **Compaction points and rendering**, including attachment references, thinking stripped from kept
+2. **Compaction events and rendering**, including attachment references, thinking stripped from kept
    Claude turns, unchanged tool activations, and the emergency fallback moved onto the renderer.
    Verified by tests that a compaction does not change the active tool set or reduce taint relative
    to the verbatim turns, a Gemini request with a compacted history is accepted, and the
