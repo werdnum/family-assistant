@@ -70,7 +70,9 @@ compaction events the prompt is append-only.**
   retrievable with `get_message_history`. Old attachments become references (id, type, filename)
   instead of bytes. Errors render as one line. A turn that still does not fit is dropped whole,
   oldest first. Stubs matter: a model that sees "09:12 asked about two plumber quotes" will look it
-  up when asked "and the other one?"; a model that sees nothing will guess.
+  up when asked "and the other one?"; a model that sees nothing will guess. A stub is only offered
+  to a profile that can call `get_message_history`; for one that cannot (such as `council`), turns
+  are kept verbatim or dropped whole, never stubbed.
 - **Provider constraints at an event.** On Claude, the verbatim turns kept across a compaction lose
   their thinking blocks, because those blocks were bound to the longer prefix; the compaction strips
   them (text and tool calls stay) rather than leaving the API to drop them, so
