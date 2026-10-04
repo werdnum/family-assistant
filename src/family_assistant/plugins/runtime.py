@@ -38,6 +38,26 @@ class ProfilePlugins:
         return None
 
 
+def withheld_profile_tools(
+    config: PluginsConfig, selection: Mapping[str, str | None]
+) -> frozenset[str]:
+    """Tools a profile with this ``plugins`` selection cannot use.
+
+    See ``Plugin.withheld_from_profile``.
+    """
+    resolved = resolve_profile_plugins(config, selection)
+    withheld: set[str] = set()
+    for plugin_id, plugin in PLUGINS_BY_ID.items():
+        instance_name = resolved.get(plugin_id)
+        instance_config = (
+            None
+            if instance_name is None
+            else config.instances(plugin_id)[instance_name]
+        )
+        withheld |= plugin.withheld_from_profile(instance_config)
+    return frozenset(withheld)
+
+
 class PluginRuntime:
     """Every configured plugin instance, started once and shared by profiles."""
 

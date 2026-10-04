@@ -100,7 +100,7 @@ from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.plugins.base import PluginStartupContext
 from family_assistant.plugins.registry import plugin_task_handlers
-from family_assistant.plugins.runtime import PluginRuntime
+from family_assistant.plugins.runtime import PluginRuntime, withheld_profile_tools
 from family_assistant.processing import (
     DelegatableService,
     ProcessingService,
@@ -194,7 +194,7 @@ from .telegram.turn_resumption import TELEGRAM_RESUMER, TelegramTurnResumer
 
 if TYPE_CHECKING:
     import socket
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Collection, Sequence
     from types import FrameType
     from wsgiref.simple_server import WSGIServer
 
@@ -266,6 +266,7 @@ def _build_profile_policy_engine(
     excluded_global_tools: Sequence[str] | None = None,
     *,
     memory_read: bool = False,
+    withheld_tools: Collection[str] = (),
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
@@ -284,6 +285,9 @@ def _build_profile_policy_engine(
     every call it receives is a dead end advertised as a capability, and the
     model has no way to know it should have used ``add_or_update_note``.
     Fail-closed, so a caller that does not say leaves them out.
+
+    ``withheld_tools`` are tools the profile's plugin instances cannot serve
+    (see ``withheld_profile_tools``), withheld the same way.
     """
     if profile_tools_policy is None:
         msg = (
@@ -332,6 +336,18 @@ def _build_profile_policy_engine(
                 description=(
                     f"Profile '{profile_id}' does not read the household's memory, "
                     "so it cannot write it either."
+                ),
+            )
+        )
+    if withheld_tools:
+        synthetic_rules.append(
+            PolicyRule(
+                match=ToolMatcher(names=sorted(withheld_tools)),
+                decision=ToolPolicyDecision.DENY,
+                priority=MAX_POLICY_RULE_PRIORITY,
+                description=(
+                    f"Profile '{profile_id}' has no plugin instance that can "
+                    "serve these tools."
                 ),
             )
         )
@@ -1561,6 +1577,9 @@ class Assistant:
             self.config.global_tools_policy,
             profile_conf.excluded_global_tools,
             memory_read=self.config.effective_memory_read(profile_conf),
+            withheld_tools=withheld_profile_tools(
+                self.config.plugins, profile_conf.plugins
+            ),
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
         policy_provider = PolicyEnforcingToolsProvider(

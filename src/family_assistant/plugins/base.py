@@ -84,6 +84,17 @@ class Plugin[ConfigT: BaseModel, InstanceT: PluginInstance](ABC):
         _ = configs
         return self.tools
 
+    def withheld_from_profile(self, config: ConfigT | None) -> frozenset[str]:
+        """Served tools a profile using this instance config cannot use.
+
+        ``config`` is the profile's selected instance, or ``None`` when it has
+        none. The default withholds nothing: a tool whose plugin has no
+        instance for the profile reports that when called. A plugin withholds
+        a tool whose only purpose depends on a setting the instance lacks.
+        """
+        _ = config
+        return frozenset()
+
     @abstractmethod
     def start(self, instance_name: str, config: ConfigT) -> InstanceT | None:
         """Build the runtime instance for one configured entry.

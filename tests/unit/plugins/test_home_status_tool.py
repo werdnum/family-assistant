@@ -10,11 +10,12 @@ import pytest
 from homeassistant_api.errors import HomeassistantAPIError
 from pydantic import SecretStr
 
+from family_assistant.plugins.config import PluginsConfig
 from family_assistant.plugins.home_assistant.config import HomeAssistantConfig
 from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
 from family_assistant.plugins.home_assistant.plugin import HOME_ASSISTANT_PLUGIN
 from family_assistant.plugins.home_assistant.tools import get_home_status_tool
-from family_assistant.plugins.runtime import ProfilePlugins
+from family_assistant.plugins.runtime import ProfilePlugins, withheld_profile_tools
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -150,3 +151,18 @@ def test_withheld_when_no_instance_has_a_template() -> None:
 
 def test_withheld_without_home_assistant() -> None:
     assert "get_home_status" not in _served_names({})
+
+
+def test_withheld_from_a_profile_whose_instance_has_no_template() -> None:
+    config = PluginsConfig(
+        home_assistant={
+            "default": _ha(),
+            "upstairs": _ha(context_template=TEMPLATE),
+        }
+    )
+
+    assert withheld_profile_tools(config, {}) == {"get_home_status"}
+    assert withheld_profile_tools(config, {"home_assistant": None}) == {
+        "get_home_status"
+    }
+    assert withheld_profile_tools(config, {"home_assistant": "upstairs"}) == set()

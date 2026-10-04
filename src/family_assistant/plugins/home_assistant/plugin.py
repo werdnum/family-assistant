@@ -45,6 +45,18 @@ class HomeAssistantPlugin(Plugin[HomeAssistantConfig, HomeAssistantInstance]):
             if registration.name != GET_HOME_STATUS_TOOL_NAME
         )
 
+    def withheld_from_profile(
+        self, config: HomeAssistantConfig | None
+    ) -> frozenset[str]:
+        """``get_home_status`` unless the profile's instance has a template.
+
+        ``served_tools`` serves it when any instance has one; a profile using
+        another instance, or none, would only ever get an error from it.
+        """
+        if config is not None and config.context_template:
+            return frozenset()
+        return frozenset({GET_HOME_STATUS_TOOL_NAME})
+
     def start(
         self, instance_name: str, config: HomeAssistantConfig
     ) -> HomeAssistantInstance | None:
