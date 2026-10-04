@@ -41,8 +41,9 @@ compaction events the prompt is append-only.**
 ### Turns and budget
 
 - The loader works in turns, never rows: a turn is the rows its own turn wrote, and a row with no
-  turn id (a proactive send) is a turn of its own. A turn is never split. Profile and
-  subconversation filtering stay as they are.
+  turn id (a proactive send) is a turn of its own. A turn is never split. The active profile's
+  history filtering and subconversation filtering apply to every input, including thread replies,
+  which today load every profile's rows.
 - The window is bounded by a character budget and a minimum number of turns, set per profile and
   interface, within the existing age cap. Cache reads cost 5-25% of normal input on current
   providers, so a warm append-only history is cheap; the budget exists for attention and noise more
