@@ -78,8 +78,11 @@ compaction events the prompt is append-only.**
   them (text and tool calls stay) rather than leaving the API to drop them, so
   `prefix_binding_mismatch` keeps meaning a bug. On Gemini, thought parts inside a kept turn are
   never trimmed; whole older turns are compacted or not.
-- **Tool activations survive.** Under append-only prompts the active tool set comes from the
-  activating messages in history; a compaction must never change it.
+- **Tool activations follow their turn.** Under append-only prompts the active tool set comes from
+  the activating messages in history, and an activation lasts until the window drops the message
+  that made it. A compacted turn keeps its activations (the stub carries them); a turn that is
+  dropped, whether for budget or age, takes its activations with it, as `append-only-prompt.md`
+  specifies, and the model can activate them again.
 - **The emergency fallback** becomes a compaction event at a smaller budget through the same
   renderer, and `prune_messages_for_context` is deleted. It is the one event that can run inside a
   tool round, where today's retry runs: it compacts only completed turns and leaves the current
@@ -107,12 +110,14 @@ has no tools and its output is schema-constrained, so the worst case is that the
 kept verbatim within the budget, and a compacted turn is still a stub the model can look up.
 
 Auto keeps deciding per request, as today, and moves to Jev as a choice question among the profile's
-`auto_model_tiers` with the profile's routing guidance as its rubric. That replaces an LLM call with
-a ten-second timeout and adds a probability over tiers to tune a threshold against. On turns that
-are also compaction events, the relevance questions ride in the same request. Its exposure to
-injected history is the same as today's classifier: the answer cannot leave `auto_model_tiers`. A
-tier switch drops earlier thinking on Claude, so shadow mode reports how often Auto would switch, as
-a cost to weigh, not a reason to hold the tier.
+`auto_model_tiers` with the profile's routing guidance as its rubric. Its inputs stay those of
+today's classifier (bounded recent history, the request, attachment metadata and the profile),
+whether or not relevance questions share the request. That replaces an LLM call with a ten-second
+timeout and adds a probability over tiers to tune a threshold against. On turns that are also
+compaction events, the relevance questions ride in the same request. Its exposure to injected
+history is the same as today's classifier: the answer cannot leave `auto_model_tiers`. A tier switch
+drops earlier thinking on Claude, so shadow mode reports how often Auto would switch, as a cost to
+weigh, not a reason to hold the tier.
 
 ### Taint
 
@@ -145,10 +150,10 @@ today. Window taint is computed over the rendered window by the same loader on e
    turns keeps the previous request, and that two consecutive turns with no event between them
    render as strict prefix plus append.
 2. **Compaction events and rendering**, including attachment references, thinking stripped from kept
-   Claude turns, unchanged tool activations, and the emergency fallback moved onto the renderer.
-   Verified by tests that a compaction does not change the active tool set or reduce taint relative
-   to the verbatim turns, a Gemini request with a compacted history is accepted, and the
-   cached-token share in diagnostics does not regress.
+   Claude turns, activations kept by compacted turns, and the emergency fallback moved onto the
+   renderer. Verified by tests that compacting a turn does not change the active tool set or reduce
+   taint relative to the verbatim turns, a Gemini request with a compacted history is accepted, and
+   the cached-token share in diagnostics does not regress.
 3. **Jev relevance and Auto in shadow mode.** Probabilities and tier choices are logged beside the
    current behaviour. Verified against whether the model then called `get_message_history`, whether
    the user had to repeat themselves, and the outcomes Auto shadow mode already records; it switches
