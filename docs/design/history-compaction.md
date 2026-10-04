@@ -54,9 +54,10 @@ compaction points the prompt is append-only.**
 ### Compaction points
 
 - The loader keeps a **compaction point**. Turns before it render compacted; turns after it render
-  verbatim. The point moves only at a compaction event, and both the point and the compacted
-  rendering are derived deterministically from stored rows, so replays are byte-identical without
-  persisting a summary.
+  verbatim. **Anything that removes or re-renders an earlier turn happens only at a compaction
+  event**, and that includes the age cap: turns that age out between events leave at the next one.
+  The point moves only at an event, and both the point and the compacted rendering are derived
+  deterministically from stored rows, so replays are byte-identical without persisting a summary.
 - **Events, with hysteresis.** A compaction runs at the start of a user turn (never inside a tool
   round) when the verbatim part passes the budget, and compacts well below it, so the next event is
   many turns away. On Telegram, the first message after an idle gap is also an event. Provider
@@ -81,11 +82,12 @@ compaction points the prompt is append-only.**
 ### Relevance at compaction events
 
 At a compaction event a classifier ranks which turns since the previous event the new message
-continues, and the compaction keeps those verbatim in preference to the rest. The budget is always
-enforced in code: relevance only decides which turns fill it, and the newest one or two turns always
-stay. Between events the result is frozen. If the classifier times out or fails, the compaction
-proceeds oldest-first as if it had returned nothing, so the budget holds on every path, including
-the emergency fallback.
+continues, and the compaction keeps those verbatim in preference to the rest. The budget is enforced
+in code, not by the classifier: relevance only decides which turns fill it. If the classifier times
+out or fails, the compaction proceeds oldest-first as if it had returned nothing. Between events the
+result is frozen. The newest one or two turns always stay, compacted if need be; when they alone
+exceed the budget they are sent anyway, and a provider context-length failure then reaches the user
+as it does today. That needs a single turn larger than the budget and is left there.
 
 The classifier is TypeSafe Jev: a typed, calibrated yes/no per candidate turn, around 100 ms, priced
 per input token at a level that is negligible per message. Its state is small (the new message plus
