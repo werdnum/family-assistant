@@ -2,8 +2,7 @@
 
 ## Status
 
-Proposed. Follows `append-only-prompt.md`
-([PR #1348](https://github.com/werdnum/family-assistant/pull/1348)), which makes every request the
+Proposed. Follows [append-only-prompt.md](append-only-prompt.md), which makes every request the
 previous request plus appended messages and leaves "the history window drops messages from the
 front" to this document. Approach-level; construction detail belongs to the implementing PRs.
 
