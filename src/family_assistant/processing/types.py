@@ -60,6 +60,7 @@ class ContextPreparerConfig(Protocol):
 
     id: str
     description: str
+    timezone: ZoneInfo
     max_history_messages: int
     history_max_age_hours: float
     web_max_history_messages: int | None

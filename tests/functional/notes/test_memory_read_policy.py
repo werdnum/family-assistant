@@ -46,7 +46,6 @@ FILE_SKILL_NAME = "Email Drafting"
 PROMPTS = {
     "note_item_format": "- {title}: {content}",
     "notes_context_header": "Relevant notes:\n{notes_list}",
-    "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
 }
 
 CURATOR_POLICY = NoteReadPolicy.for_profile(
@@ -175,16 +174,6 @@ async def test_curator_prompt_notes_are_the_core_memory_note_alone(
 
 
 @pytest.mark.asyncio
-async def test_curator_sees_no_note_titles_at_all(db_engine: AsyncEngine) -> None:
-    """Non-memory notes fail the floor; memory topics are excluded for everyone."""
-    db = await _seed(db_engine)
-
-    titles = await db.notes.get_excluded_notes_titles(read_policy=CURATOR_POLICY)
-
-    assert titles == []
-
-
-@pytest.mark.asyncio
 async def test_curator_reaches_no_file_skill(db_engine: AsyncEngine) -> None:
     """A label-less skill passes any grant set, so only the floor stops it."""
     _ = await _seed(db_engine)
@@ -285,18 +274,6 @@ async def test_ordinary_reader_keeps_its_notes_and_the_core_memory_note(
         CORE_TITLE,
         UNLABELLED_PROMPT_NOTE,
     }
-
-
-@pytest.mark.asyncio
-async def test_memory_topics_leave_the_ordinary_title_list(
-    db_engine: AsyncEngine,
-) -> None:
-    """Their pointers live in the core note's index; the list stays bounded."""
-    db = await _seed(db_engine)
-
-    titles = await db.notes.get_excluded_notes_titles(read_policy=ORDINARY_POLICY)
-
-    assert set(titles) == {UNLABELLED_EXCLUDED_NOTE, DEFAULT_LABELLED_NOTE}
 
 
 @pytest.mark.asyncio

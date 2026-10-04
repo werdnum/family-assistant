@@ -31,10 +31,8 @@ from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
 )
 from family_assistant.context_providers import (
-    CalendarContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
-    WeatherContextProvider,
 )
 from family_assistant.email_intake.actions import (
     EMAIL_INTAKE_ACTION_TASK_TYPE,
@@ -55,7 +53,6 @@ from family_assistant.events.webhook_source import WebhookEventSource
 
 # Import the whole storage module for task queue functions etc.
 # --- NEW: Import ContextProvider and its implementations ---
-from family_assistant.google_calendar import google_calendar_factory
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.message_history_indexer import (
@@ -101,9 +98,9 @@ from family_assistant.memory.sweep import (
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
-from family_assistant.plugins.base import PluginProfileContext, PluginStartupContext
+from family_assistant.plugins.base import PluginStartupContext
 from family_assistant.plugins.registry import plugin_task_handlers
-from family_assistant.plugins.runtime import PluginRuntime
+from family_assistant.plugins.runtime import PluginRuntime, withheld_profile_tools
 from family_assistant.processing import (
     DelegatableService,
     ProcessingService,
@@ -185,6 +182,7 @@ from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
+from family_assistant.weather import WeatherService
 from family_assistant.web.app_creator import configure_app_auth, create_app
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.mcp_adapter.config import require_authentication_for_adapter
@@ -196,7 +194,7 @@ from .telegram.turn_resumption import TELEGRAM_RESUMER, TelegramTurnResumer
 
 if TYPE_CHECKING:
     import socket
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Collection, Sequence
     from types import FrameType
     from wsgiref.simple_server import WSGIServer
 
@@ -209,7 +207,6 @@ if TYPE_CHECKING:
     )
     from family_assistant.context_providers import ContextProvider
     from family_assistant.llm import LLMInterface
-    from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.security.taint import SinkClass
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -269,6 +266,7 @@ def _build_profile_policy_engine(
     excluded_global_tools: Sequence[str] | None = None,
     *,
     memory_read: bool = False,
+    withheld_tools: Collection[str] = (),
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
@@ -287,6 +285,9 @@ def _build_profile_policy_engine(
     every call it receives is a dead end advertised as a capability, and the
     model has no way to know it should have used ``add_or_update_note``.
     Fail-closed, so a caller that does not say leaves them out.
+
+    ``withheld_tools`` are tools the profile's plugin instances cannot serve
+    (see ``withheld_profile_tools``), withheld the same way.
     """
     if profile_tools_policy is None:
         msg = (
@@ -335,6 +336,18 @@ def _build_profile_policy_engine(
                 description=(
                     f"Profile '{profile_id}' does not read the household's memory, "
                     "so it cannot write it either."
+                ),
+            )
+        )
+    if withheld_tools:
+        synthetic_rules.append(
+            PolicyRule(
+                match=ToolMatcher(names=sorted(withheld_tools)),
+                decision=ToolPolicyDecision.DENY,
+                priority=MAX_POLICY_RULE_PRIORITY,
+                description=(
+                    f"Profile '{profile_id}' has no plugin instance that can "
+                    "serve these tools."
                 ),
             )
         )
@@ -563,6 +576,7 @@ class Assistant:
         # Initialize all instance attributes
         self.fastapi_app: FastAPI | None = None
         self.shared_httpx_client: httpx.AsyncClient | None = None
+        self.weather_service: WeatherService | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, DelegatableService] = {}
         self.a2a_cancel_events: dict[str, asyncio.Event] = {}
@@ -816,6 +830,9 @@ class Assistant:
 
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
+        self.weather_service = WeatherService.from_config(
+            self.config, self.shared_httpx_client
+        )
 
         # Check if Telegram is enabled
         self.telegram_enabled = self.config.telegram_enabled
@@ -1096,7 +1113,7 @@ class Assistant:
 
         logger.info("Creating root ToolsProvider with all available tools")
         root_local_registrations = build_effective_local_tool_registrations(
-            self.config, google_integration_state
+            self.config, google_integration_state, self.weather_service
         )
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
@@ -1394,7 +1411,7 @@ class Assistant:
         )
         profile_read_policy = self._profile_note_read_policy(profile_conf)
         context_providers = self._build_profile_context_providers(
-            profile_conf, note_registry, profile_read_policy, profile_plugins
+            profile_conf, note_registry, profile_read_policy
         )
 
         service_config = ProcessingServiceConfig(
@@ -1515,9 +1532,13 @@ class Assistant:
         profile_conf: ServiceProfile,
         note_registry: NoteRegistry | None,
         read_policy: NoteReadPolicy,
-        plugins: ProfilePlugins,
     ) -> list[ContextProvider]:
-        """Build and filter the aggregated-context sources for one profile."""
+        """Build and filter the household-context sources for one profile.
+
+        Only sources that change when someone writes a note or edits the config
+        belong here: their output goes into the system prompt. Anything that
+        changes from one request to the next is a tool instead.
+        """
         assert self.attachment_registry is not None
         profile_config = profile_conf.processing_config
         providers: list[ContextProvider] = [
@@ -1528,55 +1549,16 @@ class Assistant:
                 read_policy=read_policy,
                 note_registry=note_registry,
             ),
-            CalendarContextProvider(
-                calendar_config=_profile_calendar_config(
-                    profile_conf.processing_config.calendar_config,
-                    self.config.calendar_config,
-                ),
-                timezone=ZoneInfo(profile_config.timezone),
-                prompts=profile_config.prompts,
-                google_calendar_for_user=google_calendar_factory(
-                    self.credential_resolvers, self.api_backend, self._database
-                ),
-            ),
             KnownUsersContextProvider(
                 chat_id_to_name_map=profile_conf.chat_id_to_name_map,
                 prompts=profile_config.prompts,
             ),
         ]
-        weather_provider = self._create_weather_context_provider(profile_conf)
-        if weather_provider is not None:
-            providers.append(weather_provider)
-        providers.extend(
-            plugins.context_providers(
-                PluginProfileContext(
-                    profile_id=profile_conf.id,
-                    prompts=profile_config.prompts,
-                    timezone=ZoneInfo(profile_config.timezone),
-                )
-            )
-        )
 
         excluded = set(profile_config.excluded_context_providers)
         if not excluded:
             return providers
         return [provider for provider in providers if provider.name not in excluded]
-
-    def _create_weather_context_provider(
-        self, profile_conf: ServiceProfile
-    ) -> WeatherContextProvider | None:
-        api_key = self.config.willyweather_api_key
-        location_id = self.config.willyweather_location_id
-        if not api_key or not location_id or self.shared_httpx_client is None:
-            return None
-        profile_config = profile_conf.processing_config
-        return WeatherContextProvider(
-            location_id=location_id,
-            api_key=api_key.get_secret_value(),
-            prompts=profile_config.prompts,
-            timezone=ZoneInfo(profile_config.timezone),
-            httpx_client=self.shared_httpx_client,
-        )
 
     async def _build_profile_tools_provider(
         self,
@@ -1595,6 +1577,9 @@ class Assistant:
             self.config.global_tools_policy,
             profile_conf.excluded_global_tools,
             memory_read=self.config.effective_memory_read(profile_conf),
+            withheld_tools=withheld_profile_tools(
+                self.config.plugins, profile_conf.plugins
+            ),
         )
         confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
         policy_provider = PolicyEnforcingToolsProvider(

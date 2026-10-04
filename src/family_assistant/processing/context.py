@@ -9,12 +9,12 @@ from family_assistant.llm.messages import (
     ErrorMessage,
     LLMMessage,
     ToolMessage,
+    UserMessage,
 )
+from family_assistant.processing.message_time import with_sent_at
 from family_assistant.processing.types import ContextPreparerConfig
 from family_assistant.security.taint import TaintSource
 from family_assistant.utils.clock import Clock
-
-from .utils import assistant_message_has_thought_signature
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -150,29 +150,18 @@ class ContextPreparer:
         # Process history messages, formatting assistant tool calls correctly
         for msg in history_messages:
             if isinstance(msg, AssistantMessage):
-                has_thought_signature = assistant_message_has_thought_signature(msg)
-
-                # Strip text content from messages with tool calls UNLESS they have thought signatures
-                # Thought signatures are cryptographically tied to exact conversation context
-                # So if a thought signature is present, we MUST preserve the original text content exactly.
-                final_content: str | None = msg.content
-
-                if msg.tool_calls and msg.content and not has_thought_signature:
-                    # Only strip text if NO thought signature is present, to avoid redundancy/partial response issues
-                    # with other providers. But for Google with signatures, we keep it.
-                    final_content = None
-                    logger.debug(
-                        f"Stripped text content from assistant message with tool calls (no signature). Original content: {msg.content[:100]}..."
+                # Replayed exactly as it was sent, text and tool calls together.
+                # Dropping the text on later turns changed a message the model
+                # had already seen, which ends the prompt-cache hit there and
+                # invalidates every later Anthropic thinking block.
+                messages.append(
+                    AssistantMessage(
+                        content=msg.content,
+                        tool_calls=msg.tool_calls,
+                        provider_metadata=msg.provider_metadata,
+                        taint_metadata=msg.taint_metadata,
                     )
-
-                # Create new AssistantMessage with potentially modified content
-                assistant_msg = AssistantMessage(
-                    content=final_content,
-                    tool_calls=msg.tool_calls,
-                    provider_metadata=msg.provider_metadata,
-                    taint_metadata=msg.taint_metadata,
                 )
-                messages.append(assistant_msg)
             elif isinstance(msg, ToolMessage):
                 # --- Format tool response messages ---
                 if (
@@ -191,8 +180,9 @@ class ContextPreparer:
                 if msg.error_traceback:
                     error_content += f"\n\nError details: {msg.error_traceback}"
                 messages.append(AssistantMessage(content=error_content))
+            elif isinstance(msg, UserMessage):
+                messages.append(with_sent_at(msg, self.config.timezone))
             else:
-                # SystemMessage, UserMessage, or other message types - pass through as-is
                 messages.append(msg)
 
         logger.debug(

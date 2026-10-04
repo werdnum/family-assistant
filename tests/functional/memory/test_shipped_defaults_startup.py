@@ -24,7 +24,6 @@ from family_assistant.memory.sweep import (
     MEMORY_REVIEW_SWEEP_TASK_ID,
     MEMORY_REVIEW_SWEEP_TASK_TYPE,
 )
-from family_assistant.plugins.runtime import ProfilePlugins
 from family_assistant.security.note_provenance import NoteProvenanceStamp
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -74,7 +73,6 @@ async def _rendered_notes_context(
         profile,
         None,
         assistant._profile_note_read_policy(profile),  # pylint: disable=protected-access
-        ProfilePlugins(),
     )
     notes_provider = next(p for p in providers if isinstance(p, NotesContextProvider))
     fragments = await notes_provider.get_context_fragments(acting_user_id=None)

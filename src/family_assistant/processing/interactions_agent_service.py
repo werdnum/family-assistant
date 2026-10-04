@@ -240,14 +240,11 @@ class InteractionsAgentProcessingService(ProcessingService):
     # empty completion would be legitimate can say so.
     expects_output: bool = True
 
-    # These agents collapse the prompt into a single `input` string (plus, for
-    # Antigravity, a `system_instruction`) and the client drops scaffolding on
-    # the way, so the block never reaches the model on either the interactive
-    # or the submit-then-poll path.
-    sends_turn_context_block: bool = False
-
     def format_system_prompt(self, *, user_name: str) -> str:
-        """Fold the clock into the prompt, since no block survives to carry it.
+        """Fold the clock into the prompt, since only the latest message survives.
+
+        These agents collapse the prompt into a single ``input`` string, so the
+        send-time stamps on earlier messages never reach them.
 
         Work grounded on live web results needs a date more than most work
         does -- "the latest on X this week" is unanswerable without one. Putting
@@ -458,8 +455,9 @@ class InteractionsAgentProcessingService(ProcessingService):
 
         Builds the same system prompt as a direct turn (via the inherited
         ``format_system_prompt``) plus the delegated content as input text.
-        No ``<turn_context>`` block is appended: these profiles aggregate no
-        context, and a single-shot submission has no cache prefix to protect.
+        No household context is added: these profiles aggregate none, and the
+        clock is folded into the prompt because a single-shot submission has no
+        cache prefix to protect.
         Chains onto the prior delegation's
         interaction (if this is a resumed run — see
         ``DelegationRunsRepository.get_latest_completed_run``), and submits

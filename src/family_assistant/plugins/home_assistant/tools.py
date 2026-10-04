@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+GET_HOME_STATUS_TOOL_NAME = "get_home_status"
+
 
 def detect_image_mime_type(content: bytes) -> str:
     """
@@ -380,6 +382,27 @@ HOME_ASSISTANT_TOOLS_DEFINITION: list[ToolDefinition] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": GET_HOME_STATUS_TOOL_NAME,
+            "description": (
+                "Gets an overview of the household's current state, curated by the "
+                "operator -- for example who is home, energy prices and the state of "
+                "key devices. Call it whenever the current state of the home matters "
+                "to the request, and to learn which entities the household cares "
+                "about. For anything the overview does not cover, use the other "
+                "Home Assistant tools (entity lists, templates, history).\n\n"
+                "Returns: the overview as text, as rendered by Home Assistant just "
+                "now. On errors, returns a descriptive error message."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -444,6 +467,42 @@ async def render_home_assistant_template_tool(
     except Exception as e:
         logger.exception(f"Unexpected error rendering template: {e}")
         return f"Error: Failed to render template - {e!s}"
+
+
+async def get_home_status_tool(exec_context: ToolExecutionContext) -> ToolResult:
+    """Render the instance's operator-configured context template."""
+    instance = (
+        None
+        if exec_context.plugins is None
+        else exec_context.plugins.get(HomeAssistantInstance)
+    )
+    if instance is None:
+        logger.error("Home Assistant client not available in execution context")
+        return ToolResult(
+            text="Error: Home Assistant integration is not configured or available."
+        )
+    if not instance.context_template:
+        return ToolResult(
+            text=(
+                "Error: No home status overview is configured for this Home "
+                "Assistant instance."
+            )
+        )
+
+    try:
+        rendered = await instance.client.async_get_rendered_template(
+            template=instance.context_template
+        )
+    except HomeassistantAPIError as e:
+        logger.exception(f"Home Assistant API error rendering home status: {e}")
+        return ToolResult(text=f"Error: Home Assistant API error - {e!s}")
+    except Exception as e:
+        logger.exception(f"Unexpected error rendering home status: {e}")
+        return ToolResult(text=f"Error: Failed to render home status - {e!s}")
+
+    if not rendered or not rendered.strip():
+        return ToolResult(text="The home status overview rendered empty.")
+    return ToolResult(text=rendered.strip())
 
 
 async def get_camera_snapshot_tool(
@@ -1051,6 +1110,16 @@ HOME_ASSISTANT_TOOLS: tuple[ToolRegistration, ...] = (
     _tool(
         "render_home_assistant_template",
         render_home_assistant_template_tool,
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.HOME_AUTOMATION,
+        ToolTag.DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    _tool(
+        GET_HOME_STATUS_TOOL_NAME,
+        get_home_status_tool,
         ToolTag.SCRIPT_DETERMINISTIC,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,

@@ -28,6 +28,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.model_selection import ModelTierEligibility, ModelTierOption
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.message_time import strip_sent_at_label
 from family_assistant.storage import delegation_runs_table
 from family_assistant.storage.database import Database
 from family_assistant.task_worker import TaskWorker
@@ -109,12 +110,20 @@ class RecordingChatInterface:
 
 
 def _texts(messages: list[LLMMessage]) -> list[str]:
-    return [extract_text_from_content(get_message_content(m)) for m in messages]
+    """Each message's text, without the send-time stamp history formatting adds."""
+    return [
+        strip_sent_at_label(extract_text_from_content(get_message_content(m)))
+        for m in messages
+    ]
 
 
 def _last_text(messages: list[LLMMessage]) -> str:
     last = last_real_message(messages)
-    return "" if last is None else extract_text_from_content(get_message_content(last))
+    return (
+        ""
+        if last is None
+        else strip_sent_at_label(extract_text_from_content(get_message_content(last)))
+    )
 
 
 def _delegate(target: str, request: str, **extra: str) -> ToolCallItem:

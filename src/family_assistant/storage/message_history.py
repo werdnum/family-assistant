@@ -102,6 +102,9 @@ message_history_table = Table(
         "provider_metadata", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Provider-specific metadata for round-trip (e.g., thought signatures)
     Column(
+        "activated_tools", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),  # On-demand tools a tool result activated for the rest of the conversation
+    Column(
         "taint_metadata_json", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),
     Column("taint_metadata_version", String(64), nullable=True),

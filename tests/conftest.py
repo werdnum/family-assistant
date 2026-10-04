@@ -27,6 +27,7 @@ import pytest
 import pytest_asyncio  # Import the correct decorator
 import vcr
 from caldav.collection import Calendar
+from google.genai import _replay_api_client as replay_api_client  # noqa: PLC2701 - the SDK exposes no hook for replay matching
 
 # Try to import pgserver, but it's optional if TEST_DATABASE_URL is provided
 try:
@@ -46,6 +47,7 @@ import family_assistant.storage.tasks as tasks_module
 # Import for task_worker_manager fixture
 from family_assistant.config_models import AppConfig
 from family_assistant.processing import ProcessingService  # Import ProcessingService
+from family_assistant.processing.message_time import strip_sent_at_label
 from family_assistant.services.attachment_registry import AttachmentRegistry
 
 # Import the metadata and the original engine object from your storage base
@@ -1101,6 +1103,41 @@ async def radicale_server(
 
 
 # --- VCR.py Configuration for LLM Integration Tests ---
+
+
+def _strip_sent_at_labels_in_place(value: object) -> None:
+    """Remove send-time stamps from every text field of a request body."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "text" and isinstance(item, str):
+                value[key] = strip_sent_at_label(item)
+            else:
+                _strip_sent_at_labels_in_place(item)
+    elif isinstance(value, list):
+        for item in value:
+            _strip_sent_at_labels_in_place(item)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def gemini_replay_ignores_send_time_stamps() -> Generator[None]:
+    """Compare Gemini SDK replays without the per-message send-time stamp.
+
+    History formatting stamps each user message with when it was sent. Paths
+    that write rows with the wall-clock time make that stamp differ on every
+    run, so it cannot be part of what an exact-match replay compares -- like a
+    cache breakpoint, it does not change which response a recording answers.
+    The SDK redacts both the live and the recorded body before comparing, which
+    is where this hooks in.
+    """
+    original = replay_api_client._redact_request_body
+
+    def redact(body: dict[str, object]) -> None:
+        original(body)
+        _strip_sent_at_labels_in_place(body)
+
+    replay_api_client._redact_request_body = redact
+    yield
+    replay_api_client._redact_request_body = original
 
 
 # --- Unified LLM Record/Replay Configuration ---

@@ -142,11 +142,12 @@ class BaseLLMClient:
         This prevents sending empty requests to the LLM which would
         typically result in errors anyway.
 
-        Turn scaffolding is skipped. The prompt now ends with the generated
-        ``<turn_context>`` block, which is never empty, so checking the literal
-        last user message would make this guard unreachable and let an empty
-        trigger (a sticker, an unsupported media type) reach the provider as a
-        generic 400 instead of a typed error naming the real problem.
+        Turn scaffolding is skipped. The prompt can end with a generated message
+        (the final-iteration instruction, a reply thread's attachment summary)
+        that is never empty, so checking the literal last user message would let
+        an empty trigger (a sticker, an unsupported media type) reach the
+        provider as a generic 400 instead of a typed error naming the real
+        problem.
         """
         last_user_message = None
         for msg in reversed(messages):

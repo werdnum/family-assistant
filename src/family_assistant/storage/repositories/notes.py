@@ -562,52 +562,6 @@ class NotesRepository(BaseRepository):
         notes = [_row_to_note_model(row) for row in rows]
         return [note for note in notes if _is_eligible(note)]
 
-    async def get_excluded_notes_titles(
-        self,
-        *,
-        read_policy: NoteReadPolicy,
-    ) -> list[str]:
-        """Titles for the "Other available notes" line.
-
-        Every note whose full content is not in the prompt: those not marked
-        for inclusion, and prompt-intended notes and skills whose stored tier
-        keeps them out of it. Titles are discovery metadata and are listed
-        whatever the note's provenance.
-
-        Memory topic notes are left out for every reader. Their pointers live
-        inside the capped core note's derived index, so the memory contribution
-        to a rendered prompt is exactly the core note and nothing grows with
-        the number of topics -- which is what makes the core note's cap a
-        statement about the prompt. They stay reachable by title through
-        ``get_note``, by search, and in the ``list_notes`` tool's output.
-        """
-        try:
-            # Only what the eligibility decision reads: this runs on every turn,
-            # and note bodies can be large.
-            stmt = (
-                select(
-                    notes_table.c.title,
-                    notes_table.c.include_in_prompt,
-                    notes_table.c.is_skill,
-                    notes_table.c.provenance_metadata_json,
-                )
-                .where(~self._labels_superset_condition([MEMORY_LABEL]))
-                .order_by(notes_table.c.title)
-            )
-            stmt = self._apply_read_policy(stmt, read_policy)
-            rows = await self._db.fetch_all(stmt)
-        except SQLAlchemyError as e:
-            self._logger.exception(f"Database error in get_excluded_notes_titles: {e}")
-            raise
-        titles: list[str] = []
-        for row in rows:
-            ambient_intended = row["include_in_prompt"] or row.get("is_skill", False)
-            if not ambient_intended or not is_ambient_eligible(
-                row["provenance_metadata_json"], title=row["title"]
-            ):
-                titles.append(row["title"])
-        return titles
-
     async def get_skills(
         self,
         *,

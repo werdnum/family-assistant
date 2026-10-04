@@ -164,34 +164,3 @@ async def test_get_prompt_notes_excludes_skills(db_engine: AsyncEngine) -> None:
     titles = [n.title for n in prompt_notes]
     assert "Regular Prompt Note" in titles
     assert "Skill Note" not in titles
-
-
-@pytest.mark.asyncio
-async def test_get_excluded_notes_titles_excludes_skills(
-    db_engine: AsyncEngine,
-) -> None:
-    """get_excluded_notes_titles() excludes skill notes."""
-    await cleanup_notes(db_engine)
-
-    db = Database(engine=db_engine)
-    await db.notes.add_or_update(
-        title="Hidden Regular Note",
-        content="Hidden content.",
-        include_in_prompt=False,
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-    await db.notes.add_or_update(
-        title="Hidden Skill",
-        content=SKILL_CONTENT,
-        include_in_prompt=False,
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-
-    excluded = await db.notes.get_excluded_notes_titles(
-        read_policy=NoteReadPolicy.UNRESTRICTED
-    )
-
-    assert "Hidden Regular Note" in excluded
-    assert "Hidden Skill" not in excluded

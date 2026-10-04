@@ -1018,10 +1018,10 @@ async def test_steer_running_turn_injects_user_input(
     steer_text = "actually, focus on tomorrow"
     steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
 
-    # Iteration 2: once the injected [MID-TURN USER UPDATE] is in the messages,
+    # Iteration 2: once the injected steering message is in the messages,
     # reply with final text. Listed first so it wins over the tool-call rule.
     api_mock_llm_client.rules.append((
-        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        lambda args: _user_message_contains(args, steer_text),
         _reply("Okay, focusing on tomorrow."),
     ))
     # Iteration 1: the initial prompt triggers a (side-effect-free) tool call.
@@ -1097,9 +1097,8 @@ async def test_steer_running_turn_injects_user_input(
     finally:
         hub.unsubscribe(conversation_id, handle.queue)
 
-    # The injected mid-turn message is persisted as the RAW user text, not the
-    # internal [MID-TURN USER UPDATE] wrapper the model saw, so a later history
-    # reload shows what the user actually typed.
+    # The injected mid-turn message is persisted as the raw user text, so a
+    # later history reload shows what the user actually typed.
     ctx = Database(engine=db_engine)
     rows = await ctx.message_history.get_recent_with_metadata(
         interface_type="web",
@@ -1112,9 +1111,9 @@ async def test_steer_running_turn_injects_user_input(
         if row["role"] == "user" and steer_text in str(row["content"])
     ]
     assert steer_rows, "Expected the steering message to be persisted"
-    assert all(
-        "MID-TURN USER UPDATE" not in str(row["content"]) for row in steer_rows
-    ), "Steering message must persist as raw text, not the internal wrapper"
+    assert all(row["content"] == steer_text for row in steer_rows), (
+        "Steering message must persist as the raw text the user typed"
+    )
     assert all(
         TurnTaintState.from_metadata(row["taint_metadata_json"]).max_tier
         is SourceTrustTier.TRUSTED_USER
@@ -1140,7 +1139,7 @@ async def test_retried_steer_with_the_same_input_id_is_queued_once(
     steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
 
     api_mock_llm_client.rules.append((
-        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        lambda args: _user_message_contains(args, steer_text),
         _reply("Okay, focusing on tomorrow."),
     ))
     api_mock_llm_client.rules.append((
@@ -1237,7 +1236,7 @@ async def test_retried_steer_after_the_turn_ends_is_still_accepted(
     steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
 
     api_mock_llm_client.rules.append((
-        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        lambda args: _user_message_contains(args, steer_text),
         _reply("Okay, focusing on tomorrow."),
     ))
     api_mock_llm_client.rules.append((
@@ -1685,7 +1684,7 @@ async def test_steer_reports_the_stream_head_it_was_queued_after(
     user_prompt = "Tell me about seqs"
     steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
     api_mock_llm_client.rules.append((
-        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        lambda args: _user_message_contains(args, "actually, hurry"),
         _reply("done"),
     ))
     api_mock_llm_client.rules.append((

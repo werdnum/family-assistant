@@ -5,6 +5,8 @@ import json
 import logging
 from typing import Any
 
+from family_assistant.processing.message_time import strip_sent_at_label
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,6 +16,23 @@ def _normalize_json_value(value: Any) -> Any:  # noqa: ANN401
         return {key: _normalize_json_value(value[key]) for key in sorted(value)}
     if isinstance(value, list):
         return [_normalize_json_value(item) for item in value]
+    return value
+
+
+def _strip_sent_at_labels(value: Any) -> Any:  # noqa: ANN401
+    """Drop the send-time stamp from every user message in a request body.
+
+    History formatting stamps each user message with when it was sent, which
+    is the wall-clock time of the run: a recorded request can never carry the
+    stamp a replay will produce. Like a cache breakpoint, it does not change
+    which response a recording answers.
+    """
+    if isinstance(value, dict):
+        return {key: _strip_sent_at_labels(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_strip_sent_at_labels(item) for item in value]
+    if isinstance(value, str):
+        return strip_sent_at_label(value)
     return value
 
 
@@ -51,7 +70,7 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     - Ensuring consistent formatting of nested structures
     - Dropping prompt-cache breakpoints, which cannot affect the response
     """
-    body = _strip_cache_control(body)
+    body = _strip_sent_at_labels(_strip_cache_control(body))
     normalized = {}
 
     # Handle messages array
@@ -63,7 +82,10 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
             # Handle different content types
             content = msg.get("content")
             if isinstance(content, str):
-                norm_msg["content"] = content
+                # A bare string and a one-element text block list are the same
+                # message. The Anthropic client sends the list form so a message
+                # keeps one shape whether or not it merges with a neighbour.
+                norm_msg["content"] = [{"text": content, "type": "text"}]
             elif isinstance(content, list):
                 # For multipart content (text + images)
                 norm_msg["content"] = sorted(content, key=lambda x: x.get("type", ""))

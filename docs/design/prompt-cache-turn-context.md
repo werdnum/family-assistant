@@ -1,5 +1,9 @@
 # Prompt caching: move per-turn context out of the system prompt
 
+> **Superseded** by [append-only-prompt.md](append-only-prompt.md): the `<turn_context>` block this
+> document introduced was removed in favour of system-prompt content, tools and per-message
+> timestamps.
+
 ## Problem
 
 Every provider we use caches prompts by **longest common prefix**. Whatever byte first differs

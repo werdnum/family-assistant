@@ -21,7 +21,10 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.llm.providers.anthropic_client import AnthropicClient
+from family_assistant.llm.providers.anthropic_client import (
+    AnthropicClient,
+    log_input_transformations,
+)
 from family_assistant.tools.types import ToolDefinition
 
 THINKING_BLOCK: dict[str, object] = {
@@ -242,7 +245,11 @@ def test_thinking_budget_below_max_tokens_is_accepted() -> None:
 
     params = client._build_request_params([], None, None, "auto")
 
-    assert params["thinking"] == {"type": "enabled", "budget_tokens": 4096}
+    assert params["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 4096,
+        "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+    }
 
 
 def test_adaptive_thinking_shape_is_not_budget_checked() -> None:
@@ -260,7 +267,7 @@ def test_adaptive_thinking_shape_is_not_budget_checked() -> None:
 
     params = client._build_request_params([], None, None, "auto")
 
-    assert params["thinking"] == {"type": "adaptive"}
+    assert params["thinking"]["type"] == "adaptive"
     assert params["output_config"] == {"effort": "high"}
 
 
@@ -427,7 +434,7 @@ def test_forced_tool_choice_is_requested_in_words(
             ],
         }
     ]
-    assert params["thinking"] == {"type": "adaptive"}
+    assert params["thinking"]["type"] == "adaptive"
     assert params["output_config"] == {"effort": "high"}
 
 
@@ -457,7 +464,7 @@ def test_auto_tool_choice_keeps_thinking() -> None:
     )
 
     assert params["tool_choice"] == {"type": "auto"}
-    assert params["thinking"] == {"type": "adaptive"}
+    assert params["thinking"]["type"] == "adaptive"
     assert params["output_config"] == {"effort": "high"}
 
 
@@ -496,7 +503,7 @@ async def test_structured_output_requests_its_tool_in_words() -> None:
         "type": "text",
         "text": "Respond by calling the `return_structured_response` tool.",
     }
-    assert sent["thinking"] == {"type": "adaptive"}
+    assert sent["thinking"]["type"] == "adaptive"
 
 
 def _text_only_response() -> SimpleNamespace:
@@ -540,3 +547,67 @@ async def test_auto_reply_without_a_tool_call_is_fine() -> None:
         )
 
     assert output.content == "The answer is 4."
+
+
+def test_thinking_requests_drop_rather_than_reject_mismatched_blocks() -> None:
+    """A history the API no longer matches costs the stale reasoning, not the turn.
+
+    Without the explicit setting an enforced account gets a 400, which the
+    retry layer turns into a silent fallback to another model.
+    """
+    client = AnthropicClient(
+        api_key="test-key",
+        model="claude-opus-5-5",
+        model_parameters={"claude-opus-5-5": {"thinking": {"type": "adaptive"}}},
+    )
+
+    params = client._build_request_params([], None, None, "auto")
+
+    assert params["thinking"]["block_binding"] == {
+        "prefix_mismatch_behavior": "drop_block"
+    }
+    assert params["extra_headers"]["anthropic-beta"] == (
+        "thinking-binding-controls-2026-08-01"
+    )
+
+
+def test_no_binding_without_a_thinking_config() -> None:
+    """The field lives inside ``thinking`` and is rejected without the header."""
+    client = AnthropicClient(api_key="test-key", model="claude-haiku-4-5")
+
+    params = client._build_request_params([], None, None, "auto")
+
+    assert "thinking" not in params
+    assert "extra_headers" not in params
+
+
+def test_prefix_mismatches_are_logged_as_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A changed history is worth a warning; a model switch is expected."""
+    message = SimpleNamespace(
+        input_transformations=[
+            {
+                "type": "thinking_dropped",
+                "path": "messages.3.content.0",
+                "reason": "prefix_binding_mismatch",
+            },
+            {
+                "type": "thinking_dropped",
+                "path": "messages.1.content.0",
+                "reason": "model_binding_mismatch",
+            },
+        ]
+    )
+
+    with caplog.at_level("INFO"):
+        log_input_transformations(message)
+
+    levels = {
+        record.getMessage().split("reason=")[1].split()[0]: record.levelname
+        for record in caplog.records
+    }
+    assert levels == {
+        "prefix_binding_mismatch": "WARNING",
+        "model_binding_mismatch": "INFO",
+    }

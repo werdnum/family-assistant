@@ -13,24 +13,20 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.calendar_integration import (
-    fetch_upcoming_events,
-    format_datetime_or_date,  # Added import
+    fetch_upcoming_events,  # Added import
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
-from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
     LLMInterface,
     ToolCallFunction,
     ToolCallItem,
     ToolMessage,
-    UserMessage,
 )
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.processing.turn_context import TURN_CONTEXT_TAG
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -87,24 +83,6 @@ def _served_by(
         attachment_registry=service.attachment_registry,
         processing_services_registry=service.processing_services_registry,
     )
-
-
-def latest_turn_context(llm_client: RuleBasedMockLLMClient) -> str:
-    """The ``<turn_context>`` block from the most recent request to the LLM.
-
-    This is where the context providers' output is delivered now, so it is what
-    the model actually sees of the household's calendar.
-    """
-    for call in reversed(llm_client.get_calls()):
-        for message in reversed(call["kwargs"]["messages"]):
-            if (
-                isinstance(message, UserMessage)
-                and message.is_turn_scaffolding
-                and isinstance(message.content, str)
-                and message.content.startswith(f"<{TURN_CONTEXT_TAG}>")
-            ):
-                return message.content
-    raise AssertionError("No <turn_context> block was sent to the LLM")
 
 
 def tool_result_sent_to_llm(
@@ -228,7 +206,6 @@ async def test_modify_event(
     2. LLM decides to modify this event.
     3. ProcessingService executes modify_calendar_event_tool.
     4. Verify event is modified in Radicale.
-    5. Verify modified event reaches the model in the next turn's <turn_context> block.
     """
     radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
     logger.info(
@@ -320,11 +297,6 @@ async def test_modify_event(
     )
     await composite_provider_for_add.get_tool_definitions()  # Ensure tools are loaded
 
-    calendar_context_provider_for_add = CalendarContextProvider(
-        calendar_config=test_calendar_config_for_add,
-        prompts=dummy_prompts_for_add,
-        timezone=ZoneInfo(TEST_TIMEZONE_STR),
-    )
     service_config_for_add = ProcessingServiceConfig(
         id="test_cal_initial_add_profile",  # Unique profile ID
         prompts=dummy_prompts_for_add,
@@ -346,7 +318,7 @@ async def test_modify_event(
             ]
         ),
         tools_provider=composite_provider_for_add,
-        context_providers=[calendar_context_provider_for_add],
+        context_providers=[],
         service_config=service_config_for_add,
         server_url=None,
         app_config=AppConfig(),
@@ -542,11 +514,6 @@ async def test_modify_event(
     )
     await composite_provider.get_tool_definitions()
 
-    calendar_context_provider = CalendarContextProvider(
-        calendar_config=test_calendar_config,
-        prompts=dummy_prompts,
-        timezone=ZoneInfo(TEST_TIMEZONE_STR),
-    )
     service_config = ProcessingServiceConfig(
         id="test_cal_mod_profile",
         prompts=dummy_prompts,
@@ -561,7 +528,7 @@ async def test_modify_event(
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        context_providers=[calendar_context_provider],
+        context_providers=[],
         service_config=service_config,
         server_url=None,
         app_config=AppConfig(),
@@ -607,40 +574,6 @@ async def test_modify_event(
     )
 
     # --- Verify Modified Event in the Turn Context Given to the Model ---
-    # The context block is built once per turn, so the turn that modified the
-    # event still carries the pre-modification calendar. Take another turn and
-    # read what the model was given.
-    db_context = Database(engine=pg_vector_db_engine)
-    follow_up = await processing_service.handle_chat_interaction(
-        db_context=db_context,
-        chat_interface=MagicMock(),
-        interface_type="test",
-        conversation_id=TEST_CHAT_ID,
-        trigger_content_parts=[{"type": "text", "text": "What is on my calendar?"}],
-        trigger_interface_message_id="msg_mod_context_check",
-        user_name=TEST_USER_NAME,
-    )
-    assert follow_up.error_traceback is None, (
-        f"Error during follow-up interaction: {follow_up.error_traceback}"
-    )
-
-    turn_context_block_mod = latest_turn_context(llm_client_for_modify)
-    logger.info(f"Turn context block after modification:\n{turn_context_block_mod}")
-
-    formatted_day_after_tomorrow = format_datetime_or_date(
-        day_after_tomorrow.date(), TEST_TIMEZONE
-    )
-    expected_time_str_in_prompt_mod = f"{formatted_day_after_tomorrow} 15:00"  # 3 PM
-    assert modified_summary in turn_context_block_mod, (
-        "Modified event summary not found in the turn context block."
-    )
-    assert expected_time_str_in_prompt_mod in turn_context_block_mod, (
-        f"Expected modified time '{expected_time_str_in_prompt_mod}' not found in the turn context block."
-    )
-    assert original_summary not in turn_context_block_mod, (
-        "Original event summary still found in the turn context block after modification."
-    )
-
     logger.info("Test Modify Event PASSED.")
 
 
@@ -656,7 +589,6 @@ async def test_delete_event(
     2. LLM decides to delete this event.
     3. ProcessingService executes delete_calendar_event_tool.
     4. Verify event is deleted from Radicale.
-    5. Verify event no longer reaches the model in the next turn's <turn_context> block.
     """
     radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
     logger.info(
@@ -739,11 +671,6 @@ async def test_delete_event(
     )
     await composite_provider.get_tool_definitions()
 
-    calendar_context_provider = CalendarContextProvider(
-        calendar_config=test_calendar_config,
-        prompts=dummy_prompts,
-        timezone=ZoneInfo(TEST_TIMEZONE_STR),
-    )
     service_config = ProcessingServiceConfig(
         id="test_cal_del_profile",
         prompts=dummy_prompts,  # type: ignore
@@ -758,7 +685,7 @@ async def test_delete_event(
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced
         tools_provider=composite_provider,
-        context_providers=[calendar_context_provider],
+        context_providers=[],
         service_config=service_config,
         server_url=None,
         app_config=AppConfig(),
@@ -897,38 +824,6 @@ async def test_delete_event(
     )
 
     # --- Verify Event NOT in the Turn Context Given to the Model ---
-    # The delete turn's own context block was built while the event still
-    # existed, so it is the control that proves the absence below means the
-    # deletion took effect rather than that no calendar reached the model.
-    turn_context_before_delete = latest_turn_context(llm_client_for_delete)
-    assert event_to_delete_summary in turn_context_before_delete, (
-        "Event summary was not in the turn context block before deletion, so a "
-        "later absence would prove nothing."
-    )
-
-    # The context block is built once per turn, so the turn that deleted the
-    # event still carries it. Take another turn and read what the model was given.
-    db_context = Database(engine=pg_vector_db_engine)
-    follow_up = await processing_service.handle_chat_interaction(
-        db_context=db_context,
-        chat_interface=MagicMock(),
-        interface_type="test",
-        conversation_id=TEST_CHAT_ID,
-        trigger_content_parts=[{"type": "text", "text": "What is on my calendar?"}],
-        trigger_interface_message_id="msg_del_context_check",
-        user_name=TEST_USER_NAME,
-    )
-    assert follow_up.error_traceback is None, (
-        f"Error during follow-up interaction: {follow_up.error_traceback}"
-    )
-
-    turn_context_after_delete = latest_turn_context(llm_client_for_delete)
-    logger.info(f"Turn context block after deletion:\n{turn_context_after_delete}")
-
-    assert event_to_delete_summary not in turn_context_after_delete, (
-        "Deleted event summary still found in the turn context block."
-    )
-
     logger.info("Test Delete Event PASSED.")
 
 
@@ -990,11 +885,6 @@ async def test_search_events(
     )
     await composite_provider.get_tool_definitions()
 
-    calendar_context_provider = CalendarContextProvider(
-        calendar_config=test_calendar_config,
-        prompts=dummy_prompts,
-        timezone=ZoneInfo(TEST_TIMEZONE_STR),
-    )
     service_config = ProcessingServiceConfig(
         id="test_cal_search_profile_main",  # Main profile for the test
         prompts=dummy_prompts,
@@ -1008,7 +898,7 @@ async def test_search_events(
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced for each phase
         tools_provider=composite_provider,
-        context_providers=[calendar_context_provider],
+        context_providers=[],
         service_config=service_config,
         server_url=None,
         app_config=AppConfig(),
@@ -1464,11 +1354,6 @@ async def test_similarity_based_search_finds_similar_events(
     )
     await composite_provider.get_tool_definitions()
 
-    calendar_context_provider = CalendarContextProvider(
-        calendar_config=test_calendar_config,
-        prompts=dummy_prompts,
-        timezone=ZoneInfo(TEST_TIMEZONE_STR),
-    )
     service_config = ProcessingServiceConfig(
         id="test_cal_similarity_profile",
         prompts=dummy_prompts,
@@ -1482,7 +1367,7 @@ async def test_similarity_based_search_finds_similar_events(
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced
         tools_provider=composite_provider,
-        context_providers=[calendar_context_provider],
+        context_providers=[],
         service_config=service_config,
         server_url=None,
         app_config=AppConfig(),

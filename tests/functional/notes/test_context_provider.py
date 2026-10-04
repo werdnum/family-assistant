@@ -59,7 +59,6 @@ async def test_notes_context_provider_empty_when_all_excluded(
         "note_item_format": "- {title}: {content}",
         "notes_context_header": "Relevant notes:\n{notes_list}",
         "no_notes": "No notes configured.",
-        "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
     }
 
     def get_db_context_func() -> Database:
@@ -74,23 +73,17 @@ async def test_notes_context_provider_empty_when_all_excluded(
     # Get context fragments
     fragments = await provider.get_context_fragments(acting_user_id=None)
 
-    # Should get 2 fragments: "no notes" message and excluded notes list
-    assert len(fragments) == 2
-    assert fragments[0] == "No notes configured."
-
-    # Should also show the excluded notes
-    excluded_notes_fragment = fragments[1]
-    assert '"Hidden Note A"' in excluded_notes_fragment
-    assert '"Hidden Note B"' in excluded_notes_fragment
+    # Notes outside the prompt are not listed; list_notes finds them.
+    assert fragments == ["No notes configured."]
 
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_notes_context_provider_includes_prompt_notes_and_lists_excluded_titles(
+async def test_notes_context_provider_includes_only_prompt_notes(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
     """Notes with include_in_prompt are rendered with their content; the rest
-    are listed by title only, so excluded content never reaches the prompt."""
+    do not appear at all, not even by title."""
     # Clean up any existing notes
     await cleanup_notes(pg_vector_db_engine)
 
@@ -125,11 +118,9 @@ async def test_notes_context_provider_includes_prompt_notes_and_lists_excluded_t
         provenance=NoteProvenanceStamp.internal(),
     )
 
-    # Create context provider with excluded notes format
     test_prompts = {
         "note_item_format": "- {title}: {content}",
         "notes_context_header": "Relevant notes:\n{notes_list}",
-        "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
     }
 
     def get_db_context_func() -> Database:
@@ -148,7 +139,6 @@ async def test_notes_context_provider_includes_prompt_notes_and_lists_excluded_t
         "Relevant notes:\n"
         "- Public Note 1: This is visible content\n"
         "- Public Note 2: Another visible note",
-        'Other available notes (not included above): "Private Data B", "Secret Note A"',
     ]
 
 
@@ -157,7 +147,7 @@ async def test_notes_context_provider_includes_prompt_notes_and_lists_excluded_t
 async def test_notes_context_provider_no_excluded_list_when_all_included(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
-    """Test that no excluded notes list appears when all notes are included."""
+    """Only the included notes appear when every note is included."""
     # Clean up any existing notes
     await cleanup_notes(pg_vector_db_engine)
 
@@ -182,7 +172,6 @@ async def test_notes_context_provider_no_excluded_list_when_all_included(
     test_prompts = {
         "note_item_format": "- {title}: {content}",
         "notes_context_header": "Relevant notes:\n{notes_list}",
-        "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
     }
 
     def get_db_context_func() -> Database:
@@ -197,7 +186,7 @@ async def test_notes_context_provider_no_excluded_list_when_all_included(
     # Get context fragments
     fragments = await provider.get_context_fragments(acting_user_id=None)
 
-    # Should only have 1 fragment (included notes, no excluded list)
+    # A single fragment: the included notes
     assert len(fragments) == 1
     assert "Note 1" in fragments[0]
     assert "Note 2" in fragments[0]

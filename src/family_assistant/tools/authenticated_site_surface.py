@@ -29,10 +29,7 @@ if TYPE_CHECKING:
 
 AMBIENT_CONTEXT_PROVIDERS: frozenset[str] = frozenset({
     "notes",
-    "calendar",
     "known_users",
-    "weather",
-    "home_assistant",
 })
 """Providers that inject the household's own data into a profile's prompt.
 

@@ -37,6 +37,7 @@ from family_assistant.llm import (
     UserMessageDict,
     describe_attachment_for_fallback,
 )
+from family_assistant.llm.deferred_tools import resolve_deferred_tools
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPart,
@@ -891,6 +892,7 @@ class OpenAIClient(BaseLLMClient):
         """Generate response using OpenAI API."""
         # Validate user input before processing
         self._validate_user_input(messages)
+        tools = resolve_deferred_tools(tools, messages)
 
         with tracer.start_as_current_span("llm.provider.generate") as span:
             telemetry = LLMCallTelemetry(
@@ -1269,6 +1271,7 @@ class OpenAIClient(BaseLLMClient):
         """Generate streaming response using OpenAI API."""
         # Validate user input before processing
         self._validate_user_input(messages)
+        tools = resolve_deferred_tools(tools, messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
     async def _generate_response_stream(
