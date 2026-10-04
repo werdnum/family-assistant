@@ -92,13 +92,14 @@ compaction events the history window makes no edits to the prompt, only appends.
 
 ### Relevance at compaction events
 
-At a compaction event a classifier ranks which turns since the previous event the new message
-continues, and the compaction keeps those verbatim in preference to the rest. The budget is enforced
-in code, not by the classifier: relevance only decides which turns fill it. If the classifier times
-out or fails, the compaction proceeds oldest-first as if it had returned nothing. Between events the
-result is frozen. The newest one or two turns always stay, compacted if need be; when they alone
-exceed the budget they are sent anyway, and a provider context-length failure then reaches the user
-as it does today. That needs a single turn larger than the budget and is left there.
+At a compaction event a classifier ranks which turns still in the window, verbatim or compacted, the
+new message continues, and the compaction keeps those verbatim in preference to the rest. The budget
+is enforced in code, not by the classifier: relevance only decides which turns fill it. If the
+classifier times out or fails, the compaction proceeds oldest-first as if it had returned nothing.
+Between events the result is frozen. The newest one or two turns always stay, compacted if need be;
+when they alone exceed the budget they are sent anyway, and a provider context-length failure then
+reaches the user as it does today. That needs a single turn larger than the budget and is left
+there.
 
 The classifier is TypeSafe Jev, an operator-configured integration. It sends the new message and the
 candidate turns' text to TypeSafe, a new external processor the owner has accepted; a deployment
@@ -148,7 +149,8 @@ today. Window taint is computed over the rendered window by the same loader on e
   window taint depends on. A client-side compaction renders identically on every adapter.
 
 - **Relevance is decided only at events.** A turn the user returns to between events stays wherever
-  the last event put it; the stub and `get_message_history` cover that case.
+  the last event put it, and a turn already dropped is not a candidate again; the stub, where there
+  is one, and `get_message_history` cover those cases.
 
 - **Budgets start as estimates** and are tuned from the provider-reported prompt and cache token
   counts already recorded in diagnostics. No tokenizer is added.
