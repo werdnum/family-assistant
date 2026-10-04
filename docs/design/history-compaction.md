@@ -79,7 +79,9 @@ compaction events the prompt is append-only.**
 - **Tool activations survive.** Under append-only prompts the active tool set comes from the
   activating messages in history; a compaction must never change it.
 - **The emergency fallback** becomes a compaction event at a smaller budget through the same
-  renderer, and `prune_messages_for_context` is deleted.
+  renderer, and `prune_messages_for_context` is deleted. It is the one event that can run inside a
+  tool round, where today's retry runs: it compacts only completed turns and leaves the current
+  turn, with its tool calls and results, intact.
 
 ### Relevance at compaction events
 
@@ -91,10 +93,13 @@ result is frozen. The newest one or two turns always stay, compacted if need be;
 exceed the budget they are sent anyway, and a provider context-length failure then reaches the user
 as it does today. That needs a single turn larger than the budget and is left there.
 
-The classifier is TypeSafe Jev: a typed, calibrated yes/no per candidate turn, around 100 ms, priced
-per input token at a level that is negligible per message. Its state is small (the new message plus
-each candidate turn's user text and final answer), and time gaps are computed in code, not asked of
-it. All questions in one request read the same state, so untrusted text in a candidate turn can
+The classifier is TypeSafe Jev, an operator-configured integration. It sends the new message and the
+candidate turns' text to TypeSafe, a new external processor the owner has accepted; a deployment
+without it compacts oldest-first, as on classifier failure, and keeps its configured Auto
+classifier. Jev gives a typed, calibrated yes/no per candidate turn, around 100 ms, priced per input
+token at a level that is negligible per message. Its state is small (the new message plus each
+candidate turn's user text and final answer), and time gaps are computed in code, not asked of it.
+All questions in one request read the same state, so untrusted text in a candidate turn can
 influence every answer in that request. That is bounded by what the answers control: the classifier
 has no tools and its output is schema-constrained, so the worst case is that the wrong turns are
 kept verbatim within the budget, and a compacted turn is still a stub the model can look up.
