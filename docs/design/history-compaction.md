@@ -36,7 +36,7 @@ the only memory, and the model can already fetch its own history when it knows s
 ## Approach
 
 **History is built from whole turns against a size budget, and compacted at discrete events. Between
-compaction events the prompt is append-only.**
+compaction events the history window makes no edits to the prompt, only appends.**
 
 ### Turns and budget
 
@@ -60,11 +60,12 @@ compaction events the prompt is append-only.**
   compaction event**, and that includes the age cap: turns that age out between events leave at the
   next one. The decision is recorded with the event, and the compacted rendering is derived
   deterministically from stored rows, so replays are byte-identical without persisting a summary.
-- **Events, with hysteresis.** A compaction runs at the start of a user turn (never inside a tool
-  round) when the whole rendered window, compacted turns included, passes the budget, and compacts
-  well below it, so the next event is many turns away. On Telegram, the first message after an idle
-  gap is also an event. Provider caches live for minutes, so after an idle gap the cache is already
-  cold and compacting there costs almost nothing extra.
+- **Events, with hysteresis.** A compaction runs at the start of a model turn, whether a user
+  message or a system wake such as a delegation completion triggered it (never inside a tool round),
+  when the whole rendered window, compacted turns included, passes the budget, and compacts well
+  below it, so the next event is many turns away. On Telegram, the first message after an idle gap
+  is also an event. Provider caches live for minutes, so after an idle gap the cache is already cold
+  and compacting there costs almost nothing extra.
 - **Compacted rendering.** A compacted turn keeps what the user said and the assistant's final
   answer, and reduces each tool call to a one-line stub that names the tool and says the detail is
   retrievable with `get_message_history`. Old attachments become references (id, type, filename)
@@ -128,18 +129,26 @@ today. Window taint is computed over the rendered window by the same loader on e
 
 ## Deliberate simplifications
 
+- **Other history edits are out of scope.** `append-only-prompt.md` also leaves trigger attachment
+  metadata, delegation wake triggers, the final-iteration instruction and reply-thread context as
+  edits to earlier requests. This document removes only the history window's edits; those stay as
+  they are, and the append-only verification below covers turns without them.
+
 - **No LLM summary.** Anthropic recommends client-side "simple compaction" (summarise everything
   into one message) and reports it performs comparably to more elaborate schemes. Deterministic
   stubs come first because they need no extra call, give the same output every time, and do not
   create a persisted summary carrying the union taint of everything it read. If shadow data shows
   the model often fetching history after a compaction, an LLM summary at compaction events is the
   next step.
+
 - **No provider-side compaction or context editing.** Anthropic's server-side compaction and context
   editing and OpenAI's `/responses/compact` produce provider-specific state (OpenAI's is opaque)
   that cannot be replayed on a fallback provider, and they hide which rows are in the prompt, which
   window taint depends on. A client-side compaction renders identically on every adapter.
+
 - **Relevance is decided only at events.** A turn the user returns to between events stays wherever
   the last event put it; the stub and `get_message_history` cover that case.
+
 - **Budgets start as estimates** and are tuned from the provider-reported prompt and cache token
   counts already recorded in diagnostics. No tokenizer is added.
 
