@@ -1341,14 +1341,19 @@ Home Assistant is a plugin (see [Plugins](#plugins)). Each configured instance u
 `plugins.home_assistant` is one Home Assistant server; the instance named `default` serves every
 profile that doesn't choose another.
 
+`context_template` is the operator's curated overview of the household -- who is home, energy
+prices, the devices that matter. The `get_home_status` tool renders it through Home Assistant when
+the assistant asks, so the template is also how the assistant learns which entities to care about.
+Write it for that reader: short, labelled lines rather than raw state dumps.
+
 ```yaml
 plugins:
   home_assistant:
     default:
       # api_url and token usually come from HOMEASSISTANT_URL / HOMEASSISTANT_API_KEY.
       verify_ssl: true
-      # Jinja template Home Assistant renders into each turn's context. Omit it for no
-      # home_assistant context provider.
+      # Jinja template behind the get_home_status tool: the household overview the
+      # assistant reads on demand. Omit it and the tool is not offered.
       context_template: |
         {% for person in states.person %}{{ person.name }} is {{ person.state }}
         {% endfor %}
@@ -1362,7 +1367,7 @@ plugins:
 | `api_url`          | None    | Base URL, without `/api`. Required to start the instance.  |
 | `token`            | None    | Long-lived access token. **Sensitive.** Required to start. |
 | `verify_ssl`       | `true`  |                                                            |
-| `context_template` | None    | No template means no `home_assistant` context provider.    |
+| `context_template` | None    | Backs `get_home_status`; no template means no such tool.   |
 | `events`           | `true`  | The `home_assistant` event source.                         |
 
 An instance missing `api_url` or `token` is not started, with a warning at startup, and profiles

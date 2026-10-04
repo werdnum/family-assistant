@@ -22,6 +22,15 @@ thermostats — it can activate scenes ("activate movie night"), run scripts ("r
 script"), play media, or send Home Assistant notifications. Anything Home Assistant itself can do is
 available.
 
+## Home at a glance
+
+- "How's the house?"
+- "Is everyone home, and what's power costing right now?"
+
+If your operator has set up a household overview, the assistant can check it whenever the current
+state of the home matters — typically who is home, energy prices and the devices your household
+cares most about. For anything the overview doesn't cover, it looks the device up directly.
+
 ## Who's home
 
 If your household has **person** entities set up in Home Assistant, the assistant knows who is home

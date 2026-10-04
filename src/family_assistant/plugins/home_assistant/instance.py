@@ -34,6 +34,11 @@ class HomeAssistantInstance(PluginInstance):
         self._context_template = context_template
         self._event_source = HomeAssistantSource(client) if events else None
 
+    @property
+    def context_template(self) -> str | None:
+        """The operator's home status template, if one is configured."""
+        return self._context_template
+
     def context_providers(
         self, profile: PluginProfileContext
     ) -> Sequence[ContextProvider]:
