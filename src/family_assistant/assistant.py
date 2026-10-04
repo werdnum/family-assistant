@@ -185,6 +185,7 @@ from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.memory import MEMORY_WRITE_TOOL_NAMES
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
+from family_assistant.weather import WeatherService
 from family_assistant.web.app_creator import configure_app_auth, create_app
 from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.mcp_adapter.config import require_authentication_for_adapter
@@ -563,6 +564,7 @@ class Assistant:
         # Initialize all instance attributes
         self.fastapi_app: FastAPI | None = None
         self.shared_httpx_client: httpx.AsyncClient | None = None
+        self.weather_service: WeatherService | None = None
         self.embedding_generator: EmbeddingGenerator | None = None
         self.processing_services_registry: dict[str, DelegatableService] = {}
         self.a2a_cancel_events: dict[str, asyncio.Event] = {}
@@ -816,6 +818,9 @@ class Assistant:
 
         self.shared_httpx_client = httpx.AsyncClient()
         logger.info("Shared httpx.AsyncClient created.")
+        self.weather_service = WeatherService.from_config(
+            self.config, self.shared_httpx_client
+        )
 
         # Check if Telegram is enabled
         self.telegram_enabled = self.config.telegram_enabled
@@ -1096,7 +1101,7 @@ class Assistant:
 
         logger.info("Creating root ToolsProvider with all available tools")
         root_local_registrations = build_effective_local_tool_registrations(
-            self.config, google_integration_state
+            self.config, google_integration_state, self.weather_service
         )
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
@@ -1565,17 +1570,13 @@ class Assistant:
     def _create_weather_context_provider(
         self, profile_conf: ServiceProfile
     ) -> WeatherContextProvider | None:
-        api_key = self.config.willyweather_api_key
-        location_id = self.config.willyweather_location_id
-        if not api_key or not location_id or self.shared_httpx_client is None:
+        if self.weather_service is None:
             return None
         profile_config = profile_conf.processing_config
         return WeatherContextProvider(
-            location_id=location_id,
-            api_key=api_key.get_secret_value(),
+            weather_service=self.weather_service,
             prompts=profile_config.prompts,
             timezone=ZoneInfo(profile_config.timezone),
-            httpx_client=self.shared_httpx_client,
         )
 
     async def _build_profile_tools_provider(

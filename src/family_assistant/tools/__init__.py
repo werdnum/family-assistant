@@ -277,6 +277,10 @@ from family_assistant.tools.video_generation import (
     VIDEO_GENERATION_TOOLS_DEFINITION,
     generate_video_tool,
 )
+from family_assistant.tools.weather import (
+    WEATHER_TOOLS_DEFINITION,
+    get_weather_forecast_tool,
+)
 from family_assistant.tools.workspace_files import (
     WORKSPACE_TOOLS_DEFINITION,
     workspace_delete_tool,
@@ -336,6 +340,8 @@ __all__ = [
     # Confirmation renderers
     "TOOL_CONFIRMATION_RENDERERS",
     "VIDEO_GENERATION_TOOLS_DEFINITION",
+    # Weather
+    "WEATHER_TOOLS_DEFINITION",
     # Workspace file tools
     "WORKSPACE_TOOLS_DEFINITION",
     "CompositeToolsProvider",
@@ -437,6 +443,7 @@ __all__ = [
     "get_system_info",
     "get_tool_definitions_for_advertisement",
     "get_user_documentation_content_tool",
+    "get_weather_forecast_tool",
     "gmail_create_draft_tool",
     "gmail_get_attachment_tool",
     "gmail_get_message_tool",
@@ -557,6 +564,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + SHOPPING_TOOLS_DEFINITION
     + REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION
     + GOOGLE_DATA_TOOLS_DEFINITION
+    + WEATHER_TOOLS_DEFINITION
 )
 
 _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
@@ -692,6 +700,8 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "ucp_transfer_checkout_to_human": ucp_transfer_checkout_to_human_tool,
     # Problem reporting
     "report_technical_problem": report_technical_problem_tool,
+    # Weather
+    "get_weather_forecast": get_weather_forecast_tool,
     # Google personal data (Gmail/Drive) tools
     "gmail_search": gmail_search_tool,
     "gmail_create_draft": gmail_create_draft_tool,
@@ -1559,6 +1569,13 @@ _CORE_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_PERSISTING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
+    ),
+    # Forecast data from a third-party API for the operator-configured
+    # location: structured machine data, not free text from other people.
+    "get_weather_forecast": _metadata(
+        ToolTag.SCRIPT_DETERMINISTIC,
+        ToolTag.READ_ONLY,
+        ToolTag.OUTPUT_MACHINE_DATA,
     ),
 }
 

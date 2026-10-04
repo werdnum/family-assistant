@@ -2660,7 +2660,8 @@ WillyWeather location ID for weather forecasts.
 | Sensitive | No                         |
 | Example   | `12345`                    |
 
-Must be an integer.
+Must be an integer. With `WILLYWEATHER_API_KEY`, it enables the `get_weather_forecast` tool, which
+reports the forecast for this location only; without both the tool is not offered.
 
 ______________________________________________________________________
 
