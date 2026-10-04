@@ -48,9 +48,9 @@ compaction events the history window makes no edits to the prompt, only appends.
   interface, within the existing age cap. Cache reads cost 5-25% of normal input on current
   providers, so a warm append-only history is cheap; the budget exists for attention and noise more
   than for cost or the context window, and can be generous where the model is.
-- Pinned rows, thread roots and resumed turns are inputs to the one loader, so they are rendered and
-  de-duplicated once. Every path that builds a window, including the web turn producer's taint
-  computation, goes through it.
+- Pinned rows, the replied-to thread (every turn in it, including the message replied to) and
+  resumed turns are inputs to the one loader, so they are rendered and de-duplicated once. Every
+  path that builds a window, including the web turn producer's taint computation, goes through it.
 
 ### Compaction events
 
