@@ -80,21 +80,28 @@ compaction points the prompt is append-only.**
 
 ### Relevance at compaction events
 
-At a compaction event a classifier decides which turns since the previous event the new message
-continues; those stay verbatim and the rest are compacted. It never removes the newest one or two
-turns, and between events its decision is frozen.
+At a compaction event a classifier ranks which turns since the previous event the new message
+continues, and the compaction keeps those verbatim in preference to the rest. The budget is always
+enforced in code: relevance only decides which turns fill it, and the newest one or two turns always
+stay. Between events the result is frozen. If the classifier times out or fails, the compaction
+proceeds oldest-first as if it had returned nothing, so the budget holds on every path, including
+the emergency fallback.
 
 The classifier is TypeSafe Jev: a typed, calibrated yes/no per candidate turn, around 100 ms, priced
-per input token at a level that is negligible per message. Its output is constrained to the schema,
-so injected history can at worst flip one keep-or-compact decision. Its state is small (the new
-message plus each candidate turn's user text and final answer), and time gaps are computed in code,
-not asked of it. On timeout or error it keeps everything verbatim.
+per input token at a level that is negligible per message. Its state is small (the new message plus
+each candidate turn's user text and final answer), and time gaps are computed in code, not asked of
+it. All questions in one request read the same state, so untrusted text in a candidate turn can
+influence every answer in that request. That is bounded by what the answers control: the classifier
+has no tools and its output is schema-constrained, so the worst case is that the wrong turns are
+kept verbatim within the budget, and a compacted turn is still a stub the model can look up.
 
-The same request also carries the Auto tier question, which is already a schema-constrained choice
-among the profile's `auto_model_tiers`, as a Jev choice question with the profile's routing guidance
-as its rubric. That replaces an LLM call with a ten-second timeout and adds a probability over tiers
-to tune a threshold against. A tier switch also drops earlier thinking, so Auto should hold its tier
-between compaction events, or at least report how often it flips.
+Auto keeps deciding per request, as today, and moves to Jev as a choice question among the profile's
+`auto_model_tiers` with the profile's routing guidance as its rubric. That replaces an LLM call with
+a ten-second timeout and adds a probability over tiers to tune a threshold against. On turns that
+are also compaction events, the relevance questions ride in the same request. Its exposure to
+injected history is the same as today's classifier: the answer cannot leave `auto_model_tiers`. A
+tier switch drops earlier thinking on Claude, so shadow mode reports how often Auto would switch, as
+a cost to weigh, not a reason to hold the tier.
 
 ### Taint
 
