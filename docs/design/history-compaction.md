@@ -63,9 +63,10 @@ compaction events the history window makes no edits to the prompt, only appends.
 - **Events, with hysteresis.** A compaction runs at the start of a model turn, whether a user
   message or a system wake such as a delegation completion triggered it (never inside a tool round),
   when the whole rendered window, compacted turns included, passes the budget, and compacts well
-  below it, so the next event is many turns away. On Telegram, the first message after an idle gap
-  is also an event. Provider caches live for minutes, so after an idle gap the cache is already cold
-  and compacting there costs almost nothing extra.
+  below it, so the next event is many turns away. A turn in the window passing the age cap is also
+  an event, as is, on Telegram, the first message after an idle gap. Provider caches live for
+  minutes, so after an idle gap the cache is already cold and compacting there costs almost nothing
+  extra.
 - **Compacted rendering.** A compacted turn keeps what the user said and the assistant's final
   answer, and reduces each tool call to a one-line stub that names the tool and says the detail is
   retrievable with `get_message_history`. Old attachments become references (id, type, filename)
