@@ -100,7 +100,7 @@ async def test_steer_input_injects_midturn_message(
     mock_llm_client.rules = [
         (
             lambda args: any(
-                msg.role == "user" and "MID-TURN USER UPDATE" in str(msg.content or "")
+                msg.role == "user" and "focus on tomorrow" in str(msg.content or "")
                 for msg in args.get("messages", [])
             ),
             LLMOutput(content="Okay, focusing on tomorrow as you asked."),

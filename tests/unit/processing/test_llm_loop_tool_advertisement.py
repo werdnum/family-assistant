@@ -10,6 +10,7 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.deferred_tools import resolve_deferred_tools
 from family_assistant.llm.messages import ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
@@ -35,6 +36,7 @@ from tests.mocks.mock_llm import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.tools.types import (
         ToolDefinition,
         ToolExecutionContext,
@@ -381,6 +383,121 @@ async def test_activation_lasts_into_the_next_turn_without_changing_the_prompt(
     assert "lazy_b" in seen[2][0]
     assert all(tools == seen[0][1] for _usable, tools, _prompt in seen)
     assert len({prompt for _usable, _tools, prompt in seen}) == 1
+
+
+class _ContextOverflowOnce(RuleBasedMockLLMClient):
+    """Fails the first request after ``arm()`` with a context-length error."""
+
+    armed = False
+
+    def arm(self) -> None:
+        self.armed = True
+
+    async def generate_response(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> LLMOutput:
+        if self.armed:
+            self.armed = False
+            raise ContextLengthError("too long", provider="mock", model="mock")
+        return await super().generate_response(messages, tools, tool_choice)
+
+
+@pytest.mark.asyncio
+async def test_pruning_away_an_activation_lets_the_tool_be_activated_again(
+    db_engine: AsyncEngine,
+) -> None:
+    """A context-length retry can drop the message that activated a tool.
+
+    The tool stops being offered, so re-activating it must record a fresh
+    activation rather than treating it as already active.
+    """
+    local_provider = _make_local_provider(["eager_a", "lazy_b"])
+    on_demand_view = OnDemandToolsView(
+        wrapped_provider=local_provider,
+        on_demand_tool_names={"lazy_b"},
+    )
+    state = {"calls": 0}
+
+    def _activate(call_id: str) -> LLMOutput:
+        return LLMOutput(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id=call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name="activate_tools",
+                        arguments=json.dumps({"tool_names": ["lazy_b"]}),
+                    ),
+                )
+            ],
+        )
+
+    def _response(_args: MatcherArgs) -> LLMOutput:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return _activate("call_activate_1")
+        if state["calls"] == 3:
+            return _activate("call_activate_2")
+        return LLMOutput(content="done", tool_calls=None)
+
+    llm_client = _ContextOverflowOnce(
+        rules=[(lambda _args: True, _response)],
+        default_response=LLMOutput(content="fallback", tool_calls=None),
+    )
+    service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=local_provider,
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a test assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=20,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="llm-loop-activation-pruned",
+            context_pruning_min_turns=1,
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+        on_demand_view=on_demand_view,
+    )
+    db_context = Database(db_engine)
+
+    async def turn(text: str) -> None:
+        result = await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="web",
+            conversation_id="conversation-activation-pruned",
+            trigger_content_parts=[{"type": "text", "text": text}],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
+        assert result.status.value == "success"
+
+    await turn("Please activate lazy_b")
+    llm_client.arm()
+    await turn("Use it again")
+
+    saved = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id="conversation-activation-pruned",
+        limit=20,
+        max_age=timedelta(hours=1),
+        processing_profile_id="llm-loop-activation-pruned",
+        current_time=service.clock.now(),
+    )
+    reactivation = next(
+        message
+        for message in saved
+        if isinstance(message, ToolMessage)
+        and message.tool_call_id == "call_activate_2"
+    )
+    assert reactivation.activated_tools == ["lazy_b"]
 
 
 @pytest.mark.asyncio

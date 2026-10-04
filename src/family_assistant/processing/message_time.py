@@ -25,7 +25,11 @@ MESSAGE_TIME_FORMAT = "%a %Y-%m-%d %H:%M %Z"
 MESSAGE_TIME_GUIDANCE = (
     "Each user message begins with a [Sent ...] line giving the time it was sent. "
     "The line is added by the system, not written by the user; the newest one is "
-    "the current time. Never include such a line in your reply."
+    "the current time. Never include such a line in your reply. A user message "
+    "that arrives after your tool results, before you have answered, was sent "
+    "while you were already working: treat it as the latest instruction for the "
+    "turn, re-evaluate your plan, and make the smallest necessary adjustment "
+    "before continuing."
 )
 
 

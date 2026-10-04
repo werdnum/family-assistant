@@ -107,8 +107,7 @@ async def test_mid_turn_input_is_injected_after_tool_result(
             isinstance(messages[-3], AssistantMessage)
             and isinstance(messages[-2], ToolMessage)
             and isinstance(messages[-1], UserMessage)
-            and "[MID-TURN USER UPDATE]" in str(messages[-1].content)
-            and steer_text in str(messages[-1].content)
+            and str(messages[-1].content).endswith(steer_text)
         )
 
     llm_client = RuleBasedMockLLMClient(
@@ -170,6 +169,12 @@ async def test_mid_turn_input_is_injected_after_tool_result(
 
     model_steer = messages_after_steer[-1]
     assert isinstance(model_steer, UserMessage)
+    # What the model saw is exactly what history formatting renders from the
+    # saved row, so the next turn replays it unchanged.
+    replayed = await service.context_preparer.format_history([
+        persisted_steer.model_copy(update={"authorship_taint_metadata": None})
+    ])
+    assert replayed[0].content == model_steer.content
     assert (
         TurnTaintState.from_metadata(model_steer.taint_metadata).max_tier
         is SourceTrustTier.TRUSTED_USER

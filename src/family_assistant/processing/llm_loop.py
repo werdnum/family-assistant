@@ -39,6 +39,7 @@ from family_assistant.tools import (
 from family_assistant.tools.types import ToolCallBatch, ToolCallReviewTurnState
 
 from .attachments import AttachmentSelectionError
+from .message_time import with_sent_at
 from .protocol import TaintedSinkRefusedError
 from .quiet_turn import (
     END_TURN_QUIETLY_TOOL_DEFINITION,
@@ -73,7 +74,6 @@ if TYPE_CHECKING:
     from .types import (
         LLMStreamingLoopConfig,
         MidTurnInputProvider,
-        MidTurnUserInput,
         RequestConfirmationCallback,
         ToolExecutionResult,
     )
@@ -164,19 +164,6 @@ class LLMStreamingLoop:
         if mime_type == "application/pdf":
             return "document"
         return "file"
-
-    @staticmethod
-    def _format_mid_turn_user_input(user_input: MidTurnUserInput) -> str:
-        """Render a mid-turn user update as model-facing steering context."""
-        source = user_input.user_name or "The user"
-        return (
-            "[MID-TURN USER UPDATE]\n"
-            f"{source} sent this while you were already working. Re-evaluate the "
-            "active plan, decide whether this changes the current task or adds "
-            "context, and make the smallest necessary adjustment. Treat this as "
-            "the latest user instruction for the current turn.\n\n"
-            f"{user_input.content}"
-        )
 
     async def run(
         self,
@@ -816,6 +803,10 @@ class LLMStreamingLoop:
                         min_turns=self.config.context_pruning_min_turns,
                     )
                     messages.extend(scaffolding)
+                    # Pruning can drop the message that activated a tool; the
+                    # adapters then stop offering it, so the loop must stop
+                    # counting it as active or re-activating it records nothing.
+                    activated_on_demand = activated_tool_names(messages)
                     context_retry_attempted = True
                     continue
 
@@ -1212,32 +1203,41 @@ class LLMStreamingLoop:
                 )
                 for user_input in pending_user_inputs:
                     # Mid-turn input providers are authenticated interface paths,
-                    # just like the user message that opened the turn.  Give both
-                    # the model-facing steering wrapper and the raw persisted row
-                    # explicit trusted-user provenance so the action reviewer can
-                    # render the updated intent and compute destination-echo signals.
+                    # just like the user message that opened the turn, so the
+                    # message carries explicit trusted-user provenance for the
+                    # action reviewer's intent and destination-echo signals.
                     mid_turn_taint_metadata = TurnTaintState.empty().to_metadata()
-                    # The model sees the wrapped steering prompt (re-evaluate the
-                    # plan, etc.) so it adapts mid-turn...
+                    # The row and the model-facing message are the same message:
+                    # it carries the time it is saved with, so the model sees now
+                    # exactly what history formatting renders on every later turn.
+                    # The steering guidance lives in the system prompt for the
+                    # same reason -- a wrapper that is not persisted would make
+                    # the replayed message differ from the one sent here.
                     mid_turn_message = UserMessage(
-                        content=self._format_mid_turn_user_input(user_input),
+                        content=user_input.content,
                         taint_metadata=mid_turn_taint_metadata,
+                        authorship_taint_metadata=mid_turn_taint_metadata,
+                        sent_at=(
+                            processing_service.clock.now()
+                            if processing_service is not None
+                            else None
+                        ),
                     )
-                    messages.append(mid_turn_message)
-                    # ...but persist (and stream) only the raw user text, so a
-                    # later history reload shows what the user actually typed,
-                    # not the internal [MID-TURN USER UPDATE] boilerplate.
+                    messages.append(
+                        with_sent_at(
+                            mid_turn_message,
+                            processing_service.service_config.timezone,
+                        )
+                        if processing_service is not None
+                        else mid_turn_message
+                    )
                     yield (
                         LLMStreamEvent(
                             type="user_input",
                             content=user_input.content,
                             input_id=user_input.interface_message_id,
                         ),
-                        UserMessage(
-                            content=user_input.content,
-                            taint_metadata=mid_turn_taint_metadata,
-                            authorship_taint_metadata=mid_turn_taint_metadata,
-                        ),
+                        mid_turn_message,
                     )
 
             if (

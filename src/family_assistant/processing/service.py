@@ -1540,7 +1540,14 @@ class ProcessingService:
         attachments: list[MessageAttachmentMetadata] | None = None,
         is_internal: bool = False,
     ) -> int | None:
-        """Persist a history message."""
+        """Persist a history message.
+
+        A user message that already carries its send time (a mid-turn update,
+        shown to the model stamped before it is saved) is saved with that time,
+        so the stamp rendered from the row later matches what the model saw.
+        """
+        if timestamp is None and isinstance(message, UserMessage):
+            timestamp = message.sent_at
         message_timestamp = timestamp if timestamp is not None else self.clock.now()
 
         return await db_context.message_history.add_message(
