@@ -1319,10 +1319,7 @@ service_profiles:
       # the Rule of Two exists to prevent.
       excluded_context_providers:
         - "notes"
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
       prompts:
         system_prompt: |
           You browse websites requiring credentials on behalf of {user_name}. Start with browser_open at the URL in the task. This protected browser is separate from ordinary browsing: no cookies, page state or element refs transfer from that browser. No site registration is required, and navigation is not confined to one origin.
@@ -1403,10 +1400,7 @@ service_profiles:
         - "credential_browser_profile"
       excluded_context_providers:
         - "notes"
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
       prompts:
         system_prompt: |
           You are doing one visual step inside an authenticated website session that another profile is driving on behalf of {user_name}. You share its browser tab, so the page in front of you is the page it left.
@@ -1469,10 +1463,7 @@ service_profiles:
       # the Rule of Two exists to prevent.
       excluded_context_providers:
         - "notes"
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
       prompts:
         system_prompt: |
           You are operating one authenticated website on behalf of {user_name}, inside a browser session that is already signed in (or is about to sign itself in) and is confined to that site. Work only on the objective you were given.
@@ -1554,10 +1545,7 @@ service_profiles:
         - "authenticated_browser_profile"
       excluded_context_providers:
         - "notes"
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
       prompts:
         system_prompt: |
           You are doing one visual step inside an authenticated website session that another profile is driving on behalf of {user_name}. You share its browser tab, so the page in front of you is the page it left.
@@ -1818,10 +1806,7 @@ service_profiles:
       llm_model: "gemini-3.8-flash"
       excluded_context_providers:
         - "notes"
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
       # A single look at the file, not a loop. Anything higher only buys retries
       # of a task that has no tools to make progress with.
       max_iterations: 3
@@ -1868,15 +1853,12 @@ service_profiles:
       memory_read: true
       memory_contribute: false
       # The notes provider is the whole point: it is what puts the core memory
-      # note in front of the curator. Every other provider would hand it the
-      # household's calendar, contacts, home state and location, which the read
-      # floor does not cover because none of it comes from the notes table.
+      # note in front of the curator. The known-users provider would hand it
+      # the household's contacts, which the read floor does not cover because
+      # they do not come from the notes table.
       include_aggregated_context: true
       excluded_context_providers:
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
       # Writes. The floor makes the repository refuse any note that is not a
       # memory note, so a bad review cannot damage the household's own notes.
       default_note_visibility_labels: ["memory"]
@@ -2588,17 +2570,6 @@ service_profiles:
       include_aggregated_context: true
       review_guidance: |
         This profile investigates the application. Its reads return content authored by anyone who has ever emailed, messaged or browsed through the assistant. Aligned egress carries diagnostic detail about the application — stack traces, component names, reproduction steps — never household content: no note text, message bodies, calendar entries, contact details or credentials.
-      # Only providers that declare their own provenance may reach this profile:
-      # its diagnostic reads already taint the turn, and a provider that injects
-      # externally sourced text without declaring it (an emailed invitation's
-      # description, an entity state an integration wrote) would render to the
-      # tool-call reviewer as the household's own words. None of the three
-      # serves diagnosis. Enforced by
-      # test_engineer_admits_only_tainted_context_providers.
-      excluded_context_providers:
-        - "calendar"
-        - "weather"
-        - "home_assistant"
       # Diagnosis is long tool loops over code, logs and query results, where
       # a weak model loops without converging, so `deep` is the floor rather
       # than the upgrade it is for the assistant. Auto runs in shadow mode

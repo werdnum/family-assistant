@@ -9,7 +9,9 @@ from family_assistant.llm.messages import (
     ErrorMessage,
     LLMMessage,
     ToolMessage,
+    UserMessage,
 )
+from family_assistant.processing.message_time import with_sent_at
 from family_assistant.processing.types import ContextPreparerConfig
 from family_assistant.security.taint import TaintSource
 from family_assistant.utils.clock import Clock
@@ -178,8 +180,9 @@ class ContextPreparer:
                 if msg.error_traceback:
                     error_content += f"\n\nError details: {msg.error_traceback}"
                 messages.append(AssistantMessage(content=error_content))
+            elif isinstance(msg, UserMessage):
+                messages.append(with_sent_at(msg, self.config.timezone))
             else:
-                # SystemMessage, UserMessage, or other message types - pass through as-is
                 messages.append(msg)
 
         logger.debug(

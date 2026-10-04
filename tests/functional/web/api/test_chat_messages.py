@@ -4,7 +4,6 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -16,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
-    CalendarContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
 )
@@ -60,9 +58,6 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     get_last_message_text,
 )
-
-if TYPE_CHECKING:
-    from family_assistant.tools.types import CalendarConfig
 
 logger = logging.getLogger(__name__)
 
@@ -162,17 +157,10 @@ def test_processing_service(
         prompts=mock_processing_service_config.prompts,
         read_policy=NoteReadPolicy.UNRESTRICTED,
     )
-    calendar_provider = CalendarContextProvider(
-        calendar_config=cast(
-            "CalendarConfig", {"caldav": {"calendar_urls": ["http://test.com"]}}
-        ),
-        timezone=mock_processing_service_config.timezone,
-        prompts=mock_processing_service_config.prompts,
-    )
     known_users_provider = KnownUsersContextProvider(
         chat_id_to_name_map={}, prompts=mock_processing_service_config.prompts
     )
-    context_providers = [notes_provider, calendar_provider, known_users_provider]
+    context_providers = [notes_provider, known_users_provider]
 
     return ProcessingService(
         llm_client=mock_llm_client,

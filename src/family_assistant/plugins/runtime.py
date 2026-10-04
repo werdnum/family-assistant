@@ -12,11 +12,9 @@ from family_assistant.plugins.registry import PLUGINS_BY_ID
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from family_assistant.context_providers import ContextProvider
     from family_assistant.events.sources import EventSource
     from family_assistant.plugins.base import (
         PluginInstance,
-        PluginProfileContext,
         PluginStartupContext,
     )
     from family_assistant.plugins.config import PluginsConfig
@@ -38,14 +36,6 @@ class ProfilePlugins:
             if isinstance(instance, instance_type):
                 return instance
         return None
-
-    def context_providers(self, profile: PluginProfileContext) -> list[ContextProvider]:
-        """Every context provider the selected instances add for ``profile``."""
-        return [
-            provider
-            for instance in self.instances
-            for provider in instance.context_providers(profile)
-        ]
 
 
 class PluginRuntime:

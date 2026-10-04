@@ -17,9 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
-from family_assistant.processing.turn_context import (
-    render_turn_context_block,
-    turn_context_guidance,
+from family_assistant.processing.household_context import (
+    render_live_session_context,
 )
 from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
@@ -297,16 +296,12 @@ async def _format_system_prompt(
         "with a notification when available. You will not be woken to handle that "
         "result. Do not promise to resume speaking in this live call."
     )
-    guidance = turn_context_guidance(
-        includes_aggregated_context=service_config.include_aggregated_context,
-        placement="inline",
-    )
-    turn_context = render_turn_context_block(
+    session_context = render_live_session_context(
         current_time_str=processing_service.current_time_str(),
         aggregated_context=aggregated_context,
     )
 
-    return f"{formatted.strip()}\n\n{voice_instruction}\n\n{guidance}\n\n{turn_context}"
+    return f"{formatted.strip()}\n\n{voice_instruction}\n\n{session_context}"
 
 
 def _create_token_response(

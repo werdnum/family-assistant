@@ -7,7 +7,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from family_assistant.processing import ProcessingService
-from family_assistant.processing.turn_context import render_turn_context_block
 from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
 
@@ -80,10 +79,6 @@ async def _render_context_page(
     }
 
     include_aggregated_context = service_config.include_aggregated_context
-    turn_context_block = render_turn_context_block(
-        current_time_str=processing_service.current_time_str(),
-        aggregated_context=(aggregated_context if include_aggregated_context else ""),
-    )
 
     return templates.TemplateResponse(
         request,
@@ -91,7 +86,6 @@ async def _render_context_page(
         context={
             "aggregated_context": aggregated_context,
             "include_aggregated_context": include_aggregated_context,
-            "turn_context_block": turn_context_block,
             "context_fragments": context_fragments,
             "system_prompt_template": system_prompt_template,
             "format_args": format_args,
@@ -167,24 +161,12 @@ async def _build_context_data(
         include_aggregated_context = (
             target_service.service_config.include_aggregated_context
         )
-        formatted_system_prompt = target_service.format_system_prompt(
-            user_name=user_name
-        )
-        delegation_addition = await target_service.delegation_catalog_addition()
-        if delegation_addition:
-            formatted_system_prompt = (
-                f"{formatted_system_prompt}\n\n{delegation_addition}".strip()
-            )
-        turn_context_block = render_turn_context_block(
-            current_time_str=target_service.current_time_str(),
-            aggregated_context=(
-                aggregated_context if include_aggregated_context else ""
-            ),
+        formatted_system_prompt, _ = await target_service.build_system_prompt(
+            user_name=user_name, user_id=None
         )
     else:
         include_aggregated_context = False
         formatted_system_prompt = ""
-        turn_context_block = ""
 
     return {
         "profile_id": target_service.service_config.id,
@@ -197,7 +179,6 @@ async def _build_context_data(
         ],
         "system_prompt_template": system_prompt_template,
         "formatted_system_prompt": formatted_system_prompt,
-        "turn_context_block": turn_context_block,
     }
 
 

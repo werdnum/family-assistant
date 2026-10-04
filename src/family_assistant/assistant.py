@@ -31,10 +31,8 @@ from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
 )
 from family_assistant.context_providers import (
-    CalendarContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
-    WeatherContextProvider,
 )
 from family_assistant.email_intake.actions import (
     EMAIL_INTAKE_ACTION_TASK_TYPE,
@@ -55,7 +53,6 @@ from family_assistant.events.webhook_source import WebhookEventSource
 
 # Import the whole storage module for task queue functions etc.
 # --- NEW: Import ContextProvider and its implementations ---
-from family_assistant.google_calendar import google_calendar_factory
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.message_history_indexer import (
@@ -101,7 +98,7 @@ from family_assistant.memory.sweep import (
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
-from family_assistant.plugins.base import PluginProfileContext, PluginStartupContext
+from family_assistant.plugins.base import PluginStartupContext
 from family_assistant.plugins.registry import plugin_task_handlers
 from family_assistant.plugins.runtime import PluginRuntime
 from family_assistant.processing import (
@@ -210,7 +207,6 @@ if TYPE_CHECKING:
     )
     from family_assistant.context_providers import ContextProvider
     from family_assistant.llm import LLMInterface
-    from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.security.taint import SinkClass
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
@@ -1399,7 +1395,7 @@ class Assistant:
         )
         profile_read_policy = self._profile_note_read_policy(profile_conf)
         context_providers = self._build_profile_context_providers(
-            profile_conf, note_registry, profile_read_policy, profile_plugins
+            profile_conf, note_registry, profile_read_policy
         )
 
         service_config = ProcessingServiceConfig(
@@ -1520,9 +1516,13 @@ class Assistant:
         profile_conf: ServiceProfile,
         note_registry: NoteRegistry | None,
         read_policy: NoteReadPolicy,
-        plugins: ProfilePlugins,
     ) -> list[ContextProvider]:
-        """Build and filter the aggregated-context sources for one profile."""
+        """Build and filter the household-context sources for one profile.
+
+        Only sources that change when someone writes a note or edits the config
+        belong here: their output goes into the system prompt. Anything that
+        changes from one request to the next is a tool instead.
+        """
         assert self.attachment_registry is not None
         profile_config = profile_conf.processing_config
         providers: list[ContextProvider] = [
@@ -1533,51 +1533,16 @@ class Assistant:
                 read_policy=read_policy,
                 note_registry=note_registry,
             ),
-            CalendarContextProvider(
-                calendar_config=_profile_calendar_config(
-                    profile_conf.processing_config.calendar_config,
-                    self.config.calendar_config,
-                ),
-                timezone=ZoneInfo(profile_config.timezone),
-                prompts=profile_config.prompts,
-                google_calendar_for_user=google_calendar_factory(
-                    self.credential_resolvers, self.api_backend, self._database
-                ),
-            ),
             KnownUsersContextProvider(
                 chat_id_to_name_map=profile_conf.chat_id_to_name_map,
                 prompts=profile_config.prompts,
             ),
         ]
-        weather_provider = self._create_weather_context_provider(profile_conf)
-        if weather_provider is not None:
-            providers.append(weather_provider)
-        providers.extend(
-            plugins.context_providers(
-                PluginProfileContext(
-                    profile_id=profile_conf.id,
-                    prompts=profile_config.prompts,
-                    timezone=ZoneInfo(profile_config.timezone),
-                )
-            )
-        )
 
         excluded = set(profile_config.excluded_context_providers)
         if not excluded:
             return providers
         return [provider for provider in providers if provider.name not in excluded]
-
-    def _create_weather_context_provider(
-        self, profile_conf: ServiceProfile
-    ) -> WeatherContextProvider | None:
-        if self.weather_service is None:
-            return None
-        profile_config = profile_conf.processing_config
-        return WeatherContextProvider(
-            weather_service=self.weather_service,
-            prompts=profile_config.prompts,
-            timezone=ZoneInfo(profile_config.timezone),
-        )
 
     async def _build_profile_tools_provider(
         self,

@@ -1,27 +1,10 @@
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
-from zoneinfo import ZoneInfo
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from family_assistant import (
-    calendar_integration,  # For calendar functions
-)
-from family_assistant.google_calendar import (
-    google_event_to_calendar_event,
-    is_user_vetted_event,
-)
 from family_assistant.security.note_provenance import note_read_taint
 from family_assistant.security.taint import (
     TaintSource,
-)
-from family_assistant.services.api_backend import ApiBackendError
-from family_assistant.services.google_api import GoogleApiError
-from family_assistant.services.oauth_credentials import (
-    OAuthCredentialError,
-    OAuthNoActingUserError,
-    OAuthNotConnectedError,
-    OAuthScopeNotGrantedError,
 )
 from family_assistant.storage.database import Database
 
@@ -32,20 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from family_assistant.google_calendar import (
-        GoogleCalendarClient,
-        GoogleCalendarFactory,
-    )
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.repositories.notes import NoteReadPolicy
-    from family_assistant.tools.types import CalendarConfig, CalendarEvent
-    from family_assistant.weather import WeatherService
-
-# Matches the window fetch_upcoming_events reads from CalDAV and iCal.
-_GOOGLE_CONTEXT_WINDOW_DAYS = 16
-# Event titles are short in practice; the cap keeps one oversized title from
-# crowding the rest of the per-turn context.
-_GOOGLE_CONTEXT_SUMMARY_LIMIT = 200
 
 
 class ContextProvider(Protocol):
@@ -66,8 +37,7 @@ class ContextProvider(Protocol):
         none). Providers of deployment-wide data ignore it; a provider of
         per-user data must show only that user's own.
         Each string in the list represents a distinct piece of formatted information
-        ready to be included in a larger context block (e.g., the per-turn
-        ``<turn_context>`` block).
+        ready to be included in the system prompt's household context section.
 
         Returns:
             A list of strings, where each string is a formatted context fragment.
@@ -198,13 +168,6 @@ class NotesContextProvider(ContextProvider):
             read_policy=self._read_policy
         )
         db_skills = await db_context.notes.get_skills(read_policy=self._read_policy)
-        excluded_titles = (
-            []
-            if ambient_material_only
-            else await db_context.notes.get_excluded_notes_titles(
-                read_policy=self._read_policy
-            )
-        )
 
         # 1. Regular notes section
         if prompt_notes:
@@ -260,19 +223,6 @@ class NotesContextProvider(ContextProvider):
                 catalog_lines.append(f"- **{skill.name}**: {skill.description}")
             fragments.append("\n".join(catalog_lines))
 
-        # 3. Excluded regular notes
-        if excluded_titles:
-            excluded_notes_format = self._prompts.get(
-                "excluded_notes_format",
-                "Other available notes (not included above): {excluded_titles}",
-            )
-            excluded_titles_str = ", ".join(f'"{title}"' for title in excluded_titles)
-            formatted_excluded_notes = excluded_notes_format.format(
-                excluded_titles=excluded_titles_str
-            ).strip()
-            if formatted_excluded_notes:
-                fragments.append(formatted_excluded_notes)
-
         logger.debug(
             "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
             self.name,
@@ -294,8 +244,7 @@ class NotesContextProvider(ContextProvider):
         """The eligible ambient material, exactly as the prompt renders it.
 
         Included notes with their attachment metadata, and the skill catalog --
-        nothing else from the turn-context block, so unreviewed titles never
-        reach the tool-call reviewer through this path.
+        without the "no notes" placeholder, which is not material.
         """
         return await self._build_context_fragments(ambient_material_only=True)
 
@@ -332,209 +281,6 @@ class NotesContextProvider(ContextProvider):
 
 # --- BEGIN WeatherContextProvider ---
 # Add necessary imports for WeatherContextProvider
-
-
-class WeatherContextProvider(ContextProvider):
-    """Provides the WillyWeather forecast as per-turn context."""
-
-    def __init__(
-        self,
-        weather_service: "WeatherService",
-        prompts: PromptsType,
-        timezone: ZoneInfo,  # Target display timezone
-    ) -> None:
-        self._weather_service = weather_service
-        self._prompts = prompts
-        self._display_tz = timezone
-
-    @property
-    def name(self) -> str:
-        return "weather"
-
-    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
-        """Asynchronously retrieves and formats weather context fragments."""
-        return await self._weather_service.get_forecast_fragments(
-            self._display_tz, self._prompts
-        )
-
-
-# --- END WeatherContextProvider ---
-
-
-class CalendarContextProvider(ContextProvider):
-    """Provides context from calendar events.
-
-    Configured CalDAV calendars and iCal feeds are shown to every turn. When the
-    deployment offers Google Calendar, the acting user's *primary* Google
-    calendar is added for that user's turns only; their other Google calendars
-    stay reachable through the calendar tools rather than filling every prompt.
-    """
-
-    def __init__(
-        self,
-        calendar_config: "CalendarConfig",
-        timezone: ZoneInfo,
-        prompts: PromptsType,
-        clock: calendar_integration.Clock | None = None,
-        google_calendar_for_user: "GoogleCalendarFactory | None" = None,
-    ) -> None:
-        """
-        Initializes the CalendarContextProvider.
-
-        Args:
-            calendar_config: Configuration dictionary for calendar sources.
-            timezone: The local timezone for display.
-            prompts: A dictionary containing prompt templates for formatting.
-            clock: A clock object for managing time.
-            google_calendar_for_user: Builds a Google Calendar client for a
-                turn's acting user; None when the deployment does not offer
-                Google Calendar.
-        """
-        self._calendar_config = calendar_config
-        self._timezone = timezone
-        self._prompts = prompts
-        self._clock = clock or calendar_integration.SystemClock()
-        self._google_calendar_for_user = google_calendar_for_user
-
-    @property
-    def name(self) -> str:
-        return "calendar"
-
-    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
-        has_configured_sources = bool(
-            self._calendar_config
-            and (
-                self._calendar_config.get("caldav") or self._calendar_config.get("ical")
-            )
-        )
-        google_client = (
-            self._google_calendar_for_user(acting_user_id)
-            if self._google_calendar_for_user is not None and acting_user_id
-            else None
-        )
-        if not has_configured_sources and google_client is None:
-            logger.info(
-                f"[{self.name}] Calendar integration not configured or no sources defined."
-            )
-            return []  # Return empty list as per protocol
-
-        try:
-            upcoming_events, google_note = await self._gather_upcoming_events(
-                has_configured_sources, google_client
-            )
-            formatted_calendar_context = self._format_calendar_context(upcoming_events)
-        except Exception as e:
-            logger.exception(
-                f"[{self.name}] Failed to fetch or format calendar events: {e}"
-            )
-            # As per protocol, return empty list on error, error is logged.
-            return []
-
-        fragments: list[str] = []
-        if formatted_calendar_context:  # Ensure not adding empty string
-            if google_note:
-                formatted_calendar_context = (
-                    f"{formatted_calendar_context}\n\n{google_note}"
-                )
-            fragments.append(formatted_calendar_context)
-        logger.debug(
-            f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
-        )
-        return fragments
-
-    async def _gather_upcoming_events(
-        self,
-        has_configured_sources: bool,
-        google_client: "GoogleCalendarClient | None",
-    ) -> "tuple[list[CalendarEvent], str | None]":
-        """Configured and Google events in start order, plus any Google note."""
-        upcoming_events: list[CalendarEvent] = []
-        if has_configured_sources:
-            upcoming_events = await calendar_integration.fetch_upcoming_events(
-                calendar_config=cast("CalendarConfig", self._calendar_config),
-                timezone=self._timezone,
-            )
-        if google_client is None:
-            return upcoming_events, None
-        google_events, google_note = await self._fetch_google_primary_events(
-            google_client
-        )
-        merged = sorted(
-            [*upcoming_events, *google_events],
-            key=lambda event: calendar_integration.event_sort_key(
-                event, self._timezone
-            ),
-        )
-        return merged, google_note
-
-    def _format_calendar_context(self, events: "list[CalendarEvent]") -> str:
-        # format_events_for_prompt itself uses prompts for individual event lines
-        # and messages for no events.
-        today_events_str, future_events_str = (
-            calendar_integration.format_events_for_prompt(
-                events=events,
-                prompts=self._prompts,
-                timezone=self._timezone,
-                clock=self._clock,
-            )
-        )
-        calendar_header_template = self._prompts.get(
-            "calendar_context_header",
-            "Upcoming Events (Today & Tomorrow):\n{today_tomorrow_events}\n\nUpcoming Events (Next 2 Weeks, max 10 shown):\n{next_two_weeks_events}",
-        )
-        return calendar_header_template.format(
-            today_tomorrow_events=today_events_str,
-            next_two_weeks_events=future_events_str,
-        ).strip()
-
-    async def _fetch_google_primary_events(
-        self, client: "GoogleCalendarClient"
-    ) -> "tuple[list[CalendarEvent], str | None]":
-        """The user's own upcoming events on their primary Google calendar.
-
-        Only events the user created, organises or accepted are included (see
-        :func:`is_user_vetted_event`): an unanswered invitation is authored by
-        whoever sent it, and this context reaches every turn untainted.
-
-        A user who has not connected Google, or who declined calendar access,
-        simply gets no Google events. Any other failure is reported in the
-        context so the assistant does not present an incomplete calendar as the
-        whole picture.
-        """
-        today = self._clock.now().astimezone(self._timezone).date()
-        time_min = datetime.combine(today, datetime.min.time(), tzinfo=self._timezone)
-        time_max = time_min + timedelta(days=_GOOGLE_CONTEXT_WINDOW_DAYS)
-        source = client.primary_source()
-        try:
-            items = await client.list_events("primary", time_min, time_max)
-        except (
-            OAuthNoActingUserError,
-            OAuthNotConnectedError,
-            OAuthScopeNotGrantedError,
-        ):
-            return [], None
-        except (OAuthCredentialError, GoogleApiError, ApiBackendError) as exc:
-            logger.warning(
-                "[%s] Could not load Google Calendar events: %s", self.name, exc
-            )
-            return [], f"Note: Google Calendar events could not be loaded: {exc}"
-
-        events: list[CalendarEvent] = []
-        for item in items:
-            if not is_user_vetted_event(item):
-                continue
-            event = google_event_to_calendar_event(item, source, self._timezone)
-            if event is None:
-                continue
-            if len(event["summary"]) > _GOOGLE_CONTEXT_SUMMARY_LIMIT:
-                event["summary"] = (
-                    event["summary"][:_GOOGLE_CONTEXT_SUMMARY_LIMIT] + "…"
-                )
-            events.append(event)
-        return events, None
-
-
-# Future providers like WeatherContextProvider, EmailSummaryProvider etc. would go here.
 
 
 class KnownUsersContextProvider(ContextProvider):

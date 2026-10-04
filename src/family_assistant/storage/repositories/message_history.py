@@ -131,6 +131,15 @@ def _should_log_post_epoch_missing_metadata(conversation_key: str) -> bool:
     return True
 
 
+def _aware_timestamp(value: object) -> datetime | None:
+    """A row's timestamp as an aware datetime; SQLite round-trips drop the zone."""
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
 def _is_pre_epoch_row(timestamp: object, history_taint_epoch: datetime) -> bool:
     """Return whether a row predates the configured history taint epoch.
 
@@ -2787,12 +2796,14 @@ class MessageHistoryRepository(BaseRepository):
                     return UserMessage(
                         content=content_parts,
                         taint_metadata=msg.get("taint_metadata"),
+                        sent_at=_aware_timestamp(msg.get("timestamp")),
                     )
 
             # No multimodal attachments - return simple text content
             return UserMessage(
                 content=text_content_str,
                 taint_metadata=msg.get("taint_metadata"),
+                sent_at=_aware_timestamp(msg.get("timestamp")),
             )
         elif role == "assistant":
             return AssistantMessage(

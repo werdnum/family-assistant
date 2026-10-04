@@ -11,7 +11,7 @@ from family_assistant.calendar_integration import fetch_upcoming_events, parse_e
 from family_assistant.utils.clock import MockClock
 
 if TYPE_CHECKING:
-    from family_assistant.tools.types import CalendarConfig, CalendarEvent
+    from family_assistant.tools.types import CalendarConfig
 
 
 NSW_SCHOOL_2026_ICS = Path(
@@ -323,51 +323,3 @@ async def test_fetch_ical_events_enriches_source_attribution_and_x_wr_calname(
     assert event.get("source_kind") == "ical"
     assert event.get("writable") is False
     assert event.get("calendar_url") is None  # Token not leaked!
-
-
-def test_format_events_for_prompt_includes_source_name() -> None:
-    now = datetime(2026, 3, 10, 8, 0, 0, tzinfo=ZoneInfo("UTC"))
-    clock = MockClock(initial_time=now)
-
-    timed_event: CalendarEvent = {
-        "uid": "evt-1",
-        "summary": "Team Standup",
-        "start": now + timedelta(hours=2),
-        "end": now + timedelta(hours=3),
-        "all_day": False,
-        "calendar_url": "https://caldav.example.com/work",
-        "similarity": None,
-        "source_id": "work",
-        "source_name": "Work",
-        "source_kind": "caldav",
-        "writable": True,
-    }
-
-    all_day_event: CalendarEvent = {
-        "uid": "evt-2",
-        "summary": "NSW Term Starts",
-        "start": (now + timedelta(days=1)).date(),
-        "end": (now + timedelta(days=1)).date(),
-        "all_day": True,
-        "calendar_url": None,
-        "similarity": None,
-        "source_id": "nsw_schools",
-        "source_name": "NSW Schools",
-        "source_kind": "ical",
-        "writable": False,
-    }
-
-    prompts = {
-        "event_item_format": "- {start_time} to {end_time}: {summary} [{source_name}]",
-        "all_day_event_item_format": "- {start_time} (All Day): {summary} [{source_name}]",
-    }
-
-    today_tomorrow, _ = calendar_integration.format_events_for_prompt(
-        [timed_event, all_day_event],
-        prompts=prompts,
-        timezone=ZoneInfo("UTC"),
-        clock=clock,
-    )
-
-    assert "Team Standup [Work]" in today_tomorrow
-    assert "NSW Term Starts [NSW Schools]" in today_tomorrow

@@ -12,7 +12,6 @@ import pytest
 from pydantic import SecretStr
 
 from family_assistant.config_loader import load_config
-from family_assistant.context_providers import WeatherContextProvider
 from family_assistant.services.effective_tool_registry import (
     build_effective_local_tool_registrations,
 )
@@ -288,18 +287,6 @@ async def test_upstream_failure_says_the_forecast_is_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_context_provider_shows_the_same_forecast(
-    service: WeatherService,
-) -> None:
-    provider = WeatherContextProvider(
-        weather_service=service, prompts={}, timezone=SYDNEY
-    )
-
-    fragments = await provider.get_context_fragments(acting_user_id=None)
-
-    assert "\n".join(fragments) == EXPECTED_FORECAST
-
-
 def test_weather_tool_is_withheld_without_configuration(tmp_path: Path) -> None:
     config = _load_defaults(tmp_path)
 

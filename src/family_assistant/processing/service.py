@@ -55,9 +55,10 @@ from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
 from .attachments import AttachmentProcessor
 from .context import ContextPreparer
+from .household_context import render_household_context_section
 from .llm_loop import LLMStreamingLoop
+from .message_time import MESSAGE_TIME_GUIDANCE
 from .tool_execution import ToolExecutor
-from .turn_context import build_turn_context_message, turn_context_guidance
 from .types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
@@ -109,9 +110,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
-# How the current time is spelled inside the <turn_context> block. Defined once
-# so the surfaces that report the block (the context viewer) cannot render a
-# different clock format from the one the model is handed.
+# How the current time is spelled where it is stated outright rather than
+# stamped on a message: Live API sessions and single-shot agent submissions.
 DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S %Z"
 
 # Stand-in result for a tool call whose real result was never recorded, so the
@@ -260,13 +260,6 @@ class ProcessingService:
     """
 
     kind: Literal["local"] = "local"
-
-    sends_turn_context_block: bool = True
-    """Whether this service's requests actually carry a ``<turn_context>`` block.
-
-    Gates the system-prompt sentence describing the block, so a subclass whose
-    transport drops it does not promise the model something that never arrives.
-    """
 
     def __init__(
         self,
@@ -1326,36 +1319,71 @@ class ProcessingService:
     def _build_system_message(content: str) -> SystemMessage:
         """Wrap a rendered system prompt, marking the whole of it cacheable.
 
-        The prompt carries no per-turn material -- the clock and the context
-        providers ride in the trailing ``<turn_context>`` block instead -- so all
-        of it is stable across a conversation's requests and the cache breakpoint
-        sits at its end. Text appended after this point (attachment metadata,
-        on-demand tool additions) lands past the offset and stays out of the
-        cached block, which is what ``stable_prefix_len`` is for.
+        The prompt carries no per-request material -- the clock is stamped on
+        each user message, and what changes minute to minute is reached through
+        tools -- so all of it is stable across a conversation's requests and the
+        cache breakpoint sits at its end.
         """
         return SystemMessage(content=content, stable_prefix_len=len(content) or None)
 
     def current_time_str(self, *, fmt: str = DEFAULT_TIME_FORMAT) -> str:
         """Now, in the profile's timezone, as the model is shown it.
 
-        Public because the surfaces that report or re-render the turn-context
-        block -- the context viewer and the two Live API paths -- must not spell
-        this out for themselves and drift from what the model actually receives.
-        It reads the injected clock, so a test that pins the clock pins these too.
+        Public because the surfaces that state the time outright -- the two Live
+        API paths and single-shot agent submissions -- must not spell it out for
+        themselves. It reads the injected clock, so a test that pins the clock
+        pins these too.
 
         *fmt* exists for telephony, which has the model speak the time aloud and
         wants a more speakable rendering than the machine-readable default.
         """
         return self.clock.now().astimezone(self.service_config.timezone).strftime(fmt)
 
+    async def build_system_prompt(
+        self, *, user_name: str, user_id: str | None
+    ) -> tuple[str, tuple[TaintSource, ...]]:
+        """The full system prompt a turn sends, and the taint its content carries.
+
+        The template, then the catalogs derived from config, then the household
+        context from the context providers -- in that order because each changes
+        less often than the next. Rebuilt every request, it comes out
+        byte-identical until a note, skill or config value it reads is written.
+
+        A profile opts in to the household's own data by setting
+        ``include_aggregated_context``. Most shipped profiles do not, and the
+        taint that comes with the context is gated with it: a profile that never
+        receives the context was never exposed to it.
+        """
+        prompt = self.format_system_prompt(user_name=user_name)
+        delegation_addition = await self.delegation_catalog_addition()
+        if delegation_addition:
+            prompt = f"{prompt}\n\n{delegation_addition}".strip()
+        site_catalog = await self.authenticated_site_catalog_addition(
+            user_name=user_name, user_id=user_id
+        )
+        if site_catalog:
+            prompt = f"{prompt}\n\n{site_catalog}".strip()
+
+        taint_sources: tuple[TaintSource, ...] = ()
+        if self.service_config.include_aggregated_context:
+            household = render_household_context_section(
+                await self.context_preparer.aggregate_context(user_id)
+            )
+            if household:
+                prompt = f"{prompt}\n\n{household}".strip()
+            taint_sources = (
+                await self.context_preparer.aggregate_context_taint_sources()
+            )
+        return prompt, taint_sources
+
     def format_system_prompt(self, *, user_name: str) -> str:
         """Render the system prompt template with strict placeholder validation.
 
         ``current_time`` and ``aggregated_other_context`` are deliberately absent
-        from ``format_args``: they now ride in the trailing ``<turn_context>``
-        block, and a template still asking for them would quietly reintroduce the
-        cache-busting interpolation this moved away from. Leaving them out turns
-        that into the unknown-placeholder error below, which
+        from ``format_args``: the time is stamped on each user message and the
+        household context is appended by ``build_system_prompt``, and a template
+        still asking for them would reintroduce per-request interpolation. Leaving
+        them out turns that into the unknown-placeholder error below, which
         ``validate_system_prompt_renders`` surfaces at startup.
         """
         system_prompt_template = self.service_config.prompts.get(
@@ -1426,17 +1454,10 @@ class ProcessingService:
                 final_system_prompt = system_prompt_docs.strip()
 
         # Appended here rather than written into each profile's template, since
-        # every profile that receives the block needs to be told what it is -- and
-        # told accurately: a profile without the aggregated-context grant must not
-        # be led to believe its notes and calendar are in there.
-        if self.sends_turn_context_block:
-            guidance = turn_context_guidance(
-                includes_aggregated_context=(
-                    self.service_config.include_aggregated_context
-                ),
-                placement="appended",
-            )
-            final_system_prompt = f"{final_system_prompt}\n\n{guidance}".strip()
+        # every profile's user messages carry the stamp it describes.
+        final_system_prompt = (
+            f"{final_system_prompt}\n\n{MESSAGE_TIME_GUIDANCE}".strip()
+        )
 
         return self.context_preparer.prepend_profile_preamble(final_system_prompt)
 
@@ -1610,8 +1631,8 @@ class ProcessingService:
 
         ``resume`` continues a turn whose earlier run was interrupted: its user
         row and every row it produced are already in history, so nothing is
-        inserted and the turn-context block goes back where the original run
-        had it -- after the turn's prompt, not after its trailing tool results.
+        inserted, and per-turn material goes back where the original run had it
+        -- after the turn's prompt, not after its trailing tool results.
         """
         thread_root_id_for_turn = thread_root_id
         if thread_root_id_for_turn is None:
@@ -1711,38 +1732,9 @@ class ProcessingService:
                 dropped,
             )
 
-        # A profile opts in to the household's own data -- notes, calendar, home
-        # state -- by setting include_aggregated_context. Most shipped profiles do
-        # not, and the taint that comes with the context is gated with it: a
-        # profile that never receives the context was never exposed to it.
-        aggregated_other_context_str = ""
-        context_taint_sources: tuple[TaintSource, ...] = ()
-        if self.service_config.include_aggregated_context:
-            aggregated_other_context_str = (
-                await self.context_preparer.aggregate_context(user_id)
-            )
-            context_taint_sources = (
-                await self.context_preparer.aggregate_context_taint_sources()
-            )
-            if thread_attachments_context:
-                if aggregated_other_context_str:
-                    aggregated_other_context_str += "\n\n" + thread_attachments_context
-                else:
-                    aggregated_other_context_str = thread_attachments_context
-
-        final_system_prompt = self.format_system_prompt(user_name=user_name)
-        delegation_addition = await self.delegation_catalog_addition()
-        if delegation_addition:
-            # Config-derived, so it is as stable as the rest of the prompt and
-            # belongs inside the cached block rather than after it.
-            final_system_prompt = (
-                f"{final_system_prompt}\n\n{delegation_addition}".strip()
-            )
-        site_catalog = await self.authenticated_site_catalog_addition(
+        final_system_prompt, context_taint_sources = await self.build_system_prompt(
             user_name=user_name, user_id=user_id
         )
-        if site_catalog:
-            final_system_prompt = f"{final_system_prompt}\n\n{site_catalog}".strip()
         if final_system_prompt:
             messages_for_llm.insert(0, self._build_system_message(final_system_prompt))
 
@@ -1771,20 +1763,26 @@ class ProcessingService:
             ),
         )
         messages_for_llm.extend(processed_content_parts.messages)
-        # Last, and after the attachment-metadata injection above: that scans back
-        # for the newest user message, and would fasten the trigger's attachment
-        # list onto this block instead of onto the trigger.
-        turn_context_message = build_turn_context_message(
-            current_time_str=self.current_time_str(),
-            aggregated_context=aggregated_other_context_str,
-        )
-        if resumed_turn_opening is not None:
-            messages_for_llm.insert(
-                self._index_after(messages_for_llm, resumed_turn_opening),
-                turn_context_message,
+        # A reply to a thread carries a summary of the thread's attachments. It is
+        # rebuilt rather than persisted, which is acceptable only because such a
+        # turn already replaces the history with the whole thread, so its prompt
+        # differs from its neighbours' regardless. Last, and after the
+        # attachment-metadata injection above, which scans back for the newest
+        # user message and would otherwise land on this one.
+        if (
+            thread_attachments_context
+            and self.service_config.include_aggregated_context
+        ):
+            thread_context_message = UserMessage(
+                content=thread_attachments_context, is_turn_scaffolding=True
             )
-        else:
-            messages_for_llm.append(turn_context_message)
+            if resumed_turn_opening is not None:
+                messages_for_llm.insert(
+                    self._index_after(messages_for_llm, resumed_turn_opening),
+                    thread_context_message,
+                )
+            else:
+                messages_for_llm.append(thread_context_message)
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
             db_context, messages_for_llm, acting_user_id=user_id
         )

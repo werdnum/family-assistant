@@ -145,14 +145,6 @@
         overflow-x: auto;
     }
     
-    .turn-context-section {
-        background-color: #eef6ff;
-        border: 1px solid #7fb0e8;
-        border-radius: 6px;
-        padding: 1rem;
-        margin-bottom: 1.5rem;
-    }
-
     .section-note {
         color: var(--text-light);
         font-size: 0.9rem;
@@ -284,30 +276,6 @@
 {% for key, value in format_args.items() %}{{ key }}: {{ value }}
 {% endfor %}
             </div>
-        </div>
-    </div>
-
-    <!-- Turn Context Block Section -->
-    <div class="turn-context-section">
-        <h3 class="toggle-section" onclick="toggleSection('turn-context-content')">
-            ⏱️ Turn Context Block <span id="turn-context-toggle">[−]</span>
-        </h3>
-        <div id="turn-context-content" class="collapsible-content expanded">
-            <p class="section-note">
-                Appended as a user message to the <strong>end</strong> of the conversation on every
-                request — it is not part of the system prompt. It always carries the current time,
-                and carries the aggregated context below only when the profile opts in with
-                <code>include_aggregated_context</code>.
-            </p>
-            {% if not include_aggregated_context %}
-            <div class="exclusion-notice">
-                <strong>This profile does not receive the aggregated context.</strong>
-                <code>include_aggregated_context</code> is off for <code>{{ profile_id }}</code>, so the
-                notes, calendar and other provider context shown further down this page are
-                <em>not</em> sent to it. Only the current time is.
-            </div>
-            {% endif %}
-            <div class="fragment">{{ turn_context_block }}</div>
         </div>
     </div>
 
