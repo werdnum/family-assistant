@@ -27,6 +27,10 @@ a thermostat, activate a scene, trigger a script, etc. Loading the skill activat
 | `get_camera_snapshot`            | Pull a still image from a HA camera entity                  |
 | `download_state_history`         | Fetch historical state changes for entities                 |
 
+`get_home_status`, when you have it, needs no skill: it returns the operator's curated overview of
+the house (who is home, energy prices, key devices). Start there for general questions about the
+state of the home, and for the entity IDs the household cares about.
+
 For **schedules and event-driven automations**, use the automations framework (`create_automation`)
 — automations can themselves call HA actions, but the automation is the right primitive for "every
 day at 9pm" or "when X happens".

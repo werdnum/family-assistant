@@ -89,7 +89,7 @@ def test_shipped_opus_5_request_carries_thinking_and_survives_validation(
         tool_choice=None,
     )
 
-    assert params["thinking"] == {"type": "adaptive"}
+    assert params["thinking"]["type"] == "adaptive"
     # Thinking shares this budget with the response, so it has to be above the
     # client's own 8192 default for the pairing to be deliberate.
     assert params["max_tokens"] > 8192

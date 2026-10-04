@@ -23,7 +23,7 @@ import tempfile
 import uuid
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -41,7 +41,6 @@ from family_assistant.config_models import (
     UserIdentityConfig,
 )
 from family_assistant.context_providers import (
-    CalendarContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
 )
@@ -222,19 +221,10 @@ def test_processing_service(
         prompts=mock_processing_service_config.prompts,
         read_policy=NoteReadPolicy.UNRESTRICTED,
     )
-    calendar_provider = CalendarContextProvider(
-        calendar_config=cast(
-            # ast-grep-ignore: no-dict-any - CalendarConfig is a project-internal TypedDict but the test only needs the caldav field populated, so we cast a minimal dict to satisfy the type stub
-            "Any",
-            {"caldav": {"calendar_urls": ["http://test.com"]}},
-        ),
-        timezone=mock_processing_service_config.timezone,
-        prompts=mock_processing_service_config.prompts,
-    )
     known_users_provider = KnownUsersContextProvider(
         chat_id_to_name_map={}, prompts=mock_processing_service_config.prompts
     )
-    context_providers = [notes_provider, calendar_provider, known_users_provider]
+    context_providers = [notes_provider, known_users_provider]
 
     return ProcessingService(
         llm_client=mock_llm_client,

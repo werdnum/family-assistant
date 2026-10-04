@@ -11,9 +11,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
     from pathlib import Path
-    from zoneinfo import ZoneInfo
 
-    from family_assistant.context_providers import ContextProvider
     from family_assistant.events.sources import EventSource
     from family_assistant.storage.database import Database
     from family_assistant.tools.metadata import ToolRegistration
@@ -22,15 +20,6 @@ if TYPE_CHECKING:
     # The task worker's handler signature: an execution context and the task's
     # payload, whose shape each task type defines.
     type TaskHandler = Callable[[ToolExecutionContext, Any], Awaitable[None]]
-
-
-@dataclass(frozen=True, slots=True)
-class PluginProfileContext:
-    """What a plugin instance may know about the profile it is serving."""
-
-    profile_id: str
-    prompts: Mapping[str, str]
-    timezone: ZoneInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,13 +36,6 @@ class PluginInstance:
     Subclasses override only what their integration supplies; the defaults
     contribute nothing.
     """
-
-    def context_providers(
-        self,
-        profile: PluginProfileContext,
-    ) -> Sequence[ContextProvider]:
-        """Context providers this instance adds to a profile that selects it."""
-        return ()
 
     def event_sources(self) -> Sequence[EventSource]:
         """Event sources this instance runs; each ``source_id`` must be unique."""
@@ -101,6 +83,17 @@ class Plugin[ConfigT: BaseModel, InstanceT: PluginInstance](ABC):
         """
         _ = configs
         return self.tools
+
+    def withheld_from_profile(self, config: ConfigT | None) -> frozenset[str]:
+        """Served tools a profile using this instance config cannot use.
+
+        ``config`` is the profile's selected instance, or ``None`` when it has
+        none. The default withholds nothing: a tool whose plugin has no
+        instance for the profile reports that when called. A plugin withholds
+        a tool whose only purpose depends on a setting the instance lacks.
+        """
+        _ = config
+        return frozenset()
 
     @abstractmethod
     def start(self, instance_name: str, config: ConfigT) -> InstanceT | None:

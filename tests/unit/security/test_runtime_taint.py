@@ -2599,13 +2599,13 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
 
 
 @pytest.mark.asyncio
-async def test_unreviewed_prompt_note_is_listed_by_title_only(
+async def test_unreviewed_prompt_note_stays_out_of_the_prompt(
     db_engine: AsyncEngine,
 ) -> None:
     """An unreviewed external note never reaches the prompt whole.
 
-    It stays discoverable by title and contributes no taint, so it no longer
-    raises every turn to ``unknown_external``.
+    It stays discoverable through ``list_notes`` and contributes no taint, so it
+    no longer raises every turn to ``unknown_external``.
     """
     write_tracker = _unknown_external_tracker()
     db_context = Database(db_engine)
@@ -2634,7 +2634,7 @@ async def test_unreviewed_prompt_note_is_listed_by_title_only(
         "External content copied into a prompt note." in fragment
         for fragment in fragments
     )
-    assert any('"Prompt external digest"' in fragment for fragment in fragments)
+    assert not any("Prompt external digest" in fragment for fragment in fragments)
     assert sources == ()
 
 

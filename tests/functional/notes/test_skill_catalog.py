@@ -16,7 +16,6 @@ from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWrit
 TEST_PROMPTS = {
     "note_item_format": "- {title}: {content}",
     "notes_context_header": "Relevant notes:\n{notes_list}",
-    "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
 }
 
 SKILL_FRONTMATTER_CONTENT = (
@@ -89,10 +88,11 @@ async def test_db_skill_appears_in_catalog_not_notes(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
-async def test_db_skill_excluded_from_other_notes_list(
+async def test_db_skill_is_catalogued_while_hidden_notes_are_not_listed(
     pg_vector_db_engine: AsyncEngine,
 ) -> None:
-    """DB skills should not appear in 'Other available notes' even if include_in_prompt=False."""
+    """A DB skill reaches the catalog even with include_in_prompt=False; a hidden
+    regular note does not appear at all."""
     await cleanup_notes(pg_vector_db_engine)
 
     db = Database(engine=pg_vector_db_engine)
@@ -122,15 +122,7 @@ async def test_db_skill_excluded_from_other_notes_list(
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
 
-    # Hidden regular note should appear in excluded list
-    excluded_fragment = next(
-        (f for f in fragments if "Other available notes" in f), None
-    )
-    assert excluded_fragment is not None
-    assert '"Hidden Regular Note"' in excluded_fragment
-
-    # Skill should be in catalog, not excluded list
-    assert '"Hidden Skill"' not in excluded_fragment
+    assert not any("Hidden Regular Note" in f for f in fragments)
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
     assert "**Email Drafting**" in catalog_fragment

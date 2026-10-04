@@ -515,7 +515,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "include_in_prompt": {
                         "type": "boolean",
-                        "description": "Whether to auto-load the full note into your context on every turn. Default is false — the note is still stored, searchable, and its title is listed in the `<turn_context>` block so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
+                        "description": "Whether to auto-load the full note into your context on every turn. Default is false — the note is still stored and searchable, and `list_notes` finds it so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
                         "default": False,
                     },
                     "append": {

@@ -402,10 +402,7 @@ class AntigravityConfig(BaseModel):
 # exclusion into a no-op.
 CONTEXT_PROVIDER_NAMES: frozenset[str] = frozenset({
     "notes",
-    "calendar",
     "known_users",
-    "weather",
-    "home_assistant",
 })
 
 _GLOB_METACHARACTERS = "*?["
@@ -459,8 +456,8 @@ class ProcessingConfig(BaseModel):
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
     include_system_docs: list[str] | None = None
-    # Context providers inject the user's own data -- notes, calendar, known
-    # users, weather, Home Assistant state -- into the system prompt. A profile
+    # Context providers inject the household's own data -- always-loaded notes,
+    # the skills catalog, known users -- into the system prompt. A profile
     # that exists to look at one attachment and answer in text has no use for
     # any of it, and injecting it hands private data to a prompt built around
     # untrusted content. Listing a provider name here drops it for this profile.
@@ -469,8 +466,8 @@ class ProcessingConfig(BaseModel):
     # means the profile receives no aggregated context at all. Defaults to false
     # so a profile nobody thought about is denied rather than granted -- most
     # shipped profiles want none of it, and two of them (media_analyst,
-    # telephone_external) must not have it. The current time is injected either
-    # way; it is not what this gates.
+    # telephone_external) must not have it. Every profile's user messages carry
+    # their send time either way; it is not what this gates.
     include_aggregated_context: bool = False
 
     @field_validator("excluded_context_providers")

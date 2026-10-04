@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
-    CalendarContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
 )
@@ -1210,15 +1209,10 @@ def api_test_processing_service(
         # ast-grep-ignore: no-unrestricted-note-read-policy - web API fixture stands in for the default assistant, which is unconfined
         read_policy=NoteReadPolicy.UNRESTRICTED,
     )
-    calendar_provider = CalendarContextProvider(
-        calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests
-        timezone=api_mock_processing_service_config.timezone,
-        prompts=api_mock_processing_service_config.prompts,
-    )
     known_users_provider = KnownUsersContextProvider(
         chat_id_to_name_map={}, prompts=api_mock_processing_service_config.prompts
     )
-    context_providers = [notes_provider, calendar_provider, known_users_provider]
+    context_providers = [notes_provider, known_users_provider]
 
     return ProcessingService(
         llm_client=api_mock_llm_client,

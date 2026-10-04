@@ -2099,8 +2099,8 @@ async def api_chat_steer_turn(
     """Inject a steering message into a running turn without restarting it.
 
     The message is queued on the turn's controller; the LLM loop drains it after
-    the next tool round and re-feeds it to the model as ``[MID-TURN USER
-    UPDATE]`` context. Returns 409 if the turn has already finished or is not
+    the next tool round and appends it to the model's messages as a user
+    message stamped with its send time. Returns 409 if the turn has already finished or is not
     steerable, so the client can fall back to starting a new turn.
     """
     await _ensure_user_owns_conversation(

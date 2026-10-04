@@ -12,11 +12,9 @@ from family_assistant.plugins.registry import PLUGINS_BY_ID
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from family_assistant.context_providers import ContextProvider
     from family_assistant.events.sources import EventSource
     from family_assistant.plugins.base import (
         PluginInstance,
-        PluginProfileContext,
         PluginStartupContext,
     )
     from family_assistant.plugins.config import PluginsConfig
@@ -39,13 +37,25 @@ class ProfilePlugins:
                 return instance
         return None
 
-    def context_providers(self, profile: PluginProfileContext) -> list[ContextProvider]:
-        """Every context provider the selected instances add for ``profile``."""
-        return [
-            provider
-            for instance in self.instances
-            for provider in instance.context_providers(profile)
-        ]
+
+def withheld_profile_tools(
+    config: PluginsConfig, selection: Mapping[str, str | None]
+) -> frozenset[str]:
+    """Tools a profile with this ``plugins`` selection cannot use.
+
+    See ``Plugin.withheld_from_profile``.
+    """
+    resolved = resolve_profile_plugins(config, selection)
+    withheld: set[str] = set()
+    for plugin_id, plugin in PLUGINS_BY_ID.items():
+        instance_name = resolved.get(plugin_id)
+        instance_config = (
+            None
+            if instance_name is None
+            else config.instances(plugin_id)[instance_name]
+        )
+        withheld |= plugin.withheld_from_profile(instance_config)
+    return frozenset(withheld)
 
 
 class PluginRuntime:

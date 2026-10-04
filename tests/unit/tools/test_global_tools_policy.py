@@ -137,3 +137,15 @@ def test_exclusion_beats_a_global_allow_at_the_maximum_priority() -> None:
     )
 
     assert engine.evaluate(_DESCRIPTOR).decision == ToolPolicyDecision.DENY
+
+
+def test_withheld_tools_are_denied_over_a_global_allow() -> None:
+    """A tool the profile's plugin instances cannot serve is withheld."""
+    engine = _build_profile_policy_engine(
+        "restrictive",
+        ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW),
+        None,
+        _GLOBAL_POLICY,
+        withheld_tools=frozenset({_TOOL_NAME}),
+    )
+    assert engine.evaluate(_DESCRIPTOR).decision == ToolPolicyDecision.DENY

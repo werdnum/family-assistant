@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import (
-    CalendarContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
 )
@@ -154,11 +153,6 @@ async def llm_integration_processing_service(
     def get_db_context_for_notes() -> Database:
         return Database(engine=db_engine)
 
-    calendar_provider = CalendarContextProvider(
-        calendar_config={},  # type: ignore[arg-type]
-        timezone=config.timezone,
-        prompts=config.prompts,
-    )
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db_context_for_notes,
         prompts=config.prompts,
@@ -169,7 +163,7 @@ async def llm_integration_processing_service(
         prompts=config.prompts,
     )
 
-    context_providers = [calendar_provider, notes_provider, users_provider]
+    context_providers = [notes_provider, users_provider]
 
     # Create processing service
     processing_service = ProcessingService(

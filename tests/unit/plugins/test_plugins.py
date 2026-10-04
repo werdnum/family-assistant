@@ -4,21 +4,16 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import get_args
 from unittest.mock import MagicMock, patch
-from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import SecretStr
 
 from family_assistant.config_loader import load_config
-from family_assistant.plugins.base import PluginProfileContext
 from family_assistant.plugins.config import (
     PluginsConfig,
     resolve_profile_plugins,
 )
 from family_assistant.plugins.home_assistant.config import HomeAssistantConfig
-from family_assistant.plugins.home_assistant.context import (
-    HomeAssistantContextProvider,
-)
 from family_assistant.plugins.home_assistant.instance import HomeAssistantInstance
 from family_assistant.plugins.home_assistant.plugin import HOME_ASSISTANT_PLUGIN
 from family_assistant.plugins.registry import PLUGINS, PLUGINS_BY_ID
@@ -198,7 +193,8 @@ class TestRuntime:
             is None
         )
 
-    def test_context_provider_only_with_a_template(self) -> None:
+    def test_context_template_is_exposed_per_instance(self) -> None:
+        """It backs get_home_status, which is offered only where one is set."""
         runtime = PluginRuntime(
             PluginsConfig(
                 home_assistant={
@@ -207,17 +203,14 @@ class TestRuntime:
                 }
             )
         )
-        profile = PluginProfileContext(
-            profile_id="p", prompts={}, timezone=ZoneInfo("UTC")
+        default = runtime.for_profile({}).get(HomeAssistantInstance)
+        bare = runtime.for_profile({"home_assistant": "bare"}).get(
+            HomeAssistantInstance
         )
-        with_template = runtime.for_profile({}).context_providers(profile)
-        assert [type(provider) for provider in with_template] == [
-            HomeAssistantContextProvider
-        ]
-        assert (
-            runtime.for_profile({"home_assistant": "bare"}).context_providers(profile)
-            == []
-        )
+        assert default is not None
+        assert bare is not None
+        assert default.context_template == "{{ 1 }}"
+        assert bare.context_template is None
 
     def test_two_instances_with_events_are_refused(self) -> None:
         runtime = PluginRuntime(

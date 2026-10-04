@@ -6,7 +6,13 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Mapping,
+    Sequence,
+)
 from dataclasses import asdict
 from typing import (
     TYPE_CHECKING,
@@ -47,6 +53,11 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
     UserMessageDict,
+)
+from family_assistant.llm.deferred_tools import (
+    is_deferred,
+    resolve_deferred_tools,
+    tool_name,
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -115,6 +126,26 @@ class _StreamingToolAccumulator(TypedDict):
 # parts. `redacted_thinking` blocks carry an opaque `data` payload instead.
 _THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
 
+# Opts a request into choosing what happens to a replayed thinking block whose
+# conversation prefix no longer matches the one that produced it.
+_THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+# Declares on-demand tools with `defer_loading` and surfaces each with a
+# `tool_addition` block in an appended system message, so activating one never
+# changes the `tools` array.
+_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
+
+# Models that accept mid-conversation system messages and tool changes, by id
+# prefix. Others (Haiku 4.5, Sonnet 5 and older) get the deferred tools filtered
+# out of the list instead, as every other provider does.
+_MID_CONVERSATION_TOOL_CHANGE_MODELS = (
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-sonnet-5-5",
+)
+
 
 class _MergedAnthropicUsage:
     """The prompt side of ``message_start`` with the output side of a delta.
@@ -133,6 +164,67 @@ class _MergedAnthropicUsage:
         )
         self.output_tokens = getattr(delta, "output_tokens", None) or (
             getattr(started, "output_tokens", 0) or 0
+        )
+
+
+def _add_beta_header(
+    # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+    params: dict[str, Any],
+    beta: str,
+) -> None:
+    """Add *beta* to the request's ``anthropic-beta`` header.
+
+    Sent as a header on the regular messages endpoint rather than through the
+    SDK's beta namespace, so the request and response types stay the ones the
+    rest of this client is written against.
+    """
+    headers = dict(params.get("extra_headers") or {})
+    existing = [b for b in str(headers.get("anthropic-beta", "")).split(",") if b]
+    if beta not in existing:
+        existing.append(beta)
+    headers["anthropic-beta"] = ",".join(existing)
+    params["extra_headers"] = headers
+
+
+def log_input_transformations(message: object) -> None:
+    """Log what the API did to replayed thinking blocks before running a request.
+
+    ``model_binding_mismatch`` is expected when a conversation moves between
+    models (a tier switch, a fallback). ``prefix_binding_mismatch`` means the
+    history sent differs from the one the block was produced against -- the
+    history window slid, the system prompt changed, or a code path edited an
+    earlier message -- and is worth a warning, because the last of those is a
+    bug.
+    """
+    transformations = getattr(message, "input_transformations", None)
+    if transformations is None:
+        extra = getattr(message, "model_extra", None)
+        if isinstance(extra, dict):
+            transformations = extra.get("input_transformations")
+    if not transformations:
+        return
+    for entry in transformations:
+        entry_type = (
+            entry.get("type")
+            if isinstance(entry, dict)
+            else getattr(entry, "type", None)
+        )
+        reason = (
+            entry.get("reason")
+            if isinstance(entry, dict)
+            else getattr(entry, "reason", None)
+        )
+        path = (
+            entry.get("path")
+            if isinstance(entry, dict)
+            else getattr(entry, "path", None)
+        )
+        log = logger.warning if reason == "prefix_binding_mismatch" else logger.info
+        log(
+            "Anthropic input transformation: type=%s reason=%s path=%s",
+            entry_type,
+            reason,
+            path,
         )
 
 
@@ -518,6 +610,7 @@ class AnthropicClient(BaseLLMClient):
             **self._get_model_specific_params(self.model),
         }
         self._validate_thinking_params(params)
+        self._apply_thinking_binding(params)
         if system_blocks:
             params["system"] = system_blocks
 
@@ -539,6 +632,7 @@ class AnthropicClient(BaseLLMClient):
         )
         try:
             response = await self.client.messages.create(**params)
+            log_input_transformations(response)
             self._record_structured_response(telemetry, response)
         except Exception as e:
             telemetry.finish_error(e)
@@ -626,18 +720,23 @@ class AnthropicClient(BaseLLMClient):
             func = tool.get("function", {})
             if not isinstance(func, dict):
                 continue
-            anthropic_tools.append({
+            # ast-grep-ignore: no-dict-any - ToolParam predates defer_loading in the SDK types
+            anthropic_tool: dict[str, Any] = {
                 "name": func.get("name", ""),
                 "description": func.get("description", ""),
                 "input_schema": func.get(
                     "parameters", {"type": "object", "properties": {}}
                 ),
-            })
+            }
+            if is_deferred(tool):
+                anthropic_tool["defer_loading"] = True
+            anthropic_tools.append(cast("ToolParam", anthropic_tool))
         return anthropic_tools
 
     def _convert_messages_to_anthropic_format(
         self,
         messages: Sequence[LLMMessage],
+        activations: Mapping[str, Sequence[str]] | None = None,
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
     ) -> tuple[str | list[TextBlockParam] | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
@@ -657,10 +756,6 @@ class AnthropicClient(BaseLLMClient):
         # profile's system prompt, and anything hoisted after it (mid-conversation
         # system triggers) is per-turn material that belongs past the breakpoint.
         stable_prefix_len: int | None = None
-        # Index of the api_message carrying the first turn-scaffolding message.
-        # It marks the boundary between replayed history and regenerated
-        # material, which is where the conversation's cache breakpoint goes.
-        first_scaffolding_index: int | None = None
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
         api_messages: list[dict[str, Any]] = []
 
@@ -672,8 +767,6 @@ class AnthropicClient(BaseLLMClient):
 
             elif isinstance(msg, UserMessage):
                 content = self._convert_user_content(msg)
-                if first_scaffolding_index is None and msg.is_turn_scaffolding:
-                    first_scaffolding_index = len(api_messages)
                 api_messages.append({"role": "user", "content": content})
 
             elif isinstance(msg, AssistantMessage):
@@ -726,64 +819,69 @@ class AnthropicClient(BaseLLMClient):
                 )
                 api_messages.append({"role": "user", "content": [tool_result_block]})
 
-        # The history breakpoint goes on before merging, while each typed message
-        # still maps to one api_message and the scaffolding index means something.
-        self._mark_history_breakpoint(api_messages, first_scaffolding_index)
-
         # Merge consecutive same-role messages (Anthropic requires alternating roles)
         api_messages = self._merge_consecutive_roles(api_messages)
+        if activations:
+            api_messages = self._insert_tool_additions(api_messages, activations)
 
-        # The trailing breakpoint goes on after, because merging is what turns the
-        # turn's last user messages into the block list that can carry one.
-        if api_messages:
-            self._mark_cache_breakpoint(api_messages[-1])
+        # One breakpoint at the very end. Each request is the previous one plus
+        # appended messages, so the previous request's breakpoint is a prefix of
+        # this one and is read back; this one is what the next request reads.
+        # A trailing tool-addition message cannot carry one, so it goes on the
+        # user turn before it.
+        for api_message in reversed(api_messages):
+            if api_message["role"] != "system":
+                self._mark_cache_breakpoint(api_message)
+                break
 
         system_blocks = self._build_system_blocks(system_parts, stable_prefix_len)
         return system_blocks, api_messages
 
-    @classmethod
-    def _mark_history_breakpoint(
-        cls,
+    @staticmethod
+    def _insert_tool_additions(
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
         api_messages: list[dict[str, Any]],
-        first_scaffolding_index: int | None,
-    ) -> None:
-        """Mark the cache breakpoint that ends the replayable history.
+        activations: Mapping[str, Sequence[str]],
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+    ) -> list[dict[str, Any]]:
+        """Surface each activated tool after the tool results that activated it.
 
-        Anthropic caches only up to an explicit breakpoint, so the system-prompt
-        breakpoint alone leaves the whole conversation re-read on every request.
-        A conversation needs two more, because the two things worth caching end in
-        different places. This is the first: everything ahead of the turn-context
-        block is history the next turn replays byte-identically. The block itself
-        is regenerated each turn and never persisted, so a breakpoint past it
-        caches a prefix the next turn cannot match -- cache writes that are never
-        read. (The second is placed at the very end, after merging, so a tool loop
-        can read the results it has already accumulated.)
-
-        It deliberately skips back over the whole run of user messages preceding
-        the block rather than landing on the one just before it. Those messages
-        merge with the block, and merging rewrites string content into a block
-        list -- so the same historical message would go out as a bare string on
-        the turn it is plain history and as a one-element list on the turn it sits
-        next to the block, which is not the byte-identical prefix a cache read
-        needs. Anchoring on the newest message that does *not* merge with the
-        block keeps its serialization stable across turns. The cost is that the
-        current turn's own user message falls outside the cached prefix, which is
-        a message or two of text.
-
-        Both breakpoints move as the conversation grows, which is the intended
-        incremental pattern: each request writes only the delta past the previous
-        one. Three in total including the system block, inside Anthropic's limit
-        of four.
+        A ``role: "system"`` message must follow a user turn and be last or be
+        followed by an assistant turn. After merging, the user turn holding a
+        batch's tool results is followed by the next assistant turn, so the
+        addition goes straight after it; were another user turn to follow (an
+        interrupted turn), it waits for the first position that is valid.
         """
-        if first_scaffolding_index is None:
-            return
-
-        index = first_scaffolding_index - 1
-        while index >= 0 and api_messages[index]["role"] == "user":
-            index -= 1
-        if index >= 0:
-            cls._mark_cache_breakpoint(api_messages[index])
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+        result: list[dict[str, Any]] = []
+        pending: list[str] = []
+        for index, api_message in enumerate(api_messages):
+            result.append(api_message)
+            if api_message["role"] != "user":
+                continue
+            content = api_message["content"]
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        for name in activations.get(str(block.get("tool_use_id")), ()):
+                            if name not in pending:
+                                pending.append(name)
+            following = (
+                api_messages[index + 1] if index + 1 < len(api_messages) else None
+            )
+            if pending and (following is None or following["role"] == "assistant"):
+                result.append({
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "tool_addition",
+                            "tool": {"type": "tool_reference", "name": name},
+                        }
+                        for name in pending
+                    ],
+                })
+                pending = []
+        return result
 
     @staticmethod
     def _mark_cache_breakpoint(
@@ -793,12 +891,10 @@ class AnthropicClient(BaseLLMClient):
         """Put a breakpoint at the end of *api_message*, if it can carry one.
 
         String content is left alone rather than wrapped into a one-element block
-        list. Rewriting it would change the shape of a message on the wire, and a
-        message that goes out as a bare string on one turn and a list on another
-        is not the byte-identical prefix a cache read needs. Nothing is lost: in a
-        real turn both breakpoints land on block lists anyway -- the trailing one
-        on the user turn the context block merged into or on a tool result, and
-        the other on an assistant turn.
+        list: a message that goes out as a bare string on one request and a list
+        on another is not the byte-identical prefix a cache read needs. User and
+        tool-result content is always converted to lists, so in practice the
+        breakpoint always has somewhere to go.
 
         Thinking blocks are skipped: they are replayed as opaque dicts and their
         signatures are validated against exactly what came back, so adding a key
@@ -900,10 +996,16 @@ class AnthropicClient(BaseLLMClient):
     @staticmethod
     def _convert_user_content(
         msg: UserMessage,
-    ) -> str | list[TextBlockParam | ImageBlockParam]:
-        """Convert UserMessage content to Anthropic format."""
+    ) -> list[TextBlockParam | ImageBlockParam]:
+        """Convert UserMessage content to Anthropic format.
+
+        Always a block list, never a bare string. A message that merges with its
+        neighbour (a tool result, a steering message) has to become a list, and
+        the same message must go out in the same shape on every later request or
+        its bytes change under the cache and under every later thinking block.
+        """
         if isinstance(msg.content, str):
-            return msg.content
+            return [TextBlockParam(type="text", text=msg.content)]
 
         # Multipart content
         blocks: list[TextBlockParam | ImageBlockParam] = []
@@ -997,6 +1099,49 @@ class AnthropicClient(BaseLLMClient):
 
         return merged
 
+    def _supports_mid_conversation_tool_changes(self) -> bool:
+        """Whether this model takes ``defer_loading`` plus ``tool_addition``."""
+        return self.model.startswith(_MID_CONVERSATION_TOOL_CHANGE_MODELS)
+
+    def _assemble_request(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+    ) -> dict[str, Any]:
+        """Convert a typed request into messages.create / messages.stream kwargs.
+
+        Deferred tools are rendered natively where the model supports it: every
+        tool stays in ``tools`` with ``defer_loading``, and each recorded
+        activation becomes a ``tool_addition`` after the result that made it.
+        Elsewhere they are filtered out like on any other provider.
+        """
+        if not self._supports_mid_conversation_tool_changes():
+            tools = resolve_deferred_tools(tools, messages)
+        deferred_names = frozenset(
+            name
+            for tool in tools or ()
+            if is_deferred(tool) and (name := tool_name(tool)) is not None
+        )
+        activations = {
+            message.tool_call_id: [
+                name for name in message.activated_tools if name in deferred_names
+            ]
+            for message in messages
+            if isinstance(message, ToolMessage) and message.activated_tools
+        }
+        processed_messages = self._process_tool_messages(list(messages))
+        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
+            processed_messages, activations=activations
+        )
+        params = self._build_request_params(
+            api_messages, system_blocks, tools, tool_choice
+        )
+        if deferred_names:
+            _add_beta_header(params, _TOOL_CHANGES_BETA)
+        return params
+
     def _build_request_params(
         self,
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
@@ -1021,6 +1166,7 @@ class AnthropicClient(BaseLLMClient):
         }
 
         self._validate_thinking_params(params)
+        self._apply_thinking_binding(params)
 
         if system_blocks:
             params["system"] = system_blocks
@@ -1058,9 +1204,20 @@ class AnthropicClient(BaseLLMClient):
         Callers already treat a reply without the expected tool call as a
         failed attempt. Returns a new list; the input is not mutated.
         """
-        if not api_messages or api_messages[-1].get("role") != "user":
-            return [*api_messages, {"role": "user", "content": instruction}]
-        last = api_messages[-1]
+        # A trailing tool-addition message has to stay last, so the instruction
+        # closes the user turn before it.
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
+        tail: list[dict[str, Any]] = []
+        head = list(api_messages)
+        if (
+            len(head) >= 2
+            and head[-1].get("role") == "system"
+            and head[-2].get("role") == "user"
+        ):
+            tail = [head.pop()]
+        if not head or head[-1].get("role") != "user":
+            return [*head, {"role": "user", "content": instruction}, *tail]
+        last = head[-1]
         content = last["content"]
         blocks = (
             [{"type": "text", "text": content}]
@@ -1068,7 +1225,38 @@ class AnthropicClient(BaseLLMClient):
             else list(content)
         )
         blocks.append({"type": "text", "text": instruction})
-        return [*api_messages[:-1], {**last, "content": blocks}]
+        return [*head[:-1], {**last, "content": blocks}, *tail]
+
+    @staticmethod
+    def _apply_thinking_binding(
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any],
+    ) -> None:
+        """Drop, rather than reject, replayed thinking the history no longer matches.
+
+        Opus 5.5, Sonnet 5.5 and Fable 5.1 bind each thinking block to the exact
+        system prompt, tools and messages that preceded it. Where that prefix has
+        changed -- the history window slid, a note in the system prompt was edited
+        -- an enforced account gets a 400 for the whole request, which the retry
+        layer would turn into a silent fallback to another model. Dropping the
+        stale blocks loses only the reasoning they carried. The setting is sent
+        explicitly so the behaviour does not depend on the account's age; models
+        that do not run the check accept it and ignore it.
+
+        It applies only where thinking is configured: the field lives inside the
+        ``thinking`` object and is rejected alongside ``between_tools``.
+        """
+        thinking = params.get("thinking")
+        if not isinstance(thinking, dict) or thinking.get("type") not in {
+            "adaptive",
+            "enabled",
+        }:
+            return
+        params["thinking"] = {
+            **thinking,
+            "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+        }
+        _add_beta_header(params, _THINKING_BINDING_BETA)
 
     def _validate_thinking_params(
         self,
@@ -1150,14 +1338,9 @@ class AnthropicClient(BaseLLMClient):
         telemetry: LLMCallTelemetry,
     ) -> LLMOutput:
         """Run and record one successful non-streaming Anthropic request."""
-        processed_messages = self._process_tool_messages(list(messages))
-        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
-            processed_messages
-        )
-        params = self._build_request_params(
-            api_messages, system_blocks, tools, tool_choice
-        )
+        params = self._assemble_request(messages, tools, tool_choice)
         response = await self.client.messages.create(**params)
+        log_input_transformations(response)
 
         content_text = ""
         tool_calls = []
@@ -1387,15 +1570,7 @@ class AnthropicClient(BaseLLMClient):
         try:
 
             async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
-                processed_messages = self._process_tool_messages(list(messages))
-
-                system_blocks, api_messages = (
-                    self._convert_messages_to_anthropic_format(processed_messages)
-                )
-
-                params = self._build_request_params(
-                    api_messages, system_blocks, tools, tool_choice
-                )
+                params = self._assemble_request(messages, tools, tool_choice)
 
                 # Check for VCR replay mode
                 vcr_events = await self._maybe_parse_vcr_stream(params)
@@ -1428,6 +1603,7 @@ class AnthropicClient(BaseLLMClient):
                             # the end, so a stream that is cancelled or dies
                             # keeps the tokens the provider already reported.
                             if event.type == "message_start":
+                                log_input_transformations(event.message)
                                 started_usage = getattr(event.message, "usage", None)
                                 if started_usage is not None:
                                     telemetry.record_usage(
