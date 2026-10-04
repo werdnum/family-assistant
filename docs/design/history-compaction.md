@@ -72,9 +72,10 @@ compaction events the history window makes no edits to the prompt, only appends.
   retrievable with `get_message_history`. Old attachments become references (id, type, filename)
   instead of bytes. Errors render as one line. A turn that still does not fit is dropped whole,
   oldest first. Stubs matter: a model that sees "09:12 asked about two plumber quotes" will look it
-  up when asked "and the other one?"; a model that sees nothing will guess. A stub is only offered
-  to a profile that can call `get_message_history`; for one that cannot (such as `council`), turns
-  are kept verbatim or dropped whole, never stubbed.
+  up when asked "and the other one?"; a model that sees nothing will guess. Compaction only produces
+  references the profile can follow: a tool stub needs `get_message_history`, an attachment
+  reference needs a tool that reads attachments. For a profile without them (such as `council`),
+  those turns are kept verbatim or dropped whole.
 - **Provider constraints at an event.** On Claude, the verbatim turns kept across a compaction lose
   their thinking blocks, because those blocks were bound to the longer prefix; the compaction strips
   them (text and tool calls stay) rather than leaving the API to drop them, so
@@ -97,9 +98,9 @@ is enforced in code, not by the classifier: relevance only decides which turns f
 classifier times out or fails, the compaction proceeds oldest-first as if it had returned nothing.
 Between events the result is frozen. The newest one or two turns always stay, compacted if need be,
 and so do the turns the user explicitly points at (the thread being replied to, pinned rows), even
-if an earlier event dropped them; when these alone exceed the budget they are sent anyway, and a
-provider context-length failure then reaches the user as it does today. That needs the mandatory set
-itself to exceed the budget, which is rare, and is left there.
+if an earlier event or the age cap dropped them; when these alone exceed the budget they are sent
+anyway, and a provider context-length failure then reaches the user as it does today. That needs the
+mandatory set itself to exceed the budget, which is rare, and is left there.
 
 The classifier is TypeSafe Jev, an operator-configured integration. It sends the new message and the
 candidate turns' text to TypeSafe, a new external processor the owner has accepted; a deployment
