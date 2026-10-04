@@ -96,10 +96,11 @@ At a compaction event a classifier ranks which turns still in the window, verbat
 new message continues, and the compaction keeps those verbatim in preference to the rest. The budget
 is enforced in code, not by the classifier: relevance only decides which turns fill it. If the
 classifier times out or fails, the compaction proceeds oldest-first as if it had returned nothing.
-Between events the result is frozen. The newest one or two turns always stay, compacted if need be;
-when they alone exceed the budget they are sent anyway, and a provider context-length failure then
-reaches the user as it does today. That needs a single turn larger than the budget and is left
-there.
+Between events the result is frozen. The newest one or two turns always stay, compacted if need be,
+and so do the turns the user explicitly points at (the thread being replied to, pinned rows), even
+if an earlier event dropped them; when these alone exceed the budget they are sent anyway, and a
+provider context-length failure then reaches the user as it does today. That needs a single turn
+larger than the budget and is left there.
 
 The classifier is TypeSafe Jev, an operator-configured integration. It sends the new message and the
 candidate turns' text to TypeSafe, a new external processor the owner has accepted; a deployment
