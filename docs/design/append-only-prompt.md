@@ -88,6 +88,8 @@ Activation becomes part of the conversation rather than turn-local state:
   - **Anthropic** declares deferred tools with `defer_loading: true` and turns each recorded
     activation into a `tool_addition` block in a `role: "system"` message after the tool results
     that made it (beta `mid-conversation-tool-changes-2026-07-01`). The `tools` array never changes.
+    Anthropic models without mid-conversation tool changes (Haiku 4.5, Sonnet 5 and older) take the
+    filtering path below instead.
   - **Gemini and OpenAI** have no equivalent, so their adapters filter the list to the non-deferred
     tools plus those activated in the messages they were given. Their tool list sits at the front of
     the request, so an activation still costs one cache miss there; persisting activations means it

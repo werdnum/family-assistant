@@ -44,7 +44,6 @@ HOUSEHOLD_NOTE = "House Rules"
 PROMPTS = {
     "note_item_format": "- {title}: {content}",
     "notes_context_header": "Relevant notes:\n{notes_list}",
-    "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
 }
 
 

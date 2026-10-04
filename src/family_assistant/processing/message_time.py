@@ -11,6 +11,7 @@ See docs/design/append-only-prompt.md.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from family_assistant.llm.messages import ContentPart, TextContentPart, UserMessage
@@ -26,6 +27,20 @@ MESSAGE_TIME_GUIDANCE = (
     "The line is added by the system, not written by the user; the newest one is "
     "the current time. Never include such a line in your reply."
 )
+
+
+SENT_AT_LABEL_PATTERN = re.compile(r"^\[Sent [^\]\n]*\]\n")
+"""Matches the stamp at the start of a rendered message, newline included."""
+
+
+def strip_sent_at_label(text: str) -> str:
+    """*text* without a leading send-time stamp.
+
+    For code that compares what a message says rather than how it was shown to
+    the model: test doubles matching on a request, and recorded-request
+    matching, where the stamp carries the wall-clock time of the run.
+    """
+    return SENT_AT_LABEL_PATTERN.sub("", text, count=1)
 
 
 def sent_at_label(sent_at: datetime, timezone: ZoneInfo) -> str:

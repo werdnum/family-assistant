@@ -131,6 +131,15 @@ def _should_log_post_epoch_missing_metadata(conversation_key: str) -> bool:
     return True
 
 
+def _stored_activated_tools(value: object) -> list[str] | None:
+    """The activation list as stored; JSON columns can come back as text."""
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, list):
+        return None
+    return [name for name in value if isinstance(name, str)] or None
+
+
 def _aware_timestamp(value: object) -> datetime | None:
     """A row's timestamp as an aware datetime; SQLite round-trips drop the zone."""
     if not isinstance(value, datetime):
@@ -1101,6 +1110,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None
         error_traceback: str | None = None
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None
+        activated_tools: list[str] | None = None
         taint_metadata = getattr(message, "taint_metadata", None)
         if isinstance(message, UserMessage):
             taint_metadata = message.authorship_taint_metadata
@@ -1143,6 +1153,7 @@ class MessageHistoryRepository(BaseRepository):
             tool_name = message.name
             error_traceback = message.error_traceback
             provider_metadata = message.provider_metadata
+            activated_tools = message.activated_tools
             if attachments is None:
                 attachments = message.attachments  # type: ignore[assignment]  # ToolAttachmentMetadata (TypedDict) is a dict at runtime
         elif isinstance(message, ErrorMessage):
@@ -1169,6 +1180,7 @@ class MessageHistoryRepository(BaseRepository):
             tool_name=tool_name,
             provider_metadata=provider_metadata,
             taint_metadata=taint_metadata,
+            activated_tools=activated_tools,
         )
 
     async def _insert_message(
@@ -1193,6 +1205,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None,
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
         taint_metadata: TaintMetadata | None = None,
+        activated_tools: list[str] | None = None,
     ) -> int:
         """
         Internal method that serializes and inserts a message into the database.
@@ -1242,6 +1255,7 @@ class MessageHistoryRepository(BaseRepository):
             "is_internal": is_internal,
             "tool_name": tool_name,
             "provider_metadata": serialized_provider_metadata,
+            "activated_tools": activated_tools,
             "taint_metadata_json": taint_metadata,
             "taint_metadata_version": TAINT_METADATA_VERSION
             if taint_metadata is not None
@@ -2819,6 +2833,7 @@ class MessageHistoryRepository(BaseRepository):
                 name=msg.get("tool_name") or "",
                 error_traceback=msg.get("error_traceback"),
                 taint_metadata=msg.get("taint_metadata"),
+                activated_tools=_stored_activated_tools(msg.get("activated_tools")),
             )
         elif role == "system":
             content = msg.get("content") or ""

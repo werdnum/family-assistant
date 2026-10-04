@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.call_context import CallAttribution, attributed_to_profile
+from family_assistant.llm.deferred_tools import activated_tool_names
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -48,7 +49,6 @@ from .quiet_turn import (
 )
 from .utils import (
     _map_stream_error_to_exception,
-    messages_have_thought_signatures,
     prune_messages_for_context,
 )
 
@@ -381,23 +381,19 @@ class LLMStreamingLoop:
         pending_attachment_ids: list[
             str
         ] = []  # Track attachment IDs from attach_to_response calls
-        # The system prompt as it arrived, before any on-demand tool additions.
-        original_system_message: SystemMessage | None = None
-        # The addition currently baked into messages[0], so the system prompt is
-        # rebuilt only when it actually changes rather than on every iteration.
-        applied_system_prompt_addition: str | None = None
-
         can_confirm = request_confirmation_callback is not None
 
-        # The on-demand view is long-lived per profile and shared across
-        # concurrent turns, so all activation state is kept turn-local here.
+        # Activation is part of the conversation: each activating tool message
+        # records what it activated, so the set starts from the history and grows
+        # as this turn activates more. The view is long-lived and shared across
+        # concurrent turns, so it holds none of this.
         tools_provider = self.tool_executor.tools_provider
         on_demand_view = (
             processing_service.on_demand_view
             if processing_service is not None
             else None
         )
-        activated_on_demand: frozenset[str] = frozenset()
+        activated_on_demand: frozenset[str] = activated_tool_names(messages)
         initial_taint_state = prompt_window_taint(messages)
         for source in initial_taint_sources or ():
             initial_taint_state = initial_taint_state.add_source(source)
@@ -471,18 +467,20 @@ class LLMStreamingLoop:
             except ToolPolicyDeniedError as exc:
                 raise TaintedSinkRefusedError(str(exc)) from exc
 
-        async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
-            """Re-compute the tool list and system prompt addition for this turn.
+        async def declared_tools_and_catalog() -> tuple[
+            list[ToolDefinition], str | None
+        ]:
+            """The tool list and on-demand catalog, fixed for the conversation.
 
-            On-demand tool definitions are sourced directly from the on-demand
-            view (when present) so the activate_tools meta-tool and the
-            turn-local activation set are honored. The system prompt addition
-            walks the provider chain for any ``SystemPromptContributingProvider``
-            contributions and appends the on-demand catalog from the view.
+            Every tool is declared on every request, on-demand ones marked
+            deferred, and the catalog lists every on-demand tool whether or not
+            it has been activated. Neither depends on what is active, so
+            activating a tool changes no earlier part of the prompt: it is an
+            appended message, which each provider adapter renders.
             """
             if on_demand_view is not None:
-                defs = await on_demand_view.get_tool_definitions(
-                    can_confirm=can_confirm, activated=activated_on_demand
+                defs = await on_demand_view.get_declared_definitions(
+                    can_confirm=can_confirm
                 )
             else:
                 defs = await get_tool_definitions_for_advertisement(
@@ -491,16 +489,13 @@ class LLMStreamingLoop:
                 )
             additions: list[str] = []
             chain_addition = await collect_system_prompt_addition(
-                tools_provider,
-                can_confirm=can_confirm,
-                activated=activated_on_demand,
+                tools_provider, can_confirm=can_confirm
             )
             if chain_addition:
                 additions.append(chain_addition)
             if on_demand_view is not None:
                 view_addition = await on_demand_view.get_system_prompt_addition(
-                    can_confirm=can_confirm,
-                    activated=activated_on_demand,
+                    can_confirm=can_confirm
                 )
                 if view_addition:
                     additions.append(view_addition)
@@ -508,6 +503,29 @@ class LLMStreamingLoop:
             if allow_quiet_end:
                 defs = [*defs, END_TURN_QUIETLY_TOOL_DEFINITION]
             return defs, addition
+
+        async def record_activation(
+            message: ToolMessage,
+            *,
+            names: list[str] | None = None,
+            search: str | None = None,
+            mcp_server_ids: list[str] | None = None,
+        ) -> frozenset[str]:
+            """Activate on-demand tools and record them on *message*, before it is saved."""
+            nonlocal activated_on_demand
+            if on_demand_view is None:
+                return frozenset()
+            activation = await on_demand_view.activate_tools(
+                names=names,
+                search=search,
+                mcp_server_ids=mcp_server_ids,
+                can_confirm=can_confirm,
+                activated=activated_on_demand,
+            )
+            if activation.newly_activated:
+                activated_on_demand |= activation.newly_activated
+                message.activated_tools = sorted(activation.newly_activated)
+            return activation.newly_activated
 
         async def build_done_metadata(
             assistant_message: AssistantMessage,
@@ -593,7 +611,19 @@ class LLMStreamingLoop:
                 )
             return done_metadata
 
-        tools_for_llm, system_prompt_addition = await refresh_on_demand_tools()
+        tools_for_llm, system_prompt_addition = await declared_tools_and_catalog()
+        # Applied once, before the first request: the catalog does not change
+        # with activation, so the system prompt is identical on every request
+        # and all of it belongs inside the cached block.
+        if (
+            system_prompt_addition
+            and messages
+            and isinstance(messages[0], SystemMessage)
+        ):
+            content = f"{messages[0].content}\n\n{system_prompt_addition}"
+            messages[0] = messages[0].model_copy(
+                update={"content": content, "stable_prefix_len": len(content)}
+            )
 
         logger.debug(
             f"Total available tools for this interaction: {len(tools_for_llm)}"
@@ -618,41 +648,6 @@ class LLMStreamingLoop:
                 if is_final_iteration
                 else "",
             )
-
-            # Check if conversation has thought signatures that must be preserved.
-            # If so, we cannot modify the system prompt as it would invalidate signatures.
-            has_thought_signatures = messages_have_thought_signatures(messages)
-
-            # Fold on-demand tool additions into the system prompt, but only when
-            # they have actually changed. The system prompt renders at the front of
-            # the prompt prefix, so rewriting it per iteration -- as this loop used
-            # to do to append an iteration counter -- invalidated the provider
-            # prompt cache on every tool call, re-reading the whole prompt and every
-            # accumulated tool result at full price. On-demand activation already
-            # changes the tool list (which invalidates the prefix regardless), so
-            # rebuilding here costs nothing extra.
-            #
-            # Thought signatures are cryptographically tied to the exact conversation
-            # context, so the system prompt is left completely alone when present.
-            if (
-                messages
-                and isinstance(messages[0], SystemMessage)
-                and not has_thought_signatures
-                and applied_system_prompt_addition != system_prompt_addition
-            ):
-                if original_system_message is None:
-                    original_system_message = messages[0]
-
-                system_content = original_system_message.content
-                if system_prompt_addition:
-                    system_content += "\n\n" + system_prompt_addition
-
-                # model_copy preserves stable_prefix_len, which points into the
-                # original content and stays valid when text is appended after it.
-                messages[0] = original_system_message.model_copy(
-                    update={"content": system_content}
-                )
-                applied_system_prompt_addition = system_prompt_addition
 
             if is_final_iteration:
                 # Delivered as a trailing user message rather than a system-prompt
@@ -992,42 +987,48 @@ class LLMStreamingLoop:
                     requested_names = args.get("tool_names")
                     requested_search = args.get("search")
                     requested_mcp = args.get("mcp_server_ids")
-                    activation = await on_demand_view.activate_tools(
-                        names=requested_names
+                    activate_message = ToolMessage(
+                        tool_call_id=activate_call.id,
+                        content="",
+                        name="activate_tools",
+                        taint_metadata=taint_tracker.snapshot().to_metadata(),
+                    )
+                    names_requested = (
+                        [n for n in requested_names if isinstance(n, str)]
                         if isinstance(requested_names, list)
-                        else None,
+                        else None
+                    )
+                    already_active = sorted(
+                        set(names_requested or ()) & activated_on_demand
+                    )
+                    newly_activated = await record_activation(
+                        activate_message,
+                        names=names_requested,
                         search=requested_search
                         if isinstance(requested_search, str)
                         else None,
                         mcp_server_ids=requested_mcp
                         if isinstance(requested_mcp, list)
                         else None,
-                        can_confirm=can_confirm,
-                        activated=activated_on_demand,
                     )
-                    if activation.newly_activated:
-                        activated_on_demand |= activation.newly_activated
-                        activated_names = sorted(activation.newly_activated)
-                        result_text = f"Activated tools: {', '.join(activated_names)}. You can now use them."
-                    else:
-                        result_text = "No matching tools found. Check the on-demand catalog for available tool names."
-                    # Refresh the local tool list and system prompt addition so
-                    # the catalog/meta-tool reflect the new activation set.
-                    (
-                        tools_for_llm,
-                        system_prompt_addition,
-                    ) = await refresh_on_demand_tools()
-                    # Emit result event and message
+                    result_parts: list[str] = []
+                    if newly_activated:
+                        result_parts.append(
+                            f"Activated tools: {', '.join(sorted(newly_activated))}. "
+                            "You can now use them for the rest of the conversation."
+                        )
+                    if already_active:
+                        result_parts.append(
+                            f"Already active: {', '.join(already_active)}."
+                        )
+                    activate_message.content = (
+                        " ".join(result_parts)
+                        or "No matching tools found. Check the on-demand catalog for available tool names."
+                    )
                     activate_event = LLMStreamEvent(
                         type="tool_result",
                         tool_call_id=activate_call.id,
-                        tool_result=result_text,
-                    )
-                    activate_message = ToolMessage(
-                        tool_call_id=activate_call.id,
-                        content=result_text,
-                        name="activate_tools",
-                        taint_metadata=taint_tracker.snapshot().to_metadata(),
+                        tool_result=activate_message.content,
                     )
                     yield (activate_event, activate_message)
                     messages.append(activate_message)
@@ -1106,6 +1107,27 @@ class LLMStreamingLoop:
                     llm_message = result.llm_message
                     result.apply_attachment_updates(pending_attachment_ids)
 
+                    # A skill loaded with get_note can declare tools or whole MCP
+                    # servers in its frontmatter. They are activated here, before
+                    # the result is saved, so the activation is recorded on it.
+                    if on_demand_view is not None and isinstance(
+                        llm_message, ToolMessage
+                    ):
+                        auto_names, auto_mcp_servers = _extract_activations_from_result(
+                            llm_message
+                        )
+                        if auto_names or auto_mcp_servers:
+                            newly = await record_activation(
+                                llm_message,
+                                names=auto_names or None,
+                                mcp_server_ids=auto_mcp_servers or None,
+                            )
+                            if newly:
+                                logger.info(
+                                    "Auto-activated tools from skill: %s",
+                                    sorted(newly),
+                                )
+
                     # Yield tool result event (llm_message for database storage)
                     yield (event, llm_message)
 
@@ -1118,33 +1140,6 @@ class LLMStreamingLoop:
                         task.cancel()
                 if tool_execution_tasks:
                     await asyncio.gather(*tool_execution_tasks, return_exceptions=True)
-
-            # Auto-activate tools / MCP servers from skill results (e.g.,
-            # get_note returning a skill with activate_tools or
-            # activate_mcp_servers in its frontmatter).
-            if on_demand_view:
-                for tool_msg in tool_response_messages_for_llm:
-                    auto_names, auto_mcp_servers = _extract_activations_from_result(
-                        tool_msg
-                    )
-                    if not auto_names and not auto_mcp_servers:
-                        continue
-                    activation = await on_demand_view.activate_tools(
-                        names=auto_names or None,
-                        mcp_server_ids=auto_mcp_servers or None,
-                        can_confirm=can_confirm,
-                        activated=activated_on_demand,
-                    )
-                    if activation.newly_activated:
-                        activated_on_demand |= activation.newly_activated
-                        (
-                            tools_for_llm,
-                            system_prompt_addition,
-                        ) = await refresh_on_demand_tools()
-                        logger.info(
-                            "Auto-activated tools from skill: %s",
-                            sorted(activation.newly_activated),
-                        )
 
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)

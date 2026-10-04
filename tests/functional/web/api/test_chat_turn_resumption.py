@@ -32,6 +32,7 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     stamp_model_selection,
 )
+from family_assistant.processing.message_time import strip_sent_at_label
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -416,14 +417,14 @@ async def test_resumed_turn_keeps_the_taint_its_interrupted_run_introduced(
     assert final.taint_metadata.get("introduced_max_tier") == "unknown_external"
 
 
-async def test_resumed_turn_puts_turn_context_back_after_the_prompt(
+async def test_resumed_turn_replays_in_its_original_shape(
     app_fixture: FastAPI,
     api_mock_llm_client: RuleBasedMockLLMClient,
     lease_registry: TurnLeaseRegistry,
     db_engine: AsyncEngine,
 ) -> None:
-    """The model sees the turn in its original shape: prompt, context block,
-    then the tool round the interrupted run already did."""
+    """The model sees the turn as the interrupted run left it: the prompt, then
+    the tool round it already did, with nothing regenerated in between."""
     shapes: list[list[str]] = []
 
     def record_shape(args: dict) -> bool:
@@ -449,7 +450,7 @@ async def test_resumed_turn_puts_turn_context_back_after_the_prompt(
         _turn_status(hub, conversation_id, turn_id, "complete"),
         description="resumed turn complete",
     )
-    assert shapes == [["user", "context", "assistant", "tool"]]
+    assert shapes == [["user", "assistant", "tool"]]
 
 
 async def test_suspension_lets_the_running_round_record_its_result(
@@ -515,7 +516,9 @@ async def test_resumed_turn_longer_than_the_history_window_keeps_its_prompt(
     def record_prompt(args: dict) -> bool:
         prompts_seen.append(
             any(
-                message.role == "user" and message.content == PROMPT
+                message.role == "user"
+                and isinstance(message.content, str)
+                and strip_sent_at_label(message.content) == PROMPT
                 for message in args["messages"]
             )
         )
@@ -594,14 +597,14 @@ async def test_resumed_turn_stays_on_the_tier_its_rows_ran_on(
     assert selection == routed.freeze()
 
 
-async def test_resumed_turn_puts_turn_context_after_the_opening_prompt_not_a_steer(
+async def test_resumed_turn_keeps_a_later_steer_where_it_was(
     app_fixture: FastAPI,
     api_mock_llm_client: RuleBasedMockLLMClient,
     lease_registry: TurnLeaseRegistry,
     db_engine: AsyncEngine,
 ) -> None:
-    """A steering message accepted later in the turn is not where the turn
-    began; the context block goes back after the opening prompt."""
+    """A steering message accepted later in the turn is replayed after the tool
+    round it followed, not hoisted next to the opening prompt."""
     shapes: list[list[str]] = []
 
     def record_shape(args: dict) -> bool:
@@ -633,7 +636,7 @@ async def test_resumed_turn_puts_turn_context_after_the_opening_prompt_not_a_ste
         _turn_status(hub, conversation_id, turn_id, "complete"),
         description="resumed turn complete",
     )
-    assert shapes == [["user", "context", "assistant", "tool", "user"]]
+    assert shapes == [["user", "assistant", "tool", "user"]]
 
 
 async def test_resumed_turn_continues_on_its_remaining_iteration_budget(

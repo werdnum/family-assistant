@@ -197,37 +197,6 @@ async def test_get_by_title_insufficient_grants(
 
 
 @pytest.mark.asyncio
-async def test_get_excluded_notes_titles_respects_grants(
-    db_engine: AsyncEngine,
-) -> None:
-    await cleanup_notes(db_engine)
-
-    db = Database(engine=db_engine)
-    await db.notes.add_or_update(
-        title="Excluded Public",
-        content="Excluded but public",
-        include_in_prompt=False,
-        visibility_labels=[],
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-    await db.notes.add_or_update(
-        title="Excluded Sensitive",
-        content="Excluded and sensitive",
-        include_in_prompt=False,
-        visibility_labels=["sensitive"],
-        write_policy=NoteWritePolicy.UNCONSTRAINED,
-        provenance=NoteProvenanceStamp.internal(),
-    )
-
-    titles = await db.notes.get_excluded_notes_titles(
-        read_policy=NoteReadPolicy(grants=frozenset({"default"}))
-    )
-    assert "Excluded Public" in titles
-    assert "Excluded Sensitive" not in titles
-
-
-@pytest.mark.asyncio
 async def test_get_all_with_grants(
     db_engine: AsyncEngine,
 ) -> None:

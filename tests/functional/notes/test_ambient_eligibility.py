@@ -42,7 +42,7 @@ async def _prompt_text(db: Database) -> str:
 
 
 @pytest.mark.asyncio
-async def test_unreviewed_prompt_note_is_listed_by_title_not_included(
+async def test_unreviewed_prompt_note_is_not_included(
     db_engine: AsyncEngine,
 ) -> None:
     db = Database(db_engine)
@@ -51,7 +51,7 @@ async def test_unreviewed_prompt_note_is_listed_by_title_not_included(
     prompt = await _prompt_text(db)
 
     assert "BODY FROM THE WEB" not in prompt
-    assert '"Web digest"' in prompt
+    assert "Web digest" not in prompt
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_unreviewed_skill_is_absent_from_the_catalog(
     prompt = await _prompt_text(db)
 
     assert "Pack for a trip" not in prompt
-    assert '"Packing"' in prompt
+    assert "Packing" not in prompt
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_unstamped_row_is_excluded_from_the_prompt_and_logged(
         prompt = await _prompt_text(db)
 
     assert "LEGACY BODY" not in prompt
-    assert '"Legacy"' in prompt
+    assert "Legacy" not in prompt
     assert any(
         record.levelno == logging.ERROR and "no stored provenance" in record.message
         for record in caplog.records

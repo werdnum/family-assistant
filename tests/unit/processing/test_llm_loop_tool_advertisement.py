@@ -10,6 +10,7 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.deferred_tools import resolve_deferred_tools
 from family_assistant.llm.messages import ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -190,6 +191,12 @@ def _make_local_provider(tool_names: list[str]) -> LocalToolsProvider:
     return LocalToolsProvider(registrations=registrations)
 
 
+def _usable_tool_names(call_kwargs: dict) -> set[str]:
+    """The tools a provider without native deferral would offer for a call."""
+    usable = resolve_deferred_tools(call_kwargs["tools"], call_kwargs["messages"])
+    return {tool["function"]["name"] for tool in usable or []}
+
+
 @pytest.mark.asyncio
 async def test_llm_loop_executes_activate_tools_call_end_to_end(
     db_engine: AsyncEngine,
@@ -285,11 +292,95 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
     # human's own words.
     assert activate_message.taint_metadata.get("max_tier") == "trusted_internal"
 
-    # The second LLM call must see lazy_b as an activated regular tool, not just
-    # the activate_tools meta-tool, proving activation actually took effect.
-    second_call_tools = llm_client.get_calls()[1]["kwargs"]["tools"] or []
-    second_call_tool_names = {tool["function"]["name"] for tool in second_call_tools}
+    # Activation is recorded on the result, so it outlives the turn.
+    assert activate_message.activated_tools == ["lazy_b"]
+
+    # The second LLM call must see lazy_b as usable, not just the
+    # activate_tools meta-tool, proving activation actually took effect.
+    second_call_tool_names = _usable_tool_names(llm_client.get_calls()[1]["kwargs"])
     assert "lazy_b" in second_call_tool_names
+
+
+@pytest.mark.asyncio
+async def test_activation_lasts_into_the_next_turn_without_changing_the_prompt(
+    db_engine: AsyncEngine,
+) -> None:
+    """A tool activated on one turn is usable on the next, and the system prompt
+    and declared tool list are the same on every request of the conversation.
+
+    Both are what keeps activation an appended message rather than an edit to an
+    earlier part of the prompt.
+    """
+    local_provider = _make_local_provider(["eager_a", "lazy_b"])
+    on_demand_view = OnDemandToolsView(
+        wrapped_provider=local_provider,
+        on_demand_tool_names={"lazy_b"},
+    )
+    state = {"calls": 0}
+    # Taken at call time: the loop keeps appending to the list it passed.
+    seen: list[tuple[set[str], object, str]] = []
+
+    def _response(args: MatcherArgs) -> LLMOutput:
+        state["calls"] += 1
+        seen.append((
+            _usable_tool_names(args),
+            args["tools"],
+            args["messages"][0].content,
+        ))
+        if state["calls"] == 1:
+            return LLMOutput(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_activate_1",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="activate_tools",
+                            arguments=json.dumps({"tool_names": ["lazy_b"]}),
+                        ),
+                    )
+                ],
+            )
+        return LLMOutput(content="done", tool_calls=None)
+
+    llm_client = RuleBasedMockLLMClient(
+        rules=[(lambda _args: True, _response)],
+        default_response=LLMOutput(content="fallback", tool_calls=None),
+    )
+    service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=local_provider,
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a test assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=20,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="llm-loop-activation-persists",
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+        on_demand_view=on_demand_view,
+    )
+    db_context = Database(db_engine)
+    for text in ("Please activate lazy_b", "Now use it"):
+        result = await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="web",
+            conversation_id="conversation-activation-persists",
+            trigger_content_parts=[{"type": "text", "text": text}],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
+        assert result.status.value == "success"
+
+    assert len(seen) == 3
+    assert "lazy_b" not in seen[0][0]
+    assert "lazy_b" in seen[2][0]
+    assert all(tools == seen[0][1] for _usable, tools, _prompt in seen)
+    assert len({prompt for _usable, _tools, prompt in seen}) == 1
 
 
 @pytest.mark.asyncio
@@ -380,8 +471,7 @@ async def test_llm_loop_auto_activates_tools_from_get_note_result(
 
     assert result.status.value == "success"
     assert state["calls"] == 2
-    second_call_tools = llm_client.get_calls()[1]["kwargs"]["tools"] or []
-    second_call_tool_names = {tool["function"]["name"] for tool in second_call_tools}
+    second_call_tool_names = _usable_tool_names(llm_client.get_calls()[1]["kwargs"])
     assert "lazy_b" in second_call_tool_names
 
 
@@ -467,8 +557,7 @@ async def test_llm_loop_ignores_activate_tools_key_from_non_get_note_tools(
 
     assert result.status.value == "success"
     assert state["calls"] == 2
-    second_call_tools = llm_client.get_calls()[1]["kwargs"]["tools"] or []
-    second_call_tool_names = {tool["function"]["name"] for tool in second_call_tools}
+    second_call_tool_names = _usable_tool_names(llm_client.get_calls()[1]["kwargs"])
     # lazy_b must remain unactivated; the untrusted tool's activate_tools key
     # was ignored. The on-demand meta-tool is still offered.
     assert "lazy_b" not in second_call_tool_names

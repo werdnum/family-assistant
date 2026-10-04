@@ -237,6 +237,12 @@ class ToolDefinition(TypedDict):
 
     type: str
     function: ToolFunctionSchema
+    defer_loading: NotRequired[bool]
+    """Declared on every request but usable only once activated.
+
+    Set by the LLM loop on on-demand tools; each provider adapter decides how to
+    render it (see ``family_assistant.llm.deferred_tools``).
+    """
 
 
 def normalize_json_schema_type(

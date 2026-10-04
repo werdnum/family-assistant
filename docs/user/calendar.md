@@ -81,11 +81,10 @@ access was available, click **Reconnect** and approve the calendar permissions.
 
 Once connected:
 
-- **Your primary Google calendar is always in view.** When you ask "what's on today?", the assistant
-  already knows your upcoming events on it, alongside the family calendars.
-- **Your other Google calendars** (a kids' calendar, a work calendar, calendars shared with you) are
-  searched when you ask about your schedule, but aren't shown up front. Calendars you've hidden in
-  Google Calendar are only searched when you name them: "check my Holidays calendar for next month."
+- **Your Google calendars are searched alongside the family calendars.** When you ask "what's on
+  today?", the assistant looks up your primary Google calendar and your other ones (a kids'
+  calendar, a work calendar, calendars shared with you). Calendars you've hidden in Google Calendar
+  are only searched when you name them: "check my Holidays calendar for next month."
 - **You can add, change, and delete events** on any Google calendar you can edit: "add swimming
   lessons to my Google calendar on Thursday at 4pm", "move my dentist appointment to 11". The family
   calendar is still the default for new events, so say "my Google calendar" when that's where you

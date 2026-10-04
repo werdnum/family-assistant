@@ -409,6 +409,16 @@ class ToolMessage(BaseModel):
     # Attachment metadata for database storage (serialized)
     attachments: list[ToolAttachmentMetadata] | None = None
 
+    activated_tools: list[str] | None = Field(default=None, exclude=True)
+    """On-demand tools this result made usable for the rest of the conversation.
+
+    Set on an ``activate_tools`` result, or on a skill load whose frontmatter
+    activates tools, and persisted with the row. Whether a deferred tool is
+    usable on a request is read off the messages it carries
+    (``family_assistant.llm.deferred_tools``), so an activation lasts as long
+    as the message that made it stays in the history.
+    """
+
     @field_validator("taint_metadata", mode="after")
     @classmethod
     def _floor_machine_authorship(

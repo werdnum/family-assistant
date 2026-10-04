@@ -22,6 +22,7 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.providers import anthropic_client as anthropic_client_module
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+from family_assistant.tools.types import ToolDefinition
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -557,3 +558,109 @@ async def test_stream_setup_failure_surfaces_original_error(
     assert [span.name for span in exporter.get_finished_spans()] == [
         "llm.provider.generate_stream"
     ]
+
+
+def _tool(name: str, *, deferred: bool = False) -> ToolDefinition:
+    definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"The {name} tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    if deferred:
+        definition["defer_loading"] = True
+    return definition
+
+
+def _activation_turn() -> list[LLMMessage]:
+    return [
+        SystemMessage(content="You are helpful."),
+        UserMessage(content="Turn on the lights"),
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="call_activate",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="activate_tools",
+                        arguments='{"tool_names": ["lights"]}',
+                    ),
+                )
+            ],
+        ),
+        ToolMessage(
+            content="Activated tools: lights.",
+            tool_call_id="call_activate",
+            name="activate_tools",
+            activated_tools=["lights"],
+        ),
+    ]
+
+
+@pytest.mark.no_db
+class TestDeferredTools:
+    """On-demand tools are declared once and surfaced by appended messages."""
+
+    def test_deferred_tools_stay_declared_and_activation_is_appended(self) -> None:
+        client = AnthropicClient(api_key="test", model="claude-opus-5-5")
+        tools = [_tool("weather"), _tool("lights", deferred=True)]
+
+        params = client._assemble_request(_activation_turn(), tools, "auto")
+
+        assert [
+            (tool["name"], tool.get("defer_loading")) for tool in params["tools"]
+        ] == [("weather", None), ("lights", True)]
+        assert params["messages"][-1] == {
+            "role": "system",
+            "content": [
+                {
+                    "type": "tool_addition",
+                    "tool": {"type": "tool_reference", "name": "lights"},
+                }
+            ],
+        }
+        assert (
+            "mid-conversation-tool-changes-2026-07-01"
+            in (params["extra_headers"]["anthropic-beta"])
+        )
+
+    def test_activation_does_not_change_the_earlier_request(self) -> None:
+        """The request after an activation extends the one before it."""
+        client = AnthropicClient(api_key="test", model="claude-opus-5-5")
+        tools = [_tool("weather"), _tool("lights", deferred=True)]
+        before = client._assemble_request(_activation_turn()[:3], tools, "auto")
+        after = client._assemble_request(_activation_turn(), tools, "auto")
+
+        assert after["tools"] == before["tools"]
+        assert after["system"] == before["system"]
+        assert _without_markers(after["messages"][: len(before["messages"])]) == (
+            _without_markers(before["messages"])
+        )
+
+    def test_trailing_tool_addition_carries_no_breakpoint(self) -> None:
+        client = AnthropicClient(api_key="test", model="claude-opus-5-5")
+        tools = [_tool("lights", deferred=True)]
+
+        params = client._assemble_request(_activation_turn(), tools, "auto")
+
+        assert _breakpoint_positions(params["messages"]) == [
+            (len(params["messages"]) - 2, 0)
+        ]
+
+    def test_models_without_tool_changes_get_the_active_tools_only(self) -> None:
+        client = AnthropicClient(api_key="test", model="claude-haiku-4-5")
+        tools = [
+            _tool("weather"),
+            _tool("lights", deferred=True),
+            _tool("dim", deferred=True),
+        ]
+
+        params = client._assemble_request(_activation_turn(), tools, "auto")
+
+        assert [tool["name"] for tool in params["tools"]] == ["weather", "lights"]
+        assert all("defer_loading" not in tool for tool in params["tools"])
+        assert all(message["role"] != "system" for message in params["messages"])
+        assert "extra_headers" not in params

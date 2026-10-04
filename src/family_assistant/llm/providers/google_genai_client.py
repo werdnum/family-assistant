@@ -46,6 +46,7 @@ from family_assistant.llm.antigravity_egress import (
     EgressResolver,
     github_git_instruction,
 )
+from family_assistant.llm.deferred_tools import resolve_deferred_tools
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -1193,6 +1194,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate response using Google GenAI."""
         # Validate user input before processing
         self._validate_user_input(messages)
+        tools = resolve_deferred_tools(tools, messages)
 
         with tracer.start_as_current_span("llm.provider.generate") as span:
             telemetry = LLMCallTelemetry(
@@ -1695,6 +1697,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """Generate streaming response using Google GenAI."""
         # Validate user input before processing
         self._validate_user_input(messages)
+        tools = resolve_deferred_tools(tools, messages)
 
         if is_interactions_agent_model(self.model_name):
             return self._generate_agent_interaction_stream(messages)

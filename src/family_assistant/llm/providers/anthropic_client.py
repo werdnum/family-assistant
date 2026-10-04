@@ -6,7 +6,13 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Mapping,
+    Sequence,
+)
 from dataclasses import asdict
 from typing import (
     TYPE_CHECKING,
@@ -47,6 +53,11 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
     UserMessageDict,
+)
+from family_assistant.llm.deferred_tools import (
+    is_deferred,
+    resolve_deferred_tools,
+    tool_name,
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -118,6 +129,22 @@ _THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
 # Opts a request into choosing what happens to a replayed thinking block whose
 # conversation prefix no longer matches the one that produced it.
 _THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+# Declares on-demand tools with `defer_loading` and surfaces each with a
+# `tool_addition` block in an appended system message, so activating one never
+# changes the `tools` array.
+_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
+
+# Models that accept mid-conversation system messages and tool changes, by id
+# prefix. Others (Haiku 4.5, Sonnet 5 and older) get the deferred tools filtered
+# out of the list instead, as every other provider does.
+_MID_CONVERSATION_TOOL_CHANGE_MODELS = (
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-sonnet-5-5",
+)
 
 
 class _MergedAnthropicUsage:
@@ -693,18 +720,23 @@ class AnthropicClient(BaseLLMClient):
             func = tool.get("function", {})
             if not isinstance(func, dict):
                 continue
-            anthropic_tools.append({
+            # ast-grep-ignore: no-dict-any - ToolParam predates defer_loading in the SDK types
+            anthropic_tool: dict[str, Any] = {
                 "name": func.get("name", ""),
                 "description": func.get("description", ""),
                 "input_schema": func.get(
                     "parameters", {"type": "object", "properties": {}}
                 ),
-            })
+            }
+            if is_deferred(tool):
+                anthropic_tool["defer_loading"] = True
+            anthropic_tools.append(cast("ToolParam", anthropic_tool))
         return anthropic_tools
 
     def _convert_messages_to_anthropic_format(
         self,
         messages: Sequence[LLMMessage],
+        activations: Mapping[str, Sequence[str]] | None = None,
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
     ) -> tuple[str | list[TextBlockParam] | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
@@ -789,15 +821,67 @@ class AnthropicClient(BaseLLMClient):
 
         # Merge consecutive same-role messages (Anthropic requires alternating roles)
         api_messages = self._merge_consecutive_roles(api_messages)
+        if activations:
+            api_messages = self._insert_tool_additions(api_messages, activations)
 
         # One breakpoint at the very end. Each request is the previous one plus
         # appended messages, so the previous request's breakpoint is a prefix of
         # this one and is read back; this one is what the next request reads.
-        if api_messages:
-            self._mark_cache_breakpoint(api_messages[-1])
+        # A trailing tool-addition message cannot carry one, so it goes on the
+        # user turn before it.
+        for api_message in reversed(api_messages):
+            if api_message["role"] != "system":
+                self._mark_cache_breakpoint(api_message)
+                break
 
         system_blocks = self._build_system_blocks(system_parts, stable_prefix_len)
         return system_blocks, api_messages
+
+    @staticmethod
+    def _insert_tool_additions(
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+        api_messages: list[dict[str, Any]],
+        activations: Mapping[str, Sequence[str]],
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+    ) -> list[dict[str, Any]]:
+        """Surface each activated tool after the tool results that activated it.
+
+        A ``role: "system"`` message must follow a user turn and be last or be
+        followed by an assistant turn. After merging, the user turn holding a
+        batch's tool results is followed by the next assistant turn, so the
+        addition goes straight after it; were another user turn to follow (an
+        interrupted turn), it waits for the first position that is valid.
+        """
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+        result: list[dict[str, Any]] = []
+        pending: list[str] = []
+        for index, api_message in enumerate(api_messages):
+            result.append(api_message)
+            if api_message["role"] != "user":
+                continue
+            content = api_message["content"]
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        for name in activations.get(str(block.get("tool_use_id")), ()):
+                            if name not in pending:
+                                pending.append(name)
+            following = (
+                api_messages[index + 1] if index + 1 < len(api_messages) else None
+            )
+            if pending and (following is None or following["role"] == "assistant"):
+                result.append({
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "tool_addition",
+                            "tool": {"type": "tool_reference", "name": name},
+                        }
+                        for name in pending
+                    ],
+                })
+                pending = []
+        return result
 
     @staticmethod
     def _mark_cache_breakpoint(
@@ -1015,6 +1099,49 @@ class AnthropicClient(BaseLLMClient):
 
         return merged
 
+    def _supports_mid_conversation_tool_changes(self) -> bool:
+        """Whether this model takes ``defer_loading`` plus ``tool_addition``."""
+        return self.model.startswith(_MID_CONVERSATION_TOOL_CHANGE_MODELS)
+
+    def _assemble_request(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+    ) -> dict[str, Any]:
+        """Convert a typed request into messages.create / messages.stream kwargs.
+
+        Deferred tools are rendered natively where the model supports it: every
+        tool stays in ``tools`` with ``defer_loading``, and each recorded
+        activation becomes a ``tool_addition`` after the result that made it.
+        Elsewhere they are filtered out like on any other provider.
+        """
+        if not self._supports_mid_conversation_tool_changes():
+            tools = resolve_deferred_tools(tools, messages)
+        deferred_names = frozenset(
+            name
+            for tool in tools or ()
+            if is_deferred(tool) and (name := tool_name(tool)) is not None
+        )
+        activations = {
+            message.tool_call_id: [
+                name for name in message.activated_tools if name in deferred_names
+            ]
+            for message in messages
+            if isinstance(message, ToolMessage) and message.activated_tools
+        }
+        processed_messages = self._process_tool_messages(list(messages))
+        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
+            processed_messages, activations=activations
+        )
+        params = self._build_request_params(
+            api_messages, system_blocks, tools, tool_choice
+        )
+        if deferred_names:
+            _add_beta_header(params, _TOOL_CHANGES_BETA)
+        return params
+
     def _build_request_params(
         self,
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
@@ -1077,9 +1204,20 @@ class AnthropicClient(BaseLLMClient):
         Callers already treat a reply without the expected tool call as a
         failed attempt. Returns a new list; the input is not mutated.
         """
-        if not api_messages or api_messages[-1].get("role") != "user":
-            return [*api_messages, {"role": "user", "content": instruction}]
-        last = api_messages[-1]
+        # A trailing tool-addition message has to stay last, so the instruction
+        # closes the user turn before it.
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
+        tail: list[dict[str, Any]] = []
+        head = list(api_messages)
+        if (
+            len(head) >= 2
+            and head[-1].get("role") == "system"
+            and head[-2].get("role") == "user"
+        ):
+            tail = [head.pop()]
+        if not head or head[-1].get("role") != "user":
+            return [*head, {"role": "user", "content": instruction}, *tail]
+        last = head[-1]
         content = last["content"]
         blocks = (
             [{"type": "text", "text": content}]
@@ -1087,7 +1225,7 @@ class AnthropicClient(BaseLLMClient):
             else list(content)
         )
         blocks.append({"type": "text", "text": instruction})
-        return [*api_messages[:-1], {**last, "content": blocks}]
+        return [*head[:-1], {**last, "content": blocks}, *tail]
 
     @staticmethod
     def _apply_thinking_binding(
@@ -1200,13 +1338,7 @@ class AnthropicClient(BaseLLMClient):
         telemetry: LLMCallTelemetry,
     ) -> LLMOutput:
         """Run and record one successful non-streaming Anthropic request."""
-        processed_messages = self._process_tool_messages(list(messages))
-        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
-            processed_messages
-        )
-        params = self._build_request_params(
-            api_messages, system_blocks, tools, tool_choice
-        )
+        params = self._assemble_request(messages, tools, tool_choice)
         response = await self.client.messages.create(**params)
         log_input_transformations(response)
 
@@ -1438,15 +1570,7 @@ class AnthropicClient(BaseLLMClient):
         try:
 
             async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
-                processed_messages = self._process_tool_messages(list(messages))
-
-                system_blocks, api_messages = (
-                    self._convert_messages_to_anthropic_format(processed_messages)
-                )
-
-                params = self._build_request_params(
-                    api_messages, system_blocks, tools, tool_choice
-                )
+                params = self._assemble_request(messages, tools, tool_choice)
 
                 # Check for VCR replay mode
                 vcr_events = await self._maybe_parse_vcr_stream(params)

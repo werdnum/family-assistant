@@ -77,8 +77,9 @@ class OnDemandToolCatalog:
         *,
         heading: str = "## On-Demand Tools",
         instruction: str = (
-            "The following tools are available but not yet active. "
-            "Call `activate_tools` with their names to enable them:"
+            "The following tools are available on demand. Call `activate_tools` "
+            "with their names to enable them; once activated, a tool stays "
+            "available for the rest of the conversation:"
         ),
         include_summaries: bool = True,
     ) -> str:
@@ -361,6 +362,32 @@ class OnDemandToolsView:
             ],
             hidden_names=frozenset(on_demand_hidden_names & advertisable_names),
         )
+
+    async def get_declared_definitions(
+        self, *, can_confirm: bool = True
+    ) -> list[ToolDefinition]:
+        """Every definition the LLM loop declares, on-demand ones marked deferred.
+
+        The same list on every request of a conversation, whatever has been
+        activated: activation is recorded in the messages, and each provider
+        adapter decides from them which deferred tools are usable (see
+        ``family_assistant.llm.deferred_tools``). ``activate_tools`` is included
+        whenever any on-demand tool is declared.
+        """
+        descriptors = await self._ensure_descriptors()
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
+        on_demand_names = {
+            d.name for d in descriptors if self._is_on_demand(d, _EMPTY_ACTIVATED)
+        }
+        declared: list[ToolDefinition] = []
+        for defn in wrapped_defs:
+            if defn.get("function", {}).get("name") in on_demand_names:
+                declared.append({**defn, "defer_loading": True})
+            else:
+                declared.append(defn)
+        if any(defn.get("defer_loading") for defn in declared):
+            declared.append(ACTIVATE_TOOLS_DEFINITION)
+        return declared
 
     async def get_tool_definitions(
         self,

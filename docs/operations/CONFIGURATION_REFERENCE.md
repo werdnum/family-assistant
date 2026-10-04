@@ -1447,8 +1447,8 @@ ______________________________________________________________________
 
 Bespoke integrations are packaged as plugins (`src/family_assistant/plugins/`). A plugin declares
 its config model, its tools, its background task handlers and what each configured instance
-contributes (context providers, event sources, work at startup) in one place. Configure instances
-under `plugins.<plugin id>.<instance name>`:
+contributes (tools, event sources, work at startup) in one place. Configure instances under
+`plugins.<plugin id>.<instance name>`:
 
 ```yaml
 plugins:
@@ -2270,9 +2270,9 @@ passes any grant set for the same reason. A profile granted only `memory` theref
 unlabelled household note until a read floor is set. Setting one confines the profile to notes
 labelled for it, at both boundaries that resolve notes: the notes repository and the skill registry.
 
-Memory topic notes are left out of the "Other available notes" title list for every reader, so the
-memory contribution to a rendered prompt is the core note alone. They remain reachable by title
-through `get_note`, through search, and in `list_notes` output.
+Memory topic notes are never loaded into a prompt, so the memory contribution to a rendered prompt
+is the core note alone. They remain reachable by title through `get_note`, through search, and in
+`list_notes` output.
 
 The shipped `memory_curator` profile sets all four to `memory`, which is what confines the
 background curator to the memory notes in both directions. See
@@ -3145,10 +3145,13 @@ output at all.
 | Sensitive | No               |
 | Values    | `true` / `false` |
 
-Context providers gather the household's notes, calendar, known users, weather and Home Assistant
-state. When this is `true`, that material reaches the model in the trailing `<turn_context>` block
-appended to the end of every request. When it is `false` — the default — the profile receives none
-of it.
+Context providers gather the household's always-loaded notes (including the core memory note), its
+skills catalog and its known users. When this is `true`, that material is appended to the profile's
+system prompt under a "Household context" heading. It changes only when a note, skill or the config
+is written, so the system prompt stays cacheable. When it is `false` — the default — the profile
+receives none of it. Calendar events, weather and Home Assistant state are not preloaded for any
+profile: the model reaches them through `search_calendar_events`, `get_weather_forecast` and
+`get_home_status`, which a profile's tool policy grants or withholds like any other tool.
 
 The default is off so that a profile nobody has explicitly considered is denied the household's
 private data rather than granted it — a profile that reads untrusted input should not also hold
@@ -3158,7 +3161,8 @@ prevent.
 `excluded_context_providers` is the finer-grained control underneath it — it drops individual
 providers from a profile that has this flag on, and has no effect on a profile that does not.
 
-The current time is injected for **every** profile regardless of this flag; it is not sensitive.
+Every profile's user messages carry the time they were sent regardless of this flag; it is not
+sensitive.
 
 Shipped `defaults.yaml` sets it on six profiles: `default_assistant`, `data_visualization`,
 `camera_analyst`, `event_handler`, `complex_tasks` and `engineer`. Every other profile — including
@@ -3178,21 +3182,22 @@ ______________________________________________________________________
 
 Per-profile `processing_config` list naming context providers to drop for that profile.
 
-| Property  | Value                                                           |
-| --------- | --------------------------------------------------------------- |
-| Required  | No                                                              |
-| Default   | `[]` (every applicable provider is attached)                    |
-| Sensitive | No                                                              |
-| Values    | `notes`, `calendar`, `known_users`, `weather`, `home_assistant` |
+| Property  | Value                                        |
+| --------- | -------------------------------------------- |
+| Required  | No                                           |
+| Default   | `[]` (every applicable provider is attached) |
+| Sensitive | No                                           |
+| Values    | `notes`, `known_users`                       |
 
-Context providers inject the user's own data into the trailing `<turn_context>` block. They apply
-only to profiles that set `include_aggregated_context: true`; within such a profile every applicable
-provider is attached by default (`weather` and `home_assistant` only when configured). An
-unrecognised name is a startup error rather than a no-op, since a silently-ignored entry would leave
-a profile holding data the config says it doesn't.
+Context providers inject the household's own data into the system prompt. They apply only to
+profiles that set `include_aggregated_context: true`; within such a profile both are attached by
+default. An unrecognised name — including `calendar`, `weather` and `home_assistant`, which are
+tools now rather than providers — is a startup error rather than a no-op, since a silently-ignored
+entry would leave a profile holding data the config says it doesn't. Remove those names from any
+profile that still lists them; withhold the corresponding tools through `tools_policy` instead.
 
 Use it to keep private data out of a profile that needs some context but not all of it. The shipped
-`media_analyst` profile excludes all five as a second layer on top of leaving
+`media_analyst` profile excludes both as a second layer on top of leaving
 `include_aggregated_context` at its default: it exists to transcribe attacker-controlled media, so
 pairing the user's notes with that input is precisely the combination the Rule of Two is meant to
 prevent.
@@ -3203,10 +3208,7 @@ service_profiles:
     processing_config:
       excluded_context_providers:
         - "notes"
-        - "calendar"
         - "known_users"
-        - "weather"
-        - "home_assistant"
 ```
 
 ______________________________________________________________________
@@ -4022,13 +4024,12 @@ once at startup, so a template naming an unknown one fails the boot rather than 
 conversation with that profile. Escape literal braces as `{{` and `}}`.
 
 > **⚠️ BREAKING CHANGE for custom prompts**: `{current_time}` and `{aggregated_other_context}` are
-> no longer template variables. The current time and the context providers' output are delivered in
-> the trailing `<turn_context>` block appended to each request instead of being interpolated into
-> the system prompt, so that the system prompt and conversation history stay byte-stable and can be
-> cached by the provider. A `system_prompt` still referencing either placeholder fails at startup.
-> Delete the reference; if the profile needs the providers' output, set
-> [include_aggregated_context](#include_aggregated_context) on it. The current time needs no opt-in.
-> See [docs/design/prompt-cache-turn-context.md](../design/prompt-cache-turn-context.md).
+> no longer template variables. Each user message carries the time it was sent, and the context
+> providers' output is appended to the system prompt, so that the system prompt and conversation
+> history stay byte-stable and can be cached by the provider. A `system_prompt` still referencing
+> either placeholder fails at startup. Delete the reference; if the profile needs the providers'
+> output, set [include_aggregated_context](#include_aggregated_context) on it. The time needs no
+> opt-in. See [docs/design/append-only-prompt.md](../design/append-only-prompt.md).
 
 ______________________________________________________________________
 
