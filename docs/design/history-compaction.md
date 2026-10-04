@@ -55,10 +55,11 @@ compaction events the history window makes no edits to the prompt, only appends.
 ### Compaction events
 
 - Each compaction event decides, for every turn up to that event, whether it renders verbatim,
-  compacted, or not at all; the kept-verbatim turns need not be contiguous. Turns after the latest
-  event render verbatim. **Anything that removes or re-renders an earlier turn happens only at a
-  compaction event**, and that includes the age cap: turns that age out between events leave at the
-  next one. The decision is recorded with the event, and the compacted rendering is derived
+  compacted, or not at all; the kept-verbatim turns need not be contiguous. Every event acts only on
+  completed turns: the active turn, including a resumed one, is always sent whole. Turns after the
+  latest event render verbatim. **Anything that removes or re-renders an earlier turn happens only
+  at a compaction event**, and that includes the age cap: turns that age out between events leave at
+  the next one. The decision is recorded with the event, and the compacted rendering is derived
   deterministically from stored rows, so replays are byte-identical without persisting a summary.
 - **Events, with hysteresis.** A compaction runs at the start of a model turn, whether a user
   message or a system wake such as a delegation completion triggered it (never inside a tool round),
@@ -87,8 +88,7 @@ compaction events the history window makes no edits to the prompt, only appends.
   specifies, and the model can activate them again.
 - **The emergency fallback** becomes a compaction event at a smaller budget through the same
   renderer, and `prune_messages_for_context` is deleted. It is the one event that can run inside a
-  tool round, where today's retry runs: it compacts only completed turns and leaves the current
-  turn, with its tool calls and results, intact.
+  tool round, where today's retry runs.
 
 ### Relevance at compaction events
 
