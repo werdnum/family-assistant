@@ -76,11 +76,11 @@ compaction events the history window makes no edits to the prompt, only appends.
   references the profile can follow: a tool stub needs `get_message_history`, an attachment
   reference needs a tool that reads attachments. For a profile without them (such as `council`),
   those turns are kept verbatim or dropped whole.
-- **Provider constraints at an event.** On Claude, the verbatim turns kept across a compaction lose
-  their thinking blocks, because those blocks were bound to the longer prefix; the compaction strips
-  them (text and tool calls stay) rather than leaving the API to drop them, so
-  `prefix_binding_mismatch` keeps meaning a bug. On Gemini, thought parts inside a kept turn are
-  never trimmed; whole older turns are compacted or not.
+- **Provider constraints at an event.** On Claude, every thinking block after the first changed
+  message loses its binding, in kept turns and in the active turn alike; the compaction strips them
+  (text and tool calls stay) rather than leaving the API to drop them, so `prefix_binding_mismatch`
+  keeps meaning a bug. On Gemini, thought parts inside a kept turn are never trimmed; whole older
+  turns are compacted or not.
 - **Tool activations follow their turn.** Under append-only prompts the active tool set comes from
   the activating messages in history, and an activation lasts until the window drops the message
   that made it. A compacted turn keeps its activations (the stub carries them); a turn that is
