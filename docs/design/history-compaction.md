@@ -80,7 +80,9 @@ compaction events the history window makes no edits to the prompt, only appends.
   message loses its binding, in kept turns and in the active turn alike; the compaction strips them
   (text and tool calls stay) rather than leaving the API to drop them, so `prefix_binding_mismatch`
   keeps meaning a bug. On Gemini, thought parts inside a kept turn are never trimmed; whole older
-  turns are compacted or not.
+  turns are compacted or not. A compacted turn carries no provider replay state (such as the OpenAI
+  response output an adapter would otherwise prefer over the messages), so every adapter renders it
+  from its compacted messages.
 - **Tool activations follow their turn.** Under append-only prompts the active tool set comes from
   the activating messages in history, and an activation lasts until the window drops the message
   that made it. A compacted turn keeps its activations (the stub carries them); a turn that is
@@ -165,8 +167,8 @@ today. Window taint is computed over the rendered window by the same loader on e
 2. **Compaction events and rendering**, including attachment references, thinking stripped from kept
    Claude turns, activations kept by compacted turns, and the emergency fallback moved onto the
    renderer. Verified by tests that compacting a turn does not change the active tool set or reduce
-   taint relative to the verbatim turns, a Gemini request with a compacted history is accepted, and
-   the cached-token share in diagnostics does not regress.
+   taint relative to the verbatim turns, a compacted history renders as stubs, and is accepted, on
+   each provider adapter, and the cached-token share in diagnostics does not regress.
 3. **Jev relevance and Auto in shadow mode.** Probabilities and tier choices are logged beside the
    current behaviour. Verified against whether the model then called `get_message_history`, whether
    the user had to repeat themselves, and the outcomes Auto shadow mode already records; it switches
