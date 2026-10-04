@@ -111,17 +111,17 @@ candidate turn's user text and final answer), and time gaps are computed in code
 All questions in one request read the same state, so untrusted text in a candidate turn can
 influence every answer in that request. That is bounded by what the answers control: the classifier
 has no tools and its output is schema-constrained, so the worst case is that the wrong turns are
-kept verbatim within the budget, and a compacted turn is still a stub the model can look up.
+kept verbatim within the budget and the right ones compacted or, for a profile without
+`get_message_history`, dropped. Shadow mode measures that the same way it measures any wrong choice.
 
 Auto keeps deciding per request, as today, and moves to Jev as a choice question among the profile's
 `auto_model_tiers` with the profile's routing guidance as its rubric. Its inputs stay those of
-today's classifier (bounded recent history, the request, attachment metadata and the profile),
-whether or not relevance questions share the request. That replaces an LLM call with a ten-second
-timeout and adds a probability over tiers to tune a threshold against. On turns that are also
-compaction events, the relevance questions ride in the same request. Its exposure to injected
-history is the same as today's classifier: the answer cannot leave `auto_model_tiers`. A tier switch
-drops earlier thinking on Claude, so shadow mode reports how often Auto would switch, as a cost to
-weigh, not a reason to hold the tier.
+today's classifier (bounded recent history, the request, attachment metadata and the profile), and
+it is its own request, never sharing state with relevance questions. That replaces an LLM call with
+a ten-second timeout and adds a probability over tiers to tune a threshold against. Its exposure to
+injected history is the same as today's classifier: the answer cannot leave `auto_model_tiers`. A
+tier switch drops earlier thinking on Claude, so shadow mode reports how often Auto would switch, as
+a cost to weigh, not a reason to hold the tier.
 
 ### Taint
 
