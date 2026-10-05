@@ -54,8 +54,11 @@ words as evidence of intent, kept distinct from them.
    judge that a human approved these actions and that their values are endorsed intent, and also
    that their prose fields may have been composed from untrusted content. The judge uses those
    fields to recognise a continuation, never as instructions.
-3. **Echo.** Approved argument values count as trusted text for the destination echo, next to the
-   active request and the originating request. An echo stays a signal to the judge. It never
+3. **Echo.** An approved call's *destination* values count as trusted text for the destination echo,
+   next to the active request and the originating request. Only the values at the approved tool's
+   declared `destination_argument_paths` qualify: the human approved those as where the action goes,
+   while an address that merely appears in a body or title was approved as content of a different
+   action and endorses nothing as a destination. An echo stays a signal to the judge. It never
    authorizes anything on its own.
 
 Only the reviewer's evidence changes. Taint tiers stay as they are, and approved content is not
@@ -90,8 +93,8 @@ text the human actually read.
    prompt-assembly unit tests: an approval in a tainted turn renders, and a declined one does not. A
    reviewer-eval case also checks that a follow-up continuing an approved send is allowed while an
    unrelated sink in the same turn still escalates.
-2. **Echo.** Approved values feed `compute_trusted_destination_echo`. Verified by unit tests,
-   including one where the destination matches only an approved value, and one where an approval in
-   a different conversation does not count.
+2. **Echo.** Approved destination values feed `compute_trusted_destination_echo`. Verified by unit
+   tests: a destination matching an approved call's destination echoes; one matching only an
+   approved call's body text does not; an approval in a different conversation does not count.
 3. **Measure.** The observe-mode audit counts reviewer `confirm` verdicts that follow an approval in
    the same turn, before and after the change.
