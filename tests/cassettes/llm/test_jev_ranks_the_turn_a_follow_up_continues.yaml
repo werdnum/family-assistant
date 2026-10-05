@@ -1,0 +1,53 @@
+interactions:
+  - request:
+      body: '{"model":"jev-1.13.0","state":{"new_message":"And what did the second plumber quote for the hot water system?","earlier_turns":{"turn_0":{"user":"Can you find me two plumber quotes for replacing the hot water system?","assistant":"Bayside Plumbing quoted $2,400 and Rapid Pipes quoted $2,150, both including installation."},"turn_1":{"user":"What''s the weather this weekend?","assistant":"Saturday is sunny and 24 degrees; Sunday has showers."}}},"questions":{"turn_0":{"type":"noul","instructions":"Does `new_message` continue, follow up on, or need the detail of the earlier conversation turn `earlier_turns.turn_0`?","criteria":{"true":"The new message refers back to that turn, asks about the same subject, or cannot be answered well without it.","false":"The new message is about something else."}},"turn_1":{"type":"noul","instructions":"Does `new_message` continue, follow up on, or need the detail of the earlier conversation turn `earlier_turns.turn_1`?","criteria":{"true":"The new message refers back to that turn, asks about the same subject, or cannot be answered well without it.","false":"The new message is about something else."}}}}'
+      headers:
+        accept:
+          - '*/*'
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '1149'
+        content-type:
+          - application/json
+        host:
+          - api.typesafe.ai
+        user-agent:
+          - python-httpx/0.28.1
+      method: POST
+      uri: https://api.typesafe.ai/v1/systemone
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/6tWys1PSc1RslLKSi3TNdQzNNYzUNJRSswrLk8tKlayqlYqKS3KizcAsyoLUoEK
+          8/JLc4BKwJSVgZ6lWa0ORJEhbkUGxrVAVaXFiempIEWZeQWlJfEl+dmpeUA7TM2MdZTyS0uQxUwM
+          amsBmKtTdZwAAAA=
+      headers:
+        CF-RAY:
+          - a45b0a7d99a760db-SYD
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 05 Oct 2026 08:26:21 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        set-cookie:
+          - __cf_bm=sgOhzefO7689m168vp30DUBNrUZcIqYh8dcUdDFSKyw-1791188781.6991253-1.0.1.1-LYi2BsrYZktGYRFUQwkohhV6dEMRJstWBsEPVHhtnZVoHQ6ayxFtV81Yi5C.MH0TVFfuGBJnD9Anqpj6EUOvYDhUpLq2NAjuezHUpHR1XO99olRcWC84OtxdL3.BGyt.; HttpOnly; SameSite=None; Secure; Path=/; Domain=typesafe.ai; Expires=Mon, 05 Oct 2026 08:56:21 GMT
+        x-typesafe-request-id:
+          - req_01a10b2bcace7d898aab0c72fe167537
+      status:
+        code: 200
+        message: OK
+version: 1

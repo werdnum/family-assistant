@@ -1,0 +1,54 @@
+interactions:
+  - request:
+      body: '{"model":"jev-1.13.0","state":{"message":"The washing machine is leaking all over the laundry floor."},"questions":{"urgent":{"type":"noul","instructions":"The message describes something needing prompt action","criteria":{"true":"Damage is happening or imminent.","false":"Nothing needs doing soon."}},"category":{"type":"choice","instructions":"Which part of household life is this about?","criteria":{"home_maintenance":"Repairs, appliances, the house itself","finance":"Money, bills, budgets","health":"Illness, appointments, medication"}}}}'
+      headers:
+        accept:
+          - '*/*'
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '545'
+        content-type:
+          - application/json
+        host:
+          - api.typesafe.ai
+        user-agent:
+          - python-httpx/0.28.1
+      method: POST
+      uri: https://api.typesafe.ai/v1/systemone
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/2WO3QqDMAyF3yXXnegEwb6MVI3arSai6YZI333150LYVXJyvpNkg5FbdKDhhZ9H
+          lmR5koICQ8sX5wX0Bn7ukWTvZJ0wgsTeReQoOk3KIihojGDP83rDmoFtgxG8Gg0Dj1iNxpIgGTo9
+          ps62uAudJamCaeba1NZZsXic/wud3IDGybDfj6KzlxVVCPEdv5ge97SlyUsl/EaK2/KyVMBe7rPi
+          GcIPqzv0+QUBAAA=
+      headers:
+        CF-RAY:
+          - a45b0a7bea8b4df6-SYD
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Mon, 05 Oct 2026 08:26:21 GMT
+        Server:
+          - cloudflare
+        Transfer-Encoding:
+          - chunked
+        alt-svc:
+          - h3=":443"; ma=86400
+        cf-cache-status:
+          - DYNAMIC
+        set-cookie:
+          - __cf_bm=P4kUK3uV7mAps8SaFShlHAfq07AygBZsGGfzwDt2kJ0-1791188781.4264083-1.0.1.1-jv3iPiq7O6WecIjNDjWP9V8O11mGBT.cAfGC8lRf_n1jIlXbQogYhdfGt.yFgAzX.dWlDjXlm9DOjTBENBaYwvFLuWtUs2DmHLOQ8LrTC_8pBD5L9i1FUlPdEdg3dhFr; HttpOnly; SameSite=None; Secure; Path=/; Domain=typesafe.ai; Expires=Mon, 05 Oct 2026 08:56:21 GMT
+        x-typesafe-request-id:
+          - req_01a10b2bc9bf7c8a86af6e04eaeb4aa5
+      status:
+        code: 200
+        message: OK
+version: 1
