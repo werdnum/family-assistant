@@ -48,6 +48,7 @@ from family_assistant.web.models import (
     RefreshTokenResponse,
     TokenSessionResponse,
 )
+from family_assistant.web.routers.vite_pages import universal_link_paths
 
 logger = logging.getLogger(__name__)
 
@@ -854,8 +855,9 @@ async def auth_route_classification() -> JSONResponse:
 async def apple_app_site_association() -> JSONResponse:
     """Serve the Apple App Site Association file for Universal Links.
 
-    The iOS app uses this to claim the app-auth callback and shared-conversation
-    paths. Team ID and bundle ID can be overridden via environment variables.
+    The iOS app claims the app-auth callback and every web UI page, so links to
+    the assistant open in the app rather than Safari. Team ID and bundle ID can
+    be overridden via environment variables.
     """
     team_id = os.environ.get("APPLE_TEAM_ID", "H7NBC2S52X")
     bundle_id = os.environ.get("APPLE_BUNDLE_ID", "dev.andrewgarrett.assistant")
@@ -870,7 +872,7 @@ async def apple_app_site_association() -> JSONResponse:
                         "appID": app_id,
                         "paths": [
                             "/.well-known/app-auth-callback*",
-                            "/shared/conversations/*",
+                            *universal_link_paths(),
                         ],
                     }
                 ],

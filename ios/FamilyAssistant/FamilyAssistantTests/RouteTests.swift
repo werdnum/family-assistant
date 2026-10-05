@@ -242,6 +242,35 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(router.selectedTab, .chat)
     }
 
+    func testNavigateStripsEmbeddedPageNamespace() throws {
+        let router = AppRouter()
+        XCTAssertTrue(router.navigate(to: try url("/app/notes/edit/Groceries"), relativeTo: baseURL))
+        XCTAssertEqual(router.selectedTab, .notes)
+        XCTAssertEqual(router.notesRoute, .edit(title: "Groceries"))
+    }
+
+    func testOpenRoutesAbsoluteSameOriginLinkInApp() throws {
+        let router = AppRouter()
+        XCTAssertTrue(router.open(try url("/chat?conversation_id=abc"), relativeTo: baseURL))
+        XCTAssertEqual(router.selectedTab, .chat)
+        XCTAssertEqual(router.chatSelection.conversationID, "abc")
+    }
+
+    func testOpenResolvesRelativeLinkAgainstServer() throws {
+        let router = AppRouter()
+        let relative = try XCTUnwrap(URL(string: "/history/conv-1"))
+        XCTAssertTrue(router.open(relative, relativeTo: baseURL))
+        XCTAssertEqual(router.selectedTab, .more)
+        XCTAssertEqual(router.morePath, [.web(WebRoute(path: "/history/conv-1"))])
+    }
+
+    func testOpenLeavesForeignOriginToSystem() throws {
+        let router = AppRouter()
+        let foreign = try XCTUnwrap(URL(string: "https://example.org/notes"))
+        XCTAssertFalse(router.open(foreign, relativeTo: baseURL))
+        XCTAssertEqual(router.selectedTab, .chat)
+    }
+
     func testOpenSharedAttachmentsSelectsNewChatRoute() {
         let router = AppRouter()
 

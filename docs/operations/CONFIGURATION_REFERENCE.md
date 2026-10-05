@@ -1530,11 +1530,14 @@ ______________________________________________________________________
 
 ## iOS Universal Links
 
-The server publishes `/.well-known/apple-app-site-association` for native app-auth callbacks and
-shared-conversation links. The checked-in production defaults match the
-`assistant.andrewgarrett.dev` app; set both variables for a differently signed or self-hosted app.
-Setting both also makes the app-auth callback use the verified HTTPS Universal Link instead of the
-`familyassistant://` fallback.
+The server publishes `/.well-known/apple-app-site-association` claiming the native app-auth callback
+and every web UI page, derived from the page routes in `web/routers/vite_pages.py`, so a link to any
+page opens the iOS app. API, login and OAuth-callback paths are not claimed. Because those flows
+finish by redirecting to a page, a browser sign-in on an iPhone with the app installed can end in
+the app rather than Safari; this is accepted, since the app is the intended client there. The
+checked-in production defaults match the `assistant.andrewgarrett.dev` app; set both variables for a
+differently signed or self-hosted app. Setting both also makes the app-auth callback use the
+verified HTTPS Universal Link instead of the `familyassistant://` fallback.
 
 ### APPLE_TEAM_ID
 
