@@ -48,12 +48,15 @@ words as evidence of intent, kept distinct from them.
    `confirmation_requests` already stores almost all of this. The design depends on every approval
    path, live and durable, going through the confirmation service. A path that bypasses it produces
    no attestation, so the cost of a missed path is an extra prompt, never a widened gate.
-2. **Render.** The reviewer prompt gets a new trusted block for approved actions. It covers every
-   approval in the conversation window the reviewer already reads, and each entry gives the tool,
-   the approved arguments and the time. The block's framing is the security boundary: it tells the
-   judge that a human approved these actions and that their values are endorsed intent, and also
-   that their prose fields may have been composed from untrusted content. The judge uses those
-   fields to recognise a continuation, never as instructions.
+2. **Render.** The reviewer prompt gets a new trusted block of human decisions. It covers every
+   resolved confirmation in the conversation window the reviewer already reads, in order, and each
+   entry gives the tool, the arguments, the decision (approved or declined) and the time. Declines
+   are rendered too, so a later refusal of the same action is never hidden behind an earlier
+   approval: the human's most recent decision is the one the judge sees last. The block's framing is
+   the security boundary: it tells the judge that a human approved these actions and that their
+   values are endorsed intent, and also that their prose fields may have been composed from
+   untrusted content. The judge uses those fields to recognise a continuation, never as
+   instructions.
 3. **Echo.** An approved call's *destination* values count as trusted text for the destination echo,
    next to the active request and the originating request. Only the values at the approved tool's
    declared `destination_argument_paths` qualify: the human approved those as where the action goes,
@@ -83,16 +86,18 @@ text the human actually read.
 - **No binding between the follow-up call and the approval.** The judge decides whether a later call
   is really a continuation. A deterministic match is what approval reuse would provide, and it is
   out of scope here.
-- **Declined and expired confirmations are not rendered.** They are evidence against an action, and
-  the reviewer's default already covers that case.
+- **Expired confirmations are not rendered.** Nobody decided anything, so they are not evidence
+  either way.
 
 ## Work plan
 
 1. **Attestation and rendering.** Reviewer prompt assembly takes approved actions from the
    conversation's confirmation records and renders them in the new block. Verified by
-   prompt-assembly unit tests: an approval in a tainted turn renders, and a declined one does not. A
-   reviewer-eval case also checks that a follow-up continuing an approved send is allowed while an
-   unrelated sink in the same turn still escalates.
+   prompt-assembly unit tests: an approval in a tainted turn renders, and an approval followed by a
+   decline of the same action renders both in order. A reviewer-eval case checks, at an `adjudicate`
+   cell (the default matrix's `arbitrary_external_message` under `unknown_external`), that a
+   follow-up message to the recipient of an approved message is allowed, while a message to an
+   unrelated recipient still escalates and a retry of a declined send does not pass.
 2. **Echo.** Approved destination values feed `compute_trusted_destination_echo`. Verified by unit
    tests: a destination matching an approved call's destination echoes; one matching only an
    approved call's body text does not; an approval in a different conversation does not count.
