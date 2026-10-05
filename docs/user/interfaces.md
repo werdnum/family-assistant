@@ -211,6 +211,11 @@ The native app signs you in securely and opens on five tabs: **Chat**, **Voice**
 **Documents**, and **More**. Chat, Voice, and Notes are native screens; Documents and everything
 under More open the corresponding pages in-app. Each tab remembers where you were.
 
+**Links open in the app.** With the app installed, tapping a link to an assistant page — in a
+message, an email, a notification, or a shared-conversation link someone sent you — opens it in the
+app on the matching tab rather than in Safari. Links inside chat replies do the same. To view a page
+in Safari instead, long-press the link and choose **Open in Safari**.
+
 **Chat** shares the same conversation history as the browser. It streams replies, supports stopping
 and steering, switches profiles (picking a profile starts a fresh conversation in it, carrying over
 anything you have typed and attached; on a chat that is still empty it switches in place; reopening

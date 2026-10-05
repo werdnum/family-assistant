@@ -2,19 +2,27 @@
 Router for Vite-managed React pages.
 
 This router centralizes the handling of React pages served by Vite,
-including chat, tools, and tool-test-bench interfaces.
+including chat, tools, and tool-test-bench interfaces. Every route on
+`vite_pages_router` is a user-facing page, which is what lets the iOS app claim
+them all as Universal Links (`universal_link_paths`); non-page files served
+from the root belong on `pwa_assets_router`.
 """
 
 import logging
 import os
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from fastapi.routing import APIRoute
 
 from family_assistant.paths import FRONTEND_DIR, STATIC_DIST_DIR
 
 logger = logging.getLogger(__name__)
 vite_pages_router = APIRouter()
+pwa_assets_router = APIRouter()
+
+_PATH_PARAMETER = re.compile(r"\{[^}]+\}")
 
 
 @vite_pages_router.get("/", name="ui_root")
@@ -23,7 +31,7 @@ async def ui_root(request: Request) -> Response:
     return _serve_vite_html_file(request, "router.html")
 
 
-@vite_pages_router.get("/sw.js", name="service_worker")
+@pwa_assets_router.get("/sw.js", name="service_worker")
 async def serve_service_worker(request: Request) -> FileResponse:
     """Serve the service worker from root path with proper headers to control all pages."""
     dev_mode = _get_dev_mode_from_request(request)
@@ -44,7 +52,7 @@ async def serve_service_worker(request: Request) -> FileResponse:
         raise HTTPException(status_code=404, detail="Service worker not found")
 
 
-@vite_pages_router.get("/manifest.webmanifest", name="pwa_manifest")
+@pwa_assets_router.get("/manifest.webmanifest", name="pwa_manifest")
 async def serve_pwa_manifest(request: Request) -> FileResponse:
     """Serve the PWA manifest from root path."""
     dev_mode = _get_dev_mode_from_request(request)
@@ -61,6 +69,20 @@ async def serve_pwa_manifest(request: Request) -> FileResponse:
 
     # In dev mode or if manifest not found, let Vite handle it
     raise HTTPException(status_code=404, detail="Manifest not found")
+
+
+def universal_link_paths() -> list[str]:
+    """Apple App Site Association path patterns for every page route.
+
+    Path parameters become `*` wildcards, so a link to any page served here
+    opens the iOS app, which routes it natively or in an embedded web view.
+    """
+    patterns = (
+        _PATH_PARAMETER.sub("*", route.path)
+        for route in vite_pages_router.routes
+        if isinstance(route, APIRoute)
+    )
+    return list(dict.fromkeys(patterns))
 
 
 def _get_dev_mode_from_request(request: Request) -> bool:

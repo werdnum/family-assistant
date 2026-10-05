@@ -152,6 +152,7 @@ final class AppRouter {
     /// Returns `false` for foreign-origin URLs.
     @discardableResult
     func navigate(to url: URL, relativeTo baseURL: URL) -> Bool {
+        let url = EmbeddedWebRoute.appURL(url, relativeTo: baseURL)
         guard let tab = Self.owningTab(for: url, relativeTo: baseURL) else {
             return false
         }
@@ -175,6 +176,18 @@ final class AppRouter {
         }
         selectedTab = tab
         return true
+    }
+
+    /// A link opened from a native view, such as a link in a chat message.
+    /// Relative links resolve against the server, so a same-origin link of
+    /// either form opens in the app; returns `false` for foreign-origin links,
+    /// which the caller should leave to the system.
+    @discardableResult
+    func open(_ url: URL, relativeTo baseURL: URL) -> Bool {
+        guard let resolved = URL(string: url.absoluteString, relativeTo: baseURL)?.absoluteURL else {
+            return false
+        }
+        return navigate(to: resolved, relativeTo: baseURL)
     }
 
     /// A link tap (or in-page SPA navigation) inside a web view shown in

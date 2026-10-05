@@ -69,7 +69,10 @@ from family_assistant.web.routers.ios_push import router as ios_push_router
 from family_assistant.web.routers.legal import legal_router
 from family_assistant.web.routers.push import router as push_router
 from family_assistant.web.routers.ucp import router as ucp_router
-from family_assistant.web.routers.vite_pages import vite_pages_router
+from family_assistant.web.routers.vite_pages import (
+    pwa_assets_router,
+    vite_pages_router,
+)
 from family_assistant.web.routers.webhooks import webhooks_router
 from family_assistant.web.template_utils import get_static_asset
 from family_assistant.web.turn_resumption import WEB_STREAM_RESUMER, WebTurnResumer
@@ -304,6 +307,7 @@ def create_app() -> FastAPI:
     # Note: Auth router will be added after AuthService is initialized
 
     logger.debug("Including vite_pages_router...")
+    new_app.include_router(pwa_assets_router, tags=["PWA Assets"])
     new_app.include_router(vite_pages_router, tags=["Vite Pages"])
 
     # Log registered UI routes for debugging CI issues

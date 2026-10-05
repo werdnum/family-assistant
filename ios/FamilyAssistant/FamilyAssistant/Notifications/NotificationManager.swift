@@ -276,7 +276,10 @@ final class NotificationManager {
             }
         }
 
-        if let path = normalizeNavigationPath(url.path) {
+        // A Universal Link carries its destination in the query too
+        // (`/chat?conversation_id=…`), so keep everything but the origin.
+        let isWebURL = url.scheme == "https" || url.scheme == "http"
+        if let path = normalizeNavigationPath(isWebURL ? url.absoluteString : url.path) {
             pendingNavigationPath = path
             return true
         }

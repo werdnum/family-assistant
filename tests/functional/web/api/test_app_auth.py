@@ -434,8 +434,15 @@ class TestAppleAppSiteAssociation:
         details = data["applinks"]["details"]
         assert len(details) == 1
         assert details[0]["appID"] == "H7NBC2S52X.dev.andrewgarrett.assistant"
-        assert "/.well-known/app-auth-callback*" in details[0]["paths"]
-        assert "/shared/conversations/*" in details[0]["paths"]
+        paths = details[0]["paths"]
+        assert "/.well-known/app-auth-callback*" in paths
+        for page in ("/", "/chat", "/notes/edit/*", "/shared/conversations/*"):
+            assert page in paths
+        # Server-side flows (login, OAuth callbacks) and non-page assets must
+        # stay in the browser.
+        for excluded in ("/app-auth-callback", "/auth", "/login", "/sw.js"):
+            assert excluded not in paths
+        assert not any(path.startswith("/api") for path in paths)
 
 
 class TestCleanupExpiredCodes:

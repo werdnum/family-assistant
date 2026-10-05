@@ -83,6 +83,15 @@ final class NotificationManagerTests: XCTestCase {
         XCTAssertEqual(manager.pendingNavigationPath, "/chat?q=fix%20this")
     }
 
+    func testHandleDeepLinkKeepsUniversalLinkQueryAndFragment() throws {
+        let manager = NotificationManager()
+
+        XCTAssertTrue(manager.handleDeepLink(try XCTUnwrap(URL(
+            string: "https://assistant.example.test/chat?conversation_id=abc&q=fix%20this#latest"
+        ))))
+        XCTAssertEqual(manager.pendingNavigationPath, "/chat?conversation_id=abc&q=fix%20this#latest")
+    }
+
     func testHandleDeepLinkRejectsProtocolRelativePathQueryWithoutHostFallback() throws {
         let manager = NotificationManager()
 

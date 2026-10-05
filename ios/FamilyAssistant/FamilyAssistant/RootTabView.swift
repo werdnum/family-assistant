@@ -44,6 +44,11 @@ struct RootTabView: View {
                 .tabItem { Label("More", systemImage: "ellipsis") }
                 .tag(AppTab.more)
         }
+        // Links tapped in native views (chat messages, notes) would otherwise
+        // leave for Safari even when they point at a page the app shows.
+        .environment(\.openURL, OpenURLAction { url in
+            appRouter.open(url, relativeTo: baseURL) ? .handled : .systemAction
+        })
     }
 
     @ViewBuilder
