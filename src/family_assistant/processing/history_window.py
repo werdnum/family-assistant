@@ -1,19 +1,28 @@
-"""The prompt's history window, built from whole turns against a size budget.
+"""The prompt's history window, built from whole turns and changed only at events.
 
 A turn is the rows its own turn wrote; a row with no turn id (a proactive send,
 a pinned data row) is a turn of its own. A turn is never split, so a window can
 never start with a tool result whose call it lost, or keep an answer without the
-request it answered. See docs/design/history-compaction.md.
+request it answered.
 
-Every path that needs the window -- the turn itself and the web producer's taint
-computation -- goes through :class:`HistoryWindowLoader`, so they agree on which
-rows are in the prompt.
+Between compaction events the window only appends: the turns the latest event
+kept render as it decided, and every turn after it renders verbatim. An event
+runs at the start of a turn whenever the window has to change -- it outgrew its
+budget, a turn in it passed the age cap, the request points at a turn outside
+it, or (where configured) the conversation was idle long enough for provider
+caches to have expired -- and decides every turn once more. See
+docs/design/history-compaction.md.
+
+Every path that needs the window -- the turn itself, its context-length retry,
+and the web producer's taint computation -- goes through
+:class:`HistoryWindowLoader`, so they agree on which rows are in the prompt.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from family_assistant.llm.messages import (
@@ -26,32 +35,55 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.processing.history_compaction import (
+    COMPACTION_TARGET_RATIO,
+    VERBATIM,
+    CompactionCandidate,
+    CompactionCapabilities,
+    CompactionPlan,
+    CompactionReason,
+    can_compact,
+    plan_compaction,
+    render_compacted_turn,
+    without_bound_thinking,
+)
+from family_assistant.storage.history_compaction import TurnDecision, TurnMode
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Sequence
     from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
 
     from family_assistant.llm.messages import MessageWithMetadata
     from family_assistant.storage.database import Database
+    from family_assistant.storage.history_compaction import HistoryScope
+    from family_assistant.storage.repositories.history_compaction import (
+        CompactionEvent,
+    )
+
+logger = logging.getLogger(__name__)
 
 # What an inlined image counts for against the budget. Images are re-sent as
 # bytes, which no character count measures; this is roughly what a provider
 # charges for a typical photo, in characters of text.
 IMAGE_CHAR_COST = 4_000
 
-# The most rows one window read fetches before whole turns are completed. Far
-# above any budget's worth of rows; it bounds the read of a conversation whose
-# age cap admits months of activity.
+# The most rows one window read fetches before whole turns are completed. A
+# window that reaches it is over any budget and compacts; it bounds the first
+# read of a long conversation, before any event has been recorded for it.
 WINDOW_ROW_LIMIT = 2_000
 
 
 @dataclass(frozen=True, slots=True)
 class HistoryLimits:
-    """How much history a window may hold."""
+    """How much history a window may hold, and when it is re-decided."""
 
     budget_chars: int
     min_turns: int
     max_age: timedelta
+    # The first message after this much quiet is a compaction event: provider
+    # caches have expired by then, so changing the prefix costs nothing extra.
+    idle_gap: timedelta | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +97,10 @@ class HistoryTurn:
     def last_activity(self) -> datetime:
         return max(row.timestamp for row in self.rows)
 
+    @property
+    def first_internal_id(self) -> int:
+        return min(int(row.internal_id) for row in self.rows)
+
 
 @dataclass(frozen=True, slots=True)
 class HistoryWindow:
@@ -73,11 +109,21 @@ class HistoryWindow:
     ``turns`` are the completed turns in the window, oldest first, and
     ``messages`` their rendering. ``active_messages`` renders the turn being
     run, which is always sent whole and is never part of ``turns``.
+    ``compaction`` is the reason when this load ran a compaction event.
     """
 
     turns: tuple[HistoryTurn, ...]
     messages: list[LLMMessage]
     active_messages: list[LLMMessage]
+    compaction: CompactionReason | None = None
+
+
+@dataclass(slots=True)
+class _WindowTurn:
+    turn: HistoryTurn
+    decision: TurnDecision | None
+    explicit: bool
+    rendered: list[LLMMessage] = field(default_factory=list)
 
 
 def turn_key(row: MessageWithMetadata) -> str:
@@ -137,64 +183,49 @@ def messages_size(messages: Sequence[LLMMessage]) -> int:
     return sum(message_size(message) for message in messages)
 
 
-def select_turns(
-    turns: Sequence[HistoryTurn],
-    sizes: dict[str, int],
-    *,
-    limits: HistoryLimits,
-    mandatory: Collection[str],
-) -> list[HistoryTurn]:
-    """The turns that fit, oldest first.
-
-    The newest ``min_turns`` turns and every mandatory turn always stay. Older
-    turns are then taken newest first while the window stays within the budget;
-    the first that does not fit ends the window, so it stays contiguous back
-    from the newest turn. The active turn is not part of the window and does
-    not count against it, so the window does not depend on how far a turn has
-    run.
-    """
-    newest = (
-        {turn.key for turn in turns[-limits.min_turns :]}
-        if limits.min_turns > 0
-        else set()
-    )
-    kept: set[str] = set(mandatory) | newest
-    total = sum(sizes[key] for key in kept)
-    for turn in reversed(turns):
-        if turn.key in kept:
-            continue
-        if total + sizes[turn.key] > limits.budget_chars:
-            break
-        kept.add(turn.key)
-        total += sizes[turn.key]
-    return [turn for turn in turns if turn.key in kept]
-
-
 class HistoryWindowLoader:
-    """Builds a request's history window from stored rows."""
+    """Builds a request's history window from stored rows and recorded events."""
 
     def __init__(
         self,
+        *,
         render: Callable[[list[LLMMessage]], Awaitable[list[LLMMessage]]],
+        timezone: ZoneInfo,
+        capabilities: Callable[[], Awaitable[CompactionCapabilities]],
     ) -> None:
         self._render = render
+        self._timezone = timezone
+        self._capabilities = capabilities
 
-    async def _render_turn(self, turn: HistoryTurn) -> list[LLMMessage]:
-        return await self._render([row.message for row in turn.rows])
+    async def _render_verbatim(
+        self, turn: HistoryTurn, strip_through: int | None
+    ) -> list[LLMMessage]:
+        return await self._render([
+            without_bound_thinking(row.message)
+            if strip_through is not None and int(row.internal_id) <= strip_through
+            else row.message
+            for row in turn.rows
+        ])
+
+    async def _render_turn(
+        self, turn: HistoryTurn, decision: TurnDecision
+    ) -> list[LLMMessage]:
+        if decision.mode is TurnMode.COMPACTED:
+            return render_compacted_turn(turn.rows, self._timezone)
+        return await self._render_verbatim(turn, decision.strip_through)
 
     async def load(
         self,
         db: Database,
         *,
-        interface_type: str,
-        conversation_id: str,
-        processing_profile_id: str,
-        subconversation_id: str | None,
+        scope: HistoryScope,
         limits: HistoryLimits,
         now: datetime,
         active_turn_id: str | None,
         thread_root_id: int | None = None,
         referenced_row_ids: Collection[int] = (),
+        context_length_target: int | None = None,
+        record: bool = True,
     ) -> HistoryWindow:
         """Load the window for a request on this conversation.
 
@@ -203,70 +234,291 @@ class HistoryWindowLoader:
         ``thread_root_id`` is the thread a reply points at: its turns on this
         profile join the window whatever their age or size, as do the turns
         holding ``referenced_row_ids`` (pinned rows, the message replied to).
+
+        ``context_length_target`` forces a compaction event down to that many
+        characters: the retry after a provider rejected the prompt as too long.
+
+        ``record=False`` computes the window a turn starting now would get,
+        compaction included, without recording the event: for a reader that
+        needs to know what will be in the prompt, not to fix it.
         """
         history = db.message_history
-        recent_rows = await history.get_history_window_rows(
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            processing_profile_id=processing_profile_id,
-            subconversation_id=subconversation_id,
-            since=now - limits.max_age,
+        event = await db.history_compaction.latest(scope)
+        boundary = event.boundary_internal_id if event is not None else 0
+        decided = event.decisions if event is not None else {}
+
+        uncovered_rows = await history.get_history_window_rows(
+            interface_type=scope.interface_type,
+            conversation_id=scope.conversation_id,
+            processing_profile_id=scope.processing_profile_id,
+            subconversation_id=scope.subconversation_id,
+            after_internal_id=boundary,
             row_limit=WINDOW_ROW_LIMIT,
             exclude_turn_id=active_turn_id,
+        )
+        truncated = len(uncovered_rows) >= WINDOW_ROW_LIMIT
+        kept_turn_ids = [key for key in decided if not key.startswith("row:")]
+        kept_row_ids = [int(key[4:]) for key in decided if key.startswith("row:")]
+        if event is not None and event.active_turn_key is not None:
+            kept_turn_ids.append(event.active_turn_key)
+        decided_rows = await history.get_turn_rows_with_metadata(
+            interface_type=scope.interface_type,
+            conversation_id=scope.conversation_id,
+            subconversation_id=scope.subconversation_id,
+            turn_ids=kept_turn_ids,
+            internal_ids=kept_row_ids,
         )
         explicit_rows: list[MessageWithMetadata] = []
         if thread_root_id is not None:
             explicit_rows.extend(
                 await history.get_thread_turn_rows(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
+                    interface_type=scope.interface_type,
+                    conversation_id=scope.conversation_id,
                     thread_root_id=thread_root_id,
-                    processing_profile_id=processing_profile_id,
-                    subconversation_id=subconversation_id,
+                    processing_profile_id=scope.processing_profile_id,
+                    subconversation_id=scope.subconversation_id,
                 )
             )
         if referenced_row_ids:
             explicit_rows.extend(
                 await history.get_turn_rows_with_metadata(
-                    interface_type=interface_type,
-                    conversation_id=conversation_id,
-                    subconversation_id=subconversation_id,
+                    interface_type=scope.interface_type,
+                    conversation_id=scope.conversation_id,
+                    subconversation_id=scope.subconversation_id,
                     internal_ids=referenced_row_ids,
                 )
             )
         active_rows = (
             await history.get_turn_rows_with_metadata(
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                subconversation_id=subconversation_id,
+                interface_type=scope.interface_type,
+                conversation_id=scope.conversation_id,
+                subconversation_id=scope.subconversation_id,
                 turn_ids=[active_turn_id],
             )
             if active_turn_id is not None
             else []
         )
 
-        cutoff = now - limits.max_age
         explicit_keys = {
             turn_key(row) for row in explicit_rows if row.turn_id != active_turn_id
         }
-        turns = [
-            turn
-            for turn in group_turns([
-                *recent_rows,
-                *(row for row in explicit_rows if row.turn_id != active_turn_id),
-            ])
-            if turn.key in explicit_keys or turn.last_activity >= cutoff
-        ]
-        rendered = {turn.key: await self._render_turn(turn) for turn in turns}
-        active_messages = await self._render([row.message for row in active_rows])
-        kept = select_turns(
-            turns,
-            {key: messages_size(messages) for key, messages in rendered.items()},
-            limits=limits,
-            mandatory=explicit_keys,
+        window: list[_WindowTurn] = []
+        for turn in group_turns([
+            *uncovered_rows,
+            *decided_rows,
+            *(row for row in explicit_rows if row.turn_id != active_turn_id),
+        ]):
+            if turn.key == active_turn_id:
+                continue
+            decision = self._prior_decision(turn, event, decided, boundary)
+            explicit = turn.key in explicit_keys
+            if decision is None and not explicit:
+                continue
+            window.append(_WindowTurn(turn=turn, decision=decision, explicit=explicit))
+        for entry in window:
+            if entry.decision is not None:
+                entry.rendered = await self._render_turn(entry.turn, entry.decision)
+
+        reason = context_length_target and CompactionReason.CONTEXT_LENGTH
+        reason = reason or self._trigger(
+            window, limits=limits, now=now, truncated=truncated
+        )
+        compaction: CompactionReason | None = None
+        active_strip_through = (
+            boundary
+            if event is not None
+            and event.changed
+            and active_turn_id is not None
+            and event.active_turn_key == active_turn_id
+            else None
+        )
+        if reason is not None:
+            new_boundary = max(
+                (
+                    int(row.internal_id)
+                    for row in (
+                        *uncovered_rows,
+                        *decided_rows,
+                        *explicit_rows,
+                        *active_rows,
+                    )
+                ),
+                default=boundary,
+            )
+            plan = await self._compact(
+                db,
+                window,
+                scope=scope,
+                limits=limits,
+                now=now,
+                reason=reason,
+                boundary=new_boundary,
+                active_turn_id=active_turn_id,
+                active_rows=active_rows,
+                record=record,
+                target_chars=(
+                    context_length_target
+                    if context_length_target is not None
+                    else int(limits.budget_chars * COMPACTION_TARGET_RATIO)
+                ),
+            )
+            for entry in window:
+                entry.decision = plan.decisions.get(entry.turn.key)
+                if entry.decision is not None:
+                    entry.rendered = await self._render_turn(entry.turn, entry.decision)
+            if plan.changed:
+                active_strip_through = new_boundary
+            compaction = reason
+
+        kept = [entry for entry in window if entry.decision is not None]
+        active_turn = group_turns(active_rows)
+        active_messages = (
+            await self._render_verbatim(active_turn[0], active_strip_through)
+            if active_turn
+            else []
         )
         return HistoryWindow(
-            turns=tuple(kept),
-            messages=[message for turn in kept for message in rendered[turn.key]],
+            turns=tuple(entry.turn for entry in kept),
+            messages=[message for entry in kept for message in entry.rendered],
             active_messages=active_messages,
+            compaction=compaction,
         )
+
+    @staticmethod
+    def _prior_decision(
+        turn: HistoryTurn,
+        event: CompactionEvent | None,
+        decided: dict[str, TurnDecision],
+        boundary: int,
+    ) -> TurnDecision | None:
+        """How the turn rendered before this load; ``None`` if it was dropped."""
+        if event is None:
+            return VERBATIM
+        if turn.key == event.active_turn_key:
+            return TurnDecision(
+                TurnMode.VERBATIM, strip_through=boundary if event.changed else None
+            )
+        if turn.first_internal_id > boundary:
+            return VERBATIM
+        return decided.get(turn.key)
+
+    @staticmethod
+    def _trigger(
+        window: Sequence[_WindowTurn],
+        *,
+        limits: HistoryLimits,
+        now: datetime,
+        truncated: bool,
+    ) -> CompactionReason | None:
+        """Why the window has to change at this request, or ``None``."""
+        in_window = [entry for entry in window if entry.decision is not None]
+        if any(entry.decision is None for entry in window):
+            return CompactionReason.REFERENCE
+        cutoff = now - limits.max_age
+        if any(
+            entry.turn.last_activity < cutoff and not entry.explicit
+            for entry in in_window
+        ):
+            return CompactionReason.AGE
+        size = sum(messages_size(entry.rendered) for entry in in_window)
+        if truncated or size > limits.budget_chars:
+            return CompactionReason.BUDGET
+        if (
+            limits.idle_gap is not None
+            and in_window
+            and now - max(entry.turn.last_activity for entry in in_window)
+            > limits.idle_gap
+        ):
+            return CompactionReason.IDLE
+        return None
+
+    async def _compact(
+        self,
+        db: Database,
+        window: Sequence[_WindowTurn],
+        *,
+        scope: HistoryScope,
+        limits: HistoryLimits,
+        now: datetime,
+        reason: CompactionReason,
+        boundary: int,
+        active_turn_id: str | None,
+        active_rows: Sequence[MessageWithMetadata],
+        target_chars: int,
+        record: bool,
+    ) -> CompactionPlan:
+        capabilities = await self._capabilities()
+        candidates: list[CompactionCandidate] = []
+        for entry in window:
+            verbatim = (
+                entry.rendered
+                if entry.decision is not None
+                and entry.decision.mode is TurnMode.VERBATIM
+                else await self._render_verbatim(entry.turn, None)
+            )
+            compacted_size = (
+                messages_size(render_compacted_turn(entry.turn.rows, self._timezone))
+                if can_compact(entry.turn.rows, capabilities)
+                else None
+            )
+            candidates.append(
+                CompactionCandidate(
+                    key=entry.turn.key,
+                    last_activity=entry.turn.last_activity,
+                    verbatim_size=messages_size(verbatim),
+                    compacted_size=compacted_size,
+                    previous=entry.decision,
+                    explicit=entry.explicit,
+                )
+            )
+        cutoff = now - limits.max_age
+        details: dict[str, object] = {
+            "target_chars": target_chars,
+            "budget_chars": limits.budget_chars,
+            "size_before": sum(
+                messages_size(entry.rendered)
+                for entry in window
+                if entry.decision is not None
+            ),
+        }
+        plan = plan_compaction(
+            candidates,
+            target_chars=target_chars,
+            min_turns=limits.min_turns,
+            cutoff=cutoff,
+            boundary_internal_id=boundary,
+        )
+        details["size_after"] = sum(
+            c.compacted_size
+            if plan.decisions[c.key].mode is TurnMode.COMPACTED
+            and c.compacted_size is not None
+            else c.verbatim_size
+            for c in candidates
+            if c.key in plan.decisions
+        )
+        if not record:
+            return plan
+        await db.history_compaction.record(
+            scope,
+            now=now,
+            boundary_internal_id=boundary,
+            active_turn_key=active_turn_id,
+            reason=reason.value,
+            decisions=plan.decisions,
+            changed=plan.changed,
+            details=details,
+        )
+        logger.info(
+            "History compaction (%s) for %s/%s on %s: %d of %d turns kept, "
+            "%s -> %s chars, changed=%s",
+            reason.value,
+            scope.interface_type,
+            scope.conversation_id,
+            scope.processing_profile_id,
+            len(plan.decisions),
+            len(candidates),
+            details["size_before"],
+            details["size_after"],
+            plan.changed,
+        )
+        return plan

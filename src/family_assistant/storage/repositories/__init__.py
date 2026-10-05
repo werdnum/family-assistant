@@ -11,6 +11,7 @@ from .delegation_runs import DelegationRunsRepository
 from .email import EmailRepository
 from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
+from .history_compaction import HistoryCompactionRepository
 from .ios_push_token import IosPushTokenRepository
 from .memory_change_log import MemoryChangeLogRepository
 from .memory_review import MemoryReviewRepository
@@ -38,6 +39,7 @@ __all__ = [
     "EmailRepository",
     "ErrorLogsRepository",
     "EventsRepository",
+    "HistoryCompactionRepository",
     "IosPushTokenRepository",
     "MemoryChangeLogRepository",
     "MemoryReviewRepository",

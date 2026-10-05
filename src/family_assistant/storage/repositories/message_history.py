@@ -1601,16 +1601,16 @@ class MessageHistoryRepository(BaseRepository):
         conversation_id: str,
         processing_profile_id: str,
         subconversation_id: str | None,
-        since: datetime,
+        after_internal_id: int,
         row_limit: int,
         exclude_turn_id: str | None = None,
     ) -> list[MessageWithMetadata]:
-        """The rows of every turn with activity since ``since``, whole.
+        """The rows of every turn written after ``after_internal_id``, whole.
 
-        The newest ``row_limit`` rows since the cutoff name the turns; each of
-        those turns is then read in full, including rows older than the cutoff
-        or beyond the limit, so no turn comes back split. Rows without a turn id
-        are turns of their own. Oldest first.
+        The newest ``row_limit`` such rows name the turns; each of those turns
+        is then read in full, including rows at or below the id or beyond the
+        limit, so no turn comes back split. Rows without a turn id are turns of
+        their own. Oldest first.
         """
         scope = [
             message_history_table.c.interface_type == interface_type,
@@ -1627,7 +1627,7 @@ class MessageHistoryRepository(BaseRepository):
             )
         newest = await self._db.fetch_all(
             select(message_history_table)
-            .where(*scope, message_history_table.c.timestamp >= since)
+            .where(*scope, message_history_table.c.internal_id > after_internal_id)
             .order_by(
                 message_history_table.c.timestamp.desc(),
                 message_history_table.c.internal_id.desc(),

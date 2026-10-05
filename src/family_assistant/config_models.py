@@ -445,6 +445,11 @@ class ProcessingConfig(BaseModel):
     web_history_budget_chars: int | None = None
     web_history_min_turns: int | None = None
     web_history_max_age_hours: float | None = None
+    # The first message after this much quiet is a compaction event. Provider
+    # caches have expired by then, so re-deciding the window costs nothing
+    # extra. None disables idle events.
+    history_idle_gap_minutes: float | None = None
+    web_history_idle_gap_minutes: float | None = None
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'anthropic'
     retry_config: RetryConfig | None = None
@@ -502,7 +507,6 @@ class ProcessingConfig(BaseModel):
     taint_sink_class: SinkClass | None = None
 
     max_iterations: int = 5
-    context_pruning_min_turns: int = 3
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
     greeting_wav_path: str | None = None
     default_note_visibility_labels: list[str] | None = None

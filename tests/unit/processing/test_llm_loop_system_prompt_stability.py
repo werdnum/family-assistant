@@ -9,6 +9,7 @@ call. These tests pin the prompt as byte-stable across iterations.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -18,9 +19,10 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.base import ContextLengthError
-from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult
@@ -304,7 +306,7 @@ async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
 
 
 class _ContextLimitOnceMockLLMClient(_SnapshottingMockLLMClient):
-    """Raises ContextLengthError once, then succeeds, to drive the pruning retry."""
+    """Raises ContextLengthError once, then succeeds, to drive the compaction retry."""
 
     def __init__(self) -> None:
         super().__init__(tool_call_rounds=0)
@@ -325,17 +327,35 @@ class _ContextLimitOnceMockLLMClient(_SnapshottingMockLLMClient):
 
 
 @pytest.mark.asyncio
-async def test_context_pruning_keeps_the_user_turn_not_the_scaffolding(
+async def test_context_compaction_keeps_the_turn_and_its_scaffolding(
     db_engine: AsyncEngine,
 ) -> None:
-    """The turn splitter starts a turn at every UserMessage, so the synthetic
-    final-iteration instruction must be excluded from pruning. At min_turns=1 it
-    would otherwise be the only turn kept, dropping the user's actual request."""
+    """The emergency compaction re-decides only the history window: the turn's
+    own request and the synthetic final-iteration instruction after it stay,
+    in order, while the earlier turn makes room."""
     llm_client = _ContextLimitOnceMockLLMClient()
     service = _make_service(llm_client, max_iterations=1)
-    service.llm_loop.config.context_pruning_min_turns = 1
-
+    service.service_config.history_min_turns = 0
     db_context = Database(db_engine)
+    empty = TurnTaintState.empty().to_metadata()
+    earlier_turn = str(uuid.uuid4())
+    for message in (
+        UserMessage(
+            content="An earlier request",
+            taint_metadata=empty,
+            authorship_taint_metadata=empty,
+        ),
+        AssistantMessage(content="An earlier answer " + "x" * 2_000),
+    ):
+        await db_context.message_history.add_message(
+            message,
+            interface_type="web",
+            conversation_id="cache-pruning",
+            timestamp=service.clock.now(),
+            turn_id=earlier_turn,
+            processing_profile_id="llm-loop-cache",
+        )
+
     await service.handle_chat_interaction(
         db_context=db_context,
         interface_type="web",
@@ -346,9 +366,10 @@ async def test_context_pruning_keeps_the_user_turn_not_the_scaffolding(
     )
 
     # The retry is the only recorded call: the first attempt raised.
-    assert llm_client.retry_messages, "pruning retry never happened"
+    assert llm_client.retry_messages, "compaction retry never happened"
     texts = [str(msg.content) for msg in llm_client.retry_messages]
+    assert not any("An earlier answer" in text for text in texts)
     assert any("Remember the milk" in text for text in texts), (
-        f"user request was pruned away, leaving only: {texts}"
+        f"user request was compacted away, leaving only: {texts}"
     )
     assert "final processing iteration" in texts[-1].lower()

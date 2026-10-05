@@ -131,6 +131,9 @@ async def initial_turn_taint(
         conversation_id=conversation_id,
         subconversation_id=None,
         active_turn_id=resumed_turn_id,
+        # The turn records any compaction this window needs when it starts; the
+        # taint read only has to see the window that will result.
+        record=False,
     )
     history_state = prompt_window_taint(window.messages)
     if resumed_turn_id is not None:

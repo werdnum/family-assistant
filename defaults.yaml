@@ -844,6 +844,9 @@ default_profile_settings:
     # Web-specific history settings for better conversation context
     web_history_budget_chars: 120000
     web_history_max_age_hours: 720 # 30 days
+    # Telegram conversations come in bursts; the first message after an hour's
+    # quiet re-decides the window while the provider cache is cold anyway.
+    history_idle_gap_minutes: 60
     max_iterations: 10 # Maximum number of tool call iterations
   tools_config:
     mcp_initialization_timeout_seconds: 60 # Default 1 minute

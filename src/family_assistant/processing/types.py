@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMStreamEvent
-    from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
+    from family_assistant.llm.messages import (
+        LLMMessage,
+        MessageReasoningInfo,
+        ToolMessage,
+    )
     from family_assistant.security.taint import SinkClass
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.tools.types import CalendarConfig
@@ -67,6 +71,8 @@ class ContextPreparerConfig(Protocol):
     web_history_budget_chars: int | None
     web_history_min_turns: int | None
     web_history_max_age_hours: float | None
+    history_idle_gap_minutes: float | None
+    web_history_idle_gap_minutes: float | None
 
 
 class ToolExecutorConfig(Protocol):
@@ -86,12 +92,24 @@ class ToolExecutorConfig(Protocol):
     calendar_config: CalendarConfig | None
 
 
+class ContextLengthCompactor(Protocol):
+    """Compacts the history window of a request a provider rejected as too long.
+
+    Returns the request to retry, or ``None`` when its history cannot get any
+    smaller. Built per turn by ProcessingService, which knows where the window
+    sits in the request and how to decide it again.
+    """
+
+    async def __call__(
+        self, messages: list[LLMMessage], /
+    ) -> list[LLMMessage] | None: ...
+
+
 class LLMStreamingLoopConfig(Protocol):
     """Config surface required by LLMStreamingLoop."""
 
     id: str
     max_iterations: int
-    context_pruning_min_turns: int
     tools_config: ToolsConfig
 
 
@@ -265,8 +283,9 @@ class ProcessingServiceConfig:
     web_history_budget_chars: int | None = None  # If None, uses history_budget_chars
     web_history_min_turns: int | None = None  # If None, uses history_min_turns
     web_history_max_age_hours: float | None = None  # Can be fractional
+    history_idle_gap_minutes: float | None = None
+    web_history_idle_gap_minutes: float | None = None
     max_iterations: int = 5
-    context_pruning_min_turns: int = 3
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
     required_note_read_labels: list[str] | None = None

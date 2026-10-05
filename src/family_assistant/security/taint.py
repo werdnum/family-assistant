@@ -2412,6 +2412,34 @@ def prompt_window_taint(messages: Sequence[object]) -> TurnTaintState:
     return state
 
 
+def introduced_taint_metadata(messages: Sequence[object]) -> TaintMetadata | None:
+    """One stamp introducing exactly what each of *messages* introduced.
+
+    For a single rendered message that stands in for several history rows, such
+    as a compacted turn: :func:`prompt_window_taint` reads it as contributing
+    the union of the rows' own contributions, so replacing the rows with it
+    neither launders nor adds taint. ``None`` when no row carries a stamp.
+    """
+    stamps = [
+        metadata
+        for message in messages
+        if (metadata := getattr(message, "taint_metadata", None)) is not None
+    ]
+    if not stamps:
+        return None
+    state = TurnTaintState.empty()
+    for metadata in stamps:
+        contribution = _row_window_contribution(metadata)
+        for source in contribution.sources:
+            state = state.add_source(source)
+        state = raise_taint_state_to(
+            state,
+            contribution.max_tier,
+            reason="A compacted history row introduced this tier.",
+        )
+    return state.to_metadata()
+
+
 def _row_window_contribution(metadata: object) -> TurnTaintState:
     """What one history row introduced, as an origin-free state."""
     if not isinstance(metadata, dict):

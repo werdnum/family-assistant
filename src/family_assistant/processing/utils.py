@@ -1,5 +1,4 @@
 import logging
-from collections.abc import Sequence
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.base import (
@@ -14,12 +13,8 @@ from family_assistant.llm.base import (
     ServiceUnavailableError,
 )
 from family_assistant.llm.messages import (
-    AssistantMessage,
-    LLMMessage,
     MessageAttachmentMetadata,
-    SystemMessage,
     TextContentPart,
-    ToolMessage,
     UserMessage,
 )
 
@@ -61,97 +56,6 @@ _NORMALIZED_ERROR_TYPE_TO_EXCEPTION: dict[str, type[LLMProviderError]] = {
 def _normalize_error_type(error_type: str) -> str:
     """Normalize provider error type values to a consistent lookup key."""
     return "".join(char for char in error_type.lower() if char.isalnum())
-
-
-def prune_messages_for_context(
-    messages: Sequence[LLMMessage],
-    *,
-    min_turns: int = 3,
-) -> list[LLMMessage]:
-    """Prune messages to reduce context length.
-
-    Strategy:
-    1. Replace old ToolMessage content with compact placeholders (preserving the
-       latest turn's tool results intact).
-    2. Drop the oldest non-system turns when there are more than ``min_turns``
-       user/assistant turns, keeping only the most recent ``min_turns`` turns
-       and all system messages.
-
-    Returns a new list; the input list is not modified.
-    """
-    # --- Step 1: identify tool_call_ids from the latest assistant tool-call block ---
-    # Find the most recent AssistantMessage that issued tool calls,
-    # even if the message list ends with a UserMessage.
-    last_turn_tool_ids: set[str] = set()
-    for msg in reversed(messages):
-        if isinstance(msg, AssistantMessage) and msg.tool_calls:
-            last_turn_tool_ids.update(tc.id for tc in msg.tool_calls)
-            # We've found the latest assistant tool-call block; stop scanning.
-            break
-
-    # Replace old tool results with compact placeholders
-    pruned: list[LLMMessage] = []
-    total_before = 0
-    total_after = 0
-    for msg in messages:
-        if isinstance(msg, ToolMessage):
-            original_size = len(msg.content)
-            placeholder = f"[Tool result truncated — originally {original_size} chars]"
-
-            if (
-                msg.tool_call_id not in last_turn_tool_ids
-                and original_size > len(placeholder)
-                and not msg.content.startswith("[Tool result truncated")
-            ):
-                total_before += original_size
-                total_after += len(placeholder)
-                pruned.append(msg.model_copy(update={"content": placeholder}))
-            else:
-                total_before += original_size
-                total_after += original_size
-                pruned.append(msg)
-        else:
-            pruned.append(msg)
-
-    if total_before > 0 and (total_before - total_after) > total_before * 0.3:
-        logger.info(
-            "Context pruning: truncated old tool results "
-            f"({total_before} -> {total_after} chars)"
-        )
-
-    # --- Step 2: drop oldest non-system turns ---
-    # Identify turn boundaries: a "turn" starts with a UserMessage
-    system_messages: list[LLMMessage] = []
-    turns: list[list[LLMMessage]] = []
-    current_turn: list[LLMMessage] = []
-
-    for msg in pruned:
-        if isinstance(msg, SystemMessage):
-            system_messages.append(msg)
-            continue
-        if isinstance(msg, UserMessage) and current_turn:
-            turns.append(current_turn)
-            current_turn = []
-        current_turn.append(msg)
-    if current_turn:
-        turns.append(current_turn)
-
-    if min_turns < 1:
-        raise ValueError("min_turns must be >= 1")
-
-    if len(turns) > min_turns:
-        kept_turns = turns[-min_turns:]
-        dropped = len(turns) - min_turns
-        logger.info(
-            f"Context pruning: dropped {dropped} oldest turns, "
-            f"keeping {min_turns} most recent"
-        )
-        result: list[LLMMessage] = list(system_messages)
-        for turn in kept_turns:
-            result.extend(turn)
-        return result
-
-    return pruned
 
 
 def _user_friendly_error_message(exc: Exception) -> str:
