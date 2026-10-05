@@ -3324,6 +3324,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
             for message in messages
             for tool_call in getattr(message, "tool_calls", None) or ()
         ]
+        if not tool_call_ids:
+            return ()
         rows = await context.db_context.confirmation_requests.list_human_decisions_for_tool_calls(
             tool_call_ids=tool_call_ids,
             interface_type=context.interface_type,
