@@ -326,7 +326,7 @@ async def test_end_to_end_event_listener_wakes_llm(
         return ProcessingServiceConfig(
             prompts={"system_prompt": "Test system prompt"},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=24,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

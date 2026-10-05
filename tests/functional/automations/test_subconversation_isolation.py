@@ -108,7 +108,7 @@ def primary_service_config(dummy_prompts: dict[str, str]) -> ProcessingServiceCo
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
@@ -121,7 +121,7 @@ def delegated_service_config(dummy_prompts: dict[str, str]) -> ProcessingService
     return ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
@@ -378,7 +378,9 @@ async def test_async_delegation_completion_wakes_source_profile_with_history(
     delegated_service_config: ProcessingServiceConfig,
 ) -> None:
     """Async delegation completion wakes the source profile through durable history."""
-    source_service_config = replace(primary_service_config, max_history_messages=1)
+    source_service_config = replace(
+        primary_service_config, history_budget_chars=0, history_min_turns=0
+    )
     source_tools_provider = create_tools_provider(source_service_config.tools_config)
     target_tools_provider = create_tools_provider(delegated_service_config.tools_config)
     await source_tools_provider.get_tool_definitions()
@@ -704,7 +706,7 @@ async def test_nested_async_delegation_result_returns_through_its_parent_run(
     nested_service_config = ProcessingServiceConfig(
         prompts=dummy_prompts,
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(delegate_handoff_after_seconds=60.0),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,

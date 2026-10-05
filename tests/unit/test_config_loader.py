@@ -505,7 +505,7 @@ class TestNestedConfigPartialOverride:
                 "default_profile_settings": {
                     "processing_config": {
                         "timezone": "UTC",
-                        "max_history_messages": 10,
+                        "history_budget_chars": 100_000,
                         "max_iterations": 5,
                     }
                 }
@@ -526,7 +526,7 @@ class TestNestedConfigPartialOverride:
         result = source()
         pc = result["default_profile_settings"]["processing_config"]
         assert pc["timezone"] == "America/New_York"
-        assert pc["max_history_messages"] == 10
+        assert pc["history_budget_chars"] == 100_000
         assert pc["max_iterations"] == 5
 
 
@@ -929,6 +929,30 @@ class TestResolveServiceProfile:
         assert result["processing_config"]["llm_model"] == "custom-model"
         # Timezone should still be from defaults
         assert result["processing_config"]["timezone"] == "UTC"
+
+    @pytest.mark.parametrize(
+        ("key", "default_value", "override"),
+        [
+            ("history_budget_chars", 100_000, 0),
+            ("history_min_turns", 2, 0),
+            ("web_history_budget_chars", 200_000, 0),
+            ("web_history_min_turns", 4, 0),
+        ],
+    )
+    def test_history_window_settings_are_overridable(
+        self, key: str, default_value: int, override: int
+    ) -> None:
+        """Profile history settings override inherited defaults, including zero."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {key: default_value},
+            "tools_config": {},
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {key: override},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"][key] == override
 
     def test_declared_model_drops_inherited_retry_config(self) -> None:
         """A profile declaring its own model must not inherit the default retry chain."""

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import traceback
@@ -37,6 +36,10 @@ from family_assistant.llm.model_selection import (
     stamp_model_selection,
 )
 from family_assistant.observability.metrics import record_model_routing
+from family_assistant.processing.history_window import (
+    HistoryWindow,
+    HistoryWindowLoader,
+)
 from family_assistant.processing.protocol import TaintedSinkRefusedError
 from family_assistant.security.taint import (
     TaintPolicyConfig,
@@ -326,6 +329,7 @@ class ProcessingService:
         self.context_preparer = ContextPreparer(
             context_providers, service_config, self.clock
         )
+        self.history_loader = HistoryWindowLoader(self.context_preparer.format_history)
         self.tool_executor = ToolExecutor(
             tools_provider,
             service_config,
@@ -865,7 +869,9 @@ class ProcessingService:
         """
         if router.history_messages <= 0:
             return []
-        _, history_max_age = self.context_preparer.get_history_limits(interface_type)
+        history_max_age = self.context_preparer.get_history_limits(
+            interface_type
+        ).max_age
         return await db_context.message_history.get_recent(
             interface_type=interface_type,
             conversation_id=conversation_id,
@@ -943,6 +949,35 @@ class ProcessingService:
             return "[Media Attached]"
         return ""
 
+    async def load_history_window(
+        self,
+        db_context: Database,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        active_turn_id: str | None,
+        thread_root_id: int | None = None,
+        referenced_row_ids: Sequence[int] = (),
+    ) -> HistoryWindow:
+        """The history window a request on this conversation is built from.
+
+        The one loader for every path that needs to know what is in the prompt,
+        the turn itself and the web producer's taint alike.
+        """
+        return await self.history_loader.load(
+            db_context,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            limits=self.context_preparer.get_history_limits(interface_type),
+            now=self.clock.now(),
+            active_turn_id=active_turn_id,
+            thread_root_id=thread_root_id,
+            referenced_row_ids=referenced_row_ids,
+        )
+
     async def _build_initial_messages_for_llm(
         self,
         db_context: Database,
@@ -953,71 +988,51 @@ class ProcessingService:
         subconversation_id: str | None,
         *,
         acting_user_id: str | None,
-        resume_turn_id: str | None = None,
+        turn_id: str,
+        resume: bool = False,
+        pinned_history_message_ids: Sequence[int] = (),
     ) -> tuple[list[LLMMessage], str, LLMMessage | None]:
-        """Load history and optional full-thread context for LLM processing.
+        """Load the history window and the turn's own rows for LLM processing.
 
-        ``resume_turn_id`` names a turn being resumed. The history window
-        bounds what came before it, but the turn itself is replayed whole: a
-        long tool loop can outgrow the window, and losing its opening rows
-        would resume the turn without the request it is answering. The third
-        element is that turn's opening message as it appears in the returned
-        history, so the caller can put the turn's scaffolding back beside it.
+        The turn itself -- its prompt and, when ``resume`` continues an
+        interrupted run, every row that run produced -- is replayed whole after
+        the window. The third element is that turn's opening message on a
+        resume, so the caller can put the turn's scaffolding back beside it.
+
+        A reply to a thread brings the thread's turns, and the message replied
+        to, into the window; pinned rows come in the same way.
         """
-        history_limit, history_max_age = self.context_preparer.get_history_limits(
-            interface_type
-        )
-        raw_history_messages = await db_context.message_history.get_recent(
+        referenced_row_ids = list(pinned_history_message_ids)
+        is_thread_reply = bool(replied_to_interface_id and thread_root_id_for_turn)
+        if is_thread_reply and replied_to_interface_id is not None:
+            replied_to_row = await db_context.message_history.get_row_by_interface_id(
+                interface_type=interface_type,
+                interface_message_id=replied_to_interface_id,
+            )
+            if replied_to_row is not None:
+                referenced_row_ids.append(replied_to_row["internal_id"])
+        window = await self.load_history_window(
+            db_context,
             interface_type=interface_type,
             conversation_id=conversation_id,
-            limit=history_limit,
-            max_age=history_max_age,
-            processing_profile_id=self.service_config.id,
             subconversation_id=subconversation_id,
-            current_time=self.clock.now(),
-            exclude_turn_id=resume_turn_id,
+            active_turn_id=turn_id,
+            thread_root_id=thread_root_id_for_turn if is_thread_reply else None,
+            referenced_row_ids=referenced_row_ids,
         )
-        resumed_turn_messages = (
-            await db_context.message_history.get_by_turn_id(resume_turn_id)
-            if resume_turn_id is not None
-            else []
-        )
-        logger.debug("Raw history messages fetched (%d).", len(raw_history_messages))
-
-        initial_messages_for_llm = await self.context_preparer.format_history(
-            raw_history_messages
-        )
-        resumed_turn_opening: LLMMessage | None = None
-        if resumed_turn_messages:
-            formatted_turn = await self.context_preparer.format_history(
-                resumed_turn_messages
-            )
-            resumed_turn_opening = formatted_turn[0] if formatted_turn else None
-            initial_messages_for_llm.extend(formatted_turn)
         logger.debug(
-            "Initial messages for LLM after formatting history (%d).",
-            len(initial_messages_for_llm),
+            "History window: %d turns, %d messages, %d active-turn messages.",
+            len(window.turns),
+            len(window.messages),
+            len(window.active_messages),
+        )
+        initial_messages_for_llm = [*window.messages, *window.active_messages]
+        resumed_turn_opening = (
+            window.active_messages[0] if resume and window.active_messages else None
         )
 
         thread_attachments_context = ""
-        if replied_to_interface_id and thread_root_id_for_turn:
-            logger.info(
-                "Fetching full thread history for root ID %s due to reply.",
-                thread_root_id_for_turn,
-            )
-            full_thread_messages = await db_context.message_history.get_by_thread_id(
-                thread_root_id=thread_root_id_for_turn,
-                processing_profile_id=None,
-                subconversation_id=subconversation_id,
-            )
-            initial_messages_for_llm = await self.context_preparer.format_history(
-                full_thread_messages
-            )
-            logger.info(
-                "Using %d messages from full thread history for LLM context.",
-                len(initial_messages_for_llm),
-            )
-
+        if is_thread_reply:
             thread_attachments_context = (
                 await self.attachment_processor.extract_conversation_context(
                     db_context,
@@ -1037,45 +1052,6 @@ class ProcessingService:
             thread_attachments_context,
             resumed_turn_opening,
         )
-
-    async def _append_missing_pinned_history_messages(
-        self,
-        db_context: Database,
-        messages_for_llm: list[LLMMessage],
-        pinned_history_message_ids: list[int] | None,
-    ) -> None:
-        """Append required rows that history limits may have excluded."""
-        if not pinned_history_message_ids:
-            return
-
-        pinned_messages = await db_context.message_history.get_by_internal_ids(
-            tuple(pinned_history_message_ids)
-        )
-        pinned_messages_for_llm = await self.context_preparer.format_history(
-            pinned_messages
-        )
-        existing_keys = {
-            (message.role, self._message_content_key(message))
-            for message in messages_for_llm
-        }
-        for pinned_message in pinned_messages_for_llm:
-            pinned_key = (
-                pinned_message.role,
-                self._message_content_key(pinned_message),
-            )
-            if pinned_key not in existing_keys:
-                messages_for_llm.append(pinned_message)
-                existing_keys.add(pinned_key)
-
-    @staticmethod
-    def _message_content_key(message: LLMMessage) -> str:
-        """Return a stable content key for duplicate detection."""
-        content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content
-        if content is None:
-            return ""
-        return json.dumps(content, default=str, sort_keys=True)
 
     @staticmethod
     def _prune_leading_invalid_messages(messages_for_llm: list[LLMMessage]) -> int:
@@ -1711,7 +1687,9 @@ class ProcessingService:
             thread_root_id_for_turn=thread_root_id_for_turn,
             subconversation_id=subconversation_id,
             acting_user_id=user_id,
-            resume_turn_id=turn_id if resume else None,
+            turn_id=turn_id,
+            resume=resume,
+            pinned_history_message_ids=pinned_history_message_ids or (),
         )
         if trigger_role == "system" and is_delegation_wake_trigger(
             user_content_for_history
@@ -1720,11 +1698,6 @@ class ProcessingService:
                 messages_for_llm,
                 user_content_for_history,
             )
-        await self._append_missing_pinned_history_messages(
-            db_context,
-            messages_for_llm,
-            pinned_history_message_ids,
-        )
         pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
         if pruned_count > 0:
             logger.warning("Pruned %d leading messages from LLM history.", pruned_count)

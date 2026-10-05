@@ -11,6 +11,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.processing.history_window import HistoryLimits
 from family_assistant.processing.message_time import with_sent_at
 from family_assistant.processing.types import ContextPreparerConfig
 from family_assistant.security.taint import TaintSource
@@ -18,6 +19,13 @@ from family_assistant.utils.clock import Clock
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _one_line(text: str | None) -> str:
+    """The first non-blank line of *text*."""
+    return next(
+        (line.strip() for line in (text or "").splitlines() if line.strip()), ""
+    )
 
 
 class ContextPreparer:
@@ -41,32 +49,35 @@ class ContextPreparer:
         self.config = config
         self.clock = clock
 
-    def get_history_limits(self, interface_type: str) -> tuple[int, timedelta]:
-        """Get history limits based on interface type.
+    def get_history_limits(self, interface_type: str) -> HistoryLimits:
+        """The history window's limits on this interface.
 
-        Args:
-            interface_type: The type of interface (e.g., "web", "telegram", "api")
-
-        Returns:
-            Tuple of (max_messages, max_age_timedelta)
+        The web interface uses its ``web_`` settings where they are set.
         """
+        config = self.config
         if interface_type == "web":
-            # Use web-specific setting if available, otherwise fall back to default
-            web_max_messages = (
-                self.config.web_max_history_messages
-                if self.config.web_max_history_messages is not None
-                else self.config.max_history_messages
+            return HistoryLimits(
+                budget_chars=(
+                    config.web_history_budget_chars
+                    if config.web_history_budget_chars is not None
+                    else config.history_budget_chars
+                ),
+                min_turns=(
+                    config.web_history_min_turns
+                    if config.web_history_min_turns is not None
+                    else config.history_min_turns
+                ),
+                max_age=timedelta(
+                    hours=config.web_history_max_age_hours
+                    if config.web_history_max_age_hours is not None
+                    else config.history_max_age_hours
+                ),
             )
-            web_max_age = (
-                self.config.web_history_max_age_hours
-                if self.config.web_history_max_age_hours is not None
-                else self.config.history_max_age_hours
-            )
-            return web_max_messages, timedelta(hours=web_max_age)
-        else:
-            return self.config.max_history_messages, timedelta(
-                hours=self.config.history_max_age_hours
-            )
+        return HistoryLimits(
+            budget_chars=config.history_budget_chars,
+            min_turns=config.history_min_turns,
+            max_age=timedelta(hours=config.history_max_age_hours),
+        )
 
     def prepend_profile_preamble(self, system_prompt: str) -> str:
         """Prepend a profile-identification header to *system_prompt*.
@@ -175,11 +186,14 @@ class ContextPreparer:
                     )
                     # Skip adding malformed tool message to history to avoid LLM errors
             elif isinstance(msg, ErrorMessage):
-                # Include error messages as assistant messages so LLM knows it responded
-                error_content = f"I encountered an error: {msg.content}"
-                if msg.error_traceback:
-                    error_content += f"\n\nError details: {msg.error_traceback}"
-                messages.append(AssistantMessage(content=error_content))
+                # An assistant message, so the model knows it responded, and one
+                # line: a replayed traceback costs every later request its size
+                # and tells the model nothing it can act on.
+                messages.append(
+                    AssistantMessage(
+                        content=f"I encountered an error: {_one_line(msg.content)}"
+                    )
+                )
             elif isinstance(msg, UserMessage):
                 messages.append(with_sent_at(msg, self.config.timezone))
             else:

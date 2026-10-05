@@ -68,7 +68,8 @@ async def test_message_history_includes_most_recent_when_limited(
     fixture = telegram_handler_fixture
 
     # Configure the processing service to have a very small history limit
-    fixture.processing_service.service_config.max_history_messages = 3
+    fixture.processing_service.service_config.history_budget_chars = 0
+    fixture.processing_service.service_config.history_min_turns = 1
 
     # Simulate a conversation with multiple back-and-forth messages
     chat_id = 123
@@ -156,7 +157,7 @@ async def test_message_history_includes_most_recent_when_limited(
     await wait_for_bot_response(fixture.telegram_client)
 
     # Now send a new unrelated request
-    # With max_history_messages=3, it should include the 3 most recent messages
+    # With a zero budget and one minimum turn, keep the last complete exchange
     # and the assistant should "remember" the completed task
     update4 = create_mock_update(
         "New unrelated request", chat_id=chat_id, message_id=107
@@ -195,7 +196,8 @@ async def test_reminder_after_completed_conversation(
     fixture = telegram_handler_fixture
 
     # Configure small history limit
-    fixture.processing_service.service_config.max_history_messages = 3
+    fixture.processing_service.service_config.history_budget_chars = 0
+    fixture.processing_service.service_config.history_min_turns = 1
 
     chat_id = 123
     user_id = 12345
@@ -203,7 +205,7 @@ async def test_reminder_after_completed_conversation(
 
     # Captures the exact message list the LLM receives for the reminder turn,
     # so the test can verify the older note conversation was actually dropped
-    # by max_history_messages rather than assuming it from a canned reply.
+    # by the history window rather than assuming it from a canned reply.
     reminder_turn_messages: list[Any] = []
 
     # Set up dynamic LLM response
@@ -295,10 +297,8 @@ async def test_reminder_after_completed_conversation(
     )
 
     # Verify the messages actually sent to the LLM for the reminder turn were
-    # truncated by max_history_messages=3: with 5 prior messages (2 note-related
-    # exchanges) and the reminder trigger itself, only the last 3 fit, so the
-    # oldest exchange -- the user's "clobbered" complaint and its reply -- must
-    # be gone, not merely absent from the mock's canned reply text.
+    # limited to the newest complete turn: the older complaint and its reply
+    # must be gone, while the entire note update remains.
     assert reminder_turn_messages, "Expected the reminder turn to reach the LLM"
     history_text = " ".join(
         extract_text_from_content(msg.content)

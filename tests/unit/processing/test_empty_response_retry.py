@@ -38,7 +38,7 @@ def _make_service(llm_client: RuleBasedMockLLMClient) -> ProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a helpful assistant."},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,

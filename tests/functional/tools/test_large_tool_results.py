@@ -52,7 +52,7 @@ async def test_large_tool_result_auto_attachment(
     config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
@@ -306,7 +306,7 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
     service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
@@ -437,7 +437,7 @@ async def test_large_result_attachment_not_sent_with_response(
     service_config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
@@ -562,7 +562,7 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
     config = ProcessingServiceConfig(
         prompts={},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=1.0,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,

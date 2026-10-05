@@ -97,7 +97,7 @@ async def test_profiles_api_does_not_fallback_to_all_mcp_servers_when_none_visib
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -137,7 +137,7 @@ def _make_service(profile_id: str, *, user_selectable: bool) -> ProcessingServic
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

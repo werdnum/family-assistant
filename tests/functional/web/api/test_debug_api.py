@@ -505,7 +505,7 @@ async def test_dump_profiles_reflects_resolved_defaults(
         "default_profile_settings": {
             "processing_config": {
                 "timezone": "Australia/Sydney",
-                "max_history_messages": 11,
+                "history_budget_chars": 100_000,
                 "history_max_age_hours": 48.0,
                 "llm_model": "gemini/default-model",
             },
@@ -537,7 +537,7 @@ async def test_dump_profiles_reflects_resolved_defaults(
         # definition, so the endpoint only surfaces them if it emits the
         # already-merged ServiceProfile (as production does).
         assert processing["timezone"] == "Australia/Sydney"
-        assert processing["max_history_messages"] == 11
+        assert processing["history_budget_chars"] == 100_000
         assert processing["history_max_age_hours"] == 48.0
         assert processing["llm_model"] == "gemini/default-model"
         assert profile_config["tools_config"]["confirmation_timeout_seconds"] == 120.0

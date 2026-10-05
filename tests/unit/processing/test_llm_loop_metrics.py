@@ -65,7 +65,7 @@ def _make_service(llm_client: ProfileRecordingLLMClient) -> ProcessingService:
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.BLOCKED,

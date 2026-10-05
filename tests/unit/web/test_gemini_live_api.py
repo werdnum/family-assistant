@@ -161,7 +161,7 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a voice assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -236,7 +236,7 @@ async def test_ephemeral_token_builds_context_for_the_signed_in_user(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a voice assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -272,7 +272,7 @@ def _voice_processing_service(profile_id: str) -> ProcessingService:
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a voice assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -385,7 +385,7 @@ async def test_ephemeral_token_declares_meta_tools_for_on_demand_tools(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a voice assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
@@ -444,7 +444,7 @@ async def test_ephemeral_token_declares_everything_when_on_demand_is_off(
         service_config=ProcessingServiceConfig(
             prompts={"system_prompt": "You are a voice assistant."},
             timezone=ZoneInfo("UTC"),
-            max_history_messages=5,
+            history_budget_chars=100_000,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,

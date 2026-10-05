@@ -268,7 +268,7 @@ async def test_attachment_context_extraction(db_engine: AsyncEngine) -> None:
             "thread_attachments_context_header": "Recent Attachments in Conversation:\n{attachments_list}"
         },
         timezone=ZoneInfo("UTC"),
-        max_history_messages=10,
+        history_budget_chars=100_000,
         history_max_age_hours=2,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.BLOCKED,

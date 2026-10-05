@@ -58,7 +58,7 @@ def _assistant(engine: AsyncEngine, llm: RuleBasedMockLLMClient) -> ProcessingSe
         id="default_assistant",
         prompts={"system_prompt": "You are the household assistant."},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=20,
+        history_budget_chars=100_000,
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.BLOCKED,

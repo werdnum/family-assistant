@@ -141,7 +141,7 @@ async def llm_integration_processing_service(
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a helpful assistant."},
         timezone=ZoneInfo("UTC"),
-        max_history_messages=20,
+        history_budget_chars=100_000,
         history_max_age_hours=72,
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         tools_config=ToolsConfig(),
