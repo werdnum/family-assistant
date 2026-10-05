@@ -153,18 +153,18 @@ def select_turns(
     not count against it, so the window does not depend on how far a turn has
     run.
     """
-    total = sum(sizes[turn.key] for turn in turns if turn.key in mandatory)
-    kept: set[str] = set(mandatory)
-    taken = 0
+    newest = {turn.key for turn in turns[len(turns) - limits.min_turns :]}
+    if limits.min_turns <= 0:
+        newest = set()
+    kept: set[str] = set(mandatory) | newest
+    total = sum(sizes[key] for key in kept)
     for turn in reversed(turns):
-        if turn.key in mandatory:
+        if turn.key in kept:
             continue
-        size = sizes[turn.key]
-        if taken >= limits.min_turns and total + size > limits.budget_chars:
+        if total + sizes[turn.key] > limits.budget_chars:
             break
         kept.add(turn.key)
-        total += size
-        taken += 1
+        total += sizes[turn.key]
     return [turn for turn in turns if turn.key in kept]
 
 

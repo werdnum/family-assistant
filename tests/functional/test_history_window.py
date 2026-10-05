@@ -326,3 +326,28 @@ async def test_a_thread_reply_loads_the_thread_on_this_profile_only(
     assert "Thread opener" in text
     assert "Opener answer" in text
     assert "Other profile" not in text
+
+
+@pytest.mark.asyncio
+async def test_thread_turns_count_toward_the_minimum(
+    db_engine: AsyncEngine, mock_clock: MockClock
+) -> None:
+    db = Database(db_engine)
+    await _seed_turn(db, mock_clock, "Unrelated big request", "z" * 5_000)
+    root = await _seed_turn(
+        db, mock_clock, "Thread opener", "Opener answer", interface_message_id="tg-2"
+    )
+    await _seed_turn(
+        db, mock_clock, "Thread follow-up", "Follow-up answer", thread_root_id=root
+    )
+    recorder = _Recorder()
+    await _run(
+        _service(mock_clock, recorder, budget_chars=500, min_turns=2),
+        db,
+        "Replying",
+        replied_to_interface_id="tg-2",
+    )
+
+    text = _texts(recorder.requests[0])
+    assert "Thread follow-up" in text
+    assert "Unrelated big request" not in text
