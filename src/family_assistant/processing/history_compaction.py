@@ -44,8 +44,10 @@ if TYPE_CHECKING:
 COMPACTION_TARGET_RATIO = 0.5
 
 HISTORY_TOOL_NAME = "get_message_history"
-# Tools that can read an attachment the prompt only names by id.
-ATTACHMENT_TOOL_NAMES = frozenset({"read_text_attachment", "get_attachment_info"})
+# Tools that can look at an image again from its id. Only a delegation passing
+# attachment_ids reaches a model that reads media; read_text_attachment decodes
+# text and get_attachment_info returns metadata, so neither recovers an image.
+MEDIA_TOOL_NAMES = frozenset({"delegate_to_service"})
 
 
 class CompactionReason(StrEnum):
@@ -66,13 +68,13 @@ class CompactionCapabilities:
     """Which references a compacted turn may leave for this profile.
 
     A stub is only useful to a model that can follow it: a tool stub needs
-    ``get_message_history``, an attachment reference a tool that reads
-    attachments. A turn that would need a reference the profile cannot follow
-    is kept verbatim or dropped whole.
+    ``get_message_history``, an image reference a way to look at the image
+    again. A turn that would need a reference the profile cannot follow is
+    kept verbatim or dropped whole.
     """
 
     history_tool: bool
-    attachment_tool: bool
+    media_tool: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +223,10 @@ def _attachment_reference(attachment_id: str | None) -> TextContentPart:
         return TextContentPart(type="text", text="[An attachment, not shown]")
     return TextContentPart(
         type="text",
-        text=f"[Attachment {attachment_id}, not shown here; read it by its id]",
+        text=(
+            f"[Image attachment {attachment_id}, not shown here; delegating with "
+            "its id lets a model look at it again]"
+        ),
     )
 
 
@@ -264,7 +269,7 @@ def can_compact(
     """Whether compacting the turn leaves only references the profile can follow."""
     if has_tool_calls(rows) and not capabilities.history_tool:
         return False
-    return not (has_attachments(rows) and not capabilities.attachment_tool)
+    return not (has_attachments(rows) and not capabilities.media_tool)
 
 
 def render_compacted_turn(

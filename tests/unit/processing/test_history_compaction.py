@@ -18,6 +18,8 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing.history_compaction import (
     CompactionCandidate,
+    CompactionCapabilities,
+    can_compact,
     plan_compaction,
     render_compacted_turn,
 )
@@ -286,3 +288,12 @@ def test_compacting_a_turn_does_not_reduce_its_taint() -> None:
     assert {source.source_id for source in verbatim.sources} <= {
         source.source_id for source in compacted.sources
     }
+
+
+def test_an_image_turn_compacts_only_where_a_model_can_look_again() -> None:
+    turn = _tool_turn()
+
+    assert not can_compact(
+        turn, CompactionCapabilities(history_tool=True, media_tool=False)
+    )
+    assert can_compact(turn, CompactionCapabilities(history_tool=True, media_tool=True))

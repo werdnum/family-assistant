@@ -37,8 +37,8 @@ from family_assistant.llm.model_selection import (
 )
 from family_assistant.observability.metrics import record_model_routing
 from family_assistant.processing.history_compaction import (
-    ATTACHMENT_TOOL_NAMES,
     HISTORY_TOOL_NAME,
+    MEDIA_TOOL_NAMES,
     CompactionCapabilities,
     without_bound_thinking,
 )
@@ -1023,7 +1023,7 @@ class ProcessingService:
         }
         return CompactionCapabilities(
             history_tool=HISTORY_TOOL_NAME in names,
-            attachment_tool=not names.isdisjoint(ATTACHMENT_TOOL_NAMES),
+            media_tool=not names.isdisjoint(MEDIA_TOOL_NAMES),
         )
 
     async def _window_references(
