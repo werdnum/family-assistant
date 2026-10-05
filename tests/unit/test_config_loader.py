@@ -3654,3 +3654,22 @@ def test_routing_left_off_needs_no_classifier() -> None:
     config = AppConfig.model_validate({"model_routing": {"mode": "off"}})
 
     assert config.model_routing.classifier.model is None
+
+
+def test_typesafe_api_key_env_maps_to_nested_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"typesafe": {"api_key": "yaml-key"}}))
+    prompts_file = tmp_path / "prompts.yaml"
+    prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
+    monkeypatch.setenv("TYPESAFE_API_KEY", "env-typesafe-key")
+
+    config = load_config(
+        config_file_path=str(config_file),
+        prompts_file_path=str(prompts_file),
+        load_dotenv_file=False,
+    )
+
+    assert config.typesafe.api_key is not None
+    assert config.typesafe.api_key.get_secret_value() == "env-typesafe-key"

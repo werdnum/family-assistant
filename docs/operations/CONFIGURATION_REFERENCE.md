@@ -1074,6 +1074,12 @@ traces are not. Routing is also on the trace span as `llm.model_tier.routing_out
 metrics. The classifier's own token spend is attributed to the profile it routed for, under the tier
 label `router` rather than under the tier the turn then ran at.
 
+Where [TypeSafe Jev](#typesafe-jev) is configured it is the classifier instead: one choice question
+over the profile's `auto_model_tiers`, with the same inputs and the profile's
+`auto_routing_guidance` as its rubric. `classifier` and `model_routing_prompt` are then unused, and
+each routed row also records `model_tier_probabilities` — a probability per tier, to tune a
+threshold against.
+
 Shipped: `default_assistant` is `auto` over `standard` and `deep`, with `mode: shadow`, so nothing
 routes yet. `frontier` stays outside the automatic range — a classifier false positive there has
 asymmetric cost, so reaching Max remains a person's explicit choice.
@@ -1108,6 +1114,44 @@ offers to replace it:
   `default_profile_settings` — so only a `model_tier` written on the profile itself is refused.
 - profiles pinned for perception reasons rather than by a config flag, such as `media_analyst` (only
   the Gemini adapter represents audio and video), which stay on an inline model by choice.
+
+______________________________________________________________________
+
+### TypeSafe Jev
+
+An optional external classifier ([TypeSafe](https://docs.typesafe.ai)'s Jev: typed, calibrated
+answers in a few hundred milliseconds, priced per input token). Configuring it sends conversation
+text to TypeSafe.
+
+```yaml
+typesafe:
+  model: "jev-1.13.0"
+  timeout_seconds: 1.0
+  relevance_mode: "shadow" # off | shadow | active
+  relevance_threshold: 0.5
+```
+
+| Property  | Value                                               |
+| --------- | --------------------------------------------------- |
+| Required  | No                                                  |
+| Enabled   | When `TYPESAFE_API_KEY` (`typesafe.api_key`) is set |
+| Sensitive | Yes (the key)                                       |
+
+- **Auto routing.** With a key set, Jev is the
+  [Auto classifier](#auto-routing-model_routing-and-processing_configmodel_selection) for
+  `model_routing` in whichever `mode` that is set to.
+- **History relevance.** At each [compaction event](#conversation-history-window) Jev is asked, for
+  every turn in the window, whether the new message continues it. In `active` mode the turns it
+  answers yes for (probability at or above `relevance_threshold`) stay verbatim in preference to the
+  rest; the budget is still enforced in code. In `shadow` mode (shipped) the window compacts
+  oldest-first and the answers, with what the window would have kept, are recorded in the event's
+  `details` in `history_compaction_events` for evaluation. `off` never asks.
+- **`model`** is pinned rather than `jev-latest`, because the threshold is tuned against one model's
+  probabilities.
+- **`timeout_seconds`** — an answer that has not arrived by here is abandoned: compaction proceeds
+  oldest-first and routing records a `timeout`, so a TypeSafe outage only costs the preference.
+
+Without a key, compaction is oldest-first and Auto uses its configured LLM classifier.
 
 ______________________________________________________________________
 

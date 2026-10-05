@@ -73,7 +73,9 @@ from family_assistant.llm.antigravity_egress import (
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_routing import (
     MODEL_ROUTING_PROMPT_KEY,
+    JevModelRouter,
     ModelRouter,
+    TierRouter,
     validate_routing_prompt_renders,
 )
 from family_assistant.llm.model_selection import ModelTierEligibility
@@ -88,6 +90,7 @@ from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
     is_interactions_agent_model,
 )
+from family_assistant.llm.typesafe import JevClient
 from family_assistant.memory.review import make_memory_review_handler
 from family_assistant.memory.sweep import (
     MEMORY_REVIEW_SWEEP_TASK_ID,
@@ -105,6 +108,10 @@ from family_assistant.processing import (
     DelegatableService,
     ProcessingService,
     ProcessingServiceConfig,
+)
+from family_assistant.processing.history_relevance import (
+    JevTurnRelevance,
+    TurnRelevance,
 )
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
@@ -608,6 +615,7 @@ class Assistant:
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
         self.plugin_startup_task: asyncio.Task | None = None
         self._tool_call_reviewer: ToolCallReviewer | None = None
+        self._jev_client: JevClient | None = None
         self._is_shutdown_complete = False
 
         # Event system
@@ -1212,7 +1220,9 @@ class Assistant:
         }
         tool_call_reviewer = self._create_tool_call_reviewer()
         self._tool_call_reviewer = tool_call_reviewer
+        self._jev_client = self._create_jev_client()
         model_router = self._create_model_router()
+        turn_relevance = self._create_turn_relevance()
         for profile_conf in resolved_profiles:
             await self._setup_processing_profile(
                 profile_conf,
@@ -1220,6 +1230,7 @@ class Assistant:
                 delegation_sink_classes,
                 tool_call_reviewer,
                 model_router,
+                turn_relevance,
             )
 
         if not self.processing_services_registry:
@@ -1296,7 +1307,32 @@ class Assistant:
                 tool_call_reviewer = ToolCallReviewer(review_llm_client, review_config)
         return tool_call_reviewer
 
-    def _create_model_router(self) -> ModelRouter | None:
+    def _create_jev_client(self) -> JevClient | None:
+        """The deployment's TypeSafe Jev client, if the operator configured one."""
+        typesafe = self.config.typesafe
+        if not typesafe.enabled or typesafe.api_key is None:
+            return None
+        logger.info("TypeSafe Jev enabled with model %s.", typesafe.model)
+        return JevClient(
+            api_key=typesafe.api_key.get_secret_value(),
+            model=typesafe.model,
+            timeout_seconds=typesafe.timeout_seconds,
+            base_url=typesafe.base_url,
+        )
+
+    def _create_turn_relevance(self) -> TurnRelevance | None:
+        """Jev's turn relevance for compaction events, unless it is off."""
+        typesafe = self.config.typesafe
+        if self._jev_client is None or typesafe.relevance_mode == "off":
+            return None
+        return JevTurnRelevance(
+            self._jev_client,
+            mode=typesafe.relevance_mode,
+            threshold=typesafe.relevance_threshold,
+            timeout_seconds=typesafe.timeout_seconds,
+        )
+
+    def _create_model_router(self) -> TierRouter | None:
         """Build the deployment's single Auto classifier, if routing is on.
 
         One router for every profile: what differs per request is the tier list
@@ -1308,6 +1344,20 @@ class Assistant:
         routing = self.config.model_routing
         if routing.mode == "off":
             return None
+        if self._jev_client is not None:
+            # Jev answers a choice question with a probability per tier, in a
+            # fraction of the LLM classifier's time; where the operator has
+            # configured it, it is the classifier.
+            logger.info(
+                "Model routing enabled in '%s' mode, classifier Jev (%s).",
+                routing.mode,
+                self._jev_client.model,
+            )
+            return JevModelRouter(
+                self._jev_client,
+                timeout_seconds=self.config.typesafe.timeout_seconds,
+                history_messages=routing.history_messages,
+            )
 
         override = self.llm_client_overrides.get("__model_router__")
         if override is None and self.llm_client_overrides:
@@ -1362,7 +1412,8 @@ class Assistant:
         note_registry: NoteRegistry | None,
         delegation_sink_classes: dict[str, SinkClass],
         tool_call_reviewer: ToolCallReviewer | None,
-        model_router: ModelRouter | None = None,
+        model_router: TierRouter | None = None,
+        turn_relevance: TurnRelevance | None = None,
     ) -> None:
         """Build and register one configured processing service."""
         profile_id = profile_conf.id
@@ -1500,6 +1551,7 @@ class Assistant:
             taint_policy=merged_taint_policy,
             tier_llm_clients=tier_llm_clients,
             model_router=model_router,
+            turn_relevance=turn_relevance,
         )
 
         # Render once now so a template referencing a placeholder that no
@@ -2929,6 +2981,8 @@ class Assistant:
 
         if self.plugin_runtime is not None:
             await self.plugin_runtime.close()
+        if self._jev_client is not None:
+            await self._jev_client.close()
         if self.shared_httpx_client:
             await self.shared_httpx_client.aclose()
             logger.info("Shared httpx client closed.")

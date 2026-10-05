@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed. Follows [append-only-prompt.md](append-only-prompt.md), which makes every request the
-previous request plus appended messages and leaves "the history window drops messages from the
-front" to this document. Approach-level; construction detail belongs to the implementing PRs.
+Implemented (#1353, #1355 and the Jev milestone); Jev relevance ships in shadow mode. Follows
+[append-only-prompt.md](append-only-prompt.md), which makes every request the previous request plus
+appended messages and leaves "the history window drops messages from the front" to this document.
+Approach-level; construction detail belongs to the implementing PRs, and operator settings are in
+[CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md#conversation-history-window).
 
 ## Problem
 

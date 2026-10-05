@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.llm.model_routing import (
     _REQUEST_CHARS,  # noqa: PLC2701 - asserting a bound means naming the bound the module applies
+    JevModelRouter,
     ModelRouter,
     validate_routing_prompt_renders,
 )
@@ -30,6 +31,8 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     RoutingOutcome,
 )
+from family_assistant.llm.typesafe import JevAnswers
+from tests.mocks.fake_jev import FakeJevClient
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
@@ -393,3 +396,87 @@ def test_a_failed_routing_outcome_survives_persistence(
     )
 
     assert ResolvedModelSelection.from_json(selection.to_json()) == selection.freeze()
+
+
+async def _jev_route(
+    client: FakeJevClient,
+    *,
+    eligibility: ModelTierEligibility = ELIGIBILITY,
+    timeout_seconds: float = 1,
+) -> RoutingDecision:
+    return await JevModelRouter(
+        client, timeout_seconds=timeout_seconds, history_messages=6
+    ).route(
+        eligibility=eligibility,
+        guidance=None,
+        history=[],
+        request_text="Explain this",
+        attachment_summary=[],
+    )
+
+
+async def test_jev_chooses_highest_probability_and_records_classifier() -> None:
+    client = FakeJevClient(
+        JevAnswers("jev-served", {}, {"tier": {"standard": 0.2, "deep": 0.8}}, 10)
+    )
+    try:
+        decision = await _jev_route(client)
+    finally:
+        await client.close()
+
+    assert decision.outcome == "decided"
+    assert decision.tier == "deep"
+    assert decision.probabilities == {"standard": 0.2, "deep": 0.8}
+    assert decision.classifier_model == "jev-served"
+
+
+async def test_jev_answer_naming_an_unoffered_tier_is_invalid() -> None:
+    client = FakeJevClient(
+        JevAnswers("jev", {}, {"tier": {"standard": 0.1, "frontier": 0.9}}, 10)
+    )
+    try:
+        decision = await _jev_route(client)
+    finally:
+        await client.close()
+
+    assert decision.outcome == "invalid"
+    assert decision.tier is None
+    assert not decision.probabilities
+
+
+async def test_jev_provider_failure_is_an_error() -> None:
+    client = FakeJevClient(fail=True)
+    try:
+        decision = await _jev_route(client)
+    finally:
+        await client.close()
+
+    assert decision.outcome == "error"
+    assert decision.tier is None
+    assert not decision.probabilities
+
+
+async def test_jev_stalled_client_is_a_timeout() -> None:
+    client = FakeJevClient(stall=True)
+    try:
+        decision = await _jev_route(client, timeout_seconds=0.01)
+    finally:
+        await client.close()
+
+    assert decision.outcome == "timeout"
+    assert decision.tier is None
+    assert not decision.probabilities
+
+
+async def test_jev_no_eligible_tiers_skips_the_client() -> None:
+    client = FakeJevClient()
+    try:
+        decision = await _jev_route(
+            client, eligibility=ModelTierEligibility(default_tier="standard")
+        )
+    finally:
+        await client.close()
+
+    assert decision.outcome == "invalid"
+    assert decision.tier is None
+    assert client.calls == []

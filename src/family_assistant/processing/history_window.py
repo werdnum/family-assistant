@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
     from family_assistant.llm.messages import MessageWithMetadata
+    from family_assistant.processing.history_relevance import TurnRelevance
     from family_assistant.storage.database import Database
     from family_assistant.storage.history_compaction import HistoryScope
     from family_assistant.storage.repositories.history_compaction import (
@@ -203,6 +204,28 @@ def messages_size(messages: Sequence[LLMMessage]) -> int:
     return sum(message_size(message) for message in messages)
 
 
+def _text_of(rows: Sequence[MessageWithMetadata], role: type[LLMMessage]) -> str:
+    """The newest text a message of *role* carries in *rows*, or empty.
+
+    For a turn, the user's request and the assistant's final answer: what the
+    relevance classifier is shown of it.
+    """
+    for row in reversed(rows):
+        message = row.message
+        if not isinstance(message, role):
+            continue
+        content = getattr(message, "content", None)
+        if isinstance(content, str) and content:
+            return content
+        if isinstance(content, list):
+            text = " ".join(
+                part.text for part in content if isinstance(part, TextContentPart)
+            )
+            if text:
+                return text
+    return ""
+
+
 class HistoryWindowLoader:
     """Builds a request's history window from stored rows and recorded events."""
 
@@ -212,10 +235,12 @@ class HistoryWindowLoader:
         render: Callable[[list[LLMMessage]], Awaitable[list[LLMMessage]]],
         timezone: ZoneInfo,
         capabilities: Callable[[], Awaitable[CompactionCapabilities]],
+        relevance: TurnRelevance | None = None,
     ) -> None:
         self._render = render
         self._timezone = timezone
         self._capabilities = capabilities
+        self._relevance = relevance
 
     async def _render_verbatim(
         self, turn: HistoryTurn, strip_through: int | None
@@ -522,12 +547,48 @@ class HistoryWindowLoader:
                 if entry.decision is not None
             ),
         }
+        relevant: frozenset[str] = frozenset()
+        # A read that does not record the event needs the answers only where
+        # they change the plan; in shadow mode they would only be recorded.
+        if (
+            self._relevance is not None
+            and window
+            and (record or self._relevance.active)
+        ):
+            outcome = await self._relevance.assess(
+                request=_text_of(active_rows, UserMessage),
+                turns=[
+                    (
+                        entry.turn.key,
+                        _text_of(entry.turn.rows, UserMessage),
+                        _text_of(entry.turn.rows, AssistantMessage),
+                    )
+                    for entry in window
+                ],
+            )
+            details["relevance"] = outcome.to_json()
+            if outcome.active:
+                relevant = outcome.relevant_keys
+            else:
+                shadow = plan_compaction(
+                    candidates,
+                    target_chars=target_chars,
+                    min_turns=limits.min_turns,
+                    cutoff=cutoff,
+                    boundary_internal_id=boundary,
+                    relevant=outcome.relevant_keys,
+                )
+                details["relevance_would_decide"] = {
+                    key: decision.mode.value
+                    for key, decision in shadow.decisions.items()
+                }
         plan = plan_compaction(
             candidates,
             target_chars=target_chars,
             min_turns=limits.min_turns,
             cutoff=cutoff,
             boundary_internal_id=boundary,
+            relevant=relevant,
         )
         details["size_after"] = sum(
             c.compacted_size

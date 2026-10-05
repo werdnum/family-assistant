@@ -42,6 +42,7 @@ from family_assistant.llm.model_routing import (
     ROUTER_CALL_TIER,
     ModelRouter,
     RoutingDecision,
+    TierRouter,
 )
 from family_assistant.llm.model_selection import (
     ModelTierEligibility,
@@ -224,7 +225,7 @@ class RoutedServiceBuilder(Protocol):
         classifier_client: LLMInterface | None = None,
         timeout_seconds: float = 5.0,
         history_messages: int = 6,
-        router: ModelRouter | None = None,
+        router: TierRouter | None = None,
     ) -> ProcessingService: ...
 
 
@@ -247,7 +248,7 @@ def build_routed_service_fixture(
         classifier_client: LLMInterface | None = None,
         timeout_seconds: float = 5.0,
         history_messages: int = 6,
-        router: ModelRouter | None = None,
+        router: TierRouter | None = None,
     ) -> ProcessingService:
         config = api_test_processing_service.service_config
         config.tier_eligibility = _ELIGIBILITY
@@ -289,7 +290,7 @@ def install_service_fixture(
         classifier_client: LLMInterface | None = None,
         timeout_seconds: float = 5.0,
         history_messages: int = 6,
-        router: ModelRouter | None = None,
+        router: TierRouter | None = None,
     ) -> ProcessingService:
         service = build_routed_service(
             mode,
@@ -1295,3 +1296,46 @@ async def test_the_profile_listing_reports_shadow_mode_as_explicit(
     install_service("shadow")
 
     assert await _listed_model_selection(api_test_client) == "explicit"
+
+
+class _ProbabilityRouter:
+    history_messages = 6
+
+    async def route(
+        self,
+        *,
+        eligibility: ModelTierEligibility,
+        guidance: str | None,
+        history: Sequence[LLMMessage],
+        request_text: str,
+        attachment_summary: Sequence[str],
+    ) -> RoutingDecision:
+        return RoutingDecision(
+            tier="deep",
+            outcome="decided",
+            classifier_model="jev-test",
+            latency_ms=1,
+            probabilities={"standard": 0.2, "deep": 0.8},
+        )
+
+
+async def test_shadow_routing_persists_probabilities_on_assistant_row(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+) -> None:
+    service = build_routed_service("shadow", router=_ProbabilityRouter())
+    conversation_id = f"routing-probabilities-{uuid.uuid4()}"
+
+    result = await service.handle_chat_interaction(
+        db_context=Database(db_engine),
+        interface_type="api",
+        conversation_id=conversation_id,
+        trigger_content_parts=[{"type": "text", "text": "Explain this"}],
+        trigger_interface_message_id=None,
+        user_name="tester",
+    )
+
+    assert result.text_reply == "standard served this"
+    reasoning = await _assistant_reasoning_info(db_engine, conversation_id)
+    assert reasoning.get("model_tier_probabilities") == {"standard": 0.2, "deep": 0.8}
+    assert reasoning.get("model_tier_would_choose") == "deep"

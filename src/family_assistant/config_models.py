@@ -198,6 +198,39 @@ class ModelTierConfig(BaseModel):
         return v
 
 
+class TypeSafeConfig(BaseModel):
+    """TypeSafe's Jev classifier, an operator-configured external processor.
+
+    Enabled by setting ``api_key`` (``TYPESAFE_API_KEY``). Jev then ranks which
+    turns a new message continues at each history compaction event, and
+    classifies the Auto tier in place of the ``model_routing`` classifier. A
+    deployment without it compacts oldest-first and keeps its configured Auto
+    classifier. Both send conversation text to TypeSafe. See
+    docs/design/history-compaction.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_key: SecretStr | None = None
+    model: str = "jev-1.13.0"
+    """Pinned rather than ``jev-latest``, which moves on each release: the
+    relevance threshold below is tuned against one model's probabilities."""
+    base_url: str = "https://api.typesafe.ai"
+    timeout_seconds: float = Field(default=1.0, gt=0)
+    """A request that has not answered by here is abandoned; compaction then
+    proceeds oldest-first and routing records a timeout."""
+    relevance_mode: Literal["off", "shadow", "active"] = "shadow"
+    """``shadow`` records Jev's answers and what compaction would have kept
+    with them beside each event, while compacting oldest-first; ``active``
+    keeps the turns Jev judges relevant verbatim in preference to the rest."""
+    relevance_threshold: float = Field(default=0.5, ge=0, le=1)
+    """The probability at which a turn counts as continued by the new message."""
+
+    @property
+    def enabled(self) -> bool:
+        return self.api_key is not None and bool(self.api_key.get_secret_value())
+
+
 class ModelRoutingConfig(BaseModel):
     """The Auto classifier: whether it runs, and what runs it.
 
@@ -2139,6 +2172,7 @@ class AppConfig(BaseSettings):
     # The Auto classifier that picks a tier per request for profiles whose
     # `processing_config.model_selection` is `auto`.
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
+    typesafe: TypeSafeConfig = Field(default_factory=TypeSafeConfig)
 
     @model_validator(mode="after")
     def validate_model_routing_names_a_classifier(self) -> AppConfig:
