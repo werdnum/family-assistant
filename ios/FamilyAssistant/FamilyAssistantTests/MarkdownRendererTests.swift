@@ -73,6 +73,23 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(blocks.contains(.blockQuote([.paragraph("quoted")])), "\(blocks)")
     }
 
+    func testTableCellsKeepInlineMarkdown() throws {
+        let markdown = """
+        | Place | Notes |
+        | --- | --- |
+        | [Cafe](https://example.test/cafe) | **open** until `5pm` |
+        """
+
+        let blocks = NativeMarkdownRenderer.blocks(from: markdown)
+
+        XCTAssertEqual(blocks, [.table(
+            header: ["Place", "Notes"],
+            rows: [["[Cafe](https://example.test/cafe)", "**open** until `5pm`"]]
+        )])
+        let cell = try XCTUnwrap(NativeMarkdownRenderer.inlineAttributedString(from: "[Cafe](https://example.test/cafe)"))
+        XCTAssertEqual(cell.runs.first?.link, URL(string: "https://example.test/cafe"))
+    }
+
     func testNativeRendererKeepsInlineMarkdownAttributes() throws {
         let attributed = try XCTUnwrap(
             NativeMarkdownRenderer.inlineAttributedString(from: "See [docs](https://example.test) and `code`.")

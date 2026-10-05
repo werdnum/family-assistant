@@ -111,7 +111,7 @@ enum NativeMarkdownRenderer {
         case let codeBlock as CodeBlock:
             return [.codeBlock(language: codeBlock.language, code: codeBlock.code.trimmingCharacters(in: CharacterSet.newlines))]
         case let table as Markdown.Table:
-            return [.table(header: table.head.cells.map { $0.plainText }, rows: table.body.rows.map { $0.cells.map { $0.plainText } })]
+            return [.table(header: table.head.cells.map(cellMarkdown(from:)), rows: table.body.rows.map { $0.cells.map(cellMarkdown(from:)) })]
         case is ThematicBreak:
             return [.thematicBreak]
         default:
@@ -122,6 +122,19 @@ enum NativeMarkdownRenderer {
 
     private static func listItem(from item: ListItem) -> NativeMarkdownListItem {
         NativeMarkdownListItem(checkbox: item.checkbox.map(MarkdownCheckbox.init), blocks: item.children.flatMap(blocks(from:)))
+    }
+
+    /// A cell's inline markdown (links, emphasis, code), not its plain text.
+    /// Formatting the children rather than the cell itself keeps the formatter
+    /// from emitting table syntax around a detached cell.
+    private static func cellMarkdown(from cell: Markdown.Table.Cell) -> String {
+        cell.children.map { child in
+            var formatter = MarkupFormatter()
+            formatter.visit(child.detachedFromParent)
+            return formatter.result
+        }
+        .joined()
+        .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
     }
 
     private static func inlineMarkdown(from markup: Markup) -> String {
