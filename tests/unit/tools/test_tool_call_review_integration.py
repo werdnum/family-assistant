@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, cast
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,7 @@ from family_assistant.config_models import (
     ToolCallReviewEscalationConfig,
 )
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
@@ -3129,3 +3131,106 @@ async def test_stored_script_preparation_error_inherits_definition_taint(
         and "script_definition" in source.labels
         for source in restored.sources
     )
+
+
+async def _approved_earlier_call(
+    context: ToolExecutionContext, *, tool_call_id: str, destination: str
+) -> None:
+    service = ConfirmationService(db=context.db_context)
+    request = await service.create_request(
+        target_user_id="user-1",
+        tool_name="reviewed_tool",
+        tool_args={"destination": destination},
+        tool_call_id=tool_call_id,
+        source_message_internal_id=None,
+        confirmation_prompt=f"Perform the reviewed operation for {destination}?",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        origin_interface_type=context.interface_type,
+        origin_conversation_id=context.conversation_id,
+    )
+    await service.approve_without_enqueueing_execution(
+        request_id=request["id"],
+        approving_user_id="user-1",
+        approving_interface="web",
+    )
+
+
+def _history_with_tool_call(tool_call_id: str) -> tuple[LLMMessage, ...]:
+    return (
+        UserMessage(
+            content="Reply to the email I forwarded.",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id=tool_call_id,
+                    type="function",
+                    function=ToolCallFunction(name="reviewed_tool", arguments="{}"),
+                )
+            ],
+            taint_metadata=_unknown_external_state().to_metadata(),
+        ),
+    )
+
+
+async def test_an_approved_call_in_history_reaches_the_reviewer(
+    db_engine: AsyncEngine,
+) -> None:
+    async def execute(**_kwargs: object) -> ToolResult:
+        return ToolResult(text="executed")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    context = _context(db_engine, _unknown_external_state())
+    await _approved_earlier_call(
+        context, tool_call_id="approved-call", destination="bob@example.test"
+    )
+    context.tool_call_review_messages = _history_with_tool_call("approved-call")
+
+    await provider.execute_tool(
+        "reviewed_tool", {"destination": "bob@example.test"}, context, "follow-up"
+    )
+
+    assert llm.last_messages is not None
+    prompt = "\n".join(str(message.content) for message in llm.last_messages)
+    assert "<human_confirmation_decisions>" in prompt
+    assert "Perform the reviewed operation for bob@example.test?" in prompt
+    assert (
+        "Destination is the destination of an action the human approved earlier "
+        "in this conversation." in prompt
+    )
+
+
+async def test_an_approval_for_a_call_outside_the_history_is_not_evidence(
+    db_engine: AsyncEngine,
+) -> None:
+    async def execute(**_kwargs: object) -> ToolResult:
+        return ToolResult(text="executed")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    context = _context(db_engine, _unknown_external_state())
+    await _approved_earlier_call(
+        context, tool_call_id="unseen-call", destination="bob@example.test"
+    )
+    context.tool_call_review_messages = _history_with_tool_call("other-call")
+
+    await provider.execute_tool(
+        "reviewed_tool", {"destination": "bob@example.test"}, context, "follow-up"
+    )
+
+    assert llm.last_messages is not None
+    prompt = "\n".join(str(message.content) for message in llm.last_messages)
+    assert "human_confirmation_decisions" not in prompt

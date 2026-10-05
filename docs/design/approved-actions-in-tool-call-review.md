@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed. Extends [auto-tool-call-review.md](auto-tool-call-review.md) and
+Implemented: milestones 1 and 2 (attestation, rendering, echo). The reviewer-eval case and the
+observe-mode measurement remain. Extends [auto-tool-call-review.md](auto-tool-call-review.md) and
 [risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md). Leaves turn taint,
 stored provenance and the sink matrix untouched.
 

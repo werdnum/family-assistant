@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import and_, insert, or_, select, update
 
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from family_assistant.security.taint import TaintMetadata
     from family_assistant.tools.types import ToolArguments, ToolArgumentsView
 
@@ -44,6 +46,7 @@ class ConfirmationRequestRow(TypedDict):
     static_policy_reason: str | None
     taint_policy_reason: str | None
     decision_only: bool
+    resolved_by_system: bool
 
 
 class ConfirmationRequestsRepository(BaseRepository):
@@ -163,8 +166,13 @@ class ConfirmationRequestsRepository(BaseRepository):
         resolving_user_id: str,
         resolving_interface: str,
         now: datetime,
+        by_system: bool = False,
     ) -> ConfirmationRequestRow | None:
-        """Move a pending request to rejected."""
+        """Move a pending request to rejected.
+
+        ``by_system`` marks a rejection nobody decided -- cleanup when a turn
+        is stopped or the prompt could not be delivered.
+        """
         stmt = (
             update(confirmation_requests_table)
             .where(
@@ -178,12 +186,50 @@ class ConfirmationRequestsRepository(BaseRepository):
                 resolved_at=now,
                 resolved_by_user_id=resolving_user_id,
                 resolved_via_interface=resolving_interface,
+                resolved_by_system=by_system,
             )
             .returning(confirmation_requests_table)
         )
         result = await self._execute_with_logging("reject_confirmation_request", stmt)
         row = result.one_or_none()
         return self._row_to_typed(dict(row)) if row is not None else None
+
+    async def list_human_decisions_for_tool_calls(
+        self,
+        *,
+        tool_call_ids: Collection[str],
+        interface_type: str,
+        conversation_id: str,
+    ) -> list[ConfirmationRequestRow]:
+        """List the decisions a human made on confirmations for these tool calls.
+
+        Approvals and human rejections only, oldest decision first. Scoped to
+        the conversation the requests were raised in, so a tool call id reused
+        elsewhere never matches; a request with no recorded origin matches
+        nothing.
+        """
+        if not tool_call_ids:
+            return []
+        table = confirmation_requests_table
+        stmt = (
+            select(table)
+            .where(
+                table.c.tool_call_id.in_(sorted(set(tool_call_ids))),
+                table.c.origin_interface_type == interface_type,
+                table.c.origin_conversation_id == conversation_id,
+                or_(
+                    table.c.status == "approved",
+                    and_(
+                        table.c.status == "rejected",
+                        table.c.resolved_by_system.is_(False),
+                    ),
+                ),
+                table.c.resolved_at.is_not(None),
+            )
+            .order_by(table.c.resolved_at.asc(), table.c.id.asc())
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [self._row_to_typed(row) for row in rows]
 
     async def mark_expired(self, *, now: datetime) -> int:
         """Expire pending requests whose deadline has passed."""

@@ -91,6 +91,7 @@ class RecordingConfirmationService:
         self.status = "pending"
         self.approve_calls: list[tuple[str, str, str]] = []
         self.reject_calls: list[tuple[str, str, str]] = []
+        self.system_reject_ids: list[str] = []
         self.expire_calls = 0
         self.last_created_request: dict[str, object] | None = None
 
@@ -107,6 +108,8 @@ class RecordingConfirmationService:
         expires_at: datetime,
         decision_only: bool = False,
         processing_profile_id: str | None = None,
+        origin_interface_type: str | None = None,
+        origin_conversation_id: str | None = None,
         taint_state_json: dict[str, object] | None = None,
         tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> dict[str, object]:
@@ -120,6 +123,8 @@ class RecordingConfirmationService:
             "expires_at": expires_at,
             "decision_only": decision_only,
             "processing_profile_id": processing_profile_id,
+            "origin_interface_type": origin_interface_type,
+            "origin_conversation_id": origin_conversation_id,
             "taint_state_json": taint_state_json,
             "tool_call_review_authorization": tool_call_review_authorization,
         }
@@ -141,9 +146,12 @@ class RecordingConfirmationService:
         request_id: str,
         rejecting_user_id: str,
         rejecting_interface: str,
+        by_system: bool = False,
     ) -> None:
         self.status = "rejected"
         self.reject_calls.append((request_id, rejecting_user_id, rejecting_interface))
+        if by_system:
+            self.system_reject_ids.append(request_id)
 
     async def get_for_user(
         self,
@@ -584,6 +592,12 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
         confirmation_service.last_created_request["tool_call_review_authorization"]
         is review_authorization
     )
+    assert (
+        confirmation_service.last_created_request["origin_interface_type"] == "telegram"
+    )
+    assert confirmation_service.last_created_request["origin_conversation_id"] == str(
+        USER_CHAT_ID
+    )
 
     assert confirmation_service.created_request_id in manager.pending_confirmations
     await manager.confirmation_callback_handler(
@@ -596,6 +610,7 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
     )
     outcome = await confirmation_task
     assert outcome.kind == "rejected"
+    assert confirmation_service.system_reject_ids == []
 
 
 @pytest.mark.asyncio
