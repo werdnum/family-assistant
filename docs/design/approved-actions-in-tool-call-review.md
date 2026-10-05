@@ -53,10 +53,12 @@ words as evidence of intent, kept distinct from them.
    resolved confirmation in the conversation window the reviewer already reads, in order, and each
    entry gives the tool, the prompt text the human read, the decision (approved or declined) and the
    time. The raw arguments are not part of the attestation: a renderer can leave an argument out, so
-   only the rendered prompt is what the human actually saw. Declines are rendered too, so a later
-   refusal of the same action is never hidden behind an earlier approval: the human's most recent
-   decision is the one the judge sees last. The block is rendered through the reviewer's existing
-   fenced, boundary-neutralizing serializer (`_render_fenced_data`), the same chokepoint
+   only the rendered prompt is what the human actually saw. Only decisions a human actually made
+   count: a request the system rejected on its own, because the turn was stopped or the prompt could
+   not be delivered, is not a decision and is not rendered. Human declines are rendered too, so a
+   later refusal of the same action is never hidden behind an earlier approval: the human's most
+   recent decision is the one the judge sees last. The block is rendered through the reviewer's
+   existing fenced, boundary-neutralizing serializer (`_render_fenced_data`), the same chokepoint
    `tool_call_arguments` uses, so text an email or web page put into the prompt cannot forge the
    block's tags or any other reviewer delimiter. Inside that fence, the block tells the judge that a
    human made these decisions and that what an approved prompt shows is endorsed intent, and also
