@@ -158,6 +158,13 @@ today. Window taint is computed over the rendered window by the same loader on e
   the last event put it, and a turn already dropped is not a candidate again; the stub, where there
   is one, and `get_message_history` cover those cases.
 
+- **The web taint read and the turn ask the classifier separately.** The web producer reads the
+  window's taint before the prompt is stored, and with active relevance asks Jev with the same
+  inputs the turn will. Jev is deterministic, so the two agree, except when one of the calls fails
+  and falls back to oldest-first. The taint read may then cover a turn the prompt dropped. That
+  over-taints, which costs a confirmation, and never under-taints, so the decision is not shared
+  between the two paths.
+
 - **Budgets start as estimates** and are tuned from the provider-reported prompt and cache token
   counts already recorded in diagnostics. No tokenizer is added.
 
