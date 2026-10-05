@@ -101,6 +101,24 @@ class HistoryTurn:
     def first_internal_id(self) -> int:
         return min(int(row.internal_id) for row in self.rows)
 
+    @property
+    def is_complete(self) -> bool:
+        """Whether the turn has finished: it has a final reply or an error.
+
+        A row written outside any turn is complete by itself. A turn whose last
+        assistant row still calls tools was interrupted, or is still running
+        concurrently, and more of it may yet be written.
+        """
+        if self.key.startswith("row:"):
+            return True
+        return any(
+            isinstance(row.message, ErrorMessage)
+            or (
+                isinstance(row.message, AssistantMessage) and not row.message.tool_calls
+            )
+            for row in self.rows
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class HistoryWindow:
@@ -123,6 +141,8 @@ class _WindowTurn:
     turn: HistoryTurn
     decision: TurnDecision | None
     explicit: bool
+    open: bool = False
+    """Unfinished: rendered as it is, and left out of any event's decision."""
     rendered: list[LLMMessage] = field(default_factory=list)
 
 
@@ -259,8 +279,8 @@ class HistoryWindowLoader:
         truncated = len(uncovered_rows) >= WINDOW_ROW_LIMIT
         kept_turn_ids = [key for key in decided if not key.startswith("row:")]
         kept_row_ids = [int(key[4:]) for key in decided if key.startswith("row:")]
-        if event is not None and event.active_turn_key is not None:
-            kept_turn_ids.append(event.active_turn_key)
+        if event is not None:
+            kept_turn_ids.extend(event.open_turn_keys)
         decided_rows = await history.get_turn_rows_with_metadata(
             interface_type=scope.interface_type,
             conversation_id=scope.conversation_id,
@@ -314,7 +334,18 @@ class HistoryWindowLoader:
             explicit = turn.key in explicit_keys
             if decision is None and not explicit:
                 continue
-            window.append(_WindowTurn(turn=turn, decision=decision, explicit=explicit))
+            window.append(
+                _WindowTurn(
+                    turn=turn,
+                    decision=decision,
+                    explicit=explicit,
+                    # An event decides only completed turns; one that has not
+                    # finished could be compacted or dropped before its last
+                    # rows are written. Past the age cap it is abandoned.
+                    open=not turn.is_complete
+                    and turn.last_activity >= now - limits.max_age,
+                )
+            )
         for entry in window:
             if entry.decision is not None:
                 entry.rendered = await self._render_turn(entry.turn, entry.decision)
@@ -329,7 +360,7 @@ class HistoryWindowLoader:
             if event is not None
             and event.changed
             and active_turn_id is not None
-            and event.active_turn_key == active_turn_id
+            and active_turn_id in event.open_turn_keys
             else None
         )
         if reason is not None:
@@ -363,7 +394,15 @@ class HistoryWindowLoader:
                 ),
             )
             for entry in window:
-                entry.decision = plan.decisions.get(entry.turn.key)
+                if entry.open:
+                    entry.decision = TurnDecision(
+                        TurnMode.VERBATIM,
+                        strip_through=new_boundary
+                        if plan.changed
+                        else entry.decision and entry.decision.strip_through,
+                    )
+                else:
+                    entry.decision = plan.decisions.get(entry.turn.key)
                 if entry.decision is not None:
                     entry.rendered = await self._render_turn(entry.turn, entry.decision)
             if plan.changed:
@@ -394,7 +433,7 @@ class HistoryWindowLoader:
         """How the turn rendered before this load; ``None`` if it was dropped."""
         if event is None:
             return VERBATIM
-        if turn.key == event.active_turn_key:
+        if turn.key in event.open_turn_keys:
             return TurnDecision(
                 TurnMode.VERBATIM, strip_through=boundary if event.changed else None
             )
@@ -416,7 +455,7 @@ class HistoryWindowLoader:
             return CompactionReason.REFERENCE
         cutoff = now - limits.max_age
         if any(
-            entry.turn.last_activity < cutoff and not entry.explicit
+            entry.turn.last_activity < cutoff and not entry.explicit and not entry.open
             for entry in in_window
         ):
             return CompactionReason.AGE
@@ -450,6 +489,8 @@ class HistoryWindowLoader:
         capabilities = await self._capabilities()
         candidates: list[CompactionCandidate] = []
         for entry in window:
+            if entry.open:
+                continue
             verbatim = (
                 entry.rendered
                 if entry.decision is not None
@@ -502,7 +543,10 @@ class HistoryWindowLoader:
             scope,
             now=now,
             boundary_internal_id=boundary,
-            active_turn_key=active_turn_id,
+            open_turn_keys={
+                *(entry.turn.key for entry in window if entry.open),
+                *([active_turn_id] if active_turn_id is not None else []),
+            },
             reason=reason.value,
             decisions=plan.decisions,
             changed=plan.changed,

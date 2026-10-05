@@ -15,7 +15,7 @@ from family_assistant.storage.history_compaction import (
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping
     from datetime import datetime
 
 
@@ -26,7 +26,7 @@ class CompactionEvent:
     id: int
     created_at: datetime
     boundary_internal_id: int
-    active_turn_key: str | None
+    open_turn_keys: frozenset[str]
     reason: str
     decisions: dict[str, TurnDecision]
     changed: bool
@@ -62,7 +62,7 @@ class HistoryCompactionRepository(BaseRepository):
             id=row["id"],
             created_at=row["created_at"],
             boundary_internal_id=row["boundary_internal_id"],
-            active_turn_key=row["active_turn_key"],
+            open_turn_keys=frozenset(row["open_turn_keys"] or ()),
             reason=row["reason"],
             decisions={
                 key: TurnDecision.from_json(value)
@@ -77,7 +77,7 @@ class HistoryCompactionRepository(BaseRepository):
         *,
         now: datetime,
         boundary_internal_id: int,
-        active_turn_key: str | None,
+        open_turn_keys: Collection[str],
         reason: str,
         decisions: Mapping[str, TurnDecision],
         changed: bool,
@@ -91,7 +91,7 @@ class HistoryCompactionRepository(BaseRepository):
                 processing_profile_id=scope.processing_profile_id,
                 subconversation_id=scope.subconversation_id,
                 boundary_internal_id=boundary_internal_id,
-                active_turn_key=active_turn_key,
+                open_turn_keys=sorted(open_turn_keys),
                 reason=reason,
                 decisions={key: value.to_json() for key, value in decisions.items()},
                 changed=changed,

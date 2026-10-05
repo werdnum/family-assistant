@@ -28,7 +28,11 @@ def upgrade() -> None:
         sa.Column("processing_profile_id", sa.String(255), nullable=False),
         sa.Column("subconversation_id", sa.String(36), nullable=True),
         sa.Column("boundary_internal_id", sa.BigInteger(), nullable=False),
-        sa.Column("active_turn_key", sa.String(64), nullable=True),
+        sa.Column(
+            "open_turn_keys",
+            sa.JSON().with_variant(postgresql.JSONB(), "postgresql"),
+            nullable=False,
+        ),
         sa.Column("reason", sa.String(32), nullable=False),
         sa.Column(
             "decisions",

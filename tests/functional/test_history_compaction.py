@@ -14,6 +14,7 @@ import pytest
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.database import Database
 from family_assistant.storage.history_compaction import HistoryScope
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
@@ -207,6 +208,54 @@ async def test_thinking_after_a_changed_turn_is_stripped(
         if isinstance(message, AssistantMessage) and message.content == "Small answer"
     )
     assert answer.provider_metadata is None
+
+
+@pytest.mark.asyncio
+async def test_an_unfinished_turn_is_left_out_of_an_event(
+    db_engine: AsyncEngine, mock_clock: MockClock
+) -> None:
+    db = Database(db_engine)
+    await _seed_tool_heavy_turns(db, mock_clock)
+    # A turn interrupted after a tool call: its final reply may yet be written.
+    unfinished = str(uuid.uuid4())
+
+    async def add(message: LLMMessage) -> None:
+        await db.message_history.add_message(
+            message,
+            interface_type="telegram",
+            conversation_id=CONVERSATION_ID,
+            timestamp=mock_clock.now(),
+            turn_id=unfinished,
+            processing_profile_id=PROFILE_ID,
+        )
+
+    await add(user_message("Unfinished request"))
+    await add(
+        AssistantMessage(
+            tool_calls=[
+                ToolCallItem(
+                    id="pending",
+                    type="function",
+                    function=ToolCallFunction(name="lookup", arguments="{}"),
+                )
+            ]
+        )
+    )
+    mock_clock.advance(timedelta(minutes=1))
+    recorder = Recorder()
+    service = make_service(
+        mock_clock, recorder, budget_chars=8_000, tools=HISTORY_TOOLS
+    )
+    await run_turn(service, db, "Meanwhile")
+    await add(AssistantMessage(content="Unfinished answer, now finished"))
+    mock_clock.advance(timedelta(minutes=1))
+    await run_turn(service, db, "Afterwards")
+
+    event = await db.history_compaction.latest(SCOPE)
+    assert event is not None
+    assert unfinished in event.open_turn_keys
+    assert "Unfinished request" in texts(recorder.requests[0])
+    assert "Unfinished answer, now finished" in texts(recorder.requests[1])
 
 
 class _RejectsOnceIfLong(RuleBasedMockLLMClient):

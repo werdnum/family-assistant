@@ -40,10 +40,11 @@ history_compaction_events_table = Table(
     # Every turn whose first row is at or below this id is decided by the
     # event, except the turn that ran it; later turns render verbatim.
     Column("boundary_internal_id", BigInteger, nullable=False),
-    # The turn that was active at the event, which is always sent whole. Its
-    # rows up to the boundary lose their bound thinking when the event changed
-    # the prefix before them.
-    Column("active_turn_key", String(64), nullable=True),
+    # Turns the event left undecided because they had not finished -- the one
+    # that ran it, and any interrupted or concurrent turn. They render verbatim
+    # until an event finds them complete, and their rows up to the boundary
+    # lose their bound thinking when the event changed the prefix before them.
+    Column("open_turn_keys", JSON().with_variant(JSONB, "postgresql"), nullable=False),
     Column("reason", String(32), nullable=False),
     # turn key -> {"mode": "verbatim" | "compacted", "strip_through": row id};
     # a decided turn absent from the map is no longer in the window.
