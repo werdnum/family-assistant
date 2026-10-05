@@ -42,6 +42,7 @@ from family_assistant.storage.events import (
     event_listeners_table,
     recent_events_table,
 )
+from family_assistant.storage.history_compaction import history_compaction_events_table
 from family_assistant.storage.ios_push_token import ios_push_tokens_table
 from family_assistant.storage.memory_change_log import memory_change_log_table
 from family_assistant.storage.memory_review import (
@@ -363,6 +364,7 @@ __all__ = [
     "delegation_runs_table",
     "error_logs_table",
     "event_listeners_table",
+    "history_compaction_events_table",
     "init_db",  # Now defined above
     "ios_push_tokens_table",
     "memory_change_log_table",

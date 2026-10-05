@@ -1423,9 +1423,12 @@ class Assistant:
             history_max_age_hours=profile_proc_conf.history_max_age_hours,
             web_history_budget_chars=profile_proc_conf.web_history_budget_chars,
             web_history_min_turns=profile_proc_conf.web_history_min_turns,
+            history_idle_gap_minutes=profile_proc_conf.history_idle_gap_minutes,
+            web_history_idle_gap_minutes=(
+                profile_proc_conf.web_history_idle_gap_minutes
+            ),
             web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
             max_iterations=profile_proc_conf.max_iterations,
-            context_pruning_min_turns=profile_proc_conf.context_pruning_min_turns,
             tools_config=profile_tools_conf,
             delegation_security_level=profile_proc_conf.delegation_security_level,
             allowed_delegation_sources=(profile_proc_conf.allowed_delegation_sources),

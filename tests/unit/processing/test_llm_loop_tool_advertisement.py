@@ -406,10 +406,10 @@ class _ContextOverflowOnce(RuleBasedMockLLMClient):
 
 
 @pytest.mark.asyncio
-async def test_pruning_away_an_activation_lets_the_tool_be_activated_again(
+async def test_compacting_away_an_activation_lets_the_tool_be_activated_again(
     db_engine: AsyncEngine,
 ) -> None:
-    """A context-length retry can drop the message that activated a tool.
+    """A context-length retry can drop the turn that activated a tool.
 
     The tool stops being offered, so re-activating it must record a fresh
     activation rather than treating it as already active.
@@ -459,7 +459,7 @@ async def test_pruning_away_an_activation_lets_the_tool_be_activated_again(
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="llm-loop-activation-pruned",
-            context_pruning_min_turns=1,
+            history_min_turns=0,
         ),
         context_providers=[],
         server_url="http://testserver",

@@ -50,7 +50,6 @@ from .quiet_turn import (
 )
 from .utils import (
     _map_stream_error_to_exception,
-    prune_messages_for_context,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +71,7 @@ if TYPE_CHECKING:
     from .service import ProcessingService
     from .tool_execution import ToolExecutor
     from .types import (
+        ContextLengthCompactor,
         LLMStreamingLoopConfig,
         MidTurnInputProvider,
         RequestConfirmationCallback,
@@ -191,6 +191,7 @@ class LLMStreamingLoop:
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
+        context_length_compactor: ContextLengthCompactor | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -229,6 +230,7 @@ class LLMStreamingLoop:
             tool_call_review_trigger=tool_call_review_trigger,
             memory_review=memory_review,
             allow_quiet_end=allow_quiet_end,
+            context_length_compactor=context_length_compactor,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -268,6 +270,7 @@ class LLMStreamingLoop:
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
         completed_iterations: int = 0,
+        context_length_compactor: ContextLengthCompactor | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """Run a turn, attributing its telemetry to this profile.
 
@@ -301,6 +304,7 @@ class LLMStreamingLoop:
             memory_review=memory_review,
             allow_quiet_end=allow_quiet_end,
             completed_iterations=completed_iterations,
+            context_length_compactor=context_length_compactor,
         )
         try:
             attribution = CallAttribution(
@@ -346,6 +350,7 @@ class LLMStreamingLoop:
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
         completed_iterations: int = 0,
+        context_length_compactor: ContextLengthCompactor | None = None,
         # AsyncGenerator rather than AsyncIterator: run_stream closes this
         # deterministically, and only the generator protocol offers aclose().
     ) -> AsyncGenerator[tuple[LLMStreamEvent, LLMMessage | None]]:
@@ -784,26 +789,17 @@ class LLMStreamingLoop:
                         context_retry_attempted
                         or accumulated_content
                         or tool_calls_from_stream
+                        or context_length_compactor is None
                     ):
                         raise
                     logger.warning(
-                        f"Context length exceeded, pruning messages and retrying: {e}"
+                        f"Context length exceeded, compacting history and retrying: {e}"
                     )
-                    # Prune without the synthetic scaffolding messages -- the
-                    # turn-context block and the final-iteration instruction. The
-                    # turn splitter starts a new turn at every UserMessage, so
-                    # leaving them in costs real turns out of min_turns -- and at
-                    # min_turns=1 the newest of them is the *only* turn kept,
-                    # discarding the user's request and every accumulated tool
-                    # result. They are re-appended in their original order, which
-                    # keeps the final-iteration instruction last.
-                    scaffolding = [msg for msg in messages if is_turn_scaffolding(msg)]
-                    messages = prune_messages_for_context(
-                        [msg for msg in messages if not is_turn_scaffolding(msg)],
-                        min_turns=self.config.context_pruning_min_turns,
-                    )
-                    messages.extend(scaffolding)
-                    # Pruning can drop the message that activated a tool; the
+                    compacted = await context_length_compactor(messages)
+                    if compacted is None:
+                        raise
+                    messages = compacted
+                    # Compaction can drop the message that activated a tool; the
                     # adapters then stop offering it, so the loop must stop
                     # counting it as active or re-activating it records nothing.
                     activated_on_demand = activated_tool_names(messages)

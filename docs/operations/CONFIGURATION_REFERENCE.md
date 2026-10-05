@@ -1224,17 +1224,39 @@ How much of a conversation's earlier turns a profile's prompt carries. Set under
 in `default_profile_settings` or on a profile; the `web_` variants apply on the web interface and
 fall back to the plain settings when unset.
 
-| Key                                                   | Default (shipped)  | Meaning                                                          |
-| ----------------------------------------------------- | ------------------ | ---------------------------------------------------------------- |
-| `history_budget_chars` / `web_history_budget_chars`   | `40000` / `120000` | Size of the window, in characters of rendered history.           |
-| `history_min_turns` / `web_history_min_turns`         | `2`                | The newest turns that stay whatever their size.                  |
-| `history_max_age_hours` / `web_history_max_age_hours` | `2` / `720`        | No turn whose last activity is older than this joins the window. |
+| Key                                                         | Default (shipped)  | Meaning                                                                 |
+| ----------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------- |
+| `history_budget_chars` / `web_history_budget_chars`         | `40000` / `120000` | Size of the window, in characters of rendered history.                  |
+| `history_min_turns` / `web_history_min_turns`               | `2`                | The newest turns that stay (compacted if need be) whatever their size.  |
+| `history_max_age_hours` / `web_history_max_age_hours`       | `2` / `720`        | A turn whose last activity is older than this leaves at the next event. |
+| `history_idle_gap_minutes` / `web_history_idle_gap_minutes` | `60` / unset       | The first message after this much quiet is a compaction event.          |
 
-The window is made of whole turns — a request, every tool call and result it led to, and the answer
-— taken newest first until the budget is reached. A turn is never split. Only the active profile's
-rows are loaded, on every path. A reply to a Telegram thread also brings in that thread's turns on
-the active profile, and the message replied to, whatever their age or size; rows a delegation or an
-event pins to its turn come in the same way.
+The window is made of whole turns — a request, every tool call and result it led to, and the answer.
+A turn is never split. Only the active profile's rows are loaded, on every path. A reply to a
+Telegram thread also brings in that thread's turns on the active profile, and the message replied
+to, whatever their age or size; rows a delegation or an event pins to its turn come in the same way.
+
+**The window only changes at compaction events.** Between events each request is the previous one
+plus appended messages, which keeps the provider cache warm and Claude's thinking blocks valid. An
+event runs at the start of a turn when the window has to change: it passed the budget, a turn in it
+passed the age cap, the request points at a turn outside it, or the idle gap elapsed (provider
+caches have expired by then, so the change costs nothing extra). An event brings the window down to
+half its budget, so the next one is many turns away:
+
+1. older turns are **compacted** — the user's words and the final answer stay, each tool used
+   becomes a one-line stub pointing at `get_message_history`, attachments become references by id,
+   and errors become one line;
+2. turns that cannot be compacted are dropped whole, oldest first;
+3. the newest turns are compacted if that is still not enough, and only then are older stubs
+   dropped.
+
+A stub is only left for a profile that can follow it: a profile without `get_message_history` (or,
+for images, `delegate_to_service`, the only way to have a model look at one again) keeps such turns
+verbatim or drops them whole. A compacted turn keeps the on-demand tools it activated and the taint
+of everything it read. Each event's decision is recorded in `history_compaction_events`, and later
+requests render from it, so nothing about a compacted turn is stored beyond the decision. If a
+provider still rejects a request as too long, the window is compacted once more to half its size and
+the request retried.
 
 An inlined image counts as 4,000 characters. Cached history is cheap on every current provider, so
 the budget is a setting for the model's attention rather than for cost; tune it from the prompt and

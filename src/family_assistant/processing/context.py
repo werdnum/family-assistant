@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
+def _minutes(value: float | None) -> timedelta | None:
+    return timedelta(minutes=value) if value is not None else None
+
+
 def _one_line(text: str | None) -> str:
     """The first non-blank line of *text*."""
     return next(
@@ -72,11 +76,13 @@ class ContextPreparer:
                     if config.web_history_max_age_hours is not None
                     else config.history_max_age_hours
                 ),
+                idle_gap=_minutes(config.web_history_idle_gap_minutes),
             )
         return HistoryLimits(
             budget_chars=config.history_budget_chars,
             min_turns=config.history_min_turns,
             max_age=timedelta(hours=config.history_max_age_hours),
+            idle_gap=_minutes(config.history_idle_gap_minutes),
         )
 
     def prepend_profile_preamble(self, system_prompt: str) -> str:

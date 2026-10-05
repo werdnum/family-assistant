@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         EmailRepository,
         ErrorLogsRepository,
         EventsRepository,
+        HistoryCompactionRepository,
         IosPushTokenRepository,
         MemoryChangeLogRepository,
         MemoryReviewRepository,
@@ -472,6 +473,15 @@ class DatabaseExecutor(ABC):
             cached = repository_class(self)  # type: ignore[call-arg] # every repository takes an executor
             self._repositories[repository_class] = cached
         return cached  # type: ignore[return-value] # keyed by its own class
+
+    @property
+    def history_compaction(self) -> HistoryCompactionRepository:
+        """Get the history compaction event repository instance."""
+        from family_assistant.storage.repositories.history_compaction import (  # noqa: PLC0415
+            HistoryCompactionRepository,
+        )
+
+        return self._repository(HistoryCompactionRepository)
 
     @property
     def memory_change_log(self) -> MemoryChangeLogRepository:

@@ -4,7 +4,7 @@ import logging
 import re
 import traceback
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from string import Formatter
 from typing import TYPE_CHECKING, Literal
 
@@ -36,9 +36,16 @@ from family_assistant.llm.model_selection import (
     stamp_model_selection,
 )
 from family_assistant.observability.metrics import record_model_routing
+from family_assistant.processing.history_compaction import (
+    HISTORY_TOOL_NAME,
+    MEDIA_TOOL_NAMES,
+    CompactionCapabilities,
+    without_bound_thinking,
+)
 from family_assistant.processing.history_window import (
     HistoryWindow,
     HistoryWindowLoader,
+    messages_size,
 )
 from family_assistant.processing.protocol import TaintedSinkRefusedError
 from family_assistant.security.taint import (
@@ -53,6 +60,7 @@ from family_assistant.storage.delegation_runs import (
     historical_delegation_wake_content,
     is_delegation_wake_trigger,
 )
+from family_assistant.storage.history_compaction import HistoryScope
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -92,7 +100,10 @@ if TYPE_CHECKING:
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.plugins.runtime import ProfilePlugins
     from family_assistant.processing.protocol import DelegatableService
-    from family_assistant.processing.types import MidTurnInputProvider
+    from family_assistant.processing.types import (
+        ContextLengthCompactor,
+        MidTurnInputProvider,
+    )
     from family_assistant.security.taint import (
         TaintMetadata,
         TaintSource,
@@ -127,6 +138,14 @@ ABANDONED_TOOL_CALL_RESULT = (
     "Re-run it if you need the result, and check for side effects first if "
     "re-running it would not be safe to do twice."
 )
+
+
+@dataclass(slots=True)
+class _WindowSlot:
+    """Where the history window sits in a request, as it is compacted."""
+
+    start: int
+    length: int
 
 
 def _taint_metadata_from_sources(
@@ -329,7 +348,11 @@ class ProcessingService:
         self.context_preparer = ContextPreparer(
             context_providers, service_config, self.clock
         )
-        self.history_loader = HistoryWindowLoader(self.context_preparer.format_history)
+        self.history_loader = HistoryWindowLoader(
+            render=self.context_preparer.format_history,
+            timezone=service_config.timezone,
+            capabilities=self._compaction_capabilities,
+        )
         self.tool_executor = ToolExecutor(
             tools_provider,
             service_config,
@@ -959,65 +982,106 @@ class ProcessingService:
         active_turn_id: str | None,
         thread_root_id: int | None = None,
         referenced_row_ids: Sequence[int] = (),
+        context_length_target: int | None = None,
+        record: bool = True,
     ) -> HistoryWindow:
         """The history window a request on this conversation is built from.
 
         The one loader for every path that needs to know what is in the prompt,
-        the turn itself and the web producer's taint alike.
+        the turn itself and the web producer's taint alike. A reader that only
+        needs to know what the window holds passes ``record=False``, so it
+        sees the compaction a turn would run without running it.
         """
         return await self.history_loader.load(
             db_context,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            processing_profile_id=self.service_config.id,
-            subconversation_id=subconversation_id,
+            scope=HistoryScope(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                processing_profile_id=self.service_config.id,
+                subconversation_id=subconversation_id,
+            ),
             limits=self.context_preparer.get_history_limits(interface_type),
             now=self.clock.now(),
             active_turn_id=active_turn_id,
             thread_root_id=thread_root_id,
             referenced_row_ids=referenced_row_ids,
+            context_length_target=context_length_target,
+            record=record,
         )
+
+    async def _compaction_capabilities(self) -> CompactionCapabilities:
+        """Which references this profile can follow, for compacted turns."""
+        from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+            get_tool_definitions_for_advertisement,
+        )
+
+        advertised = await get_tool_definitions_for_advertisement(
+            self.tools_provider, can_confirm=True
+        )
+        names = {
+            definition.get("function", {}).get("name") for definition in advertised
+        }
+        return CompactionCapabilities(
+            history_tool=HISTORY_TOOL_NAME in names,
+            media_tool=not names.isdisjoint(MEDIA_TOOL_NAMES),
+        )
+
+    async def _window_references(
+        self,
+        db_context: Database,
+        *,
+        interface_type: str,
+        replied_to_interface_id: str | None,
+        thread_root_id_for_turn: int | None,
+        pinned_history_message_ids: Sequence[int],
+    ) -> tuple[int | None, list[int]]:
+        """The thread a reply points at, and the rows the turn names explicitly.
+
+        A reply to a thread brings the thread's turns, and the message replied
+        to, into the window; pinned rows come in the same way.
+        """
+        referenced_row_ids = list(pinned_history_message_ids)
+        if not (replied_to_interface_id and thread_root_id_for_turn):
+            return None, referenced_row_ids
+        replied_to_row = await db_context.message_history.get_row_by_interface_id(
+            interface_type=interface_type,
+            interface_message_id=replied_to_interface_id,
+        )
+        if replied_to_row is not None:
+            referenced_row_ids.append(replied_to_row["internal_id"])
+        return thread_root_id_for_turn, referenced_row_ids
 
     async def _build_initial_messages_for_llm(
         self,
         db_context: Database,
         interface_type: str,
         conversation_id: str,
-        replied_to_interface_id: str | None,
-        thread_root_id_for_turn: int | None,
+        window_thread_root_id: int | None,
         subconversation_id: str | None,
         *,
         acting_user_id: str | None,
         turn_id: str,
         resume: bool = False,
-        pinned_history_message_ids: Sequence[int] = (),
-    ) -> tuple[list[LLMMessage], str, LLMMessage | None]:
+        referenced_row_ids: Sequence[int] = (),
+    ) -> tuple[list[LLMMessage], list[LLMMessage], str, LLMMessage | None]:
         """Load the history window and the turn's own rows for LLM processing.
 
-        The turn itself -- its prompt and, when ``resume`` continues an
-        interrupted run, every row that run produced -- is replayed whole after
-        the window. The third element is that turn's opening message on a
-        resume, so the caller can put the turn's scaffolding back beside it.
+        Returns the window's messages, then the turn's own -- its prompt and,
+        when ``resume`` continues an interrupted run, every row that run
+        produced, replayed whole after the window. The last element is that
+        turn's opening message on a resume, so the caller can put the turn's
+        scaffolding back beside it.
 
         A reply to a thread brings the thread's turns, and the message replied
         to, into the window; pinned rows come in the same way.
         """
-        referenced_row_ids = list(pinned_history_message_ids)
-        is_thread_reply = bool(replied_to_interface_id and thread_root_id_for_turn)
-        if is_thread_reply and replied_to_interface_id is not None:
-            replied_to_row = await db_context.message_history.get_row_by_interface_id(
-                interface_type=interface_type,
-                interface_message_id=replied_to_interface_id,
-            )
-            if replied_to_row is not None:
-                referenced_row_ids.append(replied_to_row["internal_id"])
         window = await self.load_history_window(
             db_context,
             interface_type=interface_type,
             conversation_id=conversation_id,
             subconversation_id=subconversation_id,
             active_turn_id=turn_id,
-            thread_root_id=thread_root_id_for_turn if is_thread_reply else None,
+            thread_root_id=window_thread_root_id,
             referenced_row_ids=referenced_row_ids,
         )
         logger.debug(
@@ -1026,13 +1090,12 @@ class ProcessingService:
             len(window.messages),
             len(window.active_messages),
         )
-        initial_messages_for_llm = [*window.messages, *window.active_messages]
         resumed_turn_opening = (
             window.active_messages[0] if resume and window.active_messages else None
         )
 
         thread_attachments_context = ""
-        if is_thread_reply:
+        if window_thread_root_id is not None:
             thread_attachments_context = (
                 await self.attachment_processor.extract_conversation_context(
                     db_context,
@@ -1048,7 +1111,8 @@ class ProcessingService:
                 )
 
         return (
-            initial_messages_for_llm,
+            window.messages,
+            window.active_messages,
             thread_attachments_context,
             resumed_turn_opening,
         )
@@ -1609,7 +1673,9 @@ class ProcessingService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         resume: bool = False,
-    ) -> tuple[int | None, list[LLMMessage], tuple[TaintSource, ...]]:
+    ) -> tuple[
+        int | None, list[LLMMessage], tuple[TaintSource, ...], ContextLengthCompactor
+    ]:
         """Build the full pre-LLM turn state shared by sync and streaming flows.
 
         ``resume`` continues a turn whose earlier run was interrupted: its user
@@ -1676,32 +1742,40 @@ class ProcessingService:
             logger.info("Established new thread_root_id: %s", thread_root_id_for_turn)
 
         (
-            messages_for_llm,
+            window_thread_root_id,
+            window_referenced_row_ids,
+        ) = await self._window_references(
+            db_context,
+            interface_type=interface_type,
+            replied_to_interface_id=replied_to_interface_id,
+            thread_root_id_for_turn=thread_root_id_for_turn,
+            pinned_history_message_ids=pinned_history_message_ids or (),
+        )
+        (
+            window_messages,
+            active_messages,
             thread_attachments_context,
             resumed_turn_opening,
         ) = await self._build_initial_messages_for_llm(
             db_context=db_context,
             interface_type=interface_type,
             conversation_id=conversation_id,
-            replied_to_interface_id=replied_to_interface_id,
-            thread_root_id_for_turn=thread_root_id_for_turn,
+            window_thread_root_id=window_thread_root_id,
             subconversation_id=subconversation_id,
             acting_user_id=user_id,
             turn_id=turn_id,
             resume=resume,
-            pinned_history_message_ids=pinned_history_message_ids or (),
+            referenced_row_ids=window_referenced_row_ids,
         )
         if trigger_role == "system" and is_delegation_wake_trigger(
             user_content_for_history
         ):
             self._replace_historical_delegation_wake_with_active_system_trigger(
-                messages_for_llm,
+                active_messages,
                 user_content_for_history,
             )
-        pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
-        if pruned_count > 0:
-            logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
-        synthesized, dropped = self._repair_unmatched_tool_calls(messages_for_llm)
+        window_messages = self._repaired_window(window_messages, conversation_id)
+        synthesized, dropped = self._repair_unmatched_tool_calls(active_messages)
         if synthesized or dropped:
             logger.warning(
                 "Repaired unmatched tool calls in LLM history for conversation %s: "
@@ -1712,11 +1786,15 @@ class ProcessingService:
                 dropped,
             )
 
+        messages_for_llm = [*window_messages, *active_messages]
         final_system_prompt, context_taint_sources = await self.build_system_prompt(
             user_name=user_name, user_id=user_id
         )
         if final_system_prompt:
             messages_for_llm.insert(0, self._build_system_message(final_system_prompt))
+        window_slot = _WindowSlot(
+            start=1 if final_system_prompt else 0, length=len(window_messages)
+        )
 
         processed_content_parts = await self.attachment_processor.process_content_parts(
             db_context,
@@ -1779,7 +1857,71 @@ class ProcessingService:
                     reason="Taint accumulated by the interrupted run of this turn.",
                 ),
             )
-        return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
+
+        async def compact_for_context_length(
+            messages: list[LLMMessage],
+        ) -> list[LLMMessage] | None:
+            """The request with its history compacted to half its size, or None.
+
+            The emergency compaction event: the provider rejected the prompt as
+            too long, so the window is decided again, through the same
+            renderer, at a smaller target. The turn's own messages are kept;
+            their bound thinking is stripped if the window changed under them.
+            """
+            end = window_slot.start + window_slot.length
+            old_window = messages[window_slot.start : end]
+            if not old_window:
+                return None
+            window = await self.load_history_window(
+                db_context,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                subconversation_id=subconversation_id,
+                active_turn_id=turn_id,
+                thread_root_id=window_thread_root_id,
+                referenced_row_ids=window_referenced_row_ids,
+                context_length_target=messages_size(old_window) // 2,
+            )
+            new_window = await self.attachment_processor.convert_message_urls(
+                db_context,
+                self._repaired_window(window.messages, conversation_id),
+                acting_user_id=user_id,
+            )
+            if messages_size(new_window) >= messages_size(old_window):
+                return None
+            window_slot.length = len(new_window)
+            return [
+                *messages[: window_slot.start],
+                *new_window,
+                *(without_bound_thinking(message) for message in messages[end:]),
+            ]
+
+        return (
+            thread_root_id_for_turn,
+            typed_messages_for_llm,
+            context_taint_sources,
+            compact_for_context_length,
+        )
+
+    def _repaired_window(
+        self, window_messages: list[LLMMessage], conversation_id: str
+    ) -> list[LLMMessage]:
+        """The window with any dangling tool call or result made valid."""
+        repaired = list(window_messages)
+        pruned_count = self._prune_leading_invalid_messages(repaired)
+        if pruned_count > 0:
+            logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
+        synthesized, dropped = self._repair_unmatched_tool_calls(repaired)
+        if synthesized or dropped:
+            logger.warning(
+                "Repaired unmatched tool calls in LLM history for conversation %s: "
+                "%d abandoned call(s) given a placeholder result, %d orphaned "
+                "result(s) dropped.",
+                conversation_id,
+                synthesized,
+                dropped,
+            )
+        return repaired
 
     async def process_message(
         self,
@@ -1803,6 +1945,7 @@ class ProcessingService:
         tool_call_review_trigger: TriggerReviewInput | None = None,
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
+        context_length_compactor: ContextLengthCompactor | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -1842,6 +1985,7 @@ class ProcessingService:
             tool_call_review_trigger=tool_call_review_trigger,
             memory_review=memory_review,
             allow_quiet_end=allow_quiet_end,
+            context_length_compactor=context_length_compactor,
         )
 
     async def process_message_stream(
@@ -1867,6 +2011,7 @@ class ProcessingService:
         memory_review: MemoryReviewContext | None = None,
         allow_quiet_end: bool = False,
         completed_iterations: int = 0,
+        context_length_compactor: ContextLengthCompactor | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -1902,6 +2047,7 @@ class ProcessingService:
             memory_review=memory_review,
             allow_quiet_end=allow_quiet_end,
             completed_iterations=completed_iterations,
+            context_length_compactor=context_length_compactor,
         ):
             yield item
 
@@ -2012,6 +2158,7 @@ class ProcessingService:
                 thread_root_id_for_turn,
                 typed_messages_for_llm,
                 context_taint_sources,
+                compact_for_context_length,
             ) = await self._prepare_turn_messages_for_llm(
                 db_context,
                 interface_type=interface_type,
@@ -2052,6 +2199,7 @@ class ProcessingService:
             # assistant row doesn't repeat them.
             recorded_on_tool_rows: set[str] = set()
             async for event, turn_msg in self.process_message_stream(
+                context_length_compactor=compact_for_context_length,
                 db_context=db_context,
                 messages=typed_messages_for_llm,
                 interface_type=interface_type,
@@ -2281,6 +2429,7 @@ class ProcessingService:
                 thread_root_id_for_turn,
                 typed_messages_for_llm,
                 context_taint_sources,
+                compact_for_context_length,
             ) = await self._prepare_turn_messages_for_llm(
                 db_context,
                 interface_type=interface_type,
@@ -2306,6 +2455,7 @@ class ProcessingService:
             # closing assistant row doesn't repeat them.
             recorded_on_tool_rows: set[str] = set()
             async for event, stream_msg in self.process_message_stream(
+                context_length_compactor=compact_for_context_length,
                 db_context=db_context,
                 messages=typed_messages_for_llm,
                 interface_type=interface_type,
