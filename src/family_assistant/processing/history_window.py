@@ -564,6 +564,7 @@ class HistoryWindowLoader:
                         _text_of(entry.turn.rows, AssistantMessage),
                     )
                     for entry in window
+                    if not entry.open
                 ],
             )
             details["relevance"] = outcome.to_json()
