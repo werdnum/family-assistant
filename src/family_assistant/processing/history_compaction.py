@@ -188,13 +188,18 @@ def plan_compaction(
         mode = modes.get(candidate.key)
         if mode is None:
             continue
-        strip_through = candidate.previous.strip_through if candidate.previous else None
+        # A turn coming back into the window was generated against a prefix
+        # that has changed since, and a strip, once made, survives the turn
+        # being compacted, so restoring it verbatim later cannot bring back
+        # thinking that was already invalid.
+        strip_through = (
+            candidate.previous.strip_through
+            if candidate.previous is not None
+            else boundary_internal_id
+        )
         if first_changed is not None and index > first_changed:
             strip_through = boundary_internal_id
-        decisions[candidate.key] = TurnDecision(
-            mode=mode,
-            strip_through=strip_through if mode is TurnMode.VERBATIM else None,
-        )
+        decisions[candidate.key] = TurnDecision(mode=mode, strip_through=strip_through)
     return CompactionPlan(decisions=decisions, changed=first_changed is not None)
 
 

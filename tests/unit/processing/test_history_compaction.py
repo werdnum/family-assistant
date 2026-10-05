@@ -143,7 +143,7 @@ def test_thinking_is_stripped_after_the_first_changed_turn_only() -> None:
         boundary_internal_id=100,
     )
 
-    assert plan.decisions["kept-before"] == TurnDecision(TurnMode.COMPACTED)
+    assert plan.decisions["kept-before"].strip_through is None
     assert plan.decisions["changed"].mode is TurnMode.COMPACTED
     assert plan.decisions["after"] == TurnDecision(TurnMode.VERBATIM, strip_through=100)
 
@@ -297,3 +297,29 @@ def test_an_image_turn_compacts_only_where_a_model_can_look_again() -> None:
         turn, CompactionCapabilities(history_tool=True, media_tool=False)
     )
     assert can_compact(turn, CompactionCapabilities(history_tool=True, media_tool=True))
+
+
+def test_a_strip_survives_compaction_and_a_later_restore() -> None:
+    stripped_then_compacted = TurnDecision(TurnMode.COMPACTED, strip_through=7)
+
+    plan = plan_compaction(
+        [_candidate("a", previous=stripped_then_compacted)],
+        target_chars=10_000,
+        min_turns=1,
+        cutoff=NOW - timedelta(hours=1),
+        boundary_internal_id=100,
+    )
+
+    assert plan.decisions["a"] == TurnDecision(TurnMode.VERBATIM, strip_through=7)
+
+
+def test_a_turn_coming_back_into_the_window_loses_its_thinking() -> None:
+    plan = plan_compaction(
+        [_candidate("pinned", previous=None, explicit=True)],
+        target_chars=10_000,
+        min_turns=1,
+        cutoff=NOW - timedelta(hours=1),
+        boundary_internal_id=100,
+    )
+
+    assert plan.decisions["pinned"].strip_through == 100
