@@ -511,7 +511,7 @@ class JevModelRouter:
             )
             return self._failed("error", started)
         probabilities = answers.choices.get("tier", {})
-        if not probabilities or not set(probabilities) <= set(options):
+        if set(probabilities) != set(options):
             logger.warning("Jev model routing returned no usable choice.")
             return self._failed("invalid", started)
         tier = max(probabilities, key=lambda option: probabilities[option])

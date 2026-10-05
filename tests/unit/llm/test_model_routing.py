@@ -444,6 +444,17 @@ async def test_jev_answer_naming_an_unoffered_tier_is_invalid() -> None:
     assert not decision.probabilities
 
 
+async def test_jev_answer_missing_an_offered_tier_is_invalid() -> None:
+    client = FakeJevClient(JevAnswers("jev", {}, {"tier": {"standard": 1.0}}, 10))
+    try:
+        decision = await _jev_route(client)
+    finally:
+        await client.close()
+
+    assert decision.outcome == "invalid"
+    assert decision.tier is None
+
+
 async def test_jev_provider_failure_is_an_error() -> None:
     client = FakeJevClient(fail=True)
     try:

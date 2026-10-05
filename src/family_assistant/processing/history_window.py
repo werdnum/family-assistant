@@ -583,7 +583,7 @@ class HistoryWindowLoader:
                 turns=[
                     (
                         entry.turn.key,
-                        _text_of(entry.turn.rows, UserMessage),
+                        _opening_text(entry.turn.rows),
                         _text_of(entry.turn.rows, AssistantMessage),
                     )
                     for entry in window

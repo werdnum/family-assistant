@@ -42,11 +42,13 @@ class FakeTurnRelevance:
         self.older_key: str | None = None
         self.newer_key: str | None = None
         self.requests: list[str] = []
+        self.seen_turns: list[str] = []
 
     async def assess(
         self, *, request: str, turns: Sequence[tuple[str, str, str]]
     ) -> RelevanceOutcome:
         self.requests.append(request)
+        self.seen_turns = [user for _, user, _ in turns]
         self.older_key = next(key for key, user, _ in turns if user == "Older request")
         self.newer_key = next(key for key, user, _ in turns if user == "Newer request")
         if self.fail:
@@ -244,3 +246,39 @@ async def test_the_web_taint_read_ranks_against_the_coming_prompt(
     )
 
     assert relevance.requests == ["And the older one?"]
+
+
+async def test_a_system_triggered_turn_is_offered_by_its_trigger(
+    db_engine: AsyncEngine, mock_clock: MockClock
+) -> None:
+    db = Database(db_engine)
+    service = make_service(
+        mock_clock, Recorder(), budget_chars=100_000, tools=HISTORY_TOOLS
+    )
+    await service.handle_chat_interaction(
+        db_context=db,
+        interface_type="telegram",
+        conversation_id=CONVERSATION_ID,
+        trigger_content_parts=[
+            {"type": "text", "text": "The quote comparison finished."}
+        ],
+        trigger_interface_message_id=None,
+        user_name="Alice",
+        trigger_role="system",
+    )
+    await _seed_history(db, mock_clock)
+    relevance = FakeTurnRelevance(active=True)
+
+    await run_turn(
+        make_service(
+            mock_clock,
+            Recorder(),
+            budget_chars=3_000,
+            tools=HISTORY_TOOLS,
+            turn_relevance=relevance,
+        ),
+        db,
+        "Which quote was cheaper?",
+    )
+
+    assert "The quote comparison finished." in relevance.seen_turns
