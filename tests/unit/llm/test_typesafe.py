@@ -1,10 +1,16 @@
 """TypeSafe's HTTP contract and unusable responses."""
 
 import json
+import uuid
 
 import httpx
 import pytest
+from prometheus_client import REGISTRY
 
+from family_assistant.llm.call_context import (
+    reset_processing_profile,
+    set_processing_profile,
+)
 from family_assistant.llm.typesafe import (
     ChoiceQuestion,
     JevClient,
@@ -176,3 +182,110 @@ async def test_missing_answer_raises_typesafe_error(
             await client.ask("state", {"q": NoulQuestion("Relevant?")})
     finally:
         await client.close()
+
+
+def _client_answering(body: object, status: int = 200) -> JevClient:
+    return JevClient(
+        api_key="test-key",
+        model="jev-test",
+        timeout_seconds=1,
+        transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)),
+    )
+
+
+@pytest.mark.parametrize("value", [2, -0.1, True, "0.5"])
+async def test_a_noul_answer_off_the_probability_scale_is_refused(
+    value: object,
+) -> None:
+    client = _client_answering({"answers": {"q": {"noul": value}}})
+    try:
+        with pytest.raises(TypeSafeError):
+            await client.ask("state", {"q": NoulQuestion("Is it?")})
+    finally:
+        await client.close()
+
+
+async def test_a_choice_answer_off_the_probability_scale_is_refused() -> None:
+    client = _client_answering({
+        "answers": {"q": {"probabilities": {"a": 1.5, "b": -0.5}}}
+    })
+    try:
+        with pytest.raises(TypeSafeError):
+            await client.ask(
+                "state", {"q": ChoiceQuestion("Which?", options={"a": None, "b": None})}
+            )
+    finally:
+        await client.close()
+
+
+def _sample(name: str, labels: dict[str, str]) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+async def test_a_call_is_counted_with_its_tokens_under_the_active_profile() -> None:
+    profile = f"jev_profile_{uuid.uuid4().hex[:8]}"
+    client = _client_answering({
+        "model": "jev-1.13.0",
+        "answers": {"q": {"noul": 0.4}},
+        "usage": {"input_tokens": 120, "output_tokens": 3},
+    })
+    token = set_processing_profile(profile)
+    try:
+        await client.ask("state", {"q": NoulQuestion("Is it?")})
+    finally:
+        reset_processing_profile(token)
+        await client.close()
+
+    labels = {
+        "profile": profile,
+        "tier": "none",
+        "provider": "typesafe",
+        "model": "jev-test",
+        "resolved_model": "jev-1.13.0",
+        "operation": "classify",
+    }
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {**labels, "outcome": "success", "error_type": ""},
+        )
+        == 1
+    )
+    assert (
+        _sample(
+            "family_assistant_llm_tokens_total", {**labels, "kind": "input_uncached"}
+        )
+        == 120
+    )
+    assert (
+        _sample("family_assistant_llm_tokens_total", {**labels, "kind": "output"}) == 3
+    )
+
+
+async def test_a_failed_call_is_counted_as_an_error() -> None:
+    profile = f"jev_profile_{uuid.uuid4().hex[:8]}"
+    client = _client_answering({}, status=429)
+    token = set_processing_profile(profile)
+    try:
+        with pytest.raises(TypeSafeError):
+            await client.ask("state", {"q": NoulQuestion("Is it?")})
+    finally:
+        reset_processing_profile(token)
+        await client.close()
+
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {
+                "profile": profile,
+                "tier": "none",
+                "provider": "typesafe",
+                "model": "jev-test",
+                "resolved_model": "jev-test",
+                "operation": "classify",
+                "outcome": "error",
+                "error_type": "TypeSafeError",
+            },
+        )
+        == 1
+    )

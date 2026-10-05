@@ -13,14 +13,24 @@ exists to protect.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import httpx
 
+from family_assistant.observability.metrics import (
+    current_call_attribution,
+    record_llm_call,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from family_assistant.llm.messages import MessageReasoningInfo
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +85,7 @@ class JevAnswers:
     nouls: dict[str, float]
     choices: dict[str, dict[str, float]]
     input_tokens: int | None
+    output_tokens: int | None = None
 
 
 class JevClient:
@@ -105,7 +116,56 @@ class JevClient:
         state: str | Mapping[str, object],
         questions: Mapping[str, NoulQuestion | ChoiceQuestion],
     ) -> JevAnswers:
-        """Evaluate *questions* against *state*. Raises :class:`TypeSafeError`."""
+        """Evaluate *questions* against *state*. Raises :class:`TypeSafeError`.
+
+        Every call is counted in the LLM call and token metrics under the
+        current attribution, like any provider call, whether it answers, fails
+        or is abandoned by its caller's timeout.
+        """
+        started = time.monotonic()
+        try:
+            answers = await self._ask(state, questions)
+        except TypeSafeError as error:
+            self._record(started, "error", type(error).__name__, None)
+            raise
+        except asyncio.CancelledError:
+            self._record(started, "cancelled", None, None)
+            raise
+        self._record(started, "success", None, answers)
+        return answers
+
+    def _record(
+        self,
+        started: float,
+        outcome: str,
+        error_type: str | None,
+        answers: JevAnswers | None,
+    ) -> None:
+        usage: MessageReasoningInfo | None = None
+        if answers is not None:
+            usage = {}
+            if answers.input_tokens is not None:
+                usage["prompt_tokens"] = answers.input_tokens
+            if answers.output_tokens is not None:
+                usage["completion_tokens"] = answers.output_tokens
+        record_llm_call(
+            attribution=current_call_attribution(),
+            provider="typesafe",
+            model=self.model,
+            resolved_model=answers.model if answers is not None else None,
+            operation="classify",
+            outcome=outcome,
+            error_type=error_type,
+            duration_seconds=time.monotonic() - started,
+            time_to_first_output_seconds=None,
+            reasoning_info=usage,
+        )
+
+    async def _ask(
+        self,
+        state: str | Mapping[str, object],
+        questions: Mapping[str, NoulQuestion | ChoiceQuestion],
+    ) -> JevAnswers:
         try:
             response = await self._client.post(
                 "/v1/systemone",
@@ -140,24 +200,39 @@ def _parse_answers(
             "noul" if isinstance(question, NoulQuestion) else "choice"
         )
         if kind == "noul":
-            value = answer.get("noul")
-            if not isinstance(value, int | float):
-                raise TypeSafeError(f"Jev answer for {key!r} has no probability")
-            nouls[key] = float(value)
+            nouls[key] = _probability(answer.get("noul"), key)
         else:
             probabilities = answer.get("probabilities")
-            if not isinstance(probabilities, dict) or not all(
-                isinstance(value, int | float) for value in probabilities.values()
-            ):
+            if not isinstance(probabilities, dict):
                 raise TypeSafeError(f"Jev answer for {key!r} has no distribution")
             choices[key] = {
-                str(option): float(value) for option, value in probabilities.items()
+                str(option): _probability(value, key)
+                for option, value in probabilities.items()
             }
     usage = body.get("usage")
     input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+    output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
     return JevAnswers(
         model=str(body.get("model", "")),
         nouls=nouls,
         choices=choices,
         input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+        output_tokens=output_tokens if isinstance(output_tokens, int) else None,
     )
+
+
+def _probability(value: object, key: str) -> float:
+    """*value* as a probability, or :class:`TypeSafeError` if it is not one.
+
+    A value outside the 0-1 scale is a broken answer, not an emphatic one, and
+    must take the caller's fallback rather than clear any threshold. ``bool``
+    is excluded explicitly because it is an ``int`` to Python.
+    """
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or not 0.0 <= value <= 1.0
+    ):
+        raise TypeSafeError(f"Jev answer for {key!r} is not a probability: {value!r}")
+    return float(value)
