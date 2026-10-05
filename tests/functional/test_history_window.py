@@ -329,6 +329,45 @@ async def test_a_thread_reply_loads_the_thread_on_this_profile_only(
 
 
 @pytest.mark.asyncio
+async def test_a_reply_never_loads_another_conversations_rows(
+    db_engine: AsyncEngine, mock_clock: MockClock
+) -> None:
+    db = Database(db_engine)
+    # A turn elsewhere that messaged this conversation, under its own turn id.
+    sender_turn = str(uuid.uuid4())
+    await db.message_history.add_message(
+        _user("Tell my partner dinner is at seven"),
+        interface_type="telegram",
+        conversation_id="sender-conversation",
+        timestamp=mock_clock.now(),
+        turn_id=sender_turn,
+        processing_profile_id=PROFILE_ID,
+    )
+    notification = await db.message_history.add_message(
+        AssistantMessage(content="Dinner is at seven."),
+        interface_type="telegram",
+        conversation_id=CONVERSATION_ID,
+        timestamp=mock_clock.now(),
+        turn_id=sender_turn,
+        processing_profile_id=PROFILE_ID,
+        interface_message_id="tg-notify",
+    )
+    mock_clock.advance(timedelta(minutes=1))
+    recorder = _Recorder()
+    await _run(
+        _service(mock_clock, recorder, budget_chars=40_000),
+        db,
+        "Thanks",
+        replied_to_interface_id="tg-notify",
+    )
+
+    text = _texts(recorder.requests[0])
+    assert notification
+    assert "Dinner is at seven." in text
+    assert "Tell my partner" not in text
+
+
+@pytest.mark.asyncio
 async def test_thread_turns_count_toward_the_minimum(
     db_engine: AsyncEngine, mock_clock: MockClock
 ) -> None:

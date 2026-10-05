@@ -1654,20 +1654,32 @@ class MessageHistoryRepository(BaseRepository):
     async def get_turn_rows_with_metadata(
         self,
         *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
         turn_ids: Collection[str] = (),
         internal_ids: Collection[int] = (),
     ) -> list[MessageWithMetadata]:
         """Every row of the named turns, and of the turns the named rows are in.
 
-        A named row without a turn id is a turn of its own. Oldest first.
+        Only rows in this conversation and subconversation: a turn id is not
+        unique to one, because a turn that messages another conversation or
+        delivers to a subconversation writes rows there under its own id. A
+        named row without a turn id is a turn of its own. Oldest first.
         """
         if not turn_ids and not internal_ids:
             return []
+        scope = [
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+            _exact_subconversation_condition(subconversation_id),
+        ]
         wanted_turn_ids = set(turn_ids)
         named_rows = (
             await self._db.fetch_all(
                 select(message_history_table).where(
-                    message_history_table.c.internal_id.in_(set(internal_ids))
+                    *scope,
+                    message_history_table.c.internal_id.in_(set(internal_ids)),
                 )
             )
             if internal_ids
@@ -1680,7 +1692,7 @@ class MessageHistoryRepository(BaseRepository):
         if wanted_turn_ids:
             for row in await self._db.fetch_all(
                 select(message_history_table).where(
-                    message_history_table.c.turn_id.in_(wanted_turn_ids)
+                    *scope, message_history_table.c.turn_id.in_(wanted_turn_ids)
                 )
             ):
                 rows_by_id.setdefault(row["internal_id"], row)
@@ -1695,6 +1707,8 @@ class MessageHistoryRepository(BaseRepository):
     async def get_thread_turn_rows(
         self,
         *,
+        interface_type: str,
+        conversation_id: str,
         thread_root_id: int,
         processing_profile_id: str,
         subconversation_id: str | None,
@@ -1713,6 +1727,9 @@ class MessageHistoryRepository(BaseRepository):
             )
         )
         return await self.get_turn_rows_with_metadata(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
             turn_ids={row["turn_id"] for row in thread_rows if row["turn_id"]},
             internal_ids={row["internal_id"] for row in thread_rows},
         )

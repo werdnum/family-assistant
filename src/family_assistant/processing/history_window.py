@@ -218,6 +218,8 @@ class HistoryWindowLoader:
         if thread_root_id is not None:
             explicit_rows.extend(
                 await history.get_thread_turn_rows(
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
                     thread_root_id=thread_root_id,
                     processing_profile_id=processing_profile_id,
                     subconversation_id=subconversation_id,
@@ -226,11 +228,19 @@ class HistoryWindowLoader:
         if referenced_row_ids:
             explicit_rows.extend(
                 await history.get_turn_rows_with_metadata(
-                    internal_ids=referenced_row_ids
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    subconversation_id=subconversation_id,
+                    internal_ids=referenced_row_ids,
                 )
             )
         active_rows = (
-            await history.get_turn_rows_with_metadata(turn_ids=[active_turn_id])
+            await history.get_turn_rows_with_metadata(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                subconversation_id=subconversation_id,
+                turn_ids=[active_turn_id],
+            )
             if active_turn_id is not None
             else []
         )
