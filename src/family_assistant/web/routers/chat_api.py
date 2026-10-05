@@ -1499,6 +1499,7 @@ async def api_chat_create_turn(
             selected_processing_service,
             interface_type=interface_type,
             conversation_id=conversation_id,
+            request_text=payload.prompt,
         )
 
         # The prompt and the lease commit together: a turn whose prompt is

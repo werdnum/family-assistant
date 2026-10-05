@@ -2182,7 +2182,11 @@ class AppConfig(BaseSettings):
         of `error` outcomes that look like a provider problem rather than a
         configuration one.
         """
-        if self.model_routing.mode != "off" and not self.model_routing.classifier.model:
+        if (
+            self.model_routing.mode != "off"
+            and not self.model_routing.classifier.model
+            and not self.typesafe.enabled
+        ):
             msg = (
                 f"model_routing.mode is '{self.model_routing.mode}' but "
                 "model_routing.classifier names no model. Set the classifier's "

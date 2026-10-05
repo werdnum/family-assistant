@@ -1000,6 +1000,7 @@ class ProcessingService:
         referenced_row_ids: Sequence[int] = (),
         context_length_target: int | None = None,
         record: bool = True,
+        request_text: str | None = None,
     ) -> HistoryWindow:
         """The history window a request on this conversation is built from.
 
@@ -1023,6 +1024,7 @@ class ProcessingService:
             referenced_row_ids=referenced_row_ids,
             context_length_target=context_length_target,
             record=record,
+            request_text=request_text,
         )
 
     async def _compaction_capabilities(self) -> CompactionCapabilities:

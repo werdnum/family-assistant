@@ -226,6 +226,21 @@ def _text_of(rows: Sequence[MessageWithMetadata], role: type[LLMMessage]) -> str
     return ""
 
 
+def _opening_text(rows: Sequence[MessageWithMetadata]) -> str:
+    """The text of the message that opened a turn: its user or system trigger."""
+    if not rows:
+        return ""
+    message = rows[0].message
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            part.text for part in content if isinstance(part, TextContentPart)
+        )
+    return ""
+
+
 class HistoryWindowLoader:
     """Builds a request's history window from stored rows and recorded events."""
 
@@ -271,6 +286,7 @@ class HistoryWindowLoader:
         referenced_row_ids: Collection[int] = (),
         context_length_target: int | None = None,
         record: bool = True,
+        request_text: str | None = None,
     ) -> HistoryWindow:
         """Load the window for a request on this conversation.
 
@@ -285,7 +301,10 @@ class HistoryWindowLoader:
 
         ``record=False`` computes the window a turn starting now would get,
         compaction included, without recording the event: for a reader that
-        needs to know what will be in the prompt, not to fix it.
+        needs to know what will be in the prompt, not to fix it. Such a reader
+        runs before the turn's trigger is stored, so it passes the trigger's
+        text as ``request_text``; the relevance classifier then sees what the
+        turn's own load will, and decides the same window.
         """
         history = db.message_history
         event = await db.history_compaction.latest(scope)
@@ -410,7 +429,11 @@ class HistoryWindowLoader:
                 reason=reason,
                 boundary=new_boundary,
                 active_turn_id=active_turn_id,
-                active_rows=active_rows,
+                request_text=(
+                    request_text
+                    if request_text is not None
+                    else _opening_text(active_rows)
+                ),
                 record=record,
                 target_chars=(
                     context_length_target
@@ -507,7 +530,7 @@ class HistoryWindowLoader:
         reason: CompactionReason,
         boundary: int,
         active_turn_id: str | None,
-        active_rows: Sequence[MessageWithMetadata],
+        request_text: str,
         target_chars: int,
         record: bool,
     ) -> CompactionPlan:
@@ -556,7 +579,7 @@ class HistoryWindowLoader:
             and (record or self._relevance.active)
         ):
             outcome = await self._relevance.assess(
-                request=_text_of(active_rows, UserMessage),
+                request=request_text,
                 turns=[
                     (
                         entry.turn.key,

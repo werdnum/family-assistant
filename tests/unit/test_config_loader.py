@@ -3673,3 +3673,12 @@ def test_typesafe_api_key_env_maps_to_nested_secret(
 
     assert config.typesafe.api_key is not None
     assert config.typesafe.api_key.get_secret_value() == "env-typesafe-key"
+
+
+def test_typesafe_can_be_the_auto_classifier_on_its_own() -> None:
+    config = AppConfig.model_validate({
+        "typesafe": {"api_key": "test-key"},
+        "model_routing": {"mode": "active"},
+    })
+
+    assert config.typesafe.enabled
