@@ -75,6 +75,7 @@ from family_assistant.security.taint import (
 from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.services.tool_call_review import (
     DelegatingPolicyContext,
+    HumanConfirmationDecision,
     ToolCallReviewConstraints,
     ToolCallReviewer,
     ToolCallReviewInput,
@@ -82,6 +83,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewStatus,
     ToolCallReviewVerdict,
     compute_trusted_destination_echo,
+    human_decision_from_confirmation,
     review_prompt_revision,
 )
 from family_assistant.storage.database import spawn_detached
@@ -128,6 +130,7 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.scripting.invocation import ScriptExecutionScope
     from family_assistant.storage.types import (
         TaintAuditArgumentsSummary,
@@ -3210,10 +3213,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 if context.turn_id is not None
                 else []
             )
+        human_decisions = await self._human_confirmation_decisions(
+            context=context, messages=messages
+        )
         destination_echo = compute_trusted_destination_echo(
             _destination_argument(descriptor, arguments),
             messages,
             trigger=context.tool_call_review_trigger,
+            human_decisions=human_decisions,
         )
         policy_contexts = self._review_policy_contexts(
             state=state,
@@ -3239,6 +3246,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             if context.script_execution is not None
             else (),
             program_approval_requested=program_scope is not None,
+            human_decisions=human_decisions,
         )
         if self._tool_call_reviewer is None:
             delegating_reason = " ".join(
@@ -3299,6 +3307,51 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 # ended. Only an allow/confirm verdict resets that streak.
                 context.tool_call_review_state.consecutive_denials = 0
         return result
+
+    async def _human_confirmation_decisions(
+        self,
+        *,
+        context: ToolExecutionContext,
+        messages: Sequence[LLMMessage],
+    ) -> tuple[HumanConfirmationDecision, ...]:
+        """Human decisions on confirmations for the tool calls the reviewer can see.
+
+        Keyed by the tool call ids in the reviewed history, so the window is
+        exactly the one the reviewer already reads.
+        """
+        tool_call_ids = [
+            tool_call.id
+            for message in messages
+            for tool_call in getattr(message, "tool_calls", None) or ()
+        ]
+        rows = await context.db_context.confirmation_requests.list_human_decisions_for_tool_calls(
+            tool_call_ids=tool_call_ids,
+            interface_type=context.interface_type,
+            conversation_id=context.conversation_id,
+        )
+        decisions: list[HumanConfirmationDecision] = []
+        for row in rows:
+            resolved_at = row["resolved_at"]
+            if resolved_at is None:
+                continue
+            approved = row["status"] == "approved"
+            decided_descriptor = (
+                await self.get_tool_descriptor(row["tool_name"]) if approved else None
+            )
+            decisions.append(
+                human_decision_from_confirmation(
+                    tool_name=row["tool_name"],
+                    approved=approved,
+                    decided_at=resolved_at,
+                    prompt=row["confirmation_prompt"],
+                    destination=(
+                        _destination_argument(decided_descriptor, row["tool_args_json"])
+                        if decided_descriptor is not None
+                        else None
+                    ),
+                )
+            )
+        return tuple(decisions)
 
     def _start_shadow_review(
         self,
