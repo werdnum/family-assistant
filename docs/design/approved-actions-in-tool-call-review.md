@@ -52,11 +52,13 @@ words as evidence of intent, kept distinct from them.
    resolved confirmation in the conversation window the reviewer already reads, in order, and each
    entry gives the tool, the arguments, the decision (approved or declined) and the time. Declines
    are rendered too, so a later refusal of the same action is never hidden behind an earlier
-   approval: the human's most recent decision is the one the judge sees last. The block's framing is
-   the security boundary: it tells the judge that a human approved these actions and that their
-   values are endorsed intent, and also that their prose fields may have been composed from
-   untrusted content. The judge uses those fields to recognise a continuation, never as
-   instructions.
+   approval: the human's most recent decision is the one the judge sees last. The block is rendered
+   through the reviewer's existing fenced, boundary-neutralizing serializer (`_render_fenced_data`),
+   the same chokepoint `tool_call_arguments` uses, so text an email or web page put into the
+   arguments or prompt cannot forge the block's tags or any other reviewer delimiter. Inside that
+   fence, the block tells the judge that a human made these decisions and that approved values are
+   endorsed intent, and also that prose fields may have been composed from untrusted content. The
+   judge uses those fields to recognise a continuation, never as instructions.
 3. **Echo.** An approved call's *destination* values count as trusted text for the destination echo,
    next to the active request and the originating request. Only the values at the approved tool's
    declared `destination_argument_paths` qualify: the human approved those as where the action goes,
@@ -94,7 +96,8 @@ text the human actually read.
 1. **Attestation and rendering.** Reviewer prompt assembly takes approved actions from the
    conversation's confirmation records and renders them in the new block. Verified by
    prompt-assembly unit tests: an approval in a tainted turn renders, and an approval followed by a
-   decline of the same action renders both in order. A reviewer-eval case checks, at an `adjudicate`
+   decline of the same action renders both in order, and forged reviewer tags in an approved
+   argument come out neutralized inside the fence. A reviewer-eval case checks, at an `adjudicate`
    cell (the default matrix's `arbitrary_external_message` under `unknown_external`), that a
    follow-up message to the recipient of an approved message is allowed, while a message to an
    unrelated recipient still escalates and a retry of a declined send does not pass.
