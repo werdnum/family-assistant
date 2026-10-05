@@ -587,6 +587,54 @@ schema = {
 metadata = llm_json("Extract metadata from: " + article_text, schema=schema)
 ```
 
+### Classifier Functions
+
+For sorting text into categories or asking a yes/no question about it, `classify()` and
+`classify_yes_no()` are faster and cheaper than `llm()`, give the same answer every time, and can
+only answer with the options you offer. They use the TypeSafe classifier, which has to be set up for
+your deployment; where it isn't, they raise an error, and `llm_json()` does the same job.
+
+The first argument is what to classify: a string, or a dict of named parts (for example
+`{"subject": ..., "body": ...}`) that the question can refer to by name. Text only — no images.
+
+#### `classify(state, question, options)`
+
+Choose the best of `options` and return `{"label": ..., "probabilities": {...}}`, with a probability
+for every option. `options` is a list of labels, or a dict of label to a description of when it
+applies (use `None` for a label that needs no description). At least two options.
+
+```python
+result = classify(
+    email_body,
+    "What is this email about?",
+    {
+        "bills": "Invoices, payments or account statements",
+        "school": "Messages from the children's school",
+        "other": None,
+    },
+)
+if result["label"] == "bills" and result["probabilities"]["bills"] > 0.8:
+    wake_llm({"message": "A bill arrived", "email": email_body})
+```
+
+#### `classify_yes_no(state, question, yes=None, no=None)`
+
+Return the probability, from 0 to 1, that the answer is yes. `yes` and `no` optionally describe what
+each answer means.
+
+```python
+urgency = classify_yes_no(
+    {"sender": sender, "message": text},
+    "Does `message` need a reply today?",
+    yes="It asks for something time-sensitive",
+)
+if urgency > 0.7:
+    wake_llm({"message": "Urgent message from " + sender, "text": text})
+```
+
+Pick thresholds from the probabilities rather than treating any answer as certain. Like `llm()`
+output, a classifier's answer is data derived from what it read.
+
 ### Time API Functions
 
 A comprehensive time API is available for working with dates, times, and timezones:

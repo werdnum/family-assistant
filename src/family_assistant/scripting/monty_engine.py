@@ -38,6 +38,7 @@ from .config import ScriptConfig
 from .errors import ScriptExecutionError, ScriptSyntaxError, ScriptTimeoutError
 
 if TYPE_CHECKING:
+    from family_assistant.llm.typesafe import JevClient
     from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -904,6 +905,10 @@ class MontyEngine:
         execution_context: "ToolExecutionContext | None" = None,
     ) -> None:
         """Add model calls, whose results narrow what the program's approval covers."""
+        from .apis.classify import (  # noqa: PLC0415
+            classify_async,
+            classify_yes_no_async,
+        )
         from .apis.llm import llm_call_async, llm_call_json_async  # noqa: PLC0415
 
         def note_model_output() -> None:
@@ -930,8 +935,37 @@ class MontyEngine:
                 prompt, schema=schema, system=system, model=model
             )
 
+        def jev_client() -> "JevClient | None":
+            service = (
+                execution_context.processing_service
+                if execution_context is not None
+                else None
+            )
+            return service.jev_client if service is not None else None
+
+        async def classify(
+            state: str | dict[str, object],
+            question: str,
+            options: list[str] | dict[str, str | None],
+        ) -> dict[str, object]:
+            note_model_output()
+            return await classify_async(jev_client(), state, question, options)
+
+        async def classify_yes_no(
+            state: str | dict[str, object],
+            question: str,
+            yes: str | None = None,
+            no: str | None = None,
+        ) -> float:
+            note_model_output()
+            return await classify_yes_no_async(
+                jev_client(), state, question, yes=yes, no=no
+            )
+
         impls["llm"] = llm
         impls["llm_json"] = llm_json
+        impls["classify"] = classify
+        impls["classify_yes_no"] = classify_yes_no
 
     def _build_resource_limits(self) -> pydantic_monty.ResourceLimits:
         """Build Monty resource limits from config.

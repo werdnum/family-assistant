@@ -408,6 +408,8 @@ async def prepare_script_invocation(
                 *external,
                 "llm",
                 "llm_json",
+                "classify",
+                "classify_yes_no",
                 "wake_llm",
                 "json_*",
                 "time_*",

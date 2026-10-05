@@ -1146,6 +1146,9 @@ typesafe:
   rest; the budget is still enforced in code. In `shadow` mode (shipped) the window compacts
   oldest-first and the answers, with what the window would have kept, are recorded in the event's
   `details` in `history_compaction_events` for evaluation. `off` never asks.
+- **Scripts.** `classify()` and `classify_yes_no()` in scripts call Jev (see
+  [scripting.md](../user/scripting.md)); without a key they raise, pointing the script at
+  `llm_json()`.
 - **`model`** is pinned rather than `jev-latest`, because the threshold is tuned against one model's
   probabilities.
 - **`timeout_seconds`** — an answer that has not arrived by here is abandoned: compaction proceeds
